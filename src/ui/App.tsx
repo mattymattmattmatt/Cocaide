@@ -4,8 +4,9 @@ import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
 import standText from "../../examples/stand.cocaide.json?raw";
 import framingText from "../../examples/frame-members.cocaide.json?raw";
+import tableText from "../../examples/table-frame.cocaide.json?raw";
 import { targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
-import { nextId, type Command, type RawDocument } from "../doc/commands";
+import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
@@ -20,10 +21,14 @@ import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog } from "./ask/AskSettingsDialog";
 import { BodiesPanel } from "./BodiesPanel";
+import { CutListPanel } from "./CutListPanel";
+import type { FrameActions } from "./FrameProps";
+import { NodesPanel, type PathRequest, type SizeChoice } from "./NodesPanel";
 import { useAsk } from "./ask/useAsk";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
-import { addLibraryMember, exportLibrary, mergeLibrary, placeMember, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
+import { addFramePath } from "../weldment/frame";
+import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, placeMember, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree } from "./FeatureTree";
@@ -36,7 +41,7 @@ import { nextBodyName, PropertyPanel } from "./PropertyPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
-import { EMPTY_SELECTION, Viewport, type PickTarget, type Selection, type Underlay } from "./Viewport";
+import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -44,6 +49,7 @@ const EXAMPLES: Record<string, string> = {
   flange: flangeText,
   "stand (two bodies)": standText,
   "members (weldment)": framingText,
+  "table frame (weldment)": tableText,
 };
 const STORAGE_KEY = "cocaide.document.v1";
 const REBUILD_DELAY_MS = 250;
@@ -99,7 +105,7 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [selectedFeature, setSelectedFeature] = useState<string | null>(null);
-  const [rightTab, setRightTab] = useState<"properties" | "sections" | "document">("properties");
+  const [rightTab, setRightTab] = useState<"properties" | "sections" | "cutlist" | "document">("properties");
   const [sketch, setSketch] = useState<SketchSession | null>(null);
   const [planeMenu, setPlaneMenu] = useState(false);
   const [hiddenBodies, setHiddenBodies] = useState<ReadonlySet<string>>(new Set());
@@ -121,6 +127,8 @@ export function App() {
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
   const shown = useMemo(() => ask.previewDoc ?? (parsed.ok ? parsed.value : null), [ask.previewDoc, parsed]);
+  /** The frame's nodes, where the viewport draws them. */
+  const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
 
   // The photo pinned under the part (the document's, or an open proposal's): its pixels live in this browser.
   const shownPhoto = photoOf(shown);
@@ -435,6 +443,61 @@ export function App() {
     if (!r.ok) return setNotice({ kind: "error", text: `${entry.name} not updated: ${r.error}` });
     d.replaceDoc(r.doc);
     setNotice({ kind: "info", text: `This part's copy of ${r.name} is now v${entry.version}. Ctrl+Z puts the old one back.` });
+  };
+
+  /** Several commands as one undo step (switching every member of a size, adding a weld). */
+  const batch = (cmds: Command[]): string | null => {
+    if (!doc) return "fix the document JSON first";
+    let next: RawDocument = doc;
+    for (const cmd of cmds) {
+      const r = apply(next, cmd, { user: true });
+      if (!r.ok) return r.error;
+      next = r.doc;
+    }
+    d.replaceDoc(next);
+    return null;
+  };
+  const frameActions: FrameActions = { onCreate: create, onBatch: batch };
+
+  /** Sizes for a path of members: the part's own profiles first, then the library's. */
+  const sizeChoices = useMemo<SizeChoice[]>(() => {
+    const out: SizeChoice[] = [];
+    const copies = (doc?.profiles ?? {}) as Record<string, ProfileDef>;
+    for (const [name, p] of Object.entries(copies)) for (const sz of p.sizes) out.push({ value: `part|${name}|${sz.designation}`, label: `${sz.designation} (in this part)` });
+    for (const e of library) {
+      const copy = Object.values(copies).find((p) => p.library?.id === e.id);
+      for (const sz of e.sizes) if (!copy?.sizes.some((x) => x.designation === sz.designation)) out.push({ value: `lib|${e.id}|${sz.designation}`, label: `${sz.designation} (library)` });
+    }
+    return out;
+  }, [doc, library]);
+
+  /** Members along a path of nodes, with the part's copy of a library profile if it needs one: one undo step. */
+  const addPath = (req: PathRequest): boolean => {
+    if (!doc) return false;
+    const [where, key, size] = req.size.split("|");
+    let next: RawDocument = doc;
+    let profile = key;
+    let note: string | undefined;
+    const entry = where === "lib" ? library.find((e) => e.id === key) : undefined;
+    if (where === "lib") {
+      if (!entry) return setNotice({ kind: "error", text: "That section is no longer in the library." }), false;
+      const copy = ensureCopy(doc, entry, size);
+      if (!copy.ok) return setNotice({ kind: "error", text: copy.error }), false;
+      next = copy.doc;
+      profile = copy.name;
+      note = copy.note;
+    }
+    const r = addFramePath(next, { profile, size, path: req.path, line: req.line, mitre: req.mitre });
+    if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
+    d.replaceDoc(r.doc);
+    const joints = r.joints.length ? ` and ${r.joints.length} mitre${r.joints.length === 1 ? "" : "s"}` : "";
+    setNotice({ kind: "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${size}${joints}.${note ? ` ${note}` : ""}` });
+    if (entry) {
+      const used = { ...entry, uses: entry.uses + r.members.length };
+      setLibrary((l) => l.map((e) => (e.id === entry.id ? used : e)));
+      void saveProfile(used).catch(() => undefined);
+    }
+    return true;
   };
 
   const favourite = (entry: LibraryEntry) => {
@@ -829,6 +892,7 @@ export function App() {
               onAsk={sketch ? undefined : openAsk}
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : openAsk} />
+            <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
             <BodiesPanel
               measurements={view?.measurements ?? null}
               bodies={view?.bodies ?? []}
@@ -874,6 +938,7 @@ export function App() {
                   underlay={underlay}
                   onPhotoPoint={photoPick ? onPhotoPoint : null}
                   hiddenBodies={hiddenBodies}
+                  nodes={shownNodes}
                 />
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
@@ -902,6 +967,9 @@ export function App() {
                   <button role="tab" aria-selected={rightTab === "sections"} onClick={() => setRightTab("sections")} data-testid="tab-sections">
                     Sections
                   </button>
+                  <button role="tab" aria-selected={rightTab === "cutlist"} onClick={() => setRightTab("cutlist")} data-testid="tab-cutlist">
+                    Cut list
+                  </button>
                   <button role="tab" aria-selected={rightTab === "document"} onClick={() => setRightTab("document")} data-testid="tab-document">
                     Document
                   </button>
@@ -920,6 +988,19 @@ export function App() {
                     onExport={exportSections}
                     onImport={(f) => void importSections(f)}
                   />
+                ) : rightTab === "cutlist" ? (
+                  <CutListPanel
+                    doc={doc}
+                    measurements={view?.measurements ?? null}
+                    dispatch={d.dispatch}
+                    onError={(text) => setNotice({ kind: "error", text })}
+                    onSelect={(id) => {
+                      setSelectedFeature(id);
+                      setRightTab("properties");
+                    }}
+                    onDownload={(name, text) => download(name, text, "text/csv")}
+                    fileBase={fileBase(view?.name ?? "part")}
+                  />
                 ) : rightTab === "properties" ? (
                   <section className="panel">
                     {doc && selectedFeature ? (
@@ -933,6 +1014,7 @@ export function App() {
                         onSelectFeature={setSelectedFeature}
                         onAsk={openAsk}
                         onProfileCard={setProfileCard}
+                        frame={frameActions}
                       />
                     ) : (
                       <Help />

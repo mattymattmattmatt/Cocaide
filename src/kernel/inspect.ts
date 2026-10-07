@@ -2,6 +2,7 @@
 // MCP session (Node), the right-click ask in the browser (kernel worker) and
 // tests. Plain data in, plain data out.
 
+import { cutList } from "../weldment/cutlist";
 import { labelBodies, type BodyRange } from "./bodies";
 import type { EdgeSelector, FaceSelector } from "../doc/types";
 import { Checker, isObject, validateEdgeSelector, validateFaceSelector } from "../doc/validate";
@@ -56,6 +57,10 @@ export function measurementSummary(m: Measurements): Record<string, unknown> {
       ? { bodies: m.bodies.map((b) => ({ name: b.name, volume: round6(b.volume), size: b.boundingBox?.size.map(round6), holeCount: b.holeCount })) }
       : {}),
     ...(m.interference.length ? { interference: m.interference } : {}),
+    // A weldment: the cut list, read from the trimmed members.
+    ...(m.members.length
+      ? { cutList: cutList(m.members).map((i) => ({ item: i.item, size: i.designation, length: i.length, angles: i.angles, quantity: i.quantity, kgEach: round6(i.kgEach), members: i.members })) }
+      : {}),
   };
 }
 

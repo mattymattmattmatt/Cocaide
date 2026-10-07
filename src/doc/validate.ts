@@ -11,23 +11,30 @@ import {
   DEFAULT_BODY,
   EDGE_PICKS,
   FEATURE_OPS,
+  JOINT_TYPES,
+  NODE_NAME,
   PATTERNABLE_OPS,
   PHOTO_KEYS,
   PHOTO_SCALE_KEYS,
   PHOTO_SCALE_SOURCES,
   PICKS,
   SOURCE_KEYS,
+  WELD_KEYS,
+  WELD_TYPES,
   type ChamferFeature,
   type CircularPatternFeature,
   type CombineFeature,
   type CocaideDocument,
   type Constraint,
   type EdgeSelector,
+  type EndCapFeature,
   type ExtrudeFeature,
   type FaceSelector,
   type Feature,
   type FilletFeature,
+  type GussetFeature,
   type HoleFeature,
+  type JointFeature,
   type LinearPatternFeature,
   type Material,
   type MemberFeature,
@@ -37,6 +44,7 @@ import {
   type SketchFeature,
   type Vec2,
   type Vec3,
+  type Weld,
 } from "./types";
 import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 
@@ -62,6 +70,22 @@ export interface ValidationResult {
   bodies: string[];
   /** The weldment profiles that validated, by name. */
   profiles: Record<string, ProfileDef>;
+  /** The frame's nodes, with expressions evaluated. */
+  nodes: Record<string, Vec3>;
+  /** The weld table. */
+  welds: Weld[];
+}
+
+/** What a feature may refer to: the part's profiles and nodes, and the members before it. */
+interface FeatureContext {
+  profiles: Record<string, ProfileDef>;
+  /** Every profile the part lists, valid or not. */
+  listed: string[];
+  nodes: Record<string, Vec3>;
+  /** Valid members so far, by id. */
+  members: Map<string, MemberFeature>;
+  /** The joint at each node so far. */
+  joints: Map<string, string>;
 }
 
 const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -86,14 +110,14 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], profiles: {} };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], profiles: {}, nodes: {}, welds: [] };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "profiles", "features"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "profiles", "nodes", "welds", "features"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -149,6 +173,22 @@ export function validateDocument(input: unknown): ValidationResult {
       else if (p) result.profiles[name] = p;
     }
   }
+  if (input.nodes !== undefined) {
+    if (!isObject(input.nodes)) header.fail("nodes", `must be an object of name: [x, y, z] (got ${describe(input.nodes)})`);
+    else
+      for (const [name, at] of Object.entries(input.nodes)) {
+        if (!NODE_NAME.test(name)) {
+          header.fail(`nodes.${name}`, "a node name is letters, digits and _ and starts with a letter");
+          continue;
+        }
+        const exprErrors: string[] = [];
+        const point = resolveExpressions(at, result.parameters, exprErrors, `nodes.${name}`);
+        for (const e of exprErrors) header.fail("", e);
+        if (exprErrors.length) continue;
+        const v = header.vec3({ [name]: point }, name, "nodes");
+        if (v) result.nodes[name] = v;
+      }
+  }
   if (!Array.isArray(input.features)) {
     header.fail("features", `must be an array (got ${describe(input.features)})`);
     result.headerErrors = header.errors;
@@ -157,6 +197,7 @@ export function validateDocument(input: unknown): ValidationResult {
   result.headerErrors = header.errors;
   /** Every profile the part lists, valid or not: a member of a broken one points at its errors. */
   const listed = isObject(input.profiles) ? Object.keys(input.profiles) : [];
+  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, members: new Map(), joints: new Map() };
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
   const bodies = new BodyNames();
@@ -177,8 +218,10 @@ export function validateDocument(input: unknown): ValidationResult {
         c.fail("id", `duplicate id "${raw.id}"`);
       }
       // A bad expression already says what is wrong with that field.
-      if (exprErrors.length === 0) feature = validateFeature(raw, c, seen, result.profiles, listed);
+      if (exprErrors.length === 0) feature = validateFeature(raw, c, seen, ctx);
       if (feature) bodies.check(feature, c);
+      if (feature?.op === "member" && c.errors.length === 0) ctx.members.set(feature.id, feature);
+      if (feature?.op === "joint" && c.errors.length === 0) ctx.joints.set(feature.node, feature.id);
       if (typeof raw.id === "string" && !seen.has(raw.id)) seen.set(raw.id, String(raw.op));
     }
     result.features.push({
@@ -190,16 +233,15 @@ export function validateDocument(input: unknown): ValidationResult {
     });
   });
   result.bodies = bodies.all();
+  if (input.welds !== undefined) {
+    const welds = new Checker("document");
+    result.welds = checkWelds(input.welds, result.bodies, welds);
+    result.headerErrors.push(...welds.errors);
+  }
   return result;
 }
 
-function validateFeature(
-  input: Record<string, unknown>,
-  c: Checker,
-  earlier: Map<string, string>,
-  profiles: Record<string, ProfileDef> = {},
-  listed: string[] = Object.keys(profiles),
-): Feature | null {
+function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): Feature | null {
   // `suppressed` is common to every op; check it here and validate the rest per op.
   const { suppressed, ...raw } = input;
   if (suppressed !== undefined && typeof suppressed !== "boolean") {
@@ -229,7 +271,16 @@ function validateFeature(
       feature = validateCombine(raw, c);
       break;
     case "member":
-      feature = validateMember(raw, c, profiles, listed);
+      feature = validateMember(raw, c, ctx);
+      break;
+    case "joint":
+      feature = validateJoint(raw, c, earlier, ctx);
+      break;
+    case "endCap":
+      feature = validateEndCap(raw, c, earlier, ctx);
+      break;
+    case "gusset":
+      feature = validateGusset(raw, c, earlier, ctx);
       break;
     default:
       c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
@@ -878,8 +929,9 @@ function libraryRef(v: unknown, path: string, c: Checker): { id: string; version
   return { id: v.id, version: v.version as number };
 }
 
-function validateMember(raw: Record<string, unknown>, c: Checker, profiles: Record<string, ProfileDef>, listed: string[]): MemberFeature | null {
-  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "newBody"]);
+function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext): MemberFeature | null {
+  const { profiles, listed } = ctx;
+  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "align", "newBody"]);
   const profile = typeof raw.profile === "string" ? profiles[raw.profile] : undefined;
   if (typeof raw.profile !== "string") c.fail("profile", `must name a profile in the part's profiles (got ${describe(raw.profile)})`);
   else if (!profile && listed.includes(raw.profile)) c.fail("profile", `the part's profile "${raw.profile}" has errors (see profiles.${raw.profile})`);
@@ -888,16 +940,178 @@ function validateMember(raw: Record<string, unknown>, c: Checker, profiles: Reco
   else if (profile && !profile.sizes.some((s) => s.designation === raw.size)) {
     c.fail("size", `"${raw.size}" is not a size of ${profile.name} (sizes: ${profile.sizes.map((s) => s.designation).join(", ")})`);
   }
-  const from = c.vec3(raw, "from", "");
-  const to = c.vec3(raw, "to", "");
-  if (from && to && Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]) < 1e-6) c.fail("to", "must not be the same point as from");
+  // An end is a point, or the name of a node.
+  const end = (key: "from" | "to"): [Vec3 | undefined, string | undefined] => {
+    const v = raw[key];
+    if (typeof v !== "string") return [c.vec3(raw, key, ""), undefined];
+    if (!(v in ctx.nodes)) {
+      const names = Object.keys(ctx.nodes);
+      c.fail(key, `no node "${v}" (${names.length ? `nodes: ${names.join(", ")}` : "the part has no nodes"})`);
+      return [undefined, undefined];
+    }
+    return [ctx.nodes[v], v];
+  };
+  const [from, fromNode] = end("from");
+  const [to, toNode] = end("to");
+  if (from && to && Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]) < 1e-6) {
+    c.fail("to", fromNode && toNode ? `nodes ${fromNode} and ${toNode} are the same point` : "must not be the same point as from");
+  }
   const rotation = raw.rotation === undefined ? undefined : c.num(raw, "rotation", "", {});
+  let align: Vec2 | undefined;
+  if (raw.align !== undefined) {
+    align = c.vec2(raw, "align", "");
+    if (align && !align.every((a) => a >= -1 && a <= 1)) {
+      c.fail("align", `must be two numbers from -1 to 1, a place on the section's envelope (got ${describe(raw.align)})`);
+      align = undefined;
+    }
+  }
   const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
   if (c.errors.length > 0 || !from || !to) return null;
   const f: MemberFeature = { id: raw.id as string, op: "member", profile: raw.profile as string, size: raw.size as string, from, to };
+  if (fromNode) f.fromNode = fromNode;
+  if (toNode) f.toNode = toNode;
   if (rotation !== undefined) f.rotation = rotation;
+  if (align) f.align = align;
   if (newBody) f.newBody = newBody;
   return f;
+}
+
+// ---------------------------------------------------------------- frames
+
+/** How a member meets a node: it ends there, its line passes through it, or neither. */
+export function memberAtNode(m: MemberFeature, node: string, at: Vec3): "ends" | "passes" | null {
+  if (m.fromNode === node || m.toNode === node) return "ends";
+  const d: Vec3 = [m.to[0] - m.from[0], m.to[1] - m.from[1], m.to[2] - m.from[2]];
+  const l2 = dot3(d, d);
+  const t = dot3([at[0] - m.from[0], at[1] - m.from[1], at[2] - m.from[2]], d) / l2;
+  if (t < 0 || t > 1) return null;
+  const off = Math.hypot(m.from[0] + t * d[0] - at[0], m.from[1] + t * d[1] - at[1], m.from[2] + t * d[2] - at[2]);
+  return off <= 0.01 ? "passes" : null;
+}
+
+/** A member named by a joint, gusset or end cap: an earlier member, valid. */
+function namedMember(id: unknown, path: string, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): MemberFeature | undefined {
+  if (typeof id !== "string") {
+    c.fail(path, `must be a member's id (got ${describe(id)})`);
+    return undefined;
+  }
+  const m = ctx.members.get(id);
+  if (m) return m;
+  if (earlier.get(id) === "member") c.fail(path, `member "${id}" has errors`);
+  else if (earlier.has(id)) c.fail(path, `"${id}" is a ${earlier.get(id)}, not a member`);
+  else c.fail(path, `no member "${id}" before this feature`);
+  return undefined;
+}
+
+function nodeName(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext): string | undefined {
+  if (typeof raw.node === "string" && raw.node in ctx.nodes) return raw.node;
+  const names = Object.keys(ctx.nodes);
+  c.fail("node", `must name a node (got ${describe(raw.node)}; ${names.length ? `nodes: ${names.join(", ")}` : "the part has no nodes"})`);
+  return undefined;
+}
+
+function validateJoint(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): JointFeature | null {
+  c.keys(raw, "", ["id", "op", "node", "type", "members", "through", "gap"]);
+  const node = nodeName(raw, c, ctx);
+  if (!JOINT_TYPES.includes(raw.type as never)) c.fail("type", `must be ${JOINT_TYPES.map((t) => `"${t}"`).join(" or ")} (got ${describe(raw.type)})`);
+  const gap = raw.gap === undefined ? undefined : c.num(raw, "gap", "", { nonNegative: true });
+  if (node && ctx.joints.has(node)) c.fail("node", `${node} already has a joint (${ctx.joints.get(node)}); a node has one`);
+  if (!node || c.errors.length) return null;
+  const at = ctx.nodes[node];
+  const ending = [...ctx.members.values()].filter((m) => memberAtNode(m, node, at) === "ends").map((m) => m.id);
+  const f: JointFeature = { id: raw.id as string, op: "joint", node, type: raw.type as JointFeature["type"] };
+  if (raw.type === "mitre") {
+    if (raw.through !== undefined) c.fail("through", "is for a butt joint; a mitre names its two members");
+    let pair: string[] | undefined;
+    if (raw.members === undefined) {
+      if (ending.length !== 2) c.fail("members", `${ending.length} members end at ${node}${ending.length ? ` (${ending.join(", ")})` : ""}: name the two to mitre`);
+      else pair = ending;
+    } else if (!Array.isArray(raw.members) || raw.members.length !== 2 || raw.members[0] === raw.members[1]) {
+      c.fail("members", `must be two different members (got ${describe(raw.members)})`);
+    } else {
+      raw.members.forEach((id, i) => {
+        const m = namedMember(id, `members[${i}]`, c, earlier, ctx);
+        if (m && memberAtNode(m, node, at) !== "ends") c.fail(`members[${i}]`, `${m.id} does not end at ${node}`);
+      });
+      pair = raw.members as string[];
+    }
+    if (pair) f.members = [pair[0], pair[1]];
+  } else if (raw.type === "butt") {
+    if (raw.members !== undefined) c.fail("members", "is for a mitre; a butt joint names the member that runs through");
+    const through = namedMember(raw.through, "through", c, earlier, ctx);
+    if (through && !memberAtNode(through, node, at)) c.fail("through", `${through.id} neither ends at ${node} nor passes through it`);
+    if (through && !ending.some((id) => id !== through.id)) c.fail("through", `no other member ends at ${node} to butt against ${through.id}`);
+    if (through) f.through = through.id;
+  }
+  if (gap !== undefined) f.gap = gap;
+  return c.errors.length ? null : f;
+}
+
+function validateEndCap(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): EndCapFeature | null {
+  c.keys(raw, "", ["id", "op", "member", "end", "thickness", "newBody"]);
+  const member = namedMember(raw.member, "member", c, earlier, ctx);
+  if (raw.end !== "start" && raw.end !== "end") c.fail("end", `must be "start" (the member's from end) or "end" (got ${describe(raw.end)})`);
+  const thickness = c.num(raw, "thickness", "", { positive: true });
+  const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
+  if (c.errors.length || !member || thickness === undefined) return null;
+  const f: EndCapFeature = { id: raw.id as string, op: "endCap", member: member.id, end: raw.end as EndCapFeature["end"], thickness };
+  if (newBody) f.newBody = newBody;
+  return f;
+}
+
+function validateGusset(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): GussetFeature | null {
+  c.keys(raw, "", ["id", "op", "node", "members", "size", "thickness", "chamfer", "newBody"]);
+  const node = nodeName(raw, c, ctx);
+  if (!Array.isArray(raw.members) || raw.members.length !== 2 || raw.members[0] === raw.members[1]) {
+    c.fail("members", `must be the two members it joins (got ${describe(raw.members)})`);
+  } else if (node) {
+    raw.members.forEach((id, i) => {
+      const m = namedMember(id, `members[${i}]`, c, earlier, ctx);
+      if (m && !memberAtNode(m, node, ctx.nodes[node])) c.fail(`members[${i}]`, `${m.id} neither ends at ${node} nor passes through it`);
+    });
+  }
+  const size = c.num(raw, "size", "", { positive: true });
+  const thickness = c.num(raw, "thickness", "", { positive: true });
+  const chamfer = raw.chamfer === undefined ? undefined : c.num(raw, "chamfer", "", { nonNegative: true });
+  if (size !== undefined && chamfer !== undefined && chamfer >= size) c.fail("chamfer", `must be less than the size (${size})`);
+  const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
+  if (c.errors.length || !node || size === undefined || thickness === undefined) return null;
+  const pair = raw.members as [string, string];
+  const f: GussetFeature = { id: raw.id as string, op: "gusset", node, members: [pair[0], pair[1]], size, thickness };
+  if (chamfer !== undefined) f.chamfer = chamfer;
+  if (newBody) f.newBody = newBody;
+  return f;
+}
+
+/** The weld table: notes on bodies the part makes. */
+function checkWelds(input: unknown, bodies: string[], c: Checker): Weld[] {
+  if (!Array.isArray(input)) {
+    c.fail("welds", `must be a list of welds (got ${describe(input)})`);
+    return [];
+  }
+  const out: Weld[] = [];
+  const ids = new Set<string>();
+  input.forEach((w, i) => {
+    const at = `welds[${i}]`;
+    if (!isObject(w)) return c.fail(at, `must be a weld object (got ${describe(w)})`);
+    const before = c.errors.length;
+    c.keys(w, at, [...WELD_KEYS]);
+    if (typeof w.id !== "string" || !ID_PATTERN.test(w.id)) c.fail(`${at}.id`, `must be an identifier like "w1" (got ${describe(w.id)})`);
+    else if (ids.has(w.id)) c.fail(`${at}.id`, `duplicate weld id "${w.id}"`);
+    else ids.add(w.id);
+    if (!Array.isArray(w.between) || w.between.length === 0) c.fail(`${at}.between`, `must list the bodies it joins (got ${describe(w.between)})`);
+    else
+      w.between.forEach((b, k) => {
+        if (typeof b !== "string" || !bodies.includes(b)) c.fail(`${at}.between[${k}]`, `no body ${describe(b)} (bodies: ${bodies.join(", ") || "none"})`);
+      });
+    if (!WELD_TYPES.includes(w.type as never)) c.fail(`${at}.type`, `must be ${WELD_TYPES.map((t) => `"${t}"`).join(", ")} (got ${describe(w.type)})`);
+    c.num(w, "size", at, { positive: true });
+    c.num(w, "length", at, { positive: true });
+    if (w.allRound !== undefined && typeof w.allRound !== "boolean") c.fail(`${at}.allRound`, `must be true or false (got ${describe(w.allRound)})`);
+    if (w.note !== undefined && typeof w.note !== "string") c.fail(`${at}.note`, `must be a string (got ${describe(w.note)})`);
+    if (c.errors.length === before) out.push(w as unknown as Weld);
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------- combine
@@ -964,9 +1178,11 @@ class BodyNames {
         need(f.target, "target");
         f.tools.forEach((b, i) => need(b, `tools[${i}]`));
         break;
-      case "member": {
+      case "member":
+      case "endCap":
+      case "gusset": {
         const name = f.newBody ?? f.id;
-        if (this.names.has(name)) c.fail(f.newBody ? "newBody" : "id", `a body "${name}" already exists; a member is a body of its own`);
+        if (this.names.has(name)) c.fail(f.newBody ? "newBody" : "id", `a body "${name}" already exists; ${f.op === "member" ? "a member" : f.op === "endCap" ? "an end cap" : "a gusset"} is a body of its own`);
         break;
       }
     }
@@ -986,10 +1202,10 @@ class BodyNames {
       else for (const n of copies) this.names.add(n);
     } else if (f.op === "combine") {
       for (const t of f.tools) this.names.delete(t);
-    } else if (f.op === "member") {
+    } else if (f.op === "member" || f.op === "endCap" || f.op === "gusset") {
       const name = f.newBody ?? f.id;
       this.names.add(name);
-      this.made.set(f.id, name);
+      if (f.op === "member") this.made.set(f.id, name);
     }
   }
 

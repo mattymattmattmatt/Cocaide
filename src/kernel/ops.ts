@@ -9,6 +9,8 @@ import type {
   ChamferFeature,
   CircularPatternFeature,
   CombineFeature,
+  EndCapFeature,
+  GussetFeature,
   MemberFeature,
   ProfileDef,
   ExtrudeFeature,
@@ -19,8 +21,9 @@ import type {
   Vec3,
 } from "../doc/types";
 import { facePlaneFrame, to3D, type Frame } from "../geom/frame";
-import { arcMid, type Loop, type Region } from "../geom/profile";
-import { sectionOf, sizedEntities } from "../geom/section";
+import { reach, placeSection, type PlacedSection } from "../geom/member";
+import { arcMid, buildProfile, type Loop, type Region } from "../geom/profile";
+import type { CutPlane, MemberEnds } from "../weldment/joints";
 import { add3, cross3, dot3, formatDirection, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
 import { type OC, type Scope } from "./oc";
@@ -380,36 +383,107 @@ export function transformed(oc: OC, s: Scope, shape: TopoDS_Shape, trsf: ReturnT
 // ---------------------------------------------------------------- member
 
 /**
- * The frame a member's profile lies in, at `from`: z along the member, the
- * profile's y as close to world +Z as the line allows (+Y for a vertical
- * member), turned by `rotation` degrees about the line.
+ * A straight member: the profile at its size, placed on the line (its anchor,
+ * or its `align` point), swept from `from` to `to`. A joint's ends extend it
+ * past a node and cut it on planes. In scope `s`.
  */
-export function memberFrame(from: Vec3, to: Vec3, rotation = 0): Frame {
-  const z = normalize3(sub3(to, from));
-  const up: Vec3 = Math.abs(z[2]) < 1 - 1e-9 ? [0, 0, 1] : [0, 1, 0];
-  const y0 = normalize3(sub3(up, scale3(z, dot3(up, z))));
-  const x0 = cross3(y0, z);
-  const a = (rotation * Math.PI) / 180;
-  const x = add3(scale3(x0, Math.cos(a)), scale3(y0, Math.sin(a)));
-  const y = add3(scale3(x0, -Math.sin(a)), scale3(y0, Math.cos(a)));
-  return { origin: from, x, y, z };
+export function memberTool(oc: OC, s: Scope, f: MemberFeature, def: ProfileDef, ends?: MemberEnds): TopoDS_Shape {
+  const r = placeSection(f, def);
+  if (!r.ok) throw new OpError(r.error);
+  const { placed } = r;
+  const before = ends?.start.extend ?? 0;
+  const after = ends?.end.extend ?? 0;
+  const start = sub3(f.from, scale3(placed.dir, before));
+  const tool0 = prism(oc, s, profileFaces(oc, s, sectionAt3D(placed, start)), [0, 0, 0], scale3(placed.dir, placed.length + before + after));
+  let tool = tool0;
+  for (const [side, plane] of [...(ends?.start.planes ?? []).map((p) => ["start", p] as const), ...(ends?.end.planes ?? []).map((p) => ["end", p] as const)]) {
+    tool = cutHalfSpace(oc, s, tool, plane);
+    if (countSubShapes(oc, s, tool, "solid") !== 1 || volumeOf(oc, s, tool) <= VOLUME_EPS) {
+      throw new OpError(`the joint at its ${side} (${(side === "start" ? ends!.start : ends!.end).joint}) cuts it away or in two`);
+    }
+  }
+  if (!isValidShape(oc, s, tool)) throw new OpError("the member produced an invalid solid");
+  return tool;
 }
 
-/** A straight member: the profile at its size, its anchor on the line, swept from `from` to `to`. In scope `s`. */
-export function memberTool(oc: OC, s: Scope, f: MemberFeature, def: ProfileDef): TopoDS_Shape {
-  const size = def.sizes.find((x) => x.designation === f.size);
-  if (!size) throw new OpError(`"${f.size}" is not a size of ${def.name}`);
-  const sized = sizedEntities(def, size);
-  if (!sized.ok) throw new OpError(`profile ${def.name} at ${f.size}: ${sized.error}`);
-  const section = sectionOf(sized.entities);
-  if (!section.ok) throw new OpError(`profile ${def.name} at ${f.size}: ${section.error}`);
-  const anchor = def.anchor === "centroid" ? section.props.centroid : ([0, 0] as Vec2);
-  const frame = memberFrame(f.from, f.to, f.rotation ?? 0);
-  // Shift the frame so the anchor, not the sketch origin, sits on the line.
-  const placed: Frame = { ...frame, origin: sub3(frame.origin, add3(scale3(frame.x, anchor[0]), scale3(frame.y, anchor[1]))) };
-  const regions = section.props.regions;
-  const tool = prism(oc, s, profileFaces(oc, s, { frame: placed, regions, area: section.props.area }), [0, 0, 0], sub3(f.to, f.from));
-  if (!isValidShape(oc, s, tool)) throw new OpError("the member produced an invalid solid");
+/** A placed section as a sketch profile whose plane passes through `at` on the member's line. */
+function sectionAt3D(placed: PlacedSection, at: Vec3, outerOnly = false): SketchProfile {
+  const { frame, on, props } = placed;
+  const origin = sub3(at, add3(scale3(frame.x, on[0]), scale3(frame.y, on[1])));
+  const regions = outerOnly ? props.regions.map((r) => ({ ...r, holes: [] })) : props.regions;
+  const area = regions.reduce((t, r) => t + r.outer.area + r.holes.reduce((h, x) => h + x.area, 0), 0);
+  return { frame: { ...frame, origin }, regions, area };
+}
+
+/** The shape with everything on the normal's side of the plane cut away. */
+function cutHalfSpace(oc: OC, s: Scope, shape: TopoDS_Shape, plane: CutPlane): TopoDS_Shape {
+  const pln = s.track(new oc.gp_Pln(pnt(oc, s, plane.point), dir(oc, s, plane.normal)));
+  const face = s.track(s.track(new oc.BRepBuilderAPI_MakeFace(pln)).Face());
+  const half = s.track(new oc.BRepPrimAPI_MakeHalfSpace(face, pnt(oc, s, add3(plane.point, plane.normal))));
+  return boolean(oc, s, "cut", shape, s.track(half.Solid()));
+}
+
+/** Where a member's end is, once its joint has extended it, and the way out of the member there. */
+export function memberEndAt(f: MemberFeature, placed: PlacedSection, end: "start" | "end", ends?: MemberEnds): { at: Vec3; out: Vec3 } {
+  return end === "start"
+    ? { at: sub3(f.from, scale3(placed.dir, ends?.start.extend ?? 0)), out: scale3(placed.dir, -1) }
+    : { at: add3(f.to, scale3(placed.dir, ends?.end.extend ?? 0)), out: placed.dir };
+}
+
+/** A plate of the section's outline (holes closed) on a member's square end, `thickness` thick. In scope `s`. */
+export function endCapTool(oc: OC, s: Scope, f: EndCapFeature, member: MemberFeature, placed: PlacedSection, ends?: MemberEnds): TopoDS_Shape {
+  const cut = ends?.[f.end];
+  if (cut && cut.planes.length) throw new OpError(`the ${f.end} of ${member.id} is cut by ${cut.joint}; an end cap goes on a square end`);
+  const { at, out } = memberEndAt(member, placed, f.end, ends);
+  const tool = prism(oc, s, profileFaces(oc, s, sectionAt3D(placed, at, true)), [0, 0, 0], scale3(out, f.thickness));
+  if (!isValidShape(oc, s, tool)) throw new OpError("the end cap produced an invalid solid");
+  return tool;
+}
+
+/**
+ * A triangular plate in the inside corner of two members at a node: in the
+ * plane of their lines, centred on their sections, its corner where their
+ * inner faces meet, its legs `size` along each. In scope `s`.
+ */
+export function gussetTool(oc: OC, s: Scope, f: GussetFeature, node: Vec3, a: { f: MemberFeature; placed: PlacedSection }, b: { f: MemberFeature; placed: PlacedSection }): TopoDS_Shape {
+  const way = (m: typeof a, other: Vec3 | null): Vec3 => {
+    if (m.f.fromNode === f.node) return m.placed.dir;
+    if (m.f.toNode === f.node) return scale3(m.placed.dir, -1);
+    // It runs through the node: the way toward the other member's side.
+    return other && dot3(m.placed.dir, other) < 0 ? scale3(m.placed.dir, -1) : m.placed.dir;
+  };
+  const da = way(a, null);
+  const db = way(b, da);
+  const da2 = a.f.fromNode === f.node || a.f.toNode === f.node ? da : way(a, db);
+  const normal = cross3(da2, db);
+  if (len3(normal) < 1e-6) throw new OpError(`${a.f.id} and ${b.f.id} are in line at ${f.node}: a gusset needs a corner`);
+  const m = normalize3(normal);
+  const ua = normalize3(sub3(db, scale3(da2, dot3(db, da2))));
+  const ub = normalize3(sub3(da2, scale3(db, dot3(da2, db))));
+  // How far each member's inner face is from the node, across the corner.
+  const inner = (x: typeof a, u: Vec3) => {
+    const foot = add3(x.f.from, scale3(x.placed.dir, dot3(sub3(node, x.f.from), x.placed.dir)));
+    return reach(x.placed, u) + dot3(sub3(foot, node), u);
+  };
+  const ha = inner(a, ua);
+  const hb = inner(b, ub);
+  const alpha = hb / dot3(da2, ub);
+  const beta = ha / dot3(db, ua);
+  // Centred on the members' sections across the plane.
+  const mid = (x: typeof a) => {
+    const t = x.placed.outline.map((o) => dot3(o, m));
+    return (Math.max(...t) + Math.min(...t)) / 2;
+  };
+  const corner = add3(node, add3(add3(scale3(da2, alpha), scale3(db, beta)), scale3(m, (mid(a) + mid(b)) / 2)));
+  const y = normalize3(cross3(m, da2));
+  const frame: Frame = { origin: sub3(corner, scale3(m, f.thickness / 2)), x: da2, y, z: m };
+  const p2 = (sa: number, sb: number): Vec2 => [sa + sb * dot3(db, da2), sb * dot3(db, y)];
+  const c = f.chamfer ?? 0;
+  const pts = c > 0 ? [p2(c, 0), p2(f.size, 0), p2(0, f.size), p2(0, c)] : [p2(0, 0), p2(f.size, 0), p2(0, f.size)];
+  const outline = buildProfile(pts.map((p, i) => ({ id: `g${i}`, type: "line" as const, start: p, end: pts[(i + 1) % pts.length] })));
+  if (!outline.ok) throw new OpError(`the gusset's outline: ${outline.error}`);
+  const tool = prism(oc, s, profileFaces(oc, s, { frame, regions: outline.regions, area: outline.area }), [0, 0, 0], scale3(m, f.thickness));
+  if (!isValidShape(oc, s, tool)) throw new OpError("the gusset produced an invalid solid");
   return tool;
 }
 

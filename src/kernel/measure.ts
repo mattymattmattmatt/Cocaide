@@ -48,8 +48,12 @@ export interface MemberMeasurement {
   body: string;
   profile: string;
   designation: string;
-  /** mm, from end to end. */
+  /** mm, end to end along the line, read from the trimmed body: long point to long point. */
   length: number;
+  /** Each end's cut from square, degrees: [at from, at to]. */
+  angles: [number, number];
+  /** Round the outside of each end face, mm. */
+  perimeters: [number, number];
   massKg: number;
 }
 

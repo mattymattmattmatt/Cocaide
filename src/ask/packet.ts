@@ -92,7 +92,7 @@ export function bodyFeatures(doc: RawDocument, name: string): string[] {
     if (f.op === "extrude" && (f.newBody ?? f.body ?? DEFAULT_BODY) === name) ids.add(id);
     else if ((f.op === "cut" || f.op === "hole") && only(f.bodies)) ids.add(id);
     else if (f.op === "combine" && f.target === name) ids.add(id);
-    else if (f.op === "member" && (f.newBody ?? f.id) === name) ids.add(id);
+    else if ((f.op === "member" || f.op === "endCap" || f.op === "gusset") && (f.newBody ?? f.id) === name) ids.add(id);
     else if ((f.op === "linearPattern" || f.op === "circularPattern") && ids.has(String(f.feature))) ids.add(id);
   }
   return [...ids];
@@ -107,6 +107,8 @@ export function describeScope(scope: string[]): string {
       if (t === "*") return "anything";
       if (t.startsWith("param:")) return `parameter ${t.slice(6)}`;
       if (t.startsWith("body:")) return `new features on body ${t.slice(5)} alone`;
+      if (t.startsWith("node:")) return `node ${t.slice(5)}`;
+      if (t.startsWith("weld:")) return `weld ${t.slice(5)}`;
       const [sketch, part] = t.split("/");
       if (part === "*") return `the geometry of ${sketch}`;
       if (part) return `${part} in ${sketch} and its constraints`;

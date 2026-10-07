@@ -57,6 +57,9 @@ export const EDIT_TOOLS = [
   "setParameter",
   "deleteParameter",
   "renameBody",
+  "setNode",
+  "renameNode",
+  "setWeld",
   "setDimension",
   "addEntity",
   "updateEntity",
@@ -226,6 +229,12 @@ export class AgentSession {
         return this.edit({ type: "deleteParameter", name: String(a.name) });
       case "renameBody":
         return this.edit({ type: "renameBody", from: String(a.from), to: String(a.to) });
+      case "setNode":
+        return this.edit({ type: "setNode", name: String(a.name), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null });
+      case "renameNode":
+        return this.edit({ type: "renameNode", from: String(a.from), to: String(a.to) });
+      case "setWeld":
+        return this.edit({ type: "setWeld", id: String(a.id), weld: isObject(a.weld) ? a.weld : null });
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), index: a.index as number, value: a.value as number | string });
       case "addEntity":

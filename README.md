@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase I (weldment profiles and the section library) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list) and K (the agent on weldments).
+**Status: Phase J (frames, joints and the cut list) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list) and K (the agent on weldments).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -37,6 +37,10 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - The parameters the sketch's dimensions use (`=b`, `=b - 2 * t`) are its size parameters, so one sketch is a whole family of sizes. The card measures each size (area, kg/m, envelope) and suggests tags from the geometry.
   - The **Sections** tab is the library, kept in this browser: search, favourites, export and import. **+ Member** on a size adds a straight member to the part, and each member is its own body.
   - A part keeps its own copy of every profile it uses, with the library id and version. It opens anywhere, and updating it from the library is a choice you can undo.
+- Phase J adds frames: nodes, members between them, joints where they meet, and a cut list read from the trimmed bodies.
+  - A frame is points and members, not a 3D sketch. Nodes are named points (their coordinates can be expressions), and members join them. Type a path of nodes ("A B C D A") to add the members along it, with the corners mitred.
+  - Joints are features at a node: a mitre, or a butt with one member running through. Every other member that ends there stops at the joint's members, and a gap can be left between the faces. End caps and gussets are plates of their own.
+  - The cut list measures each member's trimmed body: its length long point to long point, and the angle of each end. Alike members are one line, and the list exports as CSV. Welds are notes in a weld table, with an all-round length taken from the joint.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -45,9 +49,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 258 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H and I acceptance logic
+npm test               # 276 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I and J acceptance logic
                        #   (+9 live-model Phase D–G tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 33 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H and I acceptance suites
+npm run test:e2e       # 35 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I and J acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -74,6 +78,36 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase J: frames, joints and the cut list
+
+The frame is built in the browser, in a new part. The SHS profile is drawn and saved to the section library as in Phase I, with the sizes 40 × 40 × 3 and 50 × 50 × 3.
+1. The parameters are `frame_w` = 1200, `frame_d` = 600 and `frame_h` = 900.
+2. The nodes are the frame's eight outside corners: A to D at the top (`[0, 0, "=frame_h"]`, `["=frame_w", 0, "=frame_h"]`, …) and E to H on the floor.
+3. In **Nodes**, **Members along a path**, the path `A B C D A` of the library's SHS 40×40×3 makes the four rails, with the corners mitred. The path `E A, F B, G C, H D` makes the legs.
+
+| Check | Result |
+|---|---|
+| The table frame builds with no interference between members | 8 members, 8 bodies, no overlap. The outside is 1200 × 600 × 900: with **Nodes on the outside**, each member's line runs along its outer edge (`"align": [-1, 1]` for the rails). The four mitres at the top cut the rails at 45°, and each leg stops under the two rails it meets. |
+| The cut list's lengths and angles match the measured bodies | The cut list reads SHS 40×40×3: 2 × 1200 mm, 45° / 45°; 4 × 860 mm, square; 2 × 600 mm, 45° / 45°. It is measured on each trimmed body: its extent along its line, and the angle of each end face. The Node test checks it against the bodies another way: each body's extent along its axis is its length, and its volume is 444 mm² × its length at the centroid. For a rail that is 1200 − 2 × 20 = 1160 mm (515,040 mm³), because each 45° end takes 20 mm off. The CSV export is the same list. |
+| Switching every member to SHS 50×50×3 rebuilds the frame and updates the cut list | Select a member, then **All like it** → SHS 50x50x3: all eight change as one undo step. The outside stays 1200 × 600 × 900, the legs become 850, and the cut list reads 2 × 1200, 4 × 850 and 2 × 600. That is 3,835,200 mm³ with no interference. One undo puts SHS 40 back. |
+| (Also) FreeCAD opens the frame with each member named | `examples/table-frame.cocaide.json` ("table frame (weldment)") exports eight named solids. FreeCAD 26.3 imports them by name, with the same volume (3,054,720 mm³), area, faces and bounding box (`npm run verify:freecad`). |
+
+These checks are covered at two levels:
+- **Node** (`tests/frames.test.ts`):
+  - the acceptance frame, and the cut list against the bodies;
+  - SHS 50, and a wider table from one parameter;
+  - butt joints with the through member extended, and gaps on butts and mitres;
+  - joints that can't be made (in line, too sharp), and a suppressed member;
+  - end caps (and one refused on a mitred end) and gussets;
+  - validation of nodes, joints, caps and gussets;
+  - node moves, renames and removals that what names them follows;
+  - write scopes for nodes, parameters and joints;
+  - the path builder;
+  - the CSVs and the weld table.
+- **Browser** (`e2e/frames.spec.ts`): the whole acceptance flow above from an empty part, and on the example: a weld at a joint (353.1 mm all round: 193.1 round the mitre face, 160 round the leg), a foot cap, a gusset, and a cap refused on a mitred end.
+
+![The table frame: mitred rails, legs under them, feet, gussets, the cut list and the weld table](docs/phase-j-frame.png)
 
 ### Phase I: weldment profiles and the section library
 
@@ -255,6 +289,7 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 - In the tree, select a feature to edit it in the Properties panel. Each field commits on Enter or blur as one command. You can also suppress, move up or down, drag to reorder, and delete. Moves that break a reference are refused and the notice says why.
 - Ctrl+Z / Ctrl+Shift+Z undo and redo any change to the document. Inside a sketch they undo sketch edits. The Document tab is the same document as JSON.
 - **Parameters** (left panel) are named numbers. Type `=plate_t` or `=plate_t * 2 + 1` in any number field; the field shows what it evaluates to, and a bad expression is shown and not committed. Changing a parameter is one undo step, and sketches whose dimensions use it are re-solved. The sketcher works on numbers but keeps every expression whose value you did not change.
+- **Frames.** **Nodes** (left panel) are named points; type `=frame_w` in a coordinate to tie it to a parameter. With two nodes or more, **Members along a path** takes a size (the part's or the library's) and a path such as `A B C D A, A E`. It adds the members along it with their corners mitred, with the nodes on the outside of the frame or on the centrelines. A member's Properties set its ends (a node or a point), the point of the section its line runs through (a 3 × 3 grid, seen from its To end), and **All like it**, which switches every member of that size at once. They also cap either end. A joint's Properties change mitre or butt, which members, and the gap, and add a gusset or a weld there. The **Cut list** tab is the cut list and the weld table, each with **Export CSV**.
 - **Weldments.** A dimension in the sketcher can be typed as an expression too (`=b - 2 * t`), and it stays one. Tick **Weldment profile** and **Finish**: the profile card names the section, lists its sizes with their area and kg/m, and tags it, and **Save** puts it in the **Sections** tab. "Not now" keeps the sketch; its Properties have **Save as a weldment profile…** for later. In **Sections**, **+ Member** on a size adds a 1000 mm member along X beside the others. Set its ends, length or rotation in Properties. The toolbar's **Member** adds another like the selected one. The **Bodies** panel lists the members, with alike ones counted together, and a newer library version offers to update the part's copy.
 
 ## Right-click ask
@@ -442,6 +477,9 @@ File extension `.cocaide.json`. Units are millimetres, always. Unknown fields ar
   "source": { "drawing": "bracket.pdf", "projection": "third-angle", "units": "mm",
               "drawingNumber": "CD-0001", "material": "S275 STEEL" },   // optional: the drawing it was read from
   // features may say which body they make: "newBody": "upright", "body": "upright"; cuts: "bodies": ["base"]
+  "profiles": { "SHS": { /* a weldment profile: see below */ } },   // optional: the part's copies of library sections
+  "nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] },   // optional: a frame's points
+  "welds": [{ "id": "w1", "between": ["AB", "EA"], "type": "fillet", "size": 3, "length": 160, "allRound": true }],   // optional: notes
   "photo": { "image": "bracket-photo.jpg", "sha256": "…", "width": 1400, "height": 1000, "origin": [620, 420],
              "scale": { "from": [300, 420], "to": [940, 420], "length": 80, "what": "the plate's long edge",
                         "source": "typed", "parameter": "plate_w", "confirmed": false },
@@ -464,7 +502,10 @@ Every feature has an `id` and may be `"suppressed": true` (kept, but skipped by 
 | `fillet` / `chamfer` | `edges` (one edge selector, or a list whose matches are combined), `radius` / `distance` |
 | `linearPattern` | `feature` (an earlier extrude, cut or hole), `direction`, `spacing`, `count` (including the original); optional `direction2`, `spacing2`, `count2` for a grid |
 | `circularPattern` | `feature`, `axis: { origin, direction }`, `count` (including the original), `angle?` (total sweep, default 360) |
-| `member` | `profile` (a name in the part's `profiles`), `size` (one of its designations), `from`, `to`, `rotation?` (degrees about the line), `newBody?` (default: the member's id) |
+| `member` | `profile` (a name in the part's `profiles`), `size` (one of its designations), `from`, `to` (points, or node names), `rotation?` (degrees about the line), `align?` (`[ax, ay]`, -1 to 1, where the line runs through the section's envelope), `newBody?` (default: the member's id) |
+| `joint` | `node`, `type: "mitre" \| "butt"`, `members` (mitre: the two it cuts; optional when only two end there) or `through` (butt: the member that runs through), `gap?` (mm) |
+| `endCap` | `member`, `end: "start" \| "end"`, `thickness`, `newBody?`: a plate of the section's outline on a square end |
+| `gusset` | `node`, `members` (two), `size`, `thickness`, `chamfer?`, `newBody?`: a triangular plate in their inside corner |
 
 A pattern repeats the seed feature's tool body. An instance that adds or removes no material is an error that names the instance (`instance 5 (offset [-80, 0, 0]) removes no material`).
 
@@ -507,6 +548,22 @@ A weldment profile is a sketch with size parameters. In a part it lives under `p
 - **A `member`** sweeps one size along a straight line, as its own body. It is upright: along a horizontal line the profile's y is +Z, and along a vertical line it is +Y. The frame is right-handed, so the profile reads as drawn from the `to` end. `rotation` turns it about the line. Measurements list each member's designation, length and mass.
 - **The sketch it came from** is marked with `"profile": { "name": "SHS", "library": { "id", "version" } }`, so editing it opens the card again and saves the next version.
 - **The section library** is IndexedDB in this browser (`src/weldment/store.ts`). It is not part of any document. Export writes `{ "cocaide": "sections", "version": 1, "profiles": [...] }`, and import keeps a profile already here unless the file has a later version of it.
+
+### Frames
+
+- **Nodes** are named points at the top of the document. A coordinate can be an expression. A member whose `from` or `to` names a node moves with it, and so do its joints.
+- **`align`** puts a member's line on the section's envelope instead of its anchor. `[0, 0]` is the middle, and `[-1, 1]` the top left edge as seen from the `to` end (x across, y up). A frame whose nodes are its outside corners has each member aligned to the outside, away from the middle of the nodes. Its outside size then stays put when the section changes.
+- **Joints** (`src/weldment/joints.ts`) are worked out before the members are built, from their lines and sections. Each member end gets an extension and the planes that cut it.
+  - A mitre cuts its two members on the plane through the node that halves the angle between them, half the gap either side. They are first extended by r·cot(θ/2), where r is how far the section reaches from the line.
+  - A butt's `through` member, if it ends at the node, is extended square far enough to cover the others.
+  - Every other member that ends at the node stops at a plane perpendicular to the way it comes in. The whole of the joint's members' section is behind that plane, plus the gap.
+  - So a joint's members never overlap, and each joint checks that once everything is built. A mitre sharper than 5°, or a butt against a member in line, fails and makes no cuts.
+- **End caps** go on square ends (a cut end is refused). **Gussets** sit in the inside corner where the two members' inner faces meet, in the plane of their lines, centred across their sections.
+- **The cut list** (`src/kernel/cutlist.ts`, `src/weldment/cutlist.ts`) is measured on each member's body.
+  - Its length is the body's extent along the member's line. Curved edges are sampled finely enough that a round tube's long point is within a micron.
+  - Each end's angle is the angle from square of the biggest planar face at that end. The length round that face is kept for welds.
+  - Members of the same profile, size, length (0.1 mm) and end angles (0.1°) are one line.
+- **Welds** are a list of notes: `between` (bodies), `type` (`fillet`, `butt`, `plug`), `size`, `length`, `allRound?` and `note?`. Renaming a body renames it in the welds.
 
 Sketch entities: `line {start, end}`, `circle {center, radius}`, `arc {center, start, end, clockwise?}` (counter-clockwise by default), `rect {center, w, h}`, `slot {center1, center2, width}`. Any entity can be `"construction": true`. Closed loops are found by chaining endpoints. A loop inside a loop is a hole, and a loop inside that is an island. Loops must not cross or touch.
 
@@ -558,6 +615,7 @@ Every edit goes through `apply(doc, command, { writeScope? })` (`src/doc/command
 - `setParameter`, `deleteParameter`;
 - `renameBody`, which every feature and selector naming the body follows;
 - `setProfile`, which puts a copy of a profile in the part, replaces it, or removes it (refused while a member uses it);
+- `setNode` (add, move, or remove a node nothing names), `renameNode` (members, joints and gussets follow), and `setWeld` (add, replace or remove a weld by id);
 - `setDimension`, which changes a sketch constraint's value and re-solves the sketch;
 - `addEntity`, `updateEntity`, `deleteEntity`, `addConstraint`, `deleteConstraint`, inside one sketch, each followed by a re-solve.
 
@@ -567,15 +625,17 @@ When a parameter or dimension changes, the sketches it affects are re-solved. Fi
 
 ```
 src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules   (no kernel)
-src/geom      plane frames, 2D profiles, constraint checks, the constraint solver, section properties     (no kernel)
-src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis, measurements, interference, mesh, STEP (named bodies), rebuild()
+src/geom      plane frames, 2D profiles, constraint checks, the constraint solver, section properties, member placement     (no kernel)
+src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis, measurements, interference, the cut list, mesh,
+              STEP (named bodies), rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
 src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt
 src/intent    intent JSON, the ask-if-missing review, the drawing and photo readings, the planner, the critic
 src/drawing   drawing ingest in the browser: pdf.js rasterising at 200 dpi, text layer, legibility
 src/photo     photos in the browser: preparing for the model, the drawing-or-photo guess, IndexedDB storage
-src/weldment  the section library: profiles from sketches, versions, search, export and merge, part copies, IndexedDB storage
+src/weldment  the section library (profiles from sketches, versions, search, export and merge, part copies, IndexedDB);
+              joints, members along a path, the cut list and the weld table
 src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover,
@@ -583,7 +643,7 @@ src/ui        React + Three.js: viewport with picking, feature tree, properties,
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
 scripts       headless CLI, FreeCAD verification, log replay, the drawing and photo fixtures (make-drawings.ts, make-photos.ts)
 examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet), stand (two bodies),
-              frame-members (an SHS profile, a leg and a rail);
+              frame-members (an SHS profile, a leg and a rail), table-frame (nodes, mitred rails, legs);
               drawings/: the bracket as a PDF, a clean scan and a blurry scan; photos/: the bracket, and a freeform part
 tests         unit, kernel, agent, MCP and ask tests (Vitest, Node)
 e2e           browser tests (Playwright)

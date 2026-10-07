@@ -68,6 +68,18 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: "Rename a body. Every feature and selector that names it follows.",
     input: { from: z.string(), to: z.string() },
   },
+  setNode: {
+    description: 'Add or move a frame node (coordinates are numbers or "=expressions"), or remove one nothing names (at: null). Members on it move with it.',
+    input: { name: z.string(), at: z.array(z.union([z.number(), z.string()])).length(3).nullable() },
+  },
+  renameNode: {
+    description: "Rename a frame node. The members, joints and gussets that name it follow.",
+    input: { from: z.string(), to: z.string() },
+  },
+  setWeld: {
+    description: 'Add or replace a weld in the weld table by id, or remove it (weld: null). A weld is a note: { "between": [bodies], "type": "fillet" | "butt" | "plug", "size", "length", "allRound"?, "note"? }.',
+    input: { id: z.string(), weld: obj.nullable() },
+  },
   deleteParameter: {
     description: "Delete a parameter that nothing uses.",
     input: { name: z.string() },

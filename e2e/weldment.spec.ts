@@ -3,46 +3,9 @@
 // profile by a tick box; the card measures it; the section library keeps it;
 // another part makes members of it, and keeps its own copy.
 
-import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, sketchClick } from "./helpers";
-
-async function addParameter(page: Page, name: string, value: string) {
-  await page.getByTestId("param-new-name").fill(name);
-  await page.getByTestId("param-new-value").fill(value);
-  await page.getByTestId("param-add").click();
-}
-
-/** A rectangle centred on the origin, its width and height written as an expression. */
-async function squareAt(page: Page, half: number, size: string) {
-  await page.getByTestId("tool-rect").click();
-  await sketchClick(page, -half, -half);
-  await sketchClick(page, half, half);
-  await page.getByTestId("tool-select").click();
-  await sketchClick(page, 0, half);
-  await page.getByTestId("c-center-origin").click();
-  await sketchClick(page, 0, half);
-  await page.getByTestId("c-width-value").fill(size);
-  await page.getByTestId("c-width").click();
-  await sketchClick(page, 0, half); // the top edge has not moved yet
-  await page.getByTestId("c-height-value").fill(size);
-  await page.getByTestId("c-height").click();
-}
-
-/** Draws SHS b × b × t as a normal sketch, ticks "Weldment profile" and finishes. */
-async function drawSHS(page: Page) {
-  await page.getByTestId("new-part").click();
-  await commit(page, "doc-name", "shs");
-  await addParameter(page, "b", "40");
-  await addParameter(page, "t", "3");
-  await page.getByTestId("tool-sketch").click();
-  await page.getByTestId("plane-top").click();
-  await squareAt(page, 20, "=b");
-  await squareAt(page, 14, "=b - 2 * t"); // the grid snaps to 2 mm
-  await expect(page.getByTestId("profile-status")).toHaveText("Profile: 1 region, area 444 mm²");
-  await expect(page.getByTestId("sketch-dof")).toHaveText("Fully defined");
-  await page.getByTestId("sketch-weldment").check();
-  await page.getByTestId("finish-sketch").click();
-}
+import { expect, test } from "@playwright/test";
+import { commit, expectVolume, openApp, savedDocument } from "./helpers";
+import { drawSHS } from "./sections";
 
 test("draw an SHS, save it to the section library, and make members of it in another part", async ({ page }) => {
   const problems = await openApp(page);

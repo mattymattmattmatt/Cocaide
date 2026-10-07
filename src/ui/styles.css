@@ -109,7 +109,8 @@ button, select { font: inherit; color: inherit; }
 .panel h2 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; font-family: var(--mono); }
 .muted { color: var(--muted); }
 
-.features { flex: 1; overflow: auto; border-bottom: 1px solid var(--border); }
+.features { flex: 1 0 auto; min-height: 180px; overflow: auto; border-bottom: 1px solid var(--border); }
+.side.left { overflow-y: auto; }
 .feature-list { list-style: none; margin: 0; padding: 0; }
 .feature-row {
   display: flex; align-items: center; gap: 8px; width: 100%;
@@ -558,3 +559,52 @@ button.link.danger { color: var(--bad); }
 .bodies table.members tr:hover td { background: var(--panel-2); }
 .offer.valued input.expr { font-family: var(--mono); font-size: 12px; color: var(--accent); }
 .offer.valued .expr-error { grid-column: 1 / -1; }
+
+/* Phase J: frames */
+.node-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.node-label { position: absolute; left: 0; top: 0; font: 600 11px var(--mono); color: #e8590c; background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 0 3px; border-radius: 3px; }
+.nodes { border-bottom: 1px solid var(--border); }
+.nodes ul { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.nodes li, .node-add { display: grid; grid-template-columns: 52px minmax(0, 1fr) 26px; align-items: start; gap: 6px; }
+.node-add { grid-template-columns: 52px minmax(0, 1fr) auto; }
+.nodes input, .nodes button, .nodes select {
+  height: 26px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font-size: 12px; min-width: 0;
+}
+.nodes .node-name input { width: 100%; font-family: var(--mono); }
+.nodes button { cursor: pointer; }
+.nodes button:disabled { opacity: 0.4; cursor: default; }
+.nodes .small { font-size: 12px; margin: 0 0 8px; }
+.nodes .vec input { width: 100%; }
+.path-tool { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.path-tool h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.path-tool input[type="checkbox"] { height: auto; }
+.path-options { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.end-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.align-grid { display: flex; align-items: center; gap: 10px; }
+.align-cells { display: grid; grid-template-columns: repeat(3, 18px); grid-template-rows: repeat(3, 18px); gap: 2px; padding: 3px; border: 1px dashed var(--border); border-radius: 4px; }
+.properties .align-cells button { width: 18px; height: 18px; padding: 0; border-radius: 3px; border: 1px solid var(--border); background: var(--panel-2); }
+.properties .align-cells button.on { background: var(--accent-2); border-color: var(--accent-2); }
+.properties button.align-anchor { height: 24px; font-size: 12px; }
+.properties button.align-anchor.on { border-color: var(--accent-2); color: var(--accent-2); }
+.cut-list { display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.cut-list-head { display: flex; align-items: center; justify-content: space-between; }
+.cut-list-head h2 { margin: 0; }
+.cut-list-head button { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 12px; }
+.cut-list-head button:disabled { opacity: 0.45; cursor: default; }
+.cut-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cut-table th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 4px; }
+.cut-table td { padding: 3px 4px; border-top: 1px solid var(--border); }
+.cut-table tbody tr { cursor: pointer; }
+.cut-table tbody tr:hover td { background: var(--panel-2); }
+.cut-table tfoot td { font-weight: 600; }
+.cut-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.weld-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.weld-list li { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.weld-top { display: flex; align-items: center; gap: 8px; }
+.weld-top .small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.weld-top button.icon { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 15px; }
+.weld-fields { display: grid; grid-template-columns: 70px 1fr 1fr auto; gap: 6px; align-items: start; }
+.weld-fields label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
+.weld-fields label.check { flex-direction: row; align-items: center; color: var(--text); font-size: 12px; padding-top: 14px; }
+.weld-fields select, .weld-fields input:not([type="checkbox"]), .weld-note { height: 26px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font-size: 12px; min-width: 0; width: 100%; }
+.weld-fields select { margin-top: 15px; }

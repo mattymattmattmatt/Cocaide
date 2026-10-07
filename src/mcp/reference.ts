@@ -88,6 +88,24 @@ designation, length and mass. A part's "profiles" are copies of section-library 
   "library": { "id": "...", "version": 1 } } }
 Use the part's profiles and sizes as they are; never invent one.
 
+## frames: nodes, joints, end caps, gussets, welds
+"nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] } at the top of the document: named points,
+coordinates numbers or "=expressions". A member's "from"/"to" can name a node ("from": "A"); it moves with it.
+"align": [ax, ay] on a member puts its line on the section's envelope ([-1..1, -1..1], seen from the "to" end,
+x across, y up): a frame whose nodes are its outside corners has its members aligned to the outside.
+{ "id": "corner_A", "op": "joint", "node": "A", "type": "mitre", "members": ["DA", "AB"], "gap": 0 }
+{ "id": "foot_A", "op": "joint", "node": "E", "type": "butt", "through": "EA" }
+  mitre: cuts the two members on the plane halving their angle. butt: "through" runs through (extended, square,
+  to cover the others if it ends there). Every other member that ends at the node stops at the joint's members'
+  faces. One joint a node; it comes after its members. It fails if its members still overlap.
+{ "id": "cap_1", "op": "endCap", "member": "EA", "end": "start" | "end", "thickness": 3 }  a plate on a square end
+{ "id": "gusset_1", "op": "gusset", "node": "A", "members": ["EA", "AB"], "size": 100, "thickness": 6, "chamfer": 10 }
+  a triangular plate in the inside corner, centred on the members. End caps and gussets are bodies of their own.
+"welds": [{ "id": "w1", "between": ["EA", "AB"], "type": "fillet" | "butt" | "plug", "size": 3, "length": 160,
+  "allRound": true, "note": "" }]: the weld table, notes only (setWeld). Measurements list each member's length
+(long point to long point) and end angles (0 square, 45 mitre), read from its trimmed body, and the cut list
+groups alike members.
+
 ## Face selectors
 { "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "near": [x,y,z] (optional) }
 { "type": "cylindrical", "radius": 3.3 (optional), "axis": [0,0,1] (optional), "pick": ..., "near": [x,y,z] (optional) }

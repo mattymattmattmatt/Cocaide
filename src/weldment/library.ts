@@ -140,33 +140,47 @@ export function mergeLibrary(
 }
 
 /**
+ * The part's copy of a library profile, with a given size: the copy it has,
+ * or a new one. A copy that lacks the size is brought up to the library's
+ * version, and the note says so; a copy that is older but has the size is
+ * kept, and the note says that too.
+ */
+export function ensureCopy(
+  doc: RawDocument,
+  entry: LibraryEntry,
+  designation: string,
+): { ok: true; doc: RawDocument; name: string; note?: string } | { ok: false; error: string } {
+  const copies = (doc.profiles ?? {}) as Record<string, ProfileDef>;
+  const held = Object.entries(copies).find(([, p]) => p.library?.id === entry.id);
+  let name = held?.[0] ?? entry.name;
+  if (held && held[1].sizes.some((s) => s.designation === designation)) {
+    const v = held[1].library!.version;
+    return v < entry.version
+      ? { ok: true, doc, name, note: `This part keeps v${v} of ${name}: update its copy from Sections to use v${entry.version}.` }
+      : { ok: true, doc, name };
+  }
+  // Not in the part yet, or the part's copy is older and lacks this size.
+  if (!held) for (let k = 2; name in copies; k++) name = `${entry.name}_${k}`;
+  const r = apply(doc, { type: "setProfile", name, profile: { ...partCopy(entry), name } });
+  if (!r.ok) return r;
+  const note = held ? `This part's copy of ${name} was v${held[1].library!.version}; it is now v${entry.version}, which has ${designation}.` : undefined;
+  return { ok: true, doc: r.doc, name, ...(note ? { note } : {}) };
+}
+
+/**
  * Adds a member of a library profile to a part, with the part's copy of the
- * profile, as one change. The part's copy is used as it is, unless it lacks
- * the size: then it is brought up to the library's version, and the note says
- * so. A new member runs 1000 mm along X, beside the members already there.
+ * profile, as one change (see ensureCopy). A new member runs 1000 mm along X,
+ * beside the members already there.
  */
 export function addLibraryMember(
   doc: RawDocument,
   entry: LibraryEntry,
   designation: string,
 ): { ok: true; doc: RawDocument; id: string; note?: string } | { ok: false; error: string } {
-  const copies = (doc.profiles ?? {}) as Record<string, ProfileDef>;
-  const held = Object.entries(copies).find(([, p]) => p.library?.id === entry.id);
-  let name = held?.[0] ?? entry.name;
-  let note: string | undefined;
-  let next = doc;
-  if (!held || !held[1].sizes.some((s) => s.designation === designation)) {
-    // Not in the part yet, or the part's copy is older and lacks this size.
-    if (!held) for (let k = 2; name in copies; k++) name = `${entry.name}_${k}`;
-    if (held) note = `This part's copy of ${name} was v${held[1].library!.version}; it is now v${entry.version}, which has ${designation}.`;
-    const r = apply(next, { type: "setProfile", name, profile: { ...partCopy(entry), name } });
-    if (!r.ok) return r;
-    next = r.doc;
-  } else if (held[1].library!.version < entry.version) {
-    note = `This part keeps v${held[1].library!.version} of ${name}: update its copy from Sections to use v${entry.version}.`;
-  }
-  const r = placeMember(next, name, designation);
-  return r.ok && note ? { ...r, note } : r;
+  const copy = ensureCopy(doc, entry, designation);
+  if (!copy.ok) return copy;
+  const r = placeMember(copy.doc, copy.name, designation);
+  return r.ok && copy.note ? { ...r, note: copy.note } : r;
 }
 
 /** A member of one of the part's own profiles: 1000 mm along X, beside the members already there. */

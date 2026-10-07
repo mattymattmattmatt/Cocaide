@@ -135,6 +135,11 @@ export function suggestTags(p: SectionProps): string[] {
   return tags;
 }
 
+/** The outer boundary of a section, sampled finely: every point its envelope or support can reach. */
+export function sectionOutline(p: SectionProps): Vec2[] {
+  return p.regions.flatMap((r) => polygon(r.outer));
+}
+
 function polygon(loop: Loop): Vec2[] {
   const pts: Vec2[] = [];
   for (const s of loop.segs) {

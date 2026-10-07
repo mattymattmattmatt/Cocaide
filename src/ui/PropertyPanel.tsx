@@ -4,13 +4,14 @@
 import { useEffect, useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import { DEFAULT_BODY, type EdgeSelector, type FaceSelector, type ProfileDef, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type EdgeSelector, type FaceSelector, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
 import { describeEdgeSelector, describeWanted } from "../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import type { RebuildView } from "../worker/protocol";
 import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
+import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import type { Selection } from "./Viewport";
 
 export const OP_LABEL: Record<string, string> = {
@@ -24,6 +25,9 @@ export const OP_LABEL: Record<string, string> = {
   circularPattern: "Circular pattern",
   combine: "Combine",
   member: "Member",
+  joint: "Joint",
+  endCap: "End cap",
+  gusset: "Gusset",
 };
 
 /** The first free body name of the form body_1, body_2, ... */
@@ -44,9 +48,11 @@ interface Props {
   onAsk?(target: { kind: "failed"; id: string }, x: number, y: number): void;
   /** Opens the weldment profile card for a sketch. */
   onProfileCard?(sketchId: string): void;
+  /** Adding features and multi-feature changes, for a frame's features. */
+  frame?: FrameActions;
 }
 
-export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEditSketch, onSelectFeature, onAsk, onProfileCard }: Props) {
+export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEditSketch, onSelectFeature, onAsk, onProfileCard, frame }: Props) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setError(null), [featureId]);
   const index = doc.features.findIndex((f) => f.id === featureId);
@@ -68,6 +74,12 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
   /** The bodies made before this feature: what it can add to, cut or combine. */
   const bodiesBefore = validateDocument({ ...doc, features: doc.features.slice(0, index) }).bodies;
   const rename = (from: string, to: string) => run({ type: "renameBody", from, to });
+  /** Frame actions whose rejection shows here, like any other edit's. */
+  const batched = (a: FrameActions): FrameActions => ({ onCreate: a.onCreate, onBatch: (cmds) => {
+    const problem = a.onBatch(cmds);
+    setError(problem);
+    return problem;
+  } });
 
   return (
     <div className="properties" data-testid="properties">
@@ -97,7 +109,11 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
       )}
       <div className="prop-body">
         {op === "sketch" && <SketchProps f={resolved} onEdit={() => onEditSketch(featureId)} onProfileCard={onProfileCard && (() => onProfileCard(featureId))} />}
-        {op === "member" && <MemberProps f={f} resolved={resolved} doc={doc} view={view} update={update} rename={rename} />}
+        {op === "member" && <MemberProps f={f} resolved={resolved} doc={doc} view={view} update={update} rename={rename} actions={frame && batched(frame)} />}
+        {op === "joint" && <JointProps f={f} doc={doc} view={view} update={update} actions={frame && batched(frame)} />}
+        {op === "endCap" && <EndCapProps f={f} doc={doc} update={update} />}
+        {op === "gusset" && <GussetProps f={f} doc={doc} update={update} />}
+        {(op === "endCap" || op === "gusset") && <BodyNameField f={f} rename={rename} />}
         {(op === "extrude" || op === "cut") && <ExtrudeProps f={f} before={before} update={update} />}
         {op === "extrude" && <BodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
@@ -133,6 +149,16 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         </div>
       )}
     </div>
+  );
+}
+
+/** The body a plate (end cap, gusset) makes: named by its id, or renamed. */
+function BodyNameField({ f, rename }: { f: Raw; rename(from: string, to: string): unknown }) {
+  const body = typeof f.newBody === "string" ? f.newBody : String(f.id);
+  return (
+    <Field label="Body">
+      <TextInput value={body} onCommit={(name) => name !== body && rename(body, name)} testId="prop-body-name" />
+    </Field>
   );
 }
 
@@ -273,64 +299,6 @@ function isProfile(p: unknown): p is { name: string; library?: { id: string; ver
   return typeof p === "object" && p !== null && typeof (p as { name?: unknown }).name === "string";
 }
 
-/** A straight member: the part's copy of a profile, one of its sizes, and the line it runs along. */
-function MemberProps({ f, resolved, doc, view, update, rename }: { f: Raw; resolved: Raw; doc: RawDocument; view: RebuildView | null; update(p: Raw): unknown; rename(from: string, to: string): unknown }) {
-  const profiles = (doc.profiles ?? {}) as Record<string, ProfileDef>;
-  const profile = profiles[String(f.profile)];
-  const sizes = profile?.sizes.map((s) => s.designation) ?? [];
-  const from = resolved.from as Vec3;
-  const to = resolved.to as Vec3;
-  const d = to.map((c, i) => c - from[i]) as Vec3;
-  const length = Math.hypot(...d);
-  const body = typeof f.newBody === "string" ? f.newBody : String(f.id);
-  const measured = view?.measurements?.members.find((m) => m.id === f.id);
-  return (
-    <>
-      <Field label="Profile">
-        <Select
-          value={String(f.profile)}
-          options={Object.keys(profiles).map((p): [string, string] => [p, p])}
-          testId="prop-profile-name"
-          onChange={(v) => update({ profile: v, size: profiles[v].sizes[0].designation })}
-        />
-      </Field>
-      <Field label="Size">
-        <Select value={String(f.size)} options={sizes.map((s): [string, string] => [s, s])} testId="prop-size" onChange={(v) => update({ size: v })} />
-      </Field>
-      <Field label="From">
-        <Vec3Input value={f.from as NumberValue[]} onCommit={(v) => update({ from: v })} testId="prop-from" />
-      </Field>
-      <Field label="To">
-        <Vec3Input value={f.to as NumberValue[]} onCommit={(v) => update({ to: v })} testId="prop-to" />
-      </Field>
-      <Field label="Length" hint="Moves the end along the member">
-        <NumberInput
-          value={Math.round(length * 1e6) / 1e6}
-          min={0}
-          testId="prop-length"
-          onCommit={(v) => {
-            const l = Number(v);
-            if (!(l > 0) || !(length > 0)) return;
-            update({ to: from.map((c, i) => Math.round((c + (d[i] * l) / length) * 1e6) / 1e6 + 0) });
-          }}
-        />
-      </Field>
-      <Field label="Rotation" hint="Degrees about the member's line">
-        <NumberInput value={(f.rotation as NumberValue) ?? 0} onCommit={(v) => update({ rotation: v === 0 ? null : v })} testId="prop-rotation" />
-      </Field>
-      <Field label="Body">
-        <TextInput value={body} onCommit={(name) => name !== body && rename(body, name)} testId="prop-body-name" />
-      </Field>
-      {measured && (
-        <Field label="Measured">
-          <span className="readout" data-testid="prop-member-measured">
-            {measured.designation} · {round(measured.length)} mm · {round(measured.massKg)} kg
-          </span>
-        </Field>
-      )}
-    </>
-  );
-}
 
 export function planeName(normal: Vec3, origin: Vec3): string {
   const n = normal.map((v) => Math.round(v * 1e6) / 1e6);

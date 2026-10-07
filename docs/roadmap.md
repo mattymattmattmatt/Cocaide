@@ -103,16 +103,40 @@ rebuilds from its own copy.
 
 ## Phase J — frames, joints and the cut list
 
-- **A frame is points and members, not a 3D sketch.**
-  - Nodes: `{ "A": [0, 0, 0], "B": ["=frame_w", 0, 0] }`, where coordinates can be expressions.
-  - Members join two nodes, with a profile, a size and a rotation.
-  - Every member is a body named by its id.
-- **Joints.** At each node: which member runs through, butt or mitre, and the
-  gap. End caps and gussets come later in the phase.
-- **Cut list.** Profile, length, end angles, quantity and kg per item, read
-  from the trimmed bodies, not computed separately. Exported as CSV.
-- **Welds are notes.** Size, type and length go in a weld table. They are
-  stored, not modelled, like the material note.
+**Done.** See the README's Phase J acceptance.
+
+A frame is points and members, not a 3D sketch. A detailer thinks in nodes
+(the corners of the frame), the members between them, and what happens where
+members meet. The cut list is what the workshop needs: it is read from the
+trimmed bodies, so it can never disagree with the model.
+
+- **Nodes.** `"nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] }`
+  at the top of the document. Coordinates can be expressions. A member's
+  `from` and `to` can name a node (`"from": "A"`), and moving the node moves
+  every member that names it. Renaming a node is one command; members, joints
+  and gussets follow it.
+- **Where the line runs through the section.** A member's `align: [ax, ay]` puts the line
+  on the section's envelope: `[0, 0]` is the middle, `[-1, 1]` the top left edge as
+  seen from the member's end. Without it, the profile's anchor is on the line. A
+  frame whose nodes are its outside corners keeps its outside size when the
+  section changes.
+- **Joints are features**, at a node: `{ "op": "joint", "node": "A", "type": "mitre", "members": ["front", "side"], "gap": 0 }`
+  or `{ "op": "joint", "node": "A", "type": "butt", "through": "leg_a" }`.
+  - A mitre cuts both members on the plane that halves the angle between them.
+  - A butt runs one member through, extended to cover the others if it ends there. The others stop at its face.
+  - Every other member that ends at the node butts against the joint's members. So a leg under a mitred corner stops under the rails.
+  - The gap is left between the cut faces.
+  - The joint checks its own work: if its members still overlap, it fails and says by how much.
+- **End caps and gussets** are bodies of their own.
+  - `endCap` closes a member's square end with a plate of its outline.
+  - `gusset` is a triangular plate in the inside corner between two members at a node, with a chamfer for the weld.
+- **Cut list.** Each member's length (end to end, long point to long point)
+  and end angles (0° square, 45° mitre) are measured on its body. Alike members
+  are one line: profile, size, length, angles, quantity, kg each and in total.
+  Exported as CSV.
+- **Welds are notes.** `"welds": [{ "id": "w1", "between": ["leg_a", "front"], "type": "fillet", "size": 3, "length": 160 }]`
+  is a weld table: stored and listed, never modelled, like the material note. A
+  weld added at a joint starts with the length of the butting member's end.
 
 Acceptance: a 1200 × 600 table frame, 900 high, in SHS 40×40×3 from the
 library, with mitred top corners, builds with no interference between members.

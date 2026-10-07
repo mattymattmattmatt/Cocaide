@@ -53,7 +53,7 @@ describe("validation", () => {
     const doc = base();
     doc.features.push({ id: "loft_1", op: "loft", sections: [] });
     expect(allErrors(validateDocument(doc))).toEqual([
-      'loft_1: op: unknown op "loft" (supported: sketch, extrude, cut, hole, fillet, chamfer, linearPattern, circularPattern, combine, member)',
+      'loft_1: op: unknown op "loft" (supported: sketch, extrude, cut, hole, fillet, chamfer, linearPattern, circularPattern, combine, member, joint, endCap, gusset)',
     ]);
   });
 

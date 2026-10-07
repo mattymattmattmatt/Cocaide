@@ -167,6 +167,16 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     description: "Rename a body; every feature and selector that names it follows.",
     input_schema: obj({ from: { type: "string" }, to: { type: "string" } }, ["from", "to"]),
   },
+  {
+    name: "setNode",
+    description: 'Add or move a frame node ([x, y, z], numbers or "=expressions"), or remove one nothing names (at: null). Members on it move with it.',
+    input_schema: obj({ name: { type: "string" }, at: { type: ["array", "null"], items: { type: ["number", "string"] } } }, ["name", "at"]),
+  },
+  {
+    name: "setWeld",
+    description: "Add or replace a weld note in the weld table by id, or remove it (weld: null). Welds are notes, never modelled.",
+    input_schema: obj({ id: { type: "string" }, weld: { type: ["object", "null"] } }, ["id", "weld"]),
+  },
 ];
 
 const SKETCH_TOOLS: Anthropic.Tool[] = [

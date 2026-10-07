@@ -7,13 +7,16 @@
 // every failure is reported as "<feature id>: <reason>".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import { DEFAULT_BODY, type CircularPatternFeature, type LinearPatternFeature, type SketchFeature, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type CircularPatternFeature, type JointFeature, type LinearPatternFeature, type SketchFeature, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { checkConstraints } from "../geom/constraints";
 import { planeFrame, to3D } from "../geom/frame";
+import { placeSection } from "../geom/member";
 import { buildProfile, entityPolylines } from "../geom/profile";
+import { frameEnds, type FrameMember } from "../weldment/joints";
 import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
-import { measure, volumeOf, type Measurements } from "./measure";
+import { memberCut } from "./cutlist";
+import { interference, measure, volumeOf, type Measurements } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { getOC, type OC, type Scope, scoped } from "./oc";
 import {
@@ -21,8 +24,10 @@ import {
   copyOut,
   cutMissed,
   drillTool,
+  endCapTool,
   extrudeTool,
   fuseInto,
+  gussetTool,
   memberTool,
   OpError,
   patternInstances,
@@ -91,7 +96,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       ok: errors.length === 0 && solid !== null,
       solid,
       bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
-      measurements: solid ? withMembers(scoped((s) => measure(oc, s, solid, v.material, bodies))) : null,
+      measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies))) : null,
       errors,
       features,
       sketches,
@@ -104,20 +109,46 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     };
   };
 
-  /** The members that built, with their length and their body's mass. */
-  function withMembers(m: Measurements): Measurements {
+  /** The members that built: their length and end angles read from their bodies, and their mass. */
+  function withMembers(s: Scope, m: Measurements): Measurements {
     for (const vf of v.features) {
       const f = vf.feature;
       if (f?.op !== "member" || f.suppressed || !features.find((x) => x.id === f.id)?.ok) continue;
       const body = m.bodies.find((b) => b.name === (f.newBody ?? f.id));
-      if (!body) continue;
-      const length = Math.hypot(f.to[0] - f.from[0], f.to[1] - f.from[1], f.to[2] - f.from[2]);
-      m.members.push({ id: f.id, body: body.name, profile: f.profile, designation: f.size, length: Math.round(length * 1e6) / 1e6, massKg: body.massKg });
+      const shape = bodies.get(f.newBody ?? f.id);
+      const placed = frame.get(f.id);
+      if (!body || !shape || !placed) continue;
+      const cut = memberCut(oc, s, shape, f.from, placed.placed.dir);
+      m.members.push({
+        id: f.id,
+        body: body.name,
+        profile: f.profile,
+        designation: f.size,
+        length: r6(cut.length),
+        angles: [r6(cut.angles[0]), r6(cut.angles[1])],
+        perimeters: [r6(cut.perimeters[0]), r6(cut.perimeters[1])],
+        massKg: body.massKg,
+      });
     }
     return m;
   }
 
+  /** Every member that can be placed, for the joints and what comes after them. */
+  const frame = new Map<string, FrameMember>();
   if (v.headerErrors.length > 0) return result();
+
+  // The joints shape members wherever they are in the list: a member is built with the ends its joints give it.
+  for (const vf of v.features) {
+    const f = vf.feature;
+    if (f?.op !== "member" || f.suppressed) continue;
+    const def = v.profiles[f.profile];
+    const r = def ? placeSection(f, def) : null;
+    if (r?.ok) frame.set(f.id, { f, placed: r.placed });
+  }
+  const joints = v.features.flatMap((vf) => (vf.feature?.op === "joint" && !vf.feature.suppressed ? [vf.feature as JointFeature] : []));
+  const shapes = frameEnds([...frame.values()], joints, v.nodes);
+  /** Joints that made their cuts, to check once every member is built. */
+  const checks: string[] = [];
 
   const profiles = new Map<string, SketchProfile | null>();
   /** The tool of each extrude, cut and hole, and where it went, for patterns. Disposed before returning. */
@@ -255,10 +286,39 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const name = raw.newBody ?? raw.id;
           if (bodies.has(name)) throw new OpError(`a body "${name}" already exists; a member is a body of its own`);
           scoped((s) => {
-            const tool = memberTool(oc, s, raw, def);
+            const tool = memberTool(oc, s, raw, def, shapes.ends.get(raw.id));
             commit(new Map([[name, tool]]));
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name });
           });
+          break;
+        }
+        case "joint": {
+          for (const id of [...(raw.members ?? []), ...(raw.through ? [raw.through] : [])]) {
+            if (suppressed.has(id) || !frame.has(id)) throw new OpError(`${missing(id, "member")}, so there is nothing to join`);
+          }
+          const problem = shapes.errors.get(raw.id);
+          if (problem) throw new OpError(problem);
+          // Its members may come after it in the list: it checks its work once they are all built.
+          checks.push(raw.id);
+          break;
+        }
+        case "endCap": {
+          const m = frame.get(raw.member);
+          if (!m || !bodies.has(m.f.newBody ?? m.f.id)) throw new OpError(`${missing(raw.member, "member")}, so there is no end to cap`);
+          const name = raw.newBody ?? raw.id;
+          if (bodies.has(name)) throw new OpError(`a body "${name}" already exists; an end cap is a body of its own`);
+          scoped((s) => commit(new Map([[name, endCapTool(oc, s, raw, m.f, m.placed, shapes.ends.get(m.f.id))]])));
+          break;
+        }
+        case "gusset": {
+          const [a, b] = raw.members.map((id) => {
+            const m = frame.get(id);
+            if (!m || !bodies.has(m.f.newBody ?? m.f.id)) throw new OpError(`${missing(id, "member")}, so there is no corner for the gusset`);
+            return m;
+          });
+          const name = raw.newBody ?? raw.id;
+          if (bodies.has(name)) throw new OpError(`a body "${name}" already exists; a gusset is a body of its own`);
+          scoped((s) => commit(new Map([[name, gussetTool(oc, s, raw, v.nodes[raw.node], a, b)]])));
           break;
         }
         case "combine": {
@@ -283,6 +343,22 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     }
   }
   for (const t of tools.values()) t.tool.delete();
+  // Each joint checks its own work: the members it shaped must not overlap.
+  for (const id of checks) {
+    const built = new Map<string, TopoDS_Shape>();
+    for (const m of shapes.shaped.get(id) ?? []) {
+      const name = frame.get(m)!.f.newBody ?? m;
+      const b = bodies.get(name);
+      if (b) built.set(name, b);
+    }
+    const clash = scoped((s) => interference(oc, s, built));
+    if (!clash.length) continue;
+    const messages = clash.map((c) => `${id}: ${c.bodies[0]} and ${c.bodies[1]} still overlap by ${Math.round(c.volume * 1000) / 1000} mm³`);
+    errors.push(...messages);
+    const status = features.find((f) => f.id === id)!;
+    status.ok = false;
+    status.error = messages.join("\n");
+  }
   if (bodies.size === 0 && errors.length === 0) errors.push("document: no solid; add an extrude");
   return result();
 
@@ -352,6 +428,10 @@ function overlay(f: SketchFeature, ok: boolean): SketchOverlay {
       entityPolylines(e).map((pts) => ({ construction: !!e.construction, points: pts.map((p) => to3D(frame, p)) })),
     ),
   };
+}
+
+function r6(x: number): number {
+  return Math.round(x * 1e6) / 1e6 + 0;
 }
 
 function kernelMessage(oc: OC, e: unknown): string {

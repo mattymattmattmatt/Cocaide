@@ -21,8 +21,35 @@ export interface CocaideDocument {
   photo?: PhotoUnderlay;
   /** Weldment profiles the part uses, by name: its own copies, so it opens anywhere. */
   profiles?: Record<string, ProfileDef>;
+  /** Named points a frame is built on (Phase J). In the file, coordinates may be expressions. */
+  nodes?: Record<string, Vec3>;
+  /** The weld table: notes, stored and listed, never modelled. */
+  welds?: Weld[];
   features: Feature[];
 }
+
+// ------------------------------------------------------------ frames
+
+/** A node's name: letters, digits and _, starting with a letter ("A", "top_1"). */
+export const NODE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** A weld, as a note: where it is, what it is. Never modelled. */
+export interface Weld {
+  id: string;
+  /** The bodies it joins. */
+  between: string[];
+  type: WeldType;
+  /** Fillet leg or butt throat, mm. */
+  size: number;
+  /** Total length, mm. */
+  length: number;
+  /** Welded all round the joint. */
+  allRound?: boolean;
+  note?: string;
+}
+export const WELD_TYPES = ["fillet", "butt", "plug"] as const;
+export type WeldType = (typeof WELD_TYPES)[number];
+export const WELD_KEYS = ["id", "between", "type", "size", "length", "allRound", "note"] as const;
 
 // ------------------------------------------------------- weldment profiles
 
@@ -134,7 +161,10 @@ export type Feature =
   | LinearPatternFeature
   | CircularPatternFeature
   | CombineFeature
-  | MemberFeature;
+  | MemberFeature
+  | JointFeature
+  | EndCapFeature
+  | GussetFeature;
 export type FeatureOp = Feature["op"];
 export const FEATURE_OPS: readonly FeatureOp[] = [
   "sketch",
@@ -147,6 +177,9 @@ export const FEATURE_OPS: readonly FeatureOp[] = [
   "circularPattern",
   "combine",
   "member",
+  "joint",
+  "endCap",
+  "gusset",
 ];
 
 // ----------------------------------------------------------------- bodies
@@ -377,9 +410,66 @@ export interface MemberFeature extends FeatureBase {
   op: "member";
   profile: string;
   size: string;
+  /** In the file, a point or a node's name; validated, the point. */
   from: Vec3;
   to: Vec3;
+  /** The nodes it joins, when `from` or `to` named one. */
+  fromNode?: string;
+  toNode?: string;
   rotation?: number;
+  /**
+   * Where the line runs through the section, on its envelope: [0, 0] the
+   * middle, [-1, 1] the top left as seen from the `to` end (x across, y up).
+   * Without it, the profile's anchor is on the line.
+   */
+  align?: Vec2;
+  newBody?: string;
+}
+
+// ------------------------------------------------------------------ joints
+
+/**
+ * What happens where members meet at a node. Every member that ends at the
+ * node and is not one of the joint's own butts against them.
+ * - mitre: `members` (two that end at the node) are cut on the plane that
+ *   halves the angle between them.
+ * - butt: `through` runs through, extended to cover the others if it ends
+ *   at the node; the others stop at its face.
+ * `gap` (mm) is left between the cut faces.
+ */
+export interface JointFeature extends FeatureBase {
+  op: "joint";
+  node: string;
+  type: JointType;
+  members?: [string, string];
+  through?: string;
+  gap?: number;
+}
+export const JOINT_TYPES = ["mitre", "butt"] as const;
+export type JointType = (typeof JOINT_TYPES)[number];
+
+/** A plate of the section's outline closing a member's square end; a body of its own. */
+export interface EndCapFeature extends FeatureBase {
+  op: "endCap";
+  member: string;
+  end: "start" | "end";
+  thickness: number;
+  newBody?: string;
+}
+
+/**
+ * A triangular plate in the inside corner between two members at a node, in
+ * the plane of their lines and centred on their sections. Its legs run `size`
+ * mm along each member from where their inner faces meet; `chamfer` clips the
+ * corner for the weld. A body of its own.
+ */
+export interface GussetFeature extends FeatureBase {
+  op: "gusset";
+  node: string;
+  members: [string, string];
+  size: number;
+  thickness: number;
+  chamfer?: number;
   newBody?: string;
 }
 

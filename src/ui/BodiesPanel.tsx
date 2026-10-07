@@ -1,10 +1,10 @@
 // The part's bodies (Phase H): each with its colour, volume and mass, and the
 // pairs that overlap. Hide a body to see past it; click it to select its
 // faces; right-click it to ask about that body alone. Below them, the
-// members (Phase I): alike ones grouped, with their length and mass.
+// members (Phase I): alike ones grouped as the cut list groups them.
 
 import type { Measurements } from "../kernel";
-import type { MemberMeasurement } from "../kernel/measure";
+import { cutList } from "../weldment/cutlist";
 import type { BodyRange } from "../kernel/bodies";
 import { BODY_COLORS } from "./Viewport";
 
@@ -71,12 +71,12 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
               </tr>
             </thead>
             <tbody>
-              {groupMembers(m.members).map((g) => (
-                <tr key={g.key} data-testid="member-row" title={g.ids.join(", ")} onClick={() => onSelectMember?.(g.ids[0])}>
+              {cutList(m.members).map((g) => (
+                <tr key={g.item} data-testid="member-row" title={g.members.join(", ")} onClick={() => onSelectMember?.(g.members[0])}>
                   <td>{g.designation}</td>
                   <td className="num">{n(g.length, 1)}</td>
-                  <td className="num">{g.ids.length}</td>
-                  <td className="num">{n(g.massKg, 2)}</td>
+                  <td className="num">{g.quantity}</td>
+                  <td className="num">{n(g.kgTotal, 2)}</td>
                 </tr>
               ))}
             </tbody>
@@ -85,18 +85,4 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
       )}
     </section>
   );
-}
-
-/** Members of the same size and length (to 0.1 mm), together: what a cut list counts as one item. */
-export function groupMembers(members: MemberMeasurement[]): { key: string; designation: string; length: number; ids: string[]; massKg: number }[] {
-  const groups = new Map<string, { key: string; designation: string; length: number; ids: string[]; massKg: number }>();
-  for (const x of members) {
-    const length = Math.round(x.length * 10) / 10;
-    const key = `${x.profile}|${x.designation}|${length}`;
-    const g = groups.get(key) ?? { key, designation: x.designation, length, ids: [], massKg: 0 };
-    g.ids.push(x.id);
-    g.massKg += x.massKg;
-    groups.set(key, g);
-  }
-  return [...groups.values()];
 }

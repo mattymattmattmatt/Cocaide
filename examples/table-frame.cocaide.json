@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "table-frame",
+  "parameters": {
+    "frame_w": 1200,
+    "frame_d": 600,
+    "frame_h": 900
+  },
+  "profiles": {
+    "SHS": {
+      "name": "SHS",
+      "entities": [
+        {
+          "id": "r1",
+          "type": "rect",
+          "center": [
+            0,
+            0
+          ],
+          "w": "=b",
+          "h": "=b"
+        },
+        {
+          "id": "r2",
+          "type": "rect",
+          "center": [
+            0,
+            0
+          ],
+          "w": "=b - 2 * t",
+          "h": "=b - 2 * t"
+        }
+      ],
+      "constraints": [
+        {
+          "type": "distanceX",
+          "entity": "r1",
+          "value": "=b"
+        },
+        {
+          "type": "distanceY",
+          "entity": "r1",
+          "value": "=b"
+        },
+        {
+          "type": "distanceX",
+          "entity": "r2",
+          "value": "=b - 2 * t"
+        },
+        {
+          "type": "distanceY",
+          "entity": "r2",
+          "value": "=b - 2 * t"
+        },
+        {
+          "type": "coincident",
+          "points": [
+            "r1.center",
+            "origin"
+          ]
+        },
+        {
+          "type": "coincident",
+          "points": [
+            "r2.center",
+            "origin"
+          ]
+        }
+      ],
+      "parameters": {
+        "b": 40,
+        "t": 3
+      },
+      "sizes": [
+        {
+          "designation": "SHS 40x40x3",
+          "values": {
+            "b": 40,
+            "t": 3
+          }
+        },
+        {
+          "designation": "SHS 50x50x3",
+          "values": {
+            "b": 50,
+            "t": 3
+          }
+        }
+      ],
+      "anchor": "centroid",
+      "tags": [
+        "hollow",
+        "square"
+      ]
+    }
+  },
+  "nodes": {
+    "A": [
+      0,
+      0,
+      "=frame_h"
+    ],
+    "B": [
+      "=frame_w",
+      0,
+      "=frame_h"
+    ],
+    "C": [
+      "=frame_w",
+      "=frame_d",
+      "=frame_h"
+    ],
+    "D": [
+      0,
+      "=frame_d",
+      "=frame_h"
+    ],
+    "E": [
+      0,
+      0,
+      0
+    ],
+    "F": [
+      "=frame_w",
+      0,
+      0
+    ],
+    "G": [
+      "=frame_w",
+      "=frame_d",
+      0
+    ],
+    "H": [
+      0,
+      "=frame_d",
+      0
+    ]
+  },
+  "features": [
+    {
+      "id": "rail_front",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "A",
+      "to": "B",
+      "align": [
+        -1,
+        1
+      ]
+    },
+    {
+      "id": "rail_right",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "B",
+      "to": "C",
+      "align": [
+        -1,
+        1
+      ]
+    },
+    {
+      "id": "rail_back",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "C",
+      "to": "D",
+      "align": [
+        -1,
+        1
+      ]
+    },
+    {
+      "id": "rail_left",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "D",
+      "to": "A",
+      "align": [
+        -1,
+        1
+      ]
+    },
+    {
+      "id": "leg_a",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "E",
+      "to": "A",
+      "align": [
+        -1,
+        -1
+      ]
+    },
+    {
+      "id": "leg_b",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "F",
+      "to": "B",
+      "align": [
+        1,
+        -1
+      ]
+    },
+    {
+      "id": "leg_c",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "G",
+      "to": "C",
+      "align": [
+        1,
+        1
+      ]
+    },
+    {
+      "id": "leg_d",
+      "op": "member",
+      "profile": "SHS",
+      "size": "SHS 40x40x3",
+      "from": "H",
+      "to": "D",
+      "align": [
+        -1,
+        1
+      ]
+    },
+    {
+      "id": "corner_a",
+      "op": "joint",
+      "node": "A",
+      "type": "mitre",
+      "members": [
+        "rail_left",
+        "rail_front"
+      ]
+    },
+    {
+      "id": "corner_b",
+      "op": "joint",
+      "node": "B",
+      "type": "mitre",
+      "members": [
+        "rail_front",
+        "rail_right"
+      ]
+    },
+    {
+      "id": "corner_c",
+      "op": "joint",
+      "node": "C",
+      "type": "mitre",
+      "members": [
+        "rail_right",
+        "rail_back"
+      ]
+    },
+    {
+      "id": "corner_d",
+      "op": "joint",
+      "node": "D",
+      "type": "mitre",
+      "members": [
+        "rail_back",
+        "rail_left"
+      ]
+    }
+  ]
+}

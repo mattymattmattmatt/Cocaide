@@ -97,6 +97,13 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                     </span>
                   )}
                   {f.op === "member" && typeof f.size === "string" && <span className="feature-body">{f.size}</span>}
+                  {f.op === "joint" && (
+                    <span className="feature-body">
+                      {String(f.type)} at {String(f.node)}
+                    </span>
+                  )}
+                  {f.op === "endCap" && <span className="feature-body">on {String(f.member)}</span>}
+                  {f.op === "gusset" && <span className="feature-body">at {String(f.node)}</span>}
                   {f.op === "sketch" && typeof (f.profile as { name?: unknown } | undefined)?.name === "string" && (
                     <span className="feature-body weldment-tag" title="A weldment profile: it is in the section library">
                       ⌗ {String((f.profile as { name: string }).name)}

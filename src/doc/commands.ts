@@ -12,7 +12,7 @@ import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolv
 import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
-import { BODY_NAME, DEFAULT_BODY, type Constraint, type Feature, type PhotoUnderlay, type ProfileDef, type SketchEntity, type Vec2 } from "./types";
+import { BODY_NAME, DEFAULT_BODY, NODE_NAME, type Constraint, type Feature, type PhotoUnderlay, type ProfileDef, type SketchEntity, type Vec2, type Weld } from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
@@ -50,7 +50,13 @@ export type Command =
   /** Renames a body; every feature and selector that names it follows. */
   | { type: "renameBody"; from: string; to: string }
   /** Puts a weldment profile in the part's profiles (a copy from the library), or removes one nothing uses. */
-  | { type: "setProfile"; name: string; profile: ProfileDef | Record<string, unknown> | null };
+  | { type: "setProfile"; name: string; profile: ProfileDef | Record<string, unknown> | null }
+  /** Adds or moves a node (coordinates may be expressions), or removes one nothing names. */
+  | { type: "setNode"; name: string; at: (number | string)[] | null }
+  /** Renames a node; the members, joints and gussets that name it follow. */
+  | { type: "renameNode"; from: string; to: string }
+  /** Adds or replaces a weld in the weld table by id, or removes it. */
+  | { type: "setWeld"; id: string; weld: Weld | Record<string, unknown> | null };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
@@ -163,7 +169,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const params = documentParameters(doc);
       if (!(cmd.name in params)) return { ok: false, error: `deleteParameter: no parameter "${cmd.name}"` };
       const users = features.filter((f) => isObject(f) && parameterRefs(f).has(cmd.name)).map((f) => String(f.id));
-      if (users.length) return { ok: false, error: `deleteParameter: ${cmd.name} is used by ${users.join(", ")}` };
+      const nodes = Object.entries(isObject(doc.nodes) ? doc.nodes : {}).filter(([, at]) => parameterRefs(at).has(cmd.name)).map(([n]) => `node ${n}`);
+      if (users.length || nodes.length) return { ok: false, error: `deleteParameter: ${cmd.name} is used by ${[...users, ...nodes].join(", ")}` };
       delete params[cmd.name];
       if (Object.keys(params).length) doc.parameters = params;
       else delete doc.parameters;
@@ -177,6 +184,63 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (names.includes(cmd.to)) return { ok: false, error: `renameBody: a body "${cmd.to}" already exists` };
       const problem = renameBody(features, cmd.from, cmd.to);
       if (problem) return { ok: false, error: `renameBody: ${problem}` };
+      // The weld table names bodies too.
+      if (Array.isArray(doc.welds)) {
+        doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => (b === cmd.from ? cmd.to : b)) } : w));
+      }
+      break;
+    }
+    case "setNode": {
+      const nodes = isObject(doc.nodes) ? { ...doc.nodes } : {};
+      if (typeof cmd.name !== "string" || !NODE_NAME.test(cmd.name)) {
+        return { ok: false, error: `setNode: "${String(cmd.name)}" is not a node name (letters, digits and _, starting with a letter)` };
+      }
+      if (cmd.at === null) {
+        if (!(cmd.name in nodes)) return { ok: false, error: `setNode: no node "${cmd.name}"` };
+        const users = nodeUsers(features, cmd.name);
+        if (users.length) return { ok: false, error: `setNode: ${cmd.name} is used by ${users.join(", ")}` };
+        delete nodes[cmd.name];
+      } else {
+        if (!Array.isArray(cmd.at) || cmd.at.length !== 3 || !cmd.at.every((x) => (typeof x === "number" && Number.isFinite(x)) || isExpression(x))) {
+          return { ok: false, error: `setNode: ${cmd.name} must be at [x, y, z], numbers or =expressions (got ${JSON.stringify(cmd.at)})` };
+        }
+        nodes[cmd.name] = [...cmd.at];
+      }
+      if (Object.keys(nodes).length) doc.nodes = nodes;
+      else delete doc.nodes;
+      break;
+    }
+    case "renameNode": {
+      const nodes = isObject(doc.nodes) ? doc.nodes : {};
+      if (!(cmd.from in nodes)) return { ok: false, error: `renameNode: no node "${cmd.from}"` };
+      if (typeof cmd.to !== "string" || !NODE_NAME.test(cmd.to)) return { ok: false, error: `renameNode: "${String(cmd.to)}" is not a node name (letters, digits and _, starting with a letter)` };
+      if (cmd.to in nodes) return { ok: false, error: `renameNode: a node "${cmd.to}" already exists` };
+      // Keep the order nodes are listed in.
+      doc.nodes = Object.fromEntries(Object.entries(nodes).map(([k, v]) => [k === cmd.from ? cmd.to : k, v]));
+      for (let i = 0; i < features.length; i++) {
+        const f = { ...features[i] };
+        if (f.op === "member") {
+          if (f.from === cmd.from) f.from = cmd.to;
+          if (f.to === cmd.from) f.to = cmd.to;
+        }
+        if ((f.op === "joint" || f.op === "gusset") && f.node === cmd.from) f.node = cmd.to;
+        features[i] = f;
+      }
+      break;
+    }
+    case "setWeld": {
+      const welds = Array.isArray(doc.welds) ? [...doc.welds] : [];
+      const i = welds.findIndex((w) => isObject(w) && w.id === cmd.id);
+      if (cmd.weld === null) {
+        if (i < 0) return { ok: false, error: `setWeld: no weld "${cmd.id}"` };
+        welds.splice(i, 1);
+      } else {
+        const w = { ...structuredClone(cmd.weld), id: cmd.id };
+        if (i < 0) welds.push(w);
+        else welds[i] = w;
+      }
+      if (welds.length) doc.welds = welds;
+      else delete doc.welds;
       break;
     }
     case "setProfile": {
@@ -318,7 +382,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
         if (f.newBody !== undefined) f.newBody = rename(f.newBody);
       }
     }
-    if (f.op === "member" && (f.newBody ?? f.id) === from) f.newBody = to;
+    if ((f.op === "member" || f.op === "endCap" || f.op === "gusset") && (f.newBody ?? f.id) === from) f.newBody = to;
     if (Array.isArray(f.bodies)) f.bodies = f.bodies.map(rename);
     if (f.op === "combine") {
       f.target = rename(f.target);
@@ -482,7 +546,18 @@ export function references(f: Record<string, unknown>): string[] {
   const refs: string[] = [];
   if ((f.op === "extrude" || f.op === "cut") && typeof f.sketch === "string") refs.push(f.sketch);
   if ((f.op === "linearPattern" || f.op === "circularPattern") && typeof f.feature === "string") refs.push(f.feature);
+  // Joints, gussets and end caps work on members.
+  if ((f.op === "joint" || f.op === "gusset") && Array.isArray(f.members)) refs.push(...f.members.filter((m): m is string => typeof m === "string"));
+  if (f.op === "joint" && typeof f.through === "string") refs.push(f.through);
+  if (f.op === "endCap" && typeof f.member === "string") refs.push(f.member);
   return refs;
+}
+
+/** The features that name a node: members that end there, joints and gussets at it. */
+export function nodeUsers(features: unknown[], node: string): string[] {
+  return features
+    .filter((f) => isObject(f) && ((f.op === "member" && (f.from === node || f.to === node)) || ((f.op === "joint" || f.op === "gusset") && f.node === node)))
+    .map((f) => String((f as { id: unknown }).id));
 }
 
 function orderProblem(features: unknown[]): string | null {

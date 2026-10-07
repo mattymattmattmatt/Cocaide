@@ -50,7 +50,16 @@ interface Props {
   onPhotoPoint?: ((px: Vec2) => void) | null;
   /** Bodies not drawn (and not picked). */
   hiddenBodies?: ReadonlySet<string>;
+  /** A frame's nodes (Phase J), drawn as labelled points with the sketches. */
+  nodes?: FrameNode[];
 }
+
+export interface FrameNode {
+  name: string;
+  at: Vec3;
+}
+
+const NO_NODES: FrameNode[] = [];
 
 /** Body colours, in the order bodies are made, for a part of more than one. */
 export const BODY_COLORS = ["#c4cad3", "#8fb8e3", "#e3b98f", "#a9d39f", "#d3a9d6", "#e09c9c", "#94d1cf", "#d6cf96"];
@@ -86,6 +95,7 @@ interface ViewportApi {
   setHiddenBodies(hidden: ReadonlySet<string>): void;
   setSelection(sel: Selection): void;
   setSketchesVisible(visible: boolean): void;
+  setNodes(nodes: FrameNode[]): void;
   setUnderlay(u: Underlay | null): void;
   /** See the photo through the part (while picking points on it). */
   setGhost(ghost: boolean): void;
@@ -97,7 +107,7 @@ interface ViewportApi {
 
 const NO_BODIES: ReadonlySet<string> = new Set();
 
-export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES }: Props) {
+export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES, nodes = NO_NODES }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
   const pickRef = useRef(onPick);
@@ -141,7 +151,8 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     const helpers = new THREE.Group();
     const marks = new THREE.Group(); // hover and selection highlights
     const photoGroup = new THREE.Group(); // the pinned photo and its scale line
-    scene.add(helpers, photoGroup, model, overlays, marks);
+    const nodeGroup = new THREE.Group(); // a frame's nodes
+    scene.add(helpers, photoGroup, model, overlays, marks, nodeGroup);
     let photoMesh: THREE.Mesh | null = null;
     let photo: Underlay | null = null;
     let photoTexture: { url: string; texture: THREE.Texture } | null = null;
@@ -163,7 +174,27 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     let radius = 50;
     let center = new THREE.Vector3();
 
-    const render = () => renderer.render(scene, camera);
+    // Node labels are HTML over the canvas, moved after every render.
+    const labels = document.createElement("div");
+    labels.className = "node-labels";
+    el.appendChild(labels);
+    let nodeList: FrameNode[] = [];
+    const placeLabels = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      nodeList.forEach((n, i) => {
+        const tag = labels.children[i] as HTMLElement | undefined;
+        if (!tag) return;
+        const v = new THREE.Vector3(...n.at).project(camera);
+        const shown = overlays.visible && v.z < 1;
+        tag.style.display = shown ? "" : "none";
+        tag.style.transform = `translate(${((v.x + 1) / 2) * w + 6}px, ${((1 - v.y) / 2) * h - 18}px)`;
+      });
+    };
+    const render = () => {
+      renderer.render(scene, camera);
+      placeLabels();
+    };
     controls.addEventListener("change", render);
 
     const resize = () => {
@@ -500,6 +531,27 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       },
       setSketchesVisible(visible: boolean) {
         overlays.visible = visible;
+        nodeGroup.visible = visible;
+        render();
+      },
+      setNodes(list: FrameNode[]) {
+        nodeList = list;
+        disposeGroup(nodeGroup);
+        labels.replaceChildren(
+          ...list.map((n) => {
+            const tag = document.createElement("span");
+            tag.className = "node-label";
+            tag.textContent = n.name;
+            tag.dataset.node = n.name;
+            return tag;
+          }),
+        );
+        if (list.length) {
+          const g = new THREE.BufferGeometry().setFromPoints(list.map((n) => new THREE.Vector3(...n.at)));
+          const dots = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xe8590c, size: 7, sizeAttenuation: false, depthTest: false }));
+          dots.renderOrder = 4;
+          nodeGroup.add(dots);
+        }
         render();
       },
       setUnderlay,
@@ -537,6 +589,8 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
         disposeGroup(helpers);
         disposeGroup(marks);
         disposeGroup(photoGroup);
+        disposeGroup(nodeGroup);
+        labels.remove();
         photoTexture?.texture.dispose();
         fatMaterials.forEach((m) => m.dispose());
         renderer.dispose();
@@ -556,6 +610,10 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
   useEffect(() => {
     api.current?.setHiddenBodies(hiddenBodies);
   }, [hiddenBodies]);
+
+  useEffect(() => {
+    api.current?.setNodes(nodes);
+  }, [nodes]);
 
   useEffect(() => {
     api.current?.setSelection(selection);
@@ -591,7 +649,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
         <button onClick={() => api.current?.fit()} title="Frame the part from the current direction">
           Fit
         </button>
-        <button aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} title="Show or hide sketch geometry">
+        <button aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} title="Show or hide sketch geometry and the frame's nodes">
           Sketches
         </button>
       </div>

@@ -403,6 +403,10 @@ function toCommand(name: string, a: Record<string, unknown>): Command | string {
       return { type: "setParameter", name: str("name"), value: a.value as number };
     case "renameBody":
       return { type: "renameBody", from: str("from"), to: str("to") };
+    case "setNode":
+      return { type: "setNode", name: str("name"), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null };
+    case "setWeld":
+      return { type: "setWeld", id: str("id"), weld: obj("weld") };
     case "setDimension":
       return { type: "setDimension", sketch: str("sketch"), index: a.index as number, value: a.value as number | string };
     case "addEntity":

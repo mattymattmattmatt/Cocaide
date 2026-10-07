@@ -11,12 +11,15 @@
 //   "name"          rename the document
 //   "photo"         move or rescale the photo's scale (never confirm it: only the user can)
 //   "body:<name>"   add features that touch only that body (sketches touch none); rename it
+//   "node:<name>"   move or rename that node
+//   "weld:<id>"     change or remove that weld in the weld table ("+" adds one)
 //   "*"             anything (the whole part)
 // A parameter change is also allowed when every feature that uses the
-// parameter is in scope.
+// parameter is in scope, and so is a node move when every feature that names
+// the node is.
 
 import type { Command, RawDocument } from "./commands";
-import { references } from "./commands";
+import { nodeUsers, references } from "./commands";
 import { isObject } from "./validate";
 import { documentParameters, parameterRefs } from "./parameters";
 import { rawConstraintEntities } from "./sketch";
@@ -75,7 +78,12 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
     case "setParameter":
     case "deleteParameter": {
       what = `${cmd.type} "${cmd.name}"`;
-      const users = doc.features.filter((f) => isObject(f) && parameterRefs(f).has(cmd.name)).map((f) => String(f.id));
+      // A parameter moves the features that use it, and the members on nodes that use it.
+      const nodes = Object.entries(isObject(doc.nodes) ? doc.nodes : {}).filter(([, at]) => parameterRefs(at).has(cmd.name)).map(([n]) => n);
+      const users = [
+        ...doc.features.filter((f) => isObject(f) && parameterRefs(f).has(cmd.name)).map((f) => String(f.id)),
+        ...nodes.flatMap((n) => nodeUsers(doc.features, n)),
+      ];
       const isNew = cmd.type === "setParameter" && !(cmd.name in documentParameters(doc));
       allowed = has(`param:${cmd.name}`) || (users.length > 0 && users.every(has)) || (isNew && has("+"));
       break;
@@ -97,6 +105,23 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = `setProfile "${cmd.name}"`;
       allowed = has("+");
       break;
+    case "setNode": {
+      what = `setNode "${cmd.name}"`;
+      const users = nodeUsers(doc.features, cmd.name);
+      const isNew = !(isObject(doc.nodes) && cmd.name in doc.nodes);
+      allowed = has(`node:${cmd.name}`) || (users.length > 0 && users.every(has)) || (isNew && has("+"));
+      break;
+    }
+    case "renameNode":
+      what = `renameNode "${cmd.from}"`;
+      allowed = has(`node:${cmd.from}`);
+      break;
+    case "setWeld": {
+      what = `setWeld "${cmd.id}"`;
+      const exists = Array.isArray(doc.welds) && doc.welds.some((w) => isObject(w) && w.id === cmd.id);
+      allowed = has(`weld:${cmd.id}`) || (!exists && has("+"));
+      break;
+    }
     default:
       return "writeScope: unknown command";
   }
@@ -149,7 +174,16 @@ function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteSc
     case "combine":
       return inScope(f.target) && Array.isArray(f.tools) && f.tools.every(inScope);
     case "member":
+    case "endCap":
+    case "gusset":
       return inScope(f.newBody ?? f.id);
+    case "joint": {
+      // A joint trims every member at its node.
+      const at = doc.features.filter((x) => isObject(x) && x.op === "member" && (x.from === f.node || x.to === f.node));
+      const named = [...(Array.isArray(f.members) ? f.members : []), f.through].filter((x): x is string => typeof x === "string");
+      const touched = [...at, ...doc.features.filter((x) => isObject(x) && named.includes(String(x.id)))];
+      return touched.length > 0 && touched.every((x) => inScope(x.newBody ?? x.id));
+    }
     case "linearPattern":
     case "circularPattern": {
       const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);

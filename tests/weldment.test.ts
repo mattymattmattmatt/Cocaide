@@ -9,7 +9,7 @@ import { allErrors, validateDocument } from "../src/doc/validate";
 import { kgPerMetre, sectionAt, sectionOf, sizedEntities, suggestTags } from "../src/geom/section";
 import { loadOC, rebuild, type OC } from "../src/kernel";
 import { measurementSummary } from "../src/kernel/inspect";
-import { groupMembers } from "../src/ui/BodiesPanel";
+import { cutList } from "../src/weldment/cutlist";
 import {
   addLibraryMember,
   designationFor,
@@ -187,8 +187,8 @@ describe("profiles in a part, and members", () => {
     ]);
     expect(b.interference).toEqual([]);
     expect(b.members.map((m) => ({ ...m, massKg: Math.round(m.massKg * 1e4) / 1e4 }))).toEqual([
-      { id: "leg", body: "leg", profile: "SHS", designation: "SHS 40x40x3", length: 900, massKg: 3.1369 },
-      { id: "rail", body: "rail", profile: "SHS", designation: "SHS 50x50x3", length: 600, massKg: 2.6564 },
+      { id: "leg", body: "leg", profile: "SHS", designation: "SHS 40x40x3", length: 900, angles: [0, 0], perimeters: [160, 160], massKg: 3.1369 },
+      { id: "rail", body: "rail", profile: "SHS", designation: "SHS 50x50x3", length: 600, angles: [0, 0], perimeters: [200, 200], massKg: 2.6564 },
     ]);
   });
 
@@ -220,8 +220,8 @@ describe("profiles in a part, and members", () => {
 
   it("lists alike members together, as a cut list counts them", () => {
     const doc = must(apply(frame, { type: "addFeature", feature: { id: "leg2", op: "member", profile: "SHS", size: "SHS 40x40x3", from: [800, 0, 0], to: [800, 0, 900] } }));
-    const groups = groupMembers(built(doc).members);
-    expect(groups.map((g) => [g.designation, g.length, g.ids])).toEqual([
+    const groups = cutList(built(doc).members);
+    expect(groups.map((g) => [g.designation, g.length, g.members])).toEqual([
       ["SHS 40x40x3", 900, ["leg", "leg2"]],
       ["SHS 50x50x3", 600, ["rail"]],
     ]);
