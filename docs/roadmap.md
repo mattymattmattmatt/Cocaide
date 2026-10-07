@@ -145,16 +145,29 @@ member to SHS 50×50×3 rebuilds the frame and updates the cut list.
 
 ## Phase K — the agent on weldments
 
-- "A 1200 × 600 table frame, 900 high, SHS 40×40×3" goes through the
-  confirmation card. The profile and size come from the library, and are
-  asked for, never guessed.
-- Right-click a joint to mitre it, or a member to swap its size.
-- In the profile card, the agent suggests a name, tags and the anchor.
-- The critic checks fabrication: every member connected, no clashes after
-  trimming, no member longer than stock bar, and identical members grouped.
+**Done.** See the README's Phase K acceptance.
+
+The agent works on weldments the way it works on plates. It reads the request into intent. Code checks every number and every section against what the user typed and what the library holds. The user confirms on the card, and a deterministic planner builds the part.
+
+- **Frames from a sentence.** "A 1200 × 600 table frame, 900 high, SHS 40×40×3" is read as a frame: the type (a table: a rectangle on four legs; or a flat rectangle), the outside length, width and height, the section as the user wrote it, and how the corners are joined.
+  - The section is never the model's choice. Code finds the words in the request, then matches them against the section library. One match fills the card. None, or more than one, leaves a blank with the library's sizes to choose from. An empty library stops the request and says how to fill it.
+  - A frame always goes through the confirmation card, because it commits stock and cuts. Building it from the card is the user's confirmation.
+  - The planner builds the frame the way a person would in Phase J: parameters for the size, nodes at the outside corners, members along paths with the nodes on the outside, and the corners mitred or butted. The part gets its own copy of the library profile.
+- **The critic checks fabrication**, on any part with members, and on every planned frame:
+  - every member is connected to the rest;
+  - no two bodies clash after trimming;
+  - no member is longer than stock bar (6 m unless the part's `stock_length` parameter says otherwise);
+  - identical members are grouped: alike members are cut alike, and a planned frame's cut list is the one the plan expects.
+  - A failed check gets the one correction pass, then it is the human's.
+- **Right-click a joint** to mitre it, butt it, or leave a gap. **Right-click a member** to swap its size or turn it. The packet holds what the agent needs and nothing more: the sizes the part's copy has, the member's measured cut, and the members at the joint's node.
+- **In the profile card, the agent suggests** a name, a designation for each size, tags and the anchor, from the section's measured properties. It suggests and never decides: every field stays editable, and nothing about the geometry changes.
 
 Acceptance: the table frame prompt builds after the card, from the library's
-profile.
+profile. A section the library doesn't have is asked for, not guessed. The
+critic's checks pass on the built frame, and fail on a frame with a loose
+member or a clash. Right-clicking a butt joint and asking for a mitre gives a
+proposal that, accepted, cuts 45° ends. In the profile card, Suggest fills the
+name, designations and tags.
 
 Open: whether the library stays in one browser (with export and import) or is
 shared across a team. A shared library needs storage and accounts, which v1

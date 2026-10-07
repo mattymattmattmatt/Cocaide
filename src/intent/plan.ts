@@ -44,6 +44,7 @@ export interface PlanSource {
 
 export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   if (intent.kind === "other") return { ok: false, error: "only plates and discs have a planner; other parts are built by the agent" };
+  if (intent.kind === "frame") return { ok: false, error: "a frame is planned by planFrame, from a section in the library" };
   const k = intent.units === "in" ? 25.4 : 1;
   const notes: string[] = [];
   const conversions: string[] = [];

@@ -608,3 +608,9 @@ button.link.danger { color: var(--bad); }
 .weld-fields label.check { flex-direction: row; align-items: center; color: var(--text); font-size: 12px; padding-top: 14px; }
 .weld-fields select, .weld-fields input:not([type="checkbox"]), .weld-note { height: 26px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font-size: 12px; min-width: 0; width: 100%; }
 .weld-fields select { margin-top: 15px; }
+
+/* Phase K */
+.profile-card-head .sep { flex: 1; }
+.modal button.suggest { height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--accent); background: var(--info-bg); color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 6px; }
+.modal button.suggest:disabled { opacity: 0.5; cursor: default; }
+.suggested { color: var(--accent); background: var(--info-bg); border-radius: 6px; padding: 4px 8px; }

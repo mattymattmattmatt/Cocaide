@@ -3,6 +3,9 @@
 // pass if a measurement disagrees). It trusts the kernel, not the plan.
 
 import type { Measurements } from "../kernel/measure";
+import { cutList } from "../weldment/cutlist";
+import { fabricationChecks } from "../weldment/fabrication";
+import type { FrameExpectation } from "./frame";
 import type { Expectation } from "./plan";
 
 export interface Check {
@@ -65,6 +68,33 @@ export function critique(expect: Expectation, m: Measurements | null, rebuildErr
     expect.holes.length ? `${expect.holes.length} at the asked centres` : "none",
     misplaced.length ? `missing or wrong: ${misplaced.join("; ")}` : "all found",
   );
+  return finish(checks);
+}
+
+/**
+ * A planned frame against its plan: its size, its members, the fabrication
+ * checks (connected, no clashes, stock length, alike members cut alike), and
+ * the cut list the plan expects.
+ */
+export function critiqueFrame(expect: FrameExpectation, m: Measurements | null, rebuildErrors: string[], doc: unknown): Critique {
+  const checks: Check[] = [];
+  const add = (label: string, ok: boolean, expected: string, actual: string) => checks.push({ label, ok, expected, actual });
+  add("Rebuilds without errors", rebuildErrors.length === 0, "no errors", rebuildErrors.length ? rebuildErrors.join("; ") : "no errors");
+  if (!m || !m.boundingBox) {
+    add("Built", false, "a frame", "no solid");
+    return finish(checks);
+  }
+  const size = m.boundingBox.size;
+  add("Outside size", expect.size.every((v, i) => Math.abs(v - size[i]) <= TOL * Math.max(1, v)), expect.size.map(f).join(" × "), size.map(f).join(" × "));
+  add("Members", m.members.length === expect.members, String(expect.members), String(m.members.length));
+  checks.push(...fabricationChecks(doc, m));
+  const line = (l: { designation: string; length: number; angles: [number, number]; quantity: number }) => `${l.quantity} × ${l.designation} ${f(l.length)} (${l.angles.join("°/")}°)`;
+  const got = cutList(m.members).map((l) => ({ designation: l.designation, length: l.length, angles: l.angles, quantity: l.quantity }));
+  const want = expect.cutList;
+  const same =
+    got.length === want.length &&
+    want.every((w) => got.some((g) => g.designation === w.designation && Math.abs(g.length - w.length) <= 0.05 && g.angles.every((a, i) => Math.abs(a - w.angles[i]) <= 0.05) && g.quantity === w.quantity));
+  add("Cut list as planned", same, want.map(line).join(", "), got.map(line).join(", "));
   return finish(checks);
 }
 

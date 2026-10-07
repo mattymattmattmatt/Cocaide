@@ -35,6 +35,7 @@ const intent = (o: Record<string, unknown>) =>
     diameter: field(null),
     cornerRadius: field(null),
     holes: [],
+    frame: null,
     description: "",
     questions: [],
     ...o,

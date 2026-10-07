@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase J (frames, joints and the cut list) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list) and K (the agent on weldments).
+**Status: Phase K (the agent on weldments) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list) and K (the agent on weldments).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -41,6 +41,10 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - A frame is points and members, not a 3D sketch. Nodes are named points (their coordinates can be expressions), and members join them. Type a path of nodes ("A B C D A") to add the members along it, with the corners mitred.
   - Joints are features at a node: a mitre, or a butt with one member running through. Every other member that ends there stops at the joint's members, and a gap can be left between the faces. End caps and gussets are plates of their own.
   - The cut list measures each member's trimmed body: its length long point to long point, and the angle of each end. Alike members are one line, and the list exports as CSV. Welds are notes in a weld table, with an all-round length taken from the joint.
+- Phase K puts the agent to work on weldments.
+  - "A 1200 × 600 table frame, 900 high, SHS 40×40×3" is read as a frame. The section is the user's words, matched against the section library by code: the model never picks one, and anything not in the library is asked for.
+  - A frame always goes through the confirmation card, and then a planner builds it the way a person would in Phase J. A fabrication critic checks it: every member connected, no clashes after trimming, nothing longer than stock bar, alike members cut alike.
+  - Right-click a joint to mitre or butt it, or a member to swap its size. In the profile card, **Suggest** asks the model for a name, designations, tags and the anchor, from the measured section.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -49,9 +53,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 276 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I and J acceptance logic
-                       #   (+9 live-model Phase D–G tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 35 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I and J acceptance suites
+npm test               # 290 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J and K acceptance logic
+                       #   (+12 live-model Phase D–G and K tests, run when ANTHROPIC_API_KEY is set)
+npm run test:e2e       # 38 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J and K acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -78,6 +82,27 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase K: the agent on weldments
+
+The section library holds the SHS drawn in Phase I, with the sizes 40 × 40 × 3 and 50 × 50 × 3. In a new part, right-click empty space and type "A 1200 × 600 table frame, 900 high, SHS 40×40×3".
+
+| Check | Result |
+|---|---|
+| The table frame prompt builds after the card, from the library's profile | The model reads a frame: a table, 1200 × 600 × 900 outside, section "SHS 40×40×3", corners unspecified. The card shows the three sizes with the words they came from, and the section as **SHS 40x40x3, from the section library**. Corners is a blank, because the request doesn't say. Choose **Mitred**, then **Confirm and build**. The planner builds 8 members on nodes at the outside corners, mitred at the top, from a copy of the library's SHS (`"library": { "id", "version": 1 }`). The proposal reads "A 1200 × 600 × 900 mm table frame of SHS 40x40x3: 8 members, mitred corners. Checked against the request: 8 of 8 checks pass." Accepted, its cut list is 2 × 1200 (45°/45°), 4 × 860 (square) and 2 × 600 (45°/45°). |
+| A section the library doesn't have is asked for, not guessed | Code finds the section's words in the request before it looks them up. A section the model names that the user didn't is a guess, and is blanked. "SHS 60x60x4" is not in the library: blank, with the library's sizes to choose from. "40x40x3" with two families of that size: blank, choose one. An empty library stops the request and says how to fill it. |
+| The critic checks fabrication, and fails a loose member or a clash | On the built frame, each of these passes: every member connected, no clashes after trimming, no member longer than stock bar (6000 mm, or `stock_length`), and identical members grouped. Each fails when it should. A stray member gives "2 separate groups". Removing a corner joint gives three overlaps of 10,824 mm³. `stock_length` = 1000 flags the 1200 mm rails. One foot raised 0.2 mm gives "cut differently: … at 860 and leg_a at 859.8". |
+| Right-click a butt joint and ask for a mitre | The joint's packet has its node, the members there and how each is cut, and the scope is the joint alone. **Mitre it** proposes `type: "mitre"` on it. Accepted, the rails are cut at 45° and the leg stops under them. An edit to another member from a member's right-click is refused by the scope. |
+| In the profile card, Suggest fills the name, designations and tags | **✦ Suggest** sends the measured sizes (area, envelope, centroid, Ix/Iy, hollow or open) and nothing about the part. The reply fills the name "SHS", "SHS 40x40x3" and "SHS 50x50x3", and the tags, and says why. Every field stays editable, and a designation list that doesn't line up with the sizes is dropped. |
+
+These checks are covered at three levels:
+- **Node** (`tests/frame-ask.test.ts`): everything above, with a scripted model and the real kernel, plus butt corners and a flat rectangle.
+- **Browser** (`e2e/frame-ask.spec.ts`): the prompt through the card to the accepted frame, the joint mitred from a right-click, and Suggest in the profile card, with the API answered by a script.
+- **Live** (`tests/phase-k-acceptance.test.ts`, with `ANTHROPIC_API_KEY`): the frame prompt, a section not in the library, and Suggest, against the real model.
+
+![The frame's confirmation card: the sizes with their words, the section found in the library, the corners asked](docs/phase-k-card.png)
+
+![The proposal: the table frame previewed, with the fabrication critic's eight checks](docs/phase-k-frame.png)
 
 ### Phase J: frames, joints and the cut list
 
@@ -301,7 +326,7 @@ Right-click any of these to ask about it:
 - a parameter;
 - in the sketcher, an entity or a constraint row.
 
-The menu is labelled with the target ("Ask about hole_1"). Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch* and *Fix this error*. Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Right-click empty space to ask about the whole part (see below).
+The menu is labelled with the target ("Ask about hole_1"). Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch*, *Fix this error*, and for a weldment *Mitre it* (a joint) or *Swap its size* (a member). Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Right-click empty space to ask about the whole part (see below).
 
 **The packet is the prompt** (`src/ask/packet.ts`). It holds:
 - the target node, its parent and its direct children;
@@ -309,6 +334,7 @@ The menu is labelled with the target ("Ask about hole_1"). Under the prompt box 
 - the selector for a picked face or edge;
 - the error, if the feature failed;
 - the parameters the target uses;
+- for a member, the sizes its profile has in this part and its measured cut; for a joint, its node and the members there;
 - the write scope.
 
 The user's text comes last, unchanged. A visual prompt ("what is this face", "make it look like…") adds one image, framed on the target and outlined.
@@ -361,6 +387,13 @@ Right-click empty space, or drop a drawing (PDF or image) or a photo on the wind
 - The critic reads the rebuilt part's measurements, not the plan: size, solid count, hole count, diameters, and each hole's centre and depth.
 - If anything disagrees, the agent gets one correction pass with the findings. Then the part goes back to the human, with the checks on the proposal.
 - A part that is not a plate or a disc is built by the agent from the confirmed description.
+
+**Frames** (Phase K: `src/intent/frame.ts`, `src/weldment/fabrication.ts`).
+- A frame's intent is its type (`table` or `rectangle`), its outside length, width and height, the section as the user wrote it, and its corners.
+- The review finds the section's words in the request, then matches them against the section library and the part's own copies. Words differ only in spacing, "×" or "by". Numbers in a named family also match. Only one match fills the card.
+- The card is always shown, and **Confirm and build** is the confirmation.
+- The planner builds it like Phase J's path tool: parameters `frame_w`, `frame_d` and `frame_h`; nodes at the outside corners; members with the nodes on the outside; and mitre or butt joints (the legs run through on a table). It expects the cut list from the section's envelope.
+- The critic checks the size, the member count, the fabrication checks and the planned cut list. The fabrication checks are also in the part packet of any part with members, so "Check it" from empty space answers with them.
 
 Accepting a new part replaces the document, as one undo step. Any edit to the document while the proposal is open drops it.
 
@@ -630,12 +663,13 @@ src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis
               STEP (named bodies), rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
-src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt
-src/intent    intent JSON, the ask-if-missing review, the drawing and photo readings, the planner, the critic
+src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt,
+              the profile card's suggestions
+src/intent    intent JSON, the ask-if-missing review, the drawing and photo readings, the planners (parts and frames), the critic
 src/drawing   drawing ingest in the browser: pdf.js rasterising at 200 dpi, text layer, legibility
 src/photo     photos in the browser: preparing for the model, the drawing-or-photo guess, IndexedDB storage
 src/weldment  the section library (profiles from sketches, versions, search, export and merge, part copies, IndexedDB);
-              joints, members along a path, the cut list and the weld table
+              joints, members along a path, the cut list and the weld table, the fabrication checks
 src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover,

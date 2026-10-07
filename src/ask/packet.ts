@@ -9,14 +9,15 @@ import { references, type RawDocument } from "../doc/commands";
 import { documentParameters, parameterRefs, resolveExpressions } from "../doc/parameters";
 import { photoGuesses, photoOf } from "../doc/photo";
 import { constraintEntities } from "../doc/sketch";
-import { DEFAULT_BODY, type Constraint, type SketchEntity } from "../doc/types";
-import { isObject } from "../doc/validate";
+import { DEFAULT_BODY, type Constraint, type MemberFeature, type ProfileDef, type SketchEntity } from "../doc/types";
+import { isObject, memberAtNode, validateDocument } from "../doc/validate";
 import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
 import { sketchDof } from "../geom/solver";
 import { dist2 } from "../geom/vec";
 import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/inspect";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
+import { fabricationChecks } from "../weldment/fabrication";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
 export type AskTarget =
@@ -34,7 +35,12 @@ export type AskTarget =
   /** Empty space: the whole part, the weakest scope (spec 6). Never applied without the user accepting. */
   | { kind: "part" };
 
-export type PacketKind = "feature" | "sketch" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter" | "body" | "part";
+export type PacketKind = "feature" | "sketch" | "member" | "joint" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter" | "body" | "part";
+
+/** What a feature row is asked about as: a sketch, a member or a joint get their own actions and packet. */
+export function featureKind(op: unknown): PacketKind {
+  return op === "sketch" ? "sketch" : op === "member" ? "member" : op === "joint" ? "joint" : "feature";
+}
 
 export interface Packet {
   target: { kind: PacketKind; label: string } & Record<string, unknown>;
@@ -188,7 +194,7 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
       if (!f) throw new Error(`no feature "${target.id}"`);
       const status = check.features.find((s) => s.id === target.id);
       const isSketch = f.op === "sketch";
-      const kind: PacketKind = target.kind === "failed" ? "failed" : isSketch ? "sketch" : "feature";
+      const kind: PacketKind = target.kind === "failed" ? "failed" : featureKind(f.op);
       const parents = await parentsOf(doc, check, topo, kernel);
       const parentId = parents.get(target.id) ?? null;
       const parent = parentId ? brief(doc.features.find((x) => x.id === parentId)!) : null;
@@ -201,6 +207,9 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
         parent,
         children,
         measurements: isSketch ? sketchMeasurements(resolved.features.find((x) => x.id === target.id)!) : featureMeasurements(f, resolved, topo),
+        // A member or joint: what the frame around it is (Phase K).
+        ...(f.op === "member" ? { member: memberDetails(doc, f, check) } : {}),
+        ...(f.op === "joint" ? { joint: jointDetails(doc, f, check) } : {}),
         error: status && !status.ok ? (status.error ?? "failed") : null,
         ...(status?.suppressed ? { suppressed: true } : {}),
       };
@@ -301,6 +310,7 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
 /** The whole part as a target: its features as one line each, its parameters and measurements. */
 function partPacket(doc: RawDocument, check: CheckResult, label: string, writeScope: string[]): Packet {
   const status = new Map(check.features.map((s) => [s.id, s]));
+  const fabrication = fabricationChecks(doc, check.measurements);
   const params = documentParameters(doc);
   // A part estimated from a photo: which sizes are the photo's, so an answer never calls them exact.
   const photo = photoOf(doc);
@@ -326,6 +336,8 @@ function partPacket(doc: RawDocument, check: CheckResult, label: string, writeSc
     parent: null,
     children: [],
     measurements: check.measurements ? measurementSummary(check.measurements) : { solid: false },
+    // A weldment: what a workshop would check before cutting it.
+    ...(fabrication.length ? { fabrication } : {}),
     error: check.errors.filter((e) => e.startsWith("document:") && !e.startsWith("document: no solid")).join("; ") || null,
   };
 }
@@ -355,6 +367,49 @@ async function parentsOf(doc: RawDocument, check: CheckResult, topo: PartTopolog
 }
 
 /** A feature as a neighbour: all its fields, except a sketch's geometry, which is summarised. */
+/** A member: the sizes it can swap to (its profile's, in this part), its ends, and its cut as measured. */
+function memberDetails(doc: RawDocument, f: Raw, check: CheckResult): Raw {
+  const profile = ((doc.profiles ?? {}) as Record<string, ProfileDef>)[String(f.profile)];
+  const v = validateDocument(doc);
+  const m = v.features.find((x) => x.id === f.id)?.feature as MemberFeature | undefined;
+  const cut = check.measurements?.members.find((x) => x.id === f.id);
+  const jointAt = (node?: string) => (node ? doc.features.find((x) => x.op === "joint" && x.node === node)?.id ?? null : null);
+  return {
+    profile: f.profile,
+    size: f.size,
+    sizes: profile?.sizes.map((s) => s.designation) ?? [],
+    ...(profile?.library ? { library: `a copy of library profile ${profile.name} v${profile.library.version}; other sizes must be added from the section library first` } : {}),
+    ...(m
+      ? {
+          from: m.fromNode ? { node: m.fromNode, at: m.from.map(round6), joint: jointAt(m.fromNode) } : { at: m.from.map(round6) },
+          to: m.toNode ? { node: m.toNode, at: m.to.map(round6), joint: jointAt(m.toNode) } : { at: m.to.map(round6) },
+        }
+      : {}),
+    measured: cut ? { length: cut.length, angles: cut.angles, massKg: round6(cut.massKg) } : null,
+  };
+}
+
+/** A joint: its node, every member there (ending at it or passing through), and their cuts as measured. */
+function jointDetails(doc: RawDocument, f: Raw, check: CheckResult): Raw {
+  const v = validateDocument(doc);
+  const node = String(f.node);
+  const at = v.nodes[node];
+  const members = v.features.flatMap((x) => (x.feature?.op === "member" ? [x.feature] : []));
+  return {
+    node,
+    at: at?.map(round6) ?? null,
+    members: at
+      ? members.flatMap((m) => {
+          const how = memberAtNode(m, node, at);
+          if (!how) return [];
+          const cut = check.measurements?.members.find((x) => x.id === m.id);
+          const end = m.fromNode === node ? 0 : 1;
+          return [{ id: m.id, size: m.size, [how === "ends" ? "endsHere" : "passesThrough"]: true, ...(cut && how === "ends" ? { cutHere: `${cut.angles[end]}° from square` } : {}) }];
+        })
+      : [],
+  };
+}
+
 function brief(f: Raw): Raw {
   return f.op === "sketch" ? sketchBrief(f) : f;
 }

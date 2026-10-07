@@ -18,14 +18,17 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { RawDocument } from "../doc/commands";
 import type { PreparedDrawing } from "../drawing/rasterize";
-import { critique, type Critique } from "../intent/critic";
+import { critique, critiqueFrame, type Critique } from "../intent/critic";
+import { frameWords, planFrame } from "../intent/frame";
 import { answerDrawing, DrawingReading, reviewDrawing } from "../intent/drawing";
 import { PhotoReading, planPhoto } from "../intent/photo";
 import type { PreparedPhoto } from "../photo/prepare";
 import { planPart, type Plan } from "../intent/plan";
-import { answerIntent, reviewIntent, type Review } from "../intent/review";
+import { answerIntent, reviewIntent, type Review, type SectionOption } from "../intent/review";
 import { Intent } from "../intent/schema";
 import { round6 } from "../kernel/inspect";
+import type { ProfileDef } from "../doc/types";
+import { partCopy, type LibraryEntry } from "../weldment/library";
 import { diffDocs, runAsk, type AskEvent, type AskResult, type Proposal } from "./agent";
 import type { KernelPort } from "./kernel";
 import type { AskModel } from "./model";
@@ -46,6 +49,8 @@ export interface PartAskRequest {
   kernel: KernelPort;
   signal?: AbortSignal;
   onEvent?(e: AskEvent | { type: "intent"; intent: Intent }): void;
+  /** The section library in this browser: what a frame can be made of (Phase K). */
+  library?: LibraryEntry[];
 }
 
 export interface PartAskResult extends AskResult {
@@ -65,7 +70,7 @@ export interface PartAskResult extends AskResult {
 export const INTENT_SYSTEM = `You read requests for mechanical parts in Cocaide, a parametric CAD program, into intent JSON. You do not design the part; a planner does that from your intent, and the user confirms anything you are not sure of.
 
 action: "create" when the request describes a part to make (always when there is no current part, or a drawing is attached and the request does not say otherwise); "edit" when it asks to change the current part; "answer" when it is a question.
-kind: "plate" (rectangular, possibly with rounded corners), "disc" (round), or "other" (anything else; describe it in description).
+kind: "plate" (rectangular, possibly with rounded corners), "disc" (round), "frame" (a weldment of structural members: a table frame, a rectangular frame), or "other" (anything else; describe it in description).
 
 Every number is a field: { value, evidence, source, confidence }.
 - value: the number, in the units the user used. Never round, never convert, never "tidy" a number: 6.6 stays 6.6.
@@ -85,6 +90,12 @@ Holes come in groups with one diameter each. List every group the request mentio
 - "unspecified": the request does not say where.
 depth: null value for through holes (the usual case).
 units: "in" only if the user wrote inches; otherwise "mm".
+frame: null unless kind is "frame". For a frame:
+- type "table": a rectangle on top with a leg at each corner. "rectangle": one flat rectangular frame.
+- length along X, width along Y, height (tables) floor to top; all outside sizes. "1200 × 600 table frame, 900 high" is length 1200, width 600, height 900.
+- section: the section exactly as the user wrote it ("SHS 40×40×3"), with source "stated"; value null and source "missing" if the request does not name one. Never choose a section yourself: code finds it in the user's section library.
+- corners: "mitre" or "butt" only if the request says so; else "unspecified".
+holes: [] for a frame.
 questions: what you would need to ask before the part can be made, one short question each.`;
 
 export const DRAWING_SYSTEM = `You read 2D engineering drawings for Cocaide, a parametric CAD program, into a structured reading. You do not design the part: the user checks your reading on a confirmation card, then a planner builds it.
@@ -142,7 +153,30 @@ export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
 
   if (intent.action === "answer") return runAsk({ ...base, text: req.text, mode: "explain" });
   if (intent.action === "edit" && req.doc.features.length > 0) return runAsk({ ...base, text: req.text, mode: "edit" });
-  return createFrom(req, { ...intent, action: "create" }, new Set());
+  return createFrom(req, { ...intent, action: "create" }, new Set(), false);
+}
+
+/** What a frame can be made of: every size in the section library, and the part's own copies that aren't from it. */
+export function sectionOptions(doc: RawDocument, library: LibraryEntry[] = []): SectionOption[] {
+  const out: SectionOption[] = [];
+  for (const e of library) for (const s of e.sizes) out.push({ value: `lib|${e.id}|${s.designation}`, profile: e.name, designation: s.designation, from: "library" });
+  const ids = new Set(library.map((e) => e.id));
+  for (const [name, p] of Object.entries((doc.profiles ?? {}) as Record<string, ProfileDef>)) {
+    if (p.library && ids.has(p.library.id)) continue;
+    for (const s of p.sizes) out.push({ value: `part|${name}|${s.designation}`, profile: name, designation: s.designation, from: "part" });
+  }
+  return out;
+}
+
+/** The profile a chosen section is built from: a fresh copy of the library entry, or the part's own. */
+function sectionDef(doc: RawDocument, library: LibraryEntry[], value: string): { def: ProfileDef; designation: string } | null {
+  const [where, key, designation] = value.split("|");
+  if (where === "lib") {
+    const e = library.find((x) => x.id === key);
+    return e ? { def: partCopy(e), designation } : null;
+  }
+  const p = ((doc.profiles ?? {}) as Record<string, ProfileDef>)[key];
+  return p ? { def: structuredClone(p), designation } : null;
 }
 
 /** A drawing: read the sheet, then the confirmation card. */
@@ -243,11 +277,13 @@ export async function continuePartAsk(
     return fromDrawing(req, req.drawing, reading, new Set([...(prev.confirmed ?? []), ...confirmed]), true);
   }
   const { intent, confirmed } = answerIntent(prev.review.intent, answers);
-  return createFrom(req, intent, new Set([...(prev.confirmed ?? []), ...confirmed]));
+  // Build on a frame's card is the user's confirmation of it.
+  return createFrom(req, intent, new Set([...(prev.confirmed ?? []), ...confirmed]), true);
 }
 
-async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<string>): Promise<PartAskResult> {
-  const review = reviewIntent(intent, { text: req.text, confirmed });
+async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<string>, userConfirmed: boolean): Promise<PartAskResult> {
+  const frame = intent.kind === "frame";
+  const review = reviewIntent(intent, { text: req.text, confirmed, ...(frame ? { sections: sectionOptions(req.doc, req.library) } : {}) });
   const common: PartAskResult = {
     outcome: "questions",
     text: "",
@@ -264,24 +300,54 @@ async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<st
   };
   if (!review.ready) {
     const n = review.blanks.length;
-    common.text = [
-      n ? `I need ${n === 1 ? "one number" : `${n} things`} before I build this: ${review.blanks.map((b) => b.label.toLowerCase()).join(", ")}.` : "",
-      ...review.problems,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    const what = frame && review.blanks.every((b) => b.kind === "choice") ? (n === 1 ? "one choice" : `${n} choices`) : n === 1 ? "one number" : `${n} things`;
+    common.text = [n ? `I need ${what} before I build this: ${review.blanks.map((b) => b.label.toLowerCase()).join(", ")}.` : "", ...review.problems].filter(Boolean).join(" ");
     return common;
   }
+  if (frame) return userConfirmed ? buildFrame(req, review, common) : frameCard(review, common);
   if (review.intent.kind === "other") return buildOther(req, review, common);
   return build(req, review.intent, planPart(review.intent), common, `the request "${req.text}"`);
 }
 
+/** A frame's card: everything read is filled in, and building it is the user's confirmation (it commits stock and cuts). */
+function frameCard(review: Review, common: PartAskResult): PartAskResult {
+  const fr = review.intent.frame!;
+  const section = review.rows.find((r) => r.path === "frame.section");
+  const label = section?.options?.find((o) => o.value === section.value)?.label ?? "?";
+  const size = [fr.length.value, fr.width.value, ...(fr.type === "table" ? [fr.height.value] : [])];
+  common.text = `${frameWords(fr, size as number[])} in ${label}, ${fr.corners === "mitre" ? "mitred" : "butted"} at the corners. Check the section and the sizes, then build it.`;
+  return common;
+}
+
+/** A confirmed frame: the library's profile, planned, built and checked for fabrication. */
+async function buildFrame(req: PartAskRequest, review: Review, common: PartAskResult): Promise<PartAskResult> {
+  const fr = review.intent.frame!;
+  const section = sectionDef(req.doc, req.library ?? [], fr.section.value ?? "");
+  if (!section) return { ...common, outcome: "failed", text: "The chosen section is no longer in the library or the part." };
+  const plan = planFrame(review.intent, section);
+  if (!plan.ok) return { ...common, outcome: "failed", text: `Could not plan the frame: ${plan.error}` };
+  return build(req, review.intent, { ...plan, paths: {} } as unknown as Plan, common, `the request "${req.text}"`, {
+    judge: (doc, check) => critiqueFrame(plan.expect, check.measurements, check.errors, doc),
+    made: (check) => {
+      const m = check.measurements;
+      const corners = fr.corners === "mitre" ? "mitred corners" : fr.type === "table" ? "butt corners, the legs running through" : "butt corners";
+      return `${frameWords(fr, m?.boundingBox?.size ?? null)} of ${section.designation}: ${m?.members.length ?? 0} members, ${corners}.`;
+    },
+  });
+}
+
+interface Judge {
+  judge(doc: RawDocument, check: Awaited<ReturnType<KernelPort["check"]>>): Critique;
+  made(check: Awaited<ReturnType<KernelPort["check"]>>): string;
+}
+
 /** Rebuild the plan, criticise, one correction pass, proposal. */
-async function build(req: PartAskRequest, intent: Intent, plan: Plan, common: PartAskResult, what: string): Promise<PartAskResult> {
+async function build(req: PartAskRequest, intent: Intent, plan: Plan, common: PartAskResult, what: string, custom?: Judge): Promise<PartAskResult> {
   if (!plan.ok) return { ...common, outcome: "failed", text: `Could not plan the part: ${plan.error}` };
+  const judge = custom?.judge ?? ((_: RawDocument, c: Awaited<ReturnType<KernelPort["check"]>>) => critique(plan.expect, c.measurements, c.errors));
   let doc = plan.doc;
   let check = await req.kernel.check(doc);
-  let crit = critique(plan.expect, check.measurements, check.errors);
+  let crit = judge(doc, check);
   const notes = [...plan.notes];
   let correction: AskResult | null = null;
 
@@ -300,14 +366,14 @@ async function build(req: PartAskRequest, intent: Intent, plan: Plan, common: Pa
     if (correction.proposal) {
       doc = correction.proposal.doc;
       check = await req.kernel.check(doc);
-      crit = critique(plan.expect, check.measurements, check.errors);
+      crit = judge(doc, check);
       notes.push("The first plan did not match the request; one correction pass was made.");
     }
   }
 
   const proposal = replaceProposal(req.doc, doc, check.measurements?.volume ?? null, crit, notes);
   const m = check.measurements;
-  const made = describe(intent, m ? m.boundingBox!.size : null, m?.holeCount ?? 0, !!req.photo);
+  const made = custom ? custom.made(check) : describe(intent, m ? m.boundingBox!.size : null, m?.holeCount ?? 0, !!req.photo);
   const against = req.photo ? "what was read from the photo" : req.drawing ? "the drawing" : "the request";
   return {
     ...common,

@@ -6,6 +6,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { DrawingReading } from "../intent/drawing";
 import { PhotoReading } from "../intent/photo";
 import { Intent } from "../intent/schema";
+import { ProfileSuggestion } from "./profile";
 import { DEFAULT_MODEL, MODELS, type Effort } from "./models";
 
 export { DEFAULT_MODEL, MODELS, type Effort };
@@ -19,8 +20,8 @@ export interface ModelRequest {
 export interface IntentRequest {
   system: string;
   content: Anthropic.ContentBlockParam[];
-  /** Which structured output: a prompt's intent (default) or a drawing's reading. */
-  schema?: "intent" | "drawing" | "photo";
+  /** Which structured output: a prompt's intent (default), a drawing's or photo's reading, or a profile's suggested names. */
+  schema?: "intent" | "drawing" | "photo" | "profile";
 }
 
 export interface AskModel {
@@ -47,6 +48,8 @@ export function anthropicClient(s: ClientSettings): Anthropic {
     maxRetries: 1,
   });
 }
+
+const SCHEMAS = { intent: Intent, drawing: DrawingReading, photo: PhotoReading, profile: ProfileSuggestion } as const;
 
 export class AnthropicModel implements AskModel {
   constructor(
@@ -80,7 +83,7 @@ export class AnthropicModel implements AskModel {
         max_tokens: 8000,
         system: req.system,
         messages: [{ role: "user", content: req.content }],
-        output_config: { format: zodOutputFormat(req.schema === "drawing" ? DrawingReading : req.schema === "photo" ? PhotoReading : Intent), ...(effort ? { effort: this.effort } : {}) },
+        output_config: { format: zodOutputFormat(SCHEMAS[req.schema ?? "intent"]), ...(effort ? { effort: this.effort } : {}) },
       },
       { signal },
     );

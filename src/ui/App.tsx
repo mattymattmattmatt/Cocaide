@@ -5,7 +5,7 @@ import plateText from "../../examples/mounting-plate.cocaide.json?raw";
 import standText from "../../examples/stand.cocaide.json?raw";
 import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
-import { targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
+import { featureKind, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
 import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
@@ -20,6 +20,8 @@ import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog } from "./ask/AskSettingsDialog";
+import { canAsk, modelFor } from "./ask/settings";
+import type { ProfileFacts } from "../ask/profile";
 import { BodiesPanel } from "./BodiesPanel";
 import { CutListPanel } from "./CutListPanel";
 import type { FrameActions } from "./FrameProps";
@@ -122,7 +124,7 @@ export function App() {
 
   const { parsed, doc } = d;
   const params = useMemo(() => documentParameters(doc), [doc]);
-  const ask = useAsk({ kernel: kernel.port, doc, replaceDoc: d.replaceDoc });
+  const ask = useAsk({ kernel: kernel.port, doc, replaceDoc: d.replaceDoc, library });
   /** In the sketcher: replaces the draft with an accepted ask's sketch. */
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
@@ -402,6 +404,16 @@ export function App() {
     });
   };
 
+  /** The profile card's Suggest: the model names the section from its measurements (Phase K). */
+  const suggestNames = async (facts: ProfileFacts) => {
+    if (!canAsk(ask.settings)) {
+      ask.setSettingsOpen(true);
+      throw new Error("set up a model with Ask… first");
+    }
+    const [model, { suggestProfile }] = await Promise.all([modelFor(ask.settings), import("../ask/profile")]);
+    return suggestProfile(model, facts);
+  };
+
   /** A member of a library size: the part's copy of the profile and the member, as one undo step. */
   const addMember = (entry: LibraryEntry, designation: string) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
@@ -627,7 +639,7 @@ export function App() {
     }
     const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
     const op = target.kind === "feature" ? askDoc.features.find((g) => g.id === target.id)?.op : undefined;
-    const kind: PacketKind = target.kind === "feature" ? (op === "sketch" ? "sketch" : "feature") : target.kind;
+    const kind: PacketKind = target.kind === "feature" ? featureKind(op) : target.kind;
     ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, ...dropped, x, y });
   };
 
@@ -1029,7 +1041,15 @@ export function App() {
         </main>
         <AskPopover ask={ask} />
         {profileCard && doc && (
-          <ProfileCard key={profileCard} doc={doc} sketchId={profileCard} library={library} onSave={(def, fav, prev) => void saveProfileCard(def, fav, prev)} onClose={() => setProfileCard(null)} />
+          <ProfileCard
+            key={profileCard}
+            doc={doc}
+            sketchId={profileCard}
+            library={library}
+            onSave={(def, fav, prev) => void saveProfileCard(def, fav, prev)}
+            onClose={() => setProfileCard(null)}
+            onSuggest={suggestNames}
+          />
         )}
         {ask.settingsOpen && <AskSettingsDialog settings={ask.settings} onSave={ask.setSettings} onClose={() => ask.setSettingsOpen(false)} />}
       </div>

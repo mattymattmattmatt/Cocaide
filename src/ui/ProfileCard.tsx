@@ -2,12 +2,15 @@
 // is finished. It names the profile, lists its sizes (the parameters its
 // dimensions use are the size parameters), says what sits on a member's line,
 // and tags it. Every size is measured here: area, kg/m and the envelope.
+// Suggest (Phase K) asks the model for a name, designations, tags and the
+// anchor from those measurements; it fills the fields and changes nothing else.
 
 import { useMemo, useState } from "react";
 import type { RawDocument } from "../doc/commands";
 import type { ProfileDef, ProfileSize } from "../doc/types";
 import { kgPerMetre, sectionAt, sizedEntities, STEEL_DENSITY, suggestTags } from "../geom/section";
 import { designationFor, nameTaken, profileFromSketch, sketchParameters, type LibraryEntry } from "../weldment/library";
+import type { ProfileFacts, ProfileSuggestion } from "../ask/profile";
 import { ProfileDrawing } from "./ProfileDrawing";
 
 interface Props {
@@ -16,6 +19,8 @@ interface Props {
   library: LibraryEntry[];
   onSave(def: ProfileDef, favourite: boolean, previous: LibraryEntry | undefined): void;
   onClose(): void;
+  /** Asks the model for names and tags (Phase K). Absent: no Suggest button. */
+  onSuggest?(facts: ProfileFacts): Promise<ProfileSuggestion>;
 }
 
 const n = (x: number, digits = 3) => x.toLocaleString("en-US", { maximumFractionDigits: digits });
@@ -34,7 +39,7 @@ const row = (designation: string, values: Record<string, number>): Row => ({
   text: Object.fromEntries(Object.entries(values).map(([k, v]) => [k, Number.isFinite(v) ? String(v) : ""])),
 });
 
-export function ProfileCard({ doc, sketchId, library, onSave, onClose }: Props) {
+export function ProfileCard({ doc, sketchId, library, onSave, onClose, onSuggest }: Props) {
   const sketch = doc.features.find((f) => f.id === sketchId) as Record<string, unknown> | undefined;
   const mark = sketch?.profile as { name: string; library?: { id: string } } | undefined;
   const previous = library.find((e) => e.id === mark?.library?.id);
@@ -61,6 +66,8 @@ export function ProfileCard({ doc, sketchId, library, onSave, onClose }: Props) 
   const [favourite, setFavourite] = useState(previous?.favourite ?? false);
   const [extraTags, setExtraTags] = useState("");
   const [shown, setShown] = useState(0);
+  const [asking, setAsking] = useState(false);
+  const [advice, setAdvice] = useState<{ why: string } | { error: string } | null>(null);
 
   // A size left without a designation gets one from the name and its values.
   const named = sizes.map((s) => ({ ...s, designation: s.designation.trim() || designationFor(name.trim() || "profile", s.values) }));
@@ -87,6 +94,48 @@ export function ProfileCard({ doc, sketchId, library, onSave, onClose }: Props) 
   });
 
   const setRow = (i: number, patch: Partial<Row>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  /** What the model is told: the measured sizes, nothing else of the part. */
+  const facts = (): ProfileFacts | null => {
+    if (!draft || !first) return null;
+    const counts = new Map<string, number>();
+    for (const e of draft.entities) if (!e.construction) counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+    const where = (v: number, lo: number, hi: number, words: [string, string, string]) =>
+      Math.abs(v - lo) < 1e-6 ? words[0] : Math.abs(v - hi) < 1e-6 ? words[2] : Math.abs(v - (lo + hi) / 2) < 1e-6 ? words[1] : null;
+    const x = where(0, first.min[0], first.max[0], ["left", "centre", "right"]);
+    const y = where(0, first.min[1], first.max[1], ["lower", "middle", "upper"]);
+    const origin = x && y ? (x === "centre" && y === "middle" ? "centre" : `${y} ${x === "centre" ? "middle" : x}${x !== "centre" && y !== "middle" ? " corner" : ""}`) : "inside, off the envelope's edges and middle";
+    return {
+      parameters: names,
+      drawn: [...counts].map(([t, k]) => `${k} ${t}`).join(", "),
+      sizes: measured.flatMap((m, i) =>
+        m.ok
+          ? [{ values: named[i].values, area: m.props.area, envelope: m.props.envelope, centroid: m.props.centroid, ix: m.props.ix, iy: m.props.iy, hollow: m.props.hollow, open: m.props.open, round: m.props.round }]
+          : [],
+      ),
+      origin,
+      taken: library.filter((e) => e.id !== previous?.id).map((e) => e.name),
+      current: { name: name.trim(), designations: rows.map((r) => r.designation.trim()) },
+    };
+  };
+  const suggest = async () => {
+    const f = facts();
+    if (!f || !onSuggest) return;
+    setAsking(true);
+    setAdvice(null);
+    try {
+      const s = await onSuggest(f);
+      if (s.name) setName(s.name);
+      if (s.designations.length === rows.length) setRows(rows.map((r, i) => ({ ...r, designation: s.designations[i] })));
+      if (s.tags.length) setPicked(new Set(s.tags));
+      setAnchor(s.anchor);
+      setAdvice({ why: s.why });
+    } catch (e) {
+      setAdvice({ error: (e as Error).message });
+    } finally {
+      setAsking(false);
+    }
+  };
   const save = () => {
     if (problems.length || !sketch) return;
     onSave(profileFromSketch(sketch, doc, { name, sizes: named, anchor, tags, material }), favourite, previous);
@@ -106,6 +155,12 @@ export function ProfileCard({ doc, sketchId, library, onSave, onClose }: Props) 
       >
         <div className="profile-card-head">
           <h2>Weldment profile</h2>
+          <span className="sep" />
+          {onSuggest && (
+            <button type="button" className="suggest" onClick={() => void suggest()} disabled={asking || !first} title="Ask the model for a name, designations, tags and the anchor, from the measured section" data-testid="profile-suggest">
+              {asking ? "Asking…" : "✦ Suggest"}
+            </button>
+          )}
           <button type="button" className={`star${favourite ? " on" : ""}`} aria-pressed={favourite} aria-label="Favourite" onClick={() => setFavourite(!favourite)} data-testid="profile-favourite">
             {favourite ? "★" : "☆"}
           </button>
@@ -123,6 +178,16 @@ export function ProfileCard({ doc, sketchId, library, onSave, onClose }: Props) 
                 : "One size: write a dimension as =b to make a family of sizes."}
             </div>
             {previous && <div className="muted small">Saves version {previous.version + 1} of {previous.name}.</div>}
+            {advice && "why" in advice && (
+              <div className="suggested small" data-testid="profile-suggested">
+                Suggested: {advice.why} Change anything; the sizes are yours.
+              </div>
+            )}
+            {advice && "error" in advice && (
+              <div className="command-error small" role="alert" data-testid="profile-suggest-error">
+                No suggestion: {advice.error}
+              </div>
+            )}
           </div>
         </div>
         <table className="profile-sizes" data-testid="profile-sizes">

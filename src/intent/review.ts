@@ -5,8 +5,10 @@
 // - Anything the part needs that is missing or under 0.8 confidence is a
 //   blank the user fills in the confirmation card.
 // - What the user typed is kept exactly; the planner never rounds it.
+// - A frame's section is the user's words, matched against the section
+//   library by code. The model never picks one (Phase K).
 
-import { blank, type HoleGroup, type Intent, type NumberField, type Placement, type PointsField } from "./schema";
+import { blank, emptyFrame, type FrameIntent, type HoleGroup, type Intent, type NumberField, type Placement, type PointsField } from "./schema";
 
 export const CONFIDENT = 0.8;
 
@@ -56,7 +58,21 @@ export interface Source {
   drawing?: { text: string; legible: boolean };
   /** Paths the user filled in the card. */
   confirmed?: Set<string>;
+  /** The sections a frame can be made of: the section library's sizes, and the part's own copies. */
+  sections?: SectionOption[];
 }
+
+/** One size of one profile a frame can be built from. */
+export interface SectionOption {
+  /** What the card gives back: "lib|<library id>|<designation>" or "part|<profile>|<designation>". */
+  value: string;
+  /** The family ("SHS") and the size ("SHS 40x40x3"). */
+  profile: string;
+  designation: string;
+  from: "library" | "part";
+}
+
+export const EMPTY_LIBRARY = "The section library is empty, so there is nothing to build the frame from. Draw the section as a sketch, tick Weldment profile, save it, then ask again.";
 
 export function reviewIntent(input: Intent, src: Source): Review {
   const intent = structuredClone(input);
@@ -91,7 +107,14 @@ export function reviewIntent(input: Intent, src: Source): Review {
 
   if (intent.action !== "create") return { intent, rows, blanks: [], problems, ready: true };
 
-  if (intent.kind === "plate") {
+  if (intent.kind === "frame") {
+    const fr = (intent.frame ??= emptyFrame());
+    num(fr.length, "frame.length", "Length (X), outside", { required: true });
+    num(fr.width, "frame.width", "Width (Y), outside", { required: true });
+    if (fr.type === "table") num(fr.height, "frame.height", "Height, floor to top", { required: true });
+    rows.push(sectionRow(fr, src, confirmed, problems), cornersRow(fr, src, confirmed));
+    intent.holes = [];
+  } else if (intent.kind === "plate") {
     num(intent.width, "width", "Width (X)", { required: true });
     num(intent.height, "height", "Height (Y)", { required: true });
     num(intent.thickness, "thickness", "Thickness", { required: true, askFirst: true });
@@ -262,6 +285,89 @@ export function numbersIn(text: string, words = false): number[] {
   return out;
 }
 
+/** "SHS 40×40×3", "shs 40 x 40 x 3" and "SHS 40 by 40 by 3" are the same words. */
+export function sectionKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\s+by\s+/g, "x")
+    .replace(/[×*]/g, "x")
+    .replace(/\s+/g, "");
+}
+
+/** The library sizes the user's words name: the same words, or the same numbers in the named family. */
+export function matchSection(words: string, options: SectionOption[]): SectionOption[] {
+  const key = sectionKey(words);
+  const exact = options.filter((o) => sectionKey(o.designation) === key);
+  if (exact.length) return exact;
+  const nums = numbersIn(words);
+  if (!nums.length) return [];
+  const families = [...new Set(options.map((o) => o.profile.toLowerCase()))].filter((f) => new RegExp(`\\b${f.replace(/[^a-z0-9]/g, "")}\\b`).test(words.toLowerCase()));
+  return options.filter((o) => {
+    if (families.length && !families.includes(o.profile.toLowerCase())) return false;
+    const own = numbersIn(o.designation);
+    return own.length === nums.length && own.every((x, i) => Math.abs(x - nums[i]) < 1e-9);
+  });
+}
+
+/** The section: the request's words, found in the library. Never a guess. */
+function sectionRow(fr: FrameIntent, src: Source, confirmed: Set<string>, problems: string[]): Row {
+  const options = src.sections ?? [];
+  if (!options.length) problems.push(EMPTY_LIBRARY);
+  const words = fr.section.value;
+  const row: Row = {
+    path: "frame.section",
+    label: "Section",
+    kind: "choice",
+    options: options.map((o) => ({ value: o.value, label: o.from === "part" ? `${o.designation} (this part)` : o.designation })),
+    value: null,
+    unit: "",
+    evidence: fr.section.evidence,
+    source: fr.section.source,
+    confidence: fr.section.confidence,
+    blank: true,
+  };
+  const chosen = options.find((o) => o.value === words);
+  // Chosen in the card, or already matched on an earlier pass: an option's own value.
+  if (chosen) return { ...row, value: chosen.value, source: confirmed.has(row.path) ? "entered" : "stated", blank: false };
+  fr.section.value = null;
+  if (!words || fr.section.source === "missing") return { ...row, note: "the request does not name a section" };
+  if (!src.text || !sectionKey(src.text).includes(sectionKey(words))) return { ...row, note: `a guess: the request does not say "${words}"` };
+  if (fr.section.confidence < CONFIDENT) return { ...row, note: `read with low confidence (${Math.round(fr.section.confidence * 100)}%)` };
+  const found = matchSection(words, options);
+  if (found.length === 1) {
+    fr.section.value = found[0].value;
+    return { ...row, value: found[0].value, blank: false, note: `${found[0].designation}, from ${found[0].from === "part" ? "this part" : "the section library"}` };
+  }
+  return {
+    ...row,
+    note: found.length ? `"${words}" could be ${found.map((o) => o.designation).join(" or ")}: choose one` : `"${words}" is not in the section library: choose one, or add it there first`,
+  };
+}
+
+/** How the corners are joined: stated in the request, or chosen in the card. */
+function cornersRow(fr: FrameIntent, src: Source, confirmed: Set<string>): Row {
+  const read = fr.corners;
+  const said = read === "mitre" ? /\bmit(re|er)/i : read === "butt" ? /\bbutt/i : null;
+  const ok = !!said && (confirmed.has("frame.corners") || said.test(src.text ?? ""));
+  if (!ok) fr.corners = "unspecified";
+  return {
+    path: "frame.corners",
+    label: "Corners",
+    kind: "choice",
+    options: [
+      { value: "mitre", label: "Mitred" },
+      { value: "butt", label: fr.type === "table" ? "Butt: the legs run through" : "Butt: the long sides run through" },
+    ],
+    value: ok ? fr.corners : null,
+    unit: "",
+    evidence: "",
+    source: confirmed.has("frame.corners") ? "entered" : ok ? "stated" : "missing",
+    confidence: ok ? 1 : 0,
+    blank: !ok,
+    note: ok ? undefined : said ? `a guess: the request does not say ${read}` : "the request does not say how the corners are joined",
+  };
+}
+
 /** The intent with the user's answers from the card filled in. */
 export function answerIntent(intent: Intent, answers: Record<string, number | string | { x: number; y: number }[]>): { intent: Intent; confirmed: Set<string> } {
   const next = structuredClone(intent);
@@ -269,6 +375,13 @@ export function answerIntent(intent: Intent, answers: Record<string, number | st
   for (const [path, value] of Object.entries(answers)) {
     const m = /^holes\[(\d+)\]\.(\w+)$/.exec(path);
     const q = /^questions\[(\d+)\]$/.exec(path);
+    const fr = /^frame\.(\w+)$/.exec(path);
+    if (fr) {
+      const frame = (next.frame ??= emptyFrame()) as unknown as Record<string, unknown>;
+      frame[fr[1]] = fr[1] === "corners" ? value : { value, evidence: "entered in the card", source: "stated", confidence: 1 };
+      confirmed.add(path);
+      continue;
+    }
     if (q) {
       next.questions[Number(q[1])] = `${next.questions[Number(q[1])]} — ${String(value)}`;
       confirmed.add(path);

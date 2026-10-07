@@ -32,6 +32,8 @@ export function IntentCard({ review, onBuild, drawing, views }: Props) {
   const editable = review.rows.filter((r) => r.source !== "placement");
   const parsed = (r: Row): Answer | undefined => parse(r, values[r.path]);
   const missing = review.blanks.filter((r) => parsed(r) === undefined);
+  // A drawing's numbers, and a frame's section and cuts, are confirmed by building.
+  const confirm = !!drawing || review.intent.kind === "frame";
 
   const build = () => {
     const answers: Record<string, Answer> = {};
@@ -90,9 +92,11 @@ export function IntentCard({ review, onBuild, drawing, views }: Props) {
       </table>
       <div className="ask-buttons">
         <button className="primary" disabled={missing.length > 0 || review.problems.length > 0} onClick={build} data-testid="intent-build">
-          {drawing ? "Confirm and build" : "Build"}
+          {confirm ? "Confirm and build" : "Build"}
         </button>
-        <span className="muted small">{missing.length ? `${missing.length} to fill` : drawing ? "Check each value against the drawing" : "Ready to build"}</span>
+        <span className="muted small">
+          {missing.length ? `${missing.length} to fill` : drawing ? "Check each value against the drawing" : confirm ? "Check the section and the sizes" : "Ready to build"}
+        </span>
       </div>
     </div>
   );

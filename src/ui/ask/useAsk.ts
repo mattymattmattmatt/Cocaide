@@ -10,6 +10,7 @@ import type { AskTarget, PacketKind } from "../../ask/packet";
 import type { Drawing, PartAskResult, Photo } from "../../ask/part";
 import type { RawDocument } from "../../doc/commands";
 import type { SketchFeature } from "../../doc/types";
+import type { LibraryEntry } from "../../weldment/library";
 import { logAsk, updateAsk } from "./log";
 import { canAsk, loadSettings, modelFor, saveSettings, type AskSettings } from "./settings";
 
@@ -55,9 +56,11 @@ interface Options {
   /** The user's document as it is now. */
   doc: RawDocument | null;
   replaceDoc(doc: RawDocument): void;
+  /** The section library in this browser: what a frame is built from (Phase K). */
+  library?: LibraryEntry[];
 }
 
-export function useAsk({ kernel, doc, replaceDoc }: Options) {
+export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
   const [state, setState] = useState<AskState | null>(null);
   const [settings, setSettingsState] = useState<AskSettings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -132,7 +135,7 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
       // The part-level prompt (intent schema, planner) loads on first use.
       const result: PartAskResult =
         ctx.target.kind === "part"
-          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
+          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, library, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
           : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, signal: controller.signal, onEvent });
       if (controller.signal.aborted) return;
       const recordId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -166,7 +169,7 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
       // From empty space a change is always a proposal (spec 6.2): never applied immediately.
       if (applyNow && result.proposal && ctx.target.kind !== "part") await accept(done);
     },
-    [settings, kernel, accept],
+    [settings, kernel, accept, library],
   );
 
   /** The user filled the confirmation card: build with their numbers. */
@@ -179,12 +182,12 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
       setState({ phase: "running", ctx: s.ctx, prompt: s.prompt, applyNow: false, steps });
       const model = await modelFor(settings);
       const { continuePartAsk } = await import("../../ask/part");
-      const result = await continuePartAsk({ doc: s.ctx.doc, text: s.prompt, drawing: s.ctx.drawing, model, kernel, signal: controller.signal }, s.result, answers);
+      const result = await continuePartAsk({ doc: s.ctx.doc, text: s.prompt, drawing: s.ctx.drawing, model, kernel, library, signal: controller.signal }, s.result, answers);
       if (controller.signal.aborted) return;
       updateAsk(s.recordId, { outcome: result.outcome, text: result.text, calls: [...s.result.calls, ...result.calls], answers });
       setState({ ...s, result, preview: true, accepted: false, dropped: undefined, error: undefined });
     },
-    [settings, kernel],
+    [settings, kernel, library],
   );
 
   const discard = useCallback(() => {

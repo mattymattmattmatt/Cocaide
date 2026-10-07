@@ -79,6 +79,19 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Does it clash?", prompt: "Does this body overlap any other body? Do not change anything.", submit: true },
         { label: "Rename it", prompt: "Rename this body to ", submit: false },
       ];
+    case "member":
+      return [
+        { label: "Swap its size", prompt: "Change this member to ", submit: false },
+        { label: "Turn it 90°", prompt: "Turn this member 90° about its line.", submit: true },
+        { label: "What is its cut?", prompt: "What is this member's cut length and end angles?", submit: true },
+      ];
+    case "joint":
+      return [
+        { label: "Mitre it", prompt: "Make this joint a mitre.", submit: true },
+        { label: "Butt it", prompt: "Make this a butt joint, with this member running through: ", submit: false },
+        { label: "Leave a gap", prompt: "Leave a gap of ", submit: false },
+        { label: "Explain it", prompt: "What does this joint do to each member?", submit: true },
+      ];
     case "part":
       return [
         { label: "New part from a description", prompt: "", submit: false },
@@ -108,6 +121,7 @@ Rules:
 - Every edit is checked: the part is rebuilt and the edit is kept only if nothing newly fails. A failed edit returns the error; read it and fix the call, or stop and say why.
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
+- Weldments: a member's size must be one of the sizes in the packet's member.sizes; never invent one. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
 - Finish with one or two plain sentences for the user: what you changed and the result, or the answer, or why you stopped. No markdown headings.

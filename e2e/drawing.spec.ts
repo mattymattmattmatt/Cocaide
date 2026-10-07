@@ -53,6 +53,7 @@ const bracketReading = JSON.stringify({
         depth: none(),
       },
     ],
+    frame: null,
     description: "",
     questions: [],
   },

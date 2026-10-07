@@ -4,9 +4,9 @@
 // a confirmed intent into features. Intent is not the document.
 
 import { z } from "zod";
-import { KINDS, PLACEMENTS, SOURCES } from "./constants";
+import { CORNERS, FRAME_TYPES, KINDS, PLACEMENTS, SOURCES } from "./constants";
 
-export { KINDS, PLACEMENTS, SOURCES };
+export { CORNERS, FRAME_TYPES, KINDS, PLACEMENTS, SOURCES };
 
 /**
  * Where a value came from:
@@ -29,6 +29,9 @@ const field = <T extends z.ZodTypeAny>(value: T) =>
 
 export const NumberField = field(z.number());
 export type NumberField = z.infer<typeof NumberField>;
+
+export const TextField = field(z.string());
+export type TextField = z.infer<typeof TextField>;
 
 const Point = z.object({ x: z.number(), y: z.number() });
 export const PointsField = field(z.array(Point));
@@ -56,6 +59,25 @@ export const HoleGroup = z.object({
 });
 export type HoleGroup = z.infer<typeof HoleGroup>;
 
+/**
+ * A frame of structural members (Phase K). Sizes are outside sizes. The
+ * section is the user's words; code matches them against the section library.
+ */
+export const FrameIntent = z.object({
+  type: z.enum(FRAME_TYPES),
+  /** Outside size along X. */
+  length: NumberField,
+  /** Outside size along Y. */
+  width: NumberField,
+  /** table: floor to top, along Z. */
+  height: NumberField,
+  /** The section exactly as written in the request ("SHS 40×40×3", "40x40x3 box section"); value null when not given. */
+  section: TextField,
+  /** How the corners are joined; "unspecified" when the request does not say. */
+  corners: z.enum(CORNERS),
+});
+export type FrameIntent = z.infer<typeof FrameIntent>;
+
 export const Intent = z.object({
   /** create: a new part. edit: change the current part. answer: a question about it. */
   action: z.enum(["create", "edit", "answer"]),
@@ -74,6 +96,8 @@ export const Intent = z.object({
   /** plate: radius of the four vertical corners; null value: sharp. */
   cornerRadius: NumberField,
   holes: z.array(HoleGroup),
+  /** frame: the frame; null for any other kind. */
+  frame: FrameIntent.nullable(),
   /** other: what the part is, in a sentence. */
   description: z.string(),
   /** What the model would need to know that the request does not say. */
@@ -82,6 +106,16 @@ export const Intent = z.object({
 export type Intent = z.infer<typeof Intent>;
 
 export const blank = (): NumberField => ({ value: null, evidence: "", source: "missing", confidence: 0 });
+export const blankText = (): TextField => ({ value: null, evidence: "", source: "missing", confidence: 0 });
+
+export const emptyFrame = (type: FrameIntent["type"] = "table"): FrameIntent => ({
+  type,
+  length: blank(),
+  width: blank(),
+  height: blank(),
+  section: blankText(),
+  corners: "unspecified",
+});
 export const stated = (value: number, evidence: string): NumberField => ({ value, evidence, source: "stated", confidence: 1 });
 
 export const emptyHoleGroup = (): HoleGroup => ({
@@ -109,6 +143,7 @@ export const emptyIntent = (action: Intent["action"] = "create"): Intent => ({
   diameter: blank(),
   cornerRadius: blank(),
   holes: [],
+  frame: null,
   description: "",
   questions: [],
 });
