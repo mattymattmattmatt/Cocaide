@@ -22,6 +22,8 @@ export interface DocumentState {
   canRedo: boolean;
   /** Apply a command. Returns the error text when it was rejected. */
   dispatch(cmd: Command): string | null;
+  /** Replace the document with one already checked (an accepted proposal): one undo step. */
+  replaceDoc(doc: RawDocument): void;
   /** Replace the whole text (typing in the JSON editor). */
   setText(text: string): void;
   /** Load a new document: resets history. */
@@ -87,6 +89,16 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     [commitTyping],
   );
 
+  const replaceDoc = useCallback(
+    (next: RawDocument) => {
+      commitTyping();
+      const text = formatDocument(next);
+      history.current = record(history.current, text);
+      show(text);
+    },
+    [commitTyping],
+  );
+
   const undo = useCallback(() => {
     commitTyping();
     history.current = undoHistory(history.current);
@@ -115,6 +127,7 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     canUndo: canUndo(history.current) || typedSinceCommit,
     canRedo: canRedo(history.current) && !typedSinceCommit,
     dispatch,
+    replaceDoc,
     setText,
     load,
     markSaved: setSavedText,

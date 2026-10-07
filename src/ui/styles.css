@@ -356,3 +356,75 @@ button.danger { color: var(--bad); }
   field-sizing: content; min-width: 4ch;
 }
 .doc-title input:hover, .doc-title input:focus { border-color: var(--border); background: var(--panel-2); outline: none; }
+
+/* ------------------------------------------------------------ right-click ask */
+.ask {
+  position: fixed; z-index: 50; width: 360px; max-height: calc(100vh - 16px); overflow: auto;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 32px rgb(0 0 0 / 0.22), 0 2px 6px rgb(0 0 0 / 0.12);
+  font-size: 13px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.ask.ask-done, .ask.ask-running { width: 400px; }
+.ask-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ask-head strong { font-family: var(--mono); font-size: 12px; }
+.ask button {
+  height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--panel-2); cursor: pointer; font-size: 12.5px;
+}
+.ask button:hover:not(:disabled) { border-color: var(--accent); }
+.ask button:disabled { opacity: 0.45; cursor: default; }
+.ask button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.ask button.icon { height: 24px; width: 24px; padding: 0; border: none; background: none; font-size: 17px; color: var(--muted); }
+.ask button.link { border: none; background: none; padding: 0; height: auto; color: var(--accent); font-size: 12px; }
+.ask-form { display: flex; gap: 6px; align-items: flex-end; }
+.ask-form textarea {
+  flex: 1; min-width: 0; resize: vertical; min-height: 44px; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px;
+}
+.ask-form textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
+.ask-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.ask-actions button { height: 26px; font-size: 12px; }
+.ask-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.ask-scope { font-size: 11.5px; text-align: right; }
+.ask-model { font-size: 12px; }
+.ask-body { display: flex; flex-direction: column; gap: 8px; }
+.ask-prompt { margin: 0; padding: 4px 8px; border-left: 3px solid var(--border); color: var(--muted); white-space: pre-wrap; }
+.ask-steps { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.ask-outcome { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.ask-outcome.proposal { color: var(--accent); }
+.ask-outcome.refused, .ask-outcome.failed { color: var(--bad); }
+.ask-text { white-space: pre-wrap; line-height: 1.45; }
+.ask-proposal { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: var(--panel-2); }
+.ask-changes { margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.ask-volume { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.ask-buttons { display: flex; align-items: center; gap: 6px; }
+.ask .check { font-size: 12px; }
+.spinner {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite; margin-right: auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.preview-banner {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 12px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; white-space: nowrap;
+}
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / 0.35); display: grid; place-items: center; }
+.modal {
+  width: min(460px, calc(100vw - 32px)); background: var(--panel); color: var(--text); border-radius: 12px;
+  border: 1px solid var(--border); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.3);
+}
+.modal h2 { margin: 0; font-size: 16px; }
+.modal input, .modal select {
+  height: 30px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px; width: 100%;
+}
+.modal-buttons { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.modal-buttons .sep { flex: 1; }
+.modal-buttons button {
+  height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer;
+}
+.modal-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.modal-buttons button:disabled { opacity: 0.45; cursor: default; }
+.feature-error[title] { cursor: context-menu; }

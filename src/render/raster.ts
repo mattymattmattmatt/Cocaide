@@ -40,6 +40,8 @@ export interface RenderOptions {
   hiddenEdges?: boolean;
   /** Edges (by B-rep edge index) not to draw: seams, which are not feature edges. */
   skipEdges?: number[];
+  /** Frame the view on these faces and edges (with the part around them), not on the whole part. */
+  frame?: { faces?: number[]; edges?: number[] };
 }
 
 export interface Image {
@@ -118,9 +120,20 @@ export function render(mesh: MeshData, opts: RenderOptions): Image {
   const margin = 0.1;
   const spanX = Math.max(maxX - minX, 1e-9);
   const spanY = Math.max(maxY - minY, 1e-9);
-  const scale = Math.min((w * (1 - 2 * margin)) / spanX, (h * (1 - 2 * margin)) / spanY);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
+  let scale = Math.min((w * (1 - 2 * margin)) / spanX, (h * (1 - 2 * margin)) / spanY);
+  let cx = (minX + maxX) / 2;
+  let cy = (minY + maxY) / 2;
+  const framed = frameBounds(mesh, opts.frame, x, y);
+  if (framed) {
+    // The selection, at 2.5 times its size, but never less than a third of the part: keep some context.
+    const fx = Math.max((framed.maxX - framed.minX) * 2.5, spanX * 0.35);
+    const fy = Math.max((framed.maxY - framed.minY) * 2.5, spanY * 0.35);
+    if (fx < spanX || fy < spanY) {
+      scale = Math.min((w * (1 - 2 * margin)) / fx, (h * (1 - 2 * margin)) / fy);
+      cx = (framed.minX + framed.maxX) / 2;
+      cy = (framed.minY + framed.maxY) / 2;
+    }
+  }
   for (let i = 0; i < n; i++) {
     proj[i * 3] = w / 2 + (proj[i * 3] - cx) * scale;
     proj[i * 3 + 1] = h / 2 - (proj[i * 3 + 1] - cy) * scale;
@@ -303,6 +316,37 @@ export function render(mesh: MeshData, opts: RenderOptions): Image {
       }
     });
   }
+}
+
+/** Screen-space bounds (before scaling) of the faces and edges to frame on, or null. */
+function frameBounds(mesh: MeshData, frame: RenderOptions["frame"], x: Vec3, y: Vec3) {
+  if (!frame) return null;
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  const add = (px: number, py: number, pz: number) => {
+    const sx = px * x[0] + py * x[1] + pz * x[2];
+    const sy = px * y[0] + py * y[1] + pz * y[2];
+    minX = Math.min(minX, sx);
+    maxX = Math.max(maxX, sx);
+    minY = Math.min(minY, sy);
+    maxY = Math.max(maxY, sy);
+  };
+  for (const f of frame.faces ?? []) {
+    const r = mesh.faceRanges[f];
+    if (!r) continue;
+    for (let i = r.start; i < r.start + r.count; i++) {
+      const v = mesh.indices[i] * 3;
+      add(mesh.positions[v], mesh.positions[v + 1], mesh.positions[v + 2]);
+    }
+  }
+  for (const e of frame.edges ?? []) {
+    const r = mesh.edgeRanges[e];
+    if (!r) continue;
+    for (let k = r.start * 6; k < (r.start + r.count) * 6; k += 3) add(mesh.edges[k], mesh.edges[k + 1], mesh.edges[k + 2]);
+  }
+  return minX <= maxX ? { minX, maxX, minY, maxY } : null;
 }
 
 const GLYPHS: Record<string, string[]> = {

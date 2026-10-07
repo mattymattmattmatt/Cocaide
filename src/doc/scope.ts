@@ -4,6 +4,8 @@
 // Tokens:
 //   "<featureId>"   change that feature; add a feature that references it
 //                   (a pattern of it, an extrude of a sketch)
+//   "<sketch>/*"    the entities and constraints of that sketch, nothing else
+//   "<sketch>/<e>"  that entity of the sketch, and the constraints on it
 //   "+"             add any new feature, or a new parameter
 //   "param:<name>"  change that parameter
 //   "name"          rename the document
@@ -15,6 +17,7 @@ import type { Command, RawDocument } from "./commands";
 import { references } from "./commands";
 import { isObject } from "./validate";
 import { documentParameters, parameterRefs } from "./parameters";
+import { rawConstraintEntities } from "./sketch";
 
 export type WriteScope = string[];
 
@@ -32,7 +35,14 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       break;
     }
     case "updateFeature":
-    case "replaceFeature":
+    case "replaceFeature": {
+      what = `${cmd.type} "${cmd.id}"`;
+      // Sketch-content scope covers a rewrite that only touches entities and constraints.
+      const before = doc.features.find((f) => isObject(f) && f.id === cmd.id);
+      const after = cmd.type === "updateFeature" ? { ...before, ...cmd.patch } : (cmd.feature as Record<string, unknown>);
+      allowed = has(cmd.id) || (has(`${cmd.id}/*`) && !!before && onlyContentsChanged(before, after));
+      break;
+    }
     case "deleteFeature":
     case "reorderFeature":
     case "suppressFeature":
@@ -40,8 +50,24 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       allowed = has(cmd.id);
       break;
     case "setDimension":
-      what = `setDimension on "${cmd.sketch}"`;
-      allowed = has(cmd.sketch);
+    case "deleteConstraint": {
+      what = `${cmd.type} ${cmd.index} on "${cmd.sketch}"`;
+      const k = sketchConstraints(doc, cmd.sketch)[cmd.index];
+      allowed = sketchWide(cmd.sketch) || rawConstraintEntities(k).some((e) => has(`${cmd.sketch}/${e}`));
+      break;
+    }
+    case "addConstraint":
+      what = `addConstraint on "${cmd.sketch}"`;
+      allowed = sketchWide(cmd.sketch) || rawConstraintEntities(cmd.constraint).some((e) => has(`${cmd.sketch}/${e}`));
+      break;
+    case "updateEntity":
+    case "deleteEntity":
+      what = `${cmd.type} "${cmd.id}" in "${cmd.sketch}"`;
+      allowed = sketchWide(cmd.sketch) || has(`${cmd.sketch}/${cmd.id}`);
+      break;
+    case "addEntity":
+      what = `addEntity in "${cmd.sketch}"`;
+      allowed = sketchWide(cmd.sketch);
       break;
     case "setParameter":
     case "deleteParameter": {
@@ -59,4 +85,23 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       return "writeScope: unknown command";
   }
   return allowed ? null : `writeScope: ${what} is outside the scope [${scope.join(", ")}]`;
+
+  function sketchWide(sketch: string) {
+    return has(sketch) || has(`${sketch}/*`);
+  }
+}
+
+function sketchConstraints(doc: RawDocument, sketch: string): unknown[] {
+  const f = doc.features.find((x) => isObject(x) && x.id === sketch);
+  return f && Array.isArray(f.constraints) ? f.constraints : [];
+}
+
+/** True when two versions of a feature differ only in entities and constraints. */
+function onlyContentsChanged(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const k of keys) {
+    if (k === "entities" || k === "constraints") continue;
+    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) return false;
+  }
+  return true;
 }

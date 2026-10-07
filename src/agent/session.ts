@@ -12,29 +12,13 @@ import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument } from "../doc/format";
 import { createHistory, record, redo, undo, canRedo, canUndo, type History } from "../doc/history";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import type { Constraint, EdgeSelector, FaceSelector, SketchEntity, Vec3 } from "../doc/types";
-import { allErrors, Checker, isObject, validateDocument, validateEdgeSelector, validateFaceSelector } from "../doc/validate";
+import type { Constraint, SketchEntity, Vec3 } from "../doc/types";
+import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
-import {
-  describeEdges,
-  describeFaces,
-  exportSTEP,
-  heapBytes,
-  loadOC,
-  rebuild,
-  RECYCLE_HEAP_BYTES,
-  recycleOC,
-  scoped,
-  selectEdges,
-  selectFaces,
-  tessellate,
-  type EdgeInfo,
-  type FaceInfo,
-  type OC,
-  type RebuildResult,
-} from "../kernel";
+import { exportSTEP, heapBytes, loadOC, rebuild, RECYCLE_HEAP_BYTES, recycleOC, tessellate, type OC, type RebuildResult } from "../kernel";
+import { edgeSummary, faceSummary, measurementSummary, newFailures, round6, selectOn, shotOf, type Picked } from "../kernel/inspect";
 import { encodePNG } from "../render/png";
-import { render, VIEWS, type Camera } from "../render/raster";
+import { VIEWS, type Camera } from "../render/raster";
 import { encodeSTL } from "../render/stl";
 import { selectorHealth } from "./health";
 
@@ -72,6 +56,11 @@ export const EDIT_TOOLS = [
   "setParameter",
   "deleteParameter",
   "setDimension",
+  "addEntity",
+  "updateEntity",
+  "deleteEntity",
+  "addConstraint",
+  "deleteConstraint",
   "undo",
   "redo",
 ] as const;
@@ -235,6 +224,16 @@ export class AgentSession {
         return this.edit({ type: "deleteParameter", name: String(a.name) });
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), index: a.index as number, value: a.value as number | string });
+      case "addEntity":
+        return this.edit({ type: "addEntity", sketch: String(a.sketch), entity: isObject(a.entity) ? a.entity : {} });
+      case "updateEntity":
+        return this.edit({ type: "updateEntity", sketch: String(a.sketch), id: String(a.id), patch: isObject(a.patch) ? a.patch : {} });
+      case "deleteEntity":
+        return this.edit({ type: "deleteEntity", sketch: String(a.sketch), id: String(a.id) });
+      case "addConstraint":
+        return this.edit({ type: "addConstraint", sketch: String(a.sketch), constraint: isObject(a.constraint) ? a.constraint : {} });
+      case "deleteConstraint":
+        return this.edit({ type: "deleteConstraint", sketch: String(a.sketch), index: a.index as number });
       case "undo":
       case "redo":
         return this.step(tool as "undo" | "redo");
@@ -306,7 +305,7 @@ export class AgentSession {
   private status() {
     const m = this.built.measurements;
     const out: Record<string, unknown> = { revision: this.revision, hash: this.hash.slice(0, 12) };
-    if (m) out.volume = round(m.volume);
+    if (m) out.volume = round6(m.volume);
     else out.solid = false;
     if (this.built.errors.length) out.errors = this.built.errors;
     return out;
@@ -355,7 +354,7 @@ export class AgentSession {
     if (Object.keys(params).length) out.parameters = params;
     out.features = features;
     const m = this.built.measurements;
-    if (m) out.part = { volume: round(m.volume), size: m.boundingBox?.size.map(round), holes: m.holeCount };
+    if (m) out.part = { volume: round6(m.volume), size: m.boundingBox?.size.map(round6), holes: m.holeCount };
     if (this.built.errors.length) out.errors = this.built.errors;
     return out as CallResult["result"];
   }
@@ -402,22 +401,7 @@ export class AgentSession {
     const solid = this.built.solid;
     if (!solid) return this.fail(`measure: there is no solid yet${this.built.errors.length ? ` (${this.built.errors.join("; ")})` : ""}`);
     if (selector === undefined || selector === null) {
-      const m = this.built.measurements!;
-      return {
-        result: {
-          ok: true,
-          revision: this.revision,
-          units: "mm",
-          volume: round(m.volume),
-          surfaceArea: round(m.surfaceArea),
-          boundingBox: m.boundingBox && { min: m.boundingBox.min.map(round), max: m.boundingBox.max.map(round), size: m.boundingBox.size.map(round) },
-          mass: { kg: round(m.mass.kg), material: m.mass.material },
-          holeCount: m.holeCount,
-          holeDiameters: m.holeDiameters.map(round),
-          solids: m.solids,
-          faces: m.faces,
-        },
-      };
+      return { result: { ok: true, revision: this.revision, ...measurementSummary(this.built.measurements!) } };
     }
     const picked = this.select(selector, "measure");
     if (typeof picked === "string") return this.fail(picked);
@@ -433,24 +417,10 @@ export class AgentSession {
   }
 
   /** Runs a face or edge selector on the current solid. */
-  private select(selector: unknown, tool: string): { faces?: FaceInfo[]; edges?: EdgeInfo[] } | string {
+  private select(selector: unknown, tool: string): Picked | string {
     const solid = this.built.solid;
     if (!solid) return `${tool}: there is no solid yet`;
-    const c = new Checker(tool);
-    const isEdge = isObject(selector) && selector.type === "edge";
-    const sel = isEdge ? validateEdgeSelector(selector, "selector", c) : validateFaceSelector(selector, "selector", c);
-    if (!sel || c.errors.length) return c.errors.join("; ") || `${tool}: selector: not a selector`;
-    return scoped((s) => {
-      const faces = describeFaces(this.oc, s, solid);
-      if (!isEdge) {
-        const r = selectFaces(faces.infos, sel as FaceSelector);
-        return { faces: r.matches };
-      }
-      const edges = describeEdges(this.oc, s, solid, faces.faces).infos;
-      const r = selectEdges(edges, faces.infos, sel as EdgeSelector, "selector");
-      if (r.error) return `${tool}: ${r.error}`;
-      return { edges: r.matches };
-    });
+    return selectOn(this.oc, solid, selector, tool);
   }
 
   private exportFile(tool: "exportSTEP" | "exportSTL", file: unknown): CallResult {
@@ -468,7 +438,7 @@ export class AgentSession {
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision } };
   }
 
-  private screenshot(a: Record<string, unknown>): CallResult {
+  private async screenshot(a: Record<string, unknown>): Promise<CallResult> {
     const solid = this.built.solid;
     if (!solid) return this.fail(`screenshot: there is no solid yet${this.built.errors.length ? ` (${this.built.errors.join("; ")})` : ""}`);
     let camera: Camera;
@@ -495,23 +465,15 @@ export class AgentSession {
       highlightEdges = picked.edges?.map((e) => e.index);
       highlighted = (picked.faces ?? picked.edges)!.length;
     }
-    const edges = scoped((s) => describeEdges(this.oc, s, solid, describeFaces(this.oc, s, solid).faces).infos);
-    const seams = edges.filter((e) => e.seam).map((e) => e.index);
-    if (highlightFaces?.length) {
-      // Outline selected faces over everything, so a selection shows even when the face is hidden or edge-on.
-      const set = new Set(highlightFaces);
-      highlightEdges = edges.filter((e) => !e.seam && e.faces.some((f) => set.has(f))).map((e) => e.index);
-    }
-    const img = render(tessellate(this.oc, solid), {
+    const img = shotOf(this.oc, solid, {
       camera,
       width: size(a.width, 800),
       height: size(a.height, 600),
       highlightFaces,
       highlightEdges,
       hiddenEdges: a.hiddenEdges === true,
-      skipEdges: seams,
     });
-    const png = encodePNG(img);
+    const png = await encodePNG(img);
     const dir = join(this.outDir, "screenshots");
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `${safeName(this.built.name)}-r${this.revision}-${safeName(view)}.png`);
@@ -538,43 +500,14 @@ export class AgentSession {
   }
 }
 
-/** Features that fail after the edit but did not fail before it (new ones included), and new header errors. */
-function newFailures(before: RebuildResult, after: RebuildResult): string[] {
-  const failedBefore = new Set(before.features.filter((f) => !f.ok).map((f) => f.id));
-  const out = after.features.filter((f) => !f.ok && !failedBefore.has(f.id)).map((f) => f.error ?? `${f.id}: failed`);
-  const featureErrors = new Set(after.features.flatMap((f) => (f.error ? f.error.split("\n") : [])));
-  const headerBefore = new Set(before.errors);
-  for (const e of after.errors) if (!featureErrors.has(e) && !headerBefore.has(e)) out.push(e);
-  return out;
-}
 
 export function sha256(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-function round(x: number): number {
-  return Math.round(x * 1e6) / 1e6 + 0;
-}
 
 function safeName(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "part";
 }
 
-function faceSummary(f: FaceInfo) {
-  const out: Record<string, unknown> = { type: f.type, area: round(f.area), centroid: f.centroid.map(round) };
-  if (f.normal) out.normal = f.normal.map(round);
-  if (f.offset !== undefined) out.offset = round(f.offset);
-  if (f.cylinder) {
-    out.radius = round(f.cylinder.radius);
-    out.axis = f.cylinder.axis.map(round);
-    out.concave = f.cylinder.concave;
-  }
-  return out;
-}
 
-function edgeSummary(e: EdgeInfo) {
-  const out: Record<string, unknown> = { kind: e.kind, length: round(e.length), start: e.start.map(round), end: e.end.map(round) };
-  if (e.radius !== undefined) out.radius = round(e.radius);
-  if (e.center) out.center = e.center.map(round);
-  return out;
-}

@@ -221,3 +221,23 @@ function edgeInfo(oc: OC, s: Scope, edge: TopoDS_Edge, index: number): EdgeInfo 
   }
   return info;
 }
+
+/**
+ * What a face is, independent of how later features trimmed it: a plane's
+ * normal and offset, a cylinder's radius and axis line. Used to find the
+ * feature that first made a face.
+ */
+export function faceSignature(f: FaceInfo): string {
+  const r = (x: number, q: number) => Math.round(x / q) * q + 0;
+  const v = (a: Vec3, q: number) => a.map((x) => r(x, q).toFixed(6)).join(",");
+  if (f.type === "plane" && f.normal) return `plane ${v(f.normal, 1e-4)} ${r(f.offset ?? 0, 1e-4).toFixed(4)}`;
+  if (f.type === "cylinder" && f.cylinder) {
+    const c = f.cylinder;
+    // The axis line, sign-free: direction with its first non-zero component positive, and its point nearest the origin.
+    const k = c.axis.findIndex((x) => Math.abs(x) > 1e-9);
+    const axis = c.axis[k] < 0 ? scale3(c.axis, -1) : c.axis;
+    const foot = sub3(c.origin, scale3(axis, dot3(c.origin, axis)));
+    return `cylinder ${r(c.radius, 1e-4).toFixed(4)} ${v(axis, 1e-4)} ${v(foot, 1e-3)}`;
+  }
+  return `${f.type} ${v(f.centroid, 1e-2)}`;
+}

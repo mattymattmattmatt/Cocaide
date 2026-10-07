@@ -7,9 +7,10 @@
 // (a bad field, a broken reference, a duplicate id).
 
 import { checkConstraints } from "../geom/constraints";
-import { solveSketch } from "../geom/solver";
+import { solveSketch, wouldOverDefine } from "../geom/solver";
 import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolveExpressions, type Parameters } from "./parameters";
 import { scopeProblem, type WriteScope } from "./scope";
+import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
 import type { Constraint, Feature, SketchEntity } from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
 
@@ -30,7 +31,15 @@ export type Command =
   /** Removes a parameter nothing uses. */
   | { type: "deleteParameter"; name: string }
   /** Changes one dimension of a sketch (a constraint's value, or "=expr") and re-solves the sketch. */
-  | { type: "setDimension"; sketch: string; index: number; value: number | string };
+  | { type: "setDimension"; sketch: string; index: number; value: number | string }
+  // Inside one sketch. Each re-solves the sketch so its constraints still hold.
+  | { type: "addEntity"; sketch: string; entity: Record<string, unknown> }
+  /** Merges into the entity (null removes a field); the fields it sets are held while the sketch re-solves. */
+  | { type: "updateEntity"; sketch: string; id: string; patch: Record<string, unknown> }
+  /** Removes the entity and every constraint on it. */
+  | { type: "deleteEntity"; sketch: string; id: string }
+  | { type: "addConstraint"; sketch: string; constraint: Record<string, unknown> }
+  | { type: "deleteConstraint"; sketch: string; index: number };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
@@ -170,6 +179,18 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       features[i] = r.feature;
       break;
     }
+    case "addEntity":
+    case "updateEntity":
+    case "deleteEntity":
+    case "addConstraint":
+    case "deleteConstraint": {
+      const i = need(cmd.sketch);
+      if (typeof i === "string") return { ok: false, error: i };
+      const r = editSketch(features[i], cmd, documentParameters(doc));
+      if (typeof r === "string") return { ok: false, error: `${cmd.type}: ${r}` };
+      features[i] = r;
+      break;
+    }
     default:
       return { ok: false, error: `unknown command ${JSON.stringify((cmd as { type?: unknown }).type)}` };
   }
@@ -182,13 +203,86 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
   return { ok: true, doc };
 }
 
+type SketchCommand = Extract<Command, { type: "addEntity" | "updateEntity" | "deleteEntity" | "addConstraint" | "deleteConstraint" }>;
+
+/** One edit inside a sketch, then a re-solve. Returns the new feature or why not. */
+function editSketch(raw: Record<string, unknown>, cmd: SketchCommand, params: Parameters): Record<string, unknown> | string {
+  if (raw.op !== "sketch") return `"${cmd.sketch}" is a ${String(raw.op)}, not a sketch`;
+  const f = structuredClone(raw);
+  const entities = (Array.isArray(f.entities) ? f.entities : []) as Record<string, unknown>[];
+  const constraints = (Array.isArray(f.constraints) ? f.constraints : []) as Record<string, unknown>[];
+  const findEntity = (id: string) => entities.findIndex((e) => isObject(e) && e.id === id);
+  const fixed: string[] = [];
+  switch (cmd.type) {
+    case "addEntity": {
+      if (!isObject(cmd.entity)) return "entity must be an object";
+      const e = { ...cmd.entity };
+      if (e.id === undefined) e.id = nextEntityId(entities, ENTITY_PREFIX[e.type as keyof typeof ENTITY_PREFIX] ?? "e");
+      if (findEntity(String(e.id)) >= 0) return `${cmd.sketch} already has an entity "${String(e.id)}"`;
+      entities.push(e);
+      break;
+    }
+    case "updateEntity": {
+      const k = findEntity(cmd.id);
+      if (k < 0) return `${cmd.sketch} has no entity "${cmd.id}"`;
+      if (!isObject(cmd.patch)) return "patch must be an object";
+      if ("id" in cmd.patch && cmd.patch.id !== cmd.id) return "an entity's id cannot change";
+      const next: Record<string, unknown> = { ...entities[k], ...cmd.patch };
+      for (const [key, v] of Object.entries(next)) if (v === null) delete next[key];
+      entities[k] = next;
+      // What the edit set stays put; the rest of the sketch moves to keep its constraints.
+      for (const [key, v] of Object.entries(cmd.patch)) if (typeof v === "number" || Array.isArray(v)) fixed.push(`${cmd.id}.${key}`);
+      break;
+    }
+    case "deleteEntity": {
+      if (findEntity(cmd.id) < 0) return `${cmd.sketch} has no entity "${cmd.id}"`;
+      const left = removeEntities(entities as never, constraints as never, [cmd.id]);
+      f.entities = left.entities;
+      f.constraints = left.constraints;
+      break;
+    }
+    case "addConstraint": {
+      if (!isObject(cmd.constraint)) return "constraint must be an object";
+      const resolved = resolveExpressions(f, params, []) as { entities: SketchEntity[]; constraints?: Constraint[] };
+      const extra = resolveExpressions(cmd.constraint, params, []) as Constraint;
+      try {
+        if (wouldOverDefine(resolved.entities, resolved.constraints ?? [], extra)) {
+          return `${cmd.sketch}: that constraint repeats or contradicts what the sketch already fixes`;
+        }
+      } catch (e) {
+        return `${cmd.sketch}: constraint: ${(e as Error).message}`;
+      }
+      constraints.push({ ...cmd.constraint });
+      break;
+    }
+    case "deleteConstraint": {
+      if (!Number.isInteger(cmd.index) || cmd.index < 0 || cmd.index >= constraints.length) {
+        return `${cmd.sketch} has no constraint at index ${cmd.index} (it has ${constraints.length})`;
+      }
+      constraints.splice(cmd.index, 1);
+      break;
+    }
+  }
+  if (cmd.type !== "deleteEntity") {
+    f.entities = entities;
+    if (constraints.length || f.constraints !== undefined) f.constraints = constraints;
+  }
+  const r = resolveSketch(f, params, fixed);
+  if (!r.ok) return fixed.length ? `${r.error} (with ${fixed.join(", ")} held where you set them)` : r.error;
+  return r.feature;
+}
+
 /**
  * Brings a sketch's geometry back in line with its constraints after a
  * dimension or parameter changed: solve, with fields that are themselves
  * expressions held fixed, and write the solved numbers back. A sketch whose
  * constraints already hold, or that does not validate, is returned as is.
  */
-export function resolveSketch(raw: Record<string, unknown>, params: Parameters): { ok: true; feature: Record<string, unknown> } | { ok: false; error: string } {
+export function resolveSketch(
+  raw: Record<string, unknown>,
+  params: Parameters,
+  hold: string[] = [],
+): { ok: true; feature: Record<string, unknown> } | { ok: false; error: string } {
   const errors: string[] = [];
   const resolved = resolveExpressions(raw, params, errors) as { entities?: SketchEntity[]; constraints?: Constraint[] };
   if (errors.length || !Array.isArray(resolved.entities)) return { ok: true, feature: raw };
@@ -199,7 +293,7 @@ export function resolveSketch(raw: Record<string, unknown>, params: Parameters):
     return { ok: true, feature: raw }; // malformed: validation will say why
   }
   const rawEntities = raw.entities as Record<string, unknown>[];
-  const fixed: string[] = [];
+  const fixed: string[] = [...hold];
   for (const e of rawEntities) {
     for (const [field, v] of Object.entries(e)) {
       if (isExpression(v)) fixed.push(`${String(e.id)}.${field}`);
@@ -219,8 +313,10 @@ export function resolveSketch(raw: Record<string, unknown>, params: Parameters):
   return { ok: true, feature: out };
 }
 
+/** Solver output for the document: a value within 1e-8 of a 6-decimal number is that number. */
 function clean(x: number): number {
-  return Math.round(x * 1e9) / 1e9 + 0;
+  const r6 = Math.round(x * 1e6) / 1e6;
+  return (Math.abs(x - r6) < 1e-8 ? r6 : Math.round(x * 1e9) / 1e9) + 0;
 }
 
 /** Ids of features that reference `id` (an extrude's sketch, a pattern's feature). */

@@ -2,11 +2,12 @@
 // one document command (one undo step in the model). Inside the session
 // there is a draft-level undo stack too.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Constraint, DatumPlane, SketchEntity, SketchFeature, Vec2 } from "../../doc/types";
 import { buildProfile } from "../../geom/profile";
 import { sketchDof, solveSketch, wouldOverDefine } from "../../geom/solver";
-import { NumberInput } from "../fields";
+import { evaluate } from "../../doc/parameters";
+import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
 import { describeConstraint, removeEntities, suggestions, type SketchItem } from "./draft";
 import { SketchCanvas, type Tool } from "./SketchCanvas";
@@ -27,6 +28,10 @@ interface Props {
   reference: Float32Array;
   onFinish(feature: SketchFeature): void;
   onCancel(): void;
+  /** Right-click on an entity or a constraint: ask about it, with the draft as it is now. */
+  onAsk?(target: { kind: "entity"; entity: string } | { kind: "constraint"; index: number }, draft: SketchFeature, x: number, y: number): void;
+  /** Set by the sketcher: replaces the draft with an accepted proposal's sketch (one sketch undo step). */
+  applyRef?: { current: ((feature: SketchFeature) => void) | null };
 }
 
 interface DraftState {
@@ -43,7 +48,7 @@ const TOOLS: [Tool, string, string][] = [
   ["slot", "Slot", "S"],
 ];
 
-export function SketchMode({ session, reference, onFinish, onCancel }: Props) {
+export function SketchMode({ session, reference, onFinish, onCancel, onAsk, applyRef }: Props) {
   const [past, setPast] = useState<DraftState[]>([]);
   const [future, setFuture] = useState<DraftState[]>([]);
   const [draft, setDraft] = useState<DraftState>({ entities: session.entities, constraints: session.constraints });
@@ -55,6 +60,7 @@ export function SketchMode({ session, reference, onFinish, onCancel }: Props) {
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [selection, setSelection] = useState<SketchItem[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const params = useContext(ParametersContext);
 
   const entities = live ?? draft.entities;
   const commit = useCallback(
@@ -65,6 +71,21 @@ export function SketchMode({ session, reference, onFinish, onCancel }: Props) {
     },
     [draft],
   );
+  const asFeature = (): SketchFeature => ({
+    id: session.id,
+    op: "sketch",
+    plane: session.plane,
+    entities: draft.entities,
+    ...(draft.constraints.length ? { constraints: draft.constraints } : {}),
+    ...(session.suppressed ? { suppressed: true } : {}),
+  });
+  if (applyRef) {
+    applyRef.current = (f) => {
+      commit({ entities: f.entities, constraints: f.constraints ?? [] });
+      setSelection([]);
+      setMessage(null);
+    };
+  }
   const undo = () => {
     if (!past.length) return;
     setFuture((f) => [draft, ...f]);
@@ -241,6 +262,11 @@ export function SketchMode({ session, reference, onFinish, onCancel }: Props) {
           onSelect={setSelection}
           onCreate={onCreate}
           onDrag={onDrag}
+          onContext={(entity, x, y) => {
+            if (!entity || !onAsk) return;
+            setSelection([{ kind: "entity", id: entity }]);
+            onAsk({ kind: "entity", entity }, asFeature(), x, y);
+          }}
         />
         <div className="sketch-plane-label">{planeName(session.plane.normal, session.plane.origin)}</div>
       </section>
@@ -288,14 +314,28 @@ export function SketchMode({ session, reference, onFinish, onCancel }: Props) {
           {draft.constraints.length === 0 && <p className="muted small">None yet.</p>}
           <ol className="constraint-list" data-testid="constraint-list">
             {draft.constraints.map((k, i) => (
-              <li key={i}>
+              <li
+                key={i}
+                data-testid={`constraint-row-${i}`}
+                onContextMenu={(e) => {
+                  if (!onAsk) return;
+                  e.preventDefault();
+                  onAsk({ kind: "constraint", index: i }, asFeature(), e.clientX, e.clientY);
+                }}
+              >
                 <span className="constraint-label">{describeConstraint(k)}</span>
                 {"value" in k && (
                   <NumberInput
                     value={k.value}
                     min={0}
                     testId={`constraint-value-${i}`}
-                    onCommit={(v) => setConstraints(draft.constraints.map((c, j) => (j === i ? ({ ...c, value: v } as Constraint) : c)))}
+                    onCommit={(v) => {
+                      // The sketcher solves numbers; an expression is evaluated here (Finish keeps unchanged ones).
+                      const value = typeof v === "number" ? v : evaluate(v, params);
+                      if (typeof value !== "number" && !value.ok) return setMessage(value.error);
+                      const n = typeof value === "number" ? value : value.value;
+                      setConstraints(draft.constraints.map((c, j) => (j === i ? ({ ...c, value: n } as Constraint) : c)));
+                    }}
                   />
                 )}
                 <button

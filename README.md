@@ -4,13 +4,17 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase C (agent tools) done.**
+**Status: Phase D (right-click ask) done.**
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
   - Every edit is a transaction that rolls back if it breaks the part.
   - Every call is logged next to the revision it produced, so a run can be replayed.
   - Numeric fields can be expressions over document parameters (`"=plate_t * 2"`).
+- Phase D adds the right-click ask: right-click a feature, sketch, sketch entity or constraint, face, edge, parameter or failed rebuild, and ask about it.
+  - The model sees a context packet for that one thing, never the whole tree.
+  - It may change only what the right-click scopes, and the API enforces that.
+  - It answers, or proposes an edit you accept or discard.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -19,9 +23,16 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 164 unit, kernel and agent tests, including the Phase A and Phase C acceptance suites
-npm run test:e2e       # 13 browser tests (Playwright, Chromium), including the Phase B acceptance suite
+npm test               # 187 unit, kernel and agent tests, including the Phase A and C acceptance suites
+                       #   (+3 live-model Phase D tests, run when ANTHROPIC_API_KEY is set)
+npm run test:e2e       # 18 browser tests (Playwright, Chromium), including the Phase B and D acceptance suites
 npm run build          # typecheck + production bundle in dist/
+```
+
+The right-click ask needs a model. Either start the dev server with a key, so the page never holds it, or paste a key into **Ask…** in the top bar (it stays in that browser):
+
+```sh
+ANTHROPIC_API_KEY=sk-ant-... npm run dev     # the dev server proxies /anthropic and adds the key
 ```
 
 Headless, same document and kernel as the browser:
@@ -41,6 +52,26 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase D: right-click ask
+
+| Check | Result |
+|---|---|
+| Right-click `hole_1`, "make it 8 mm", changes that diameter only | The packet is `hole_1` with parent `ext_1`, no children, measured Ø6.6 × 6 deep, and write scope `[hole_1]`. The proposal lists exactly `hole_1 diameter: 6.6 → 8`, and the viewport previews it at 18,898.407 mm³. Accept writes it as one undo step; every other feature is byte-identical. |
+| Right-click a sketch entity, "pattern the part", is refused as out of scope | The scope is `sketch_1/r1`, meaning r1 and the constraints on it. The model's `addFeature` comes back as `writeScope: addFeature "linearPattern_1" is outside the scope [sketch_1/r1]`. The ask ends as **Out of scope** with nothing to accept, and the document is unchanged. |
+| "What is this face" returns text and does not write | A question is explain-only. The model is offered no write tools at all: only `measure`, `getFeature` and `escalate`. It gets one picture, framed on the face with the face outlined. The ask ends as **Answer**, with no proposal, and the document is unchanged. |
+
+These checks are covered at three levels:
+- **Browser** (`e2e/ask.spec.ts`): the page runs the real Anthropic SDK. Playwright answers its calls to `api.anthropic.com` with scripted Messages API responses and records what the page sent: the packet, the tools offered, and the user's words last and unchanged.
+  - The same file also covers the conflict rule (a user edit drops the open proposal and keeps the prompt) and "fix this error" with apply-immediately.
+- **Node** (`tests/ask.test.ts`): runs the same logic with a scripted model, plus:
+  - rollback inside an ask;
+  - the one-correction-pass limit;
+  - the one-feature rule for faces and edges;
+  - reads limited to what the packet names.
+- **Live model** (`tests/phase-d-acceptance.test.ts`): runs the three checks against Claude when `ANTHROPIC_API_KEY` is set. **No key was available where this was built, so it has not been run against the live model yet.**
+
+![Right-click hole_1, "make it 8 mm": the proposal, previewed](docs/phase-d-ask.png)
 
 ### Phase C: agent tools
 
@@ -91,6 +122,53 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 - Ctrl+Z / Ctrl+Shift+Z undo and redo any change to the document. Inside a sketch they undo sketch edits. The Document tab is the same document as JSON.
 - **Parameters** (left panel) are named numbers. Type `=plate_t` or `=plate_t * 2 + 1` in any number field; the field shows what it evaluates to, and a bad expression is shown and not committed. Changing a parameter is one undo step, and sketches whose dimensions use it are re-solved. The sketcher works on numbers but keeps every expression whose value you did not change.
 
+## Right-click ask
+
+Right-click any of these to ask about it:
+- a feature in the tree (a sketch counts as a sketch);
+- a failed rebuild row;
+- a face or an edge in the viewport;
+- a parameter;
+- in the sketcher, an entity or a constraint row.
+
+The menu is labelled with the target ("Ask about hole_1"). Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch* and *Fix this error*. Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Asking about the whole part, from empty space, is Phase E.
+
+**The packet is the prompt** (`src/ask/packet.ts`). It holds:
+- the target node, its parent and its direct children;
+- the target's own measurements (for a hole, its measured diameter and depth);
+- the selector for a picked face or edge;
+- the error, if the feature failed;
+- the parameters the target uses;
+- the write scope.
+
+The user's text comes last, unchanged. A visual prompt ("what is this face", "make it look like…") adds one image, framed on the target and outlined.
+
+**Scope** (`src/ask/packet.ts` → `scopeFor`, enforced by `apply`):
+
+| Right-click | May change |
+|---|---|
+| Sketch entity or constraint | that entity, and constraints on it (`sketch_1/r1`) |
+| Sketch | its entities and constraints, not the feature or what uses it (`sketch_1/*`) |
+| Feature | its fields, or a new child that references it (`hole_1`) |
+| Face or edge | one new feature that uses that face or edge (a hole drilled into it, a fillet of it, or a sketch on it with its cut); the feature that made the face is untouched |
+| Failed rebuild | the feature named in the error |
+| Parameter | that parameter |
+
+**Cheap before smart.** The agent answers if the packet is enough. Otherwise it changes one field, then makes a scoped edit, and if none of those fit it escalates ("cannot be done from here"). A question gets no write tools, so it cannot write.
+
+Edits run in a sandbox copy of the document. Each one is a checked transaction, kept only if nothing newly fails. The agent gets one correction pass after it sees the result. What comes back is a **proposal**: the list of changes down to the field, and volume before and after, previewed in the viewport. Accepting it replays the agent's commands on your document as it is then, as one undo step. **Apply immediately** (per prompt, off by default) accepts it as soon as it checks out.
+
+If you edit a feature the open proposal touches, the proposal is dropped and your prompt is kept (spec 6.4).
+
+Every ask is logged in the browser next to the revisions it produced:
+- the target, prompt and model;
+- each tool call with the sandbox revision and hash after it;
+- whether the proposal was accepted, and the hash of what was accepted.
+
+**Ask… → Download ask log** saves it as JSON Lines.
+
+**Model.** The default is Claude Opus 5.5 at low effort; Sonnet 5.5 and Haiku 4.5 can be chosen under **Ask…**. The SDK is loaded on the first ask, not with the app. What leaves the machine is the packet, plus the one framed image for a visual prompt. Modelling and STEP export never need a key.
+
 ## Agents (MCP)
 
 `src/mcp/server.ts` is an MCP server over stdio, one document per server. The host sets the document, the write scope, and where files go; the agent cannot change any of them.
@@ -117,6 +195,7 @@ For Claude Code, for example, in `.mcp.json`:
 | `addFeature(feature, index?)` | `id` is optional |
 | `updateFeature(id, patch)`, `deleteFeature(id)`, `reorderFeature(id, index)`, `suppressFeature(id, suppressed)` | The same commands as the UI |
 | `setParameter(name, value)`, `deleteParameter(name)`, `setDimension(sketch, index, value)` | `setDimension` sets the value of constraint `index` and re-solves the sketch |
+| `addEntity`, `updateEntity`, `deleteEntity`, `addConstraint`, `deleteConstraint` | Edits inside a sketch; it re-solves after each. `updateEntity` holds the fields it sets, and a change the constraints forbid is refused |
 | `rebuild`, `validate` | `validate` is schema + rebuild + selector health: each selector picks exactly one thing, and is flagged if it picks by position, or if a runner-up face is within 80% of the area it chose by |
 | `measure(selector?)` | The part (volume, area, bounding box, mass, holes), or what a face or edge selector picks right now |
 | `exportSTEP(file?)`, `exportSTL(file?)` | Written to the output folder; refused while the part has errors |
@@ -129,6 +208,8 @@ The server's instructions say how edits work. The resource `cocaide://reference`
 
 **Write scope.** `apply(doc, cmd, { writeScope })` enforces it, so no client can get round it:
 - a feature id: change, suppress, delete or move that feature, or add a feature that uses it (a pattern of it);
+- `<sketch>/*`: that sketch's entities and constraints, nothing else;
+- `<sketch>/<entity>`: that entity, and the constraints on it;
 - `+`: add features and new parameters;
 - `param:<name>`: set that parameter (also allowed when every feature that uses it is in scope);
 - `name`: rename the document;
@@ -218,7 +299,8 @@ Every operation is verified before it is accepted: the result must be a valid so
 Every edit goes through `apply(doc, command, { writeScope? })` (`src/doc/commands.ts`). The commands are:
 - `addFeature`, `updateFeature` (where `null` removes a field), `replaceFeature`, `deleteFeature`, `reorderFeature`, `suppressFeature`, `setName`;
 - `setParameter`, `deleteParameter`;
-- `setDimension`, which changes a sketch constraint's value and re-solves the sketch.
+- `setDimension`, which changes a sketch constraint's value and re-solves the sketch;
+- `addEntity`, `updateEntity`, `deleteEntity`, `addConstraint`, `deleteConstraint`, inside one sketch, each followed by a re-solve.
 
 When a parameter or dimension changes, the sketches it affects are re-solved. Fields that are expressions are held fixed, and only plain numbers move. `apply` never mutates its input. It refuses an edit that falls outside the write scope, would introduce a validation error, would delete a feature something uses, or would move a feature above one it uses, and it says why. Undo is a stack of document snapshots (`src/doc/history.ts`); restoring the document restores the solid. The UI and the agent session are both clients of `apply`.
 
@@ -229,14 +311,15 @@ src/doc       document types, strict validation, parameters, formatting, command
 src/geom      plane frames, 2D profiles, constraint checks, the constraint solver     (no kernel)
 src/kernel    OCCT: operations, selectors, picking -> selector synthesis, measurements, mesh, STEP, rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
-src/agent     the agent session (Node): transactions, revisions, log, replay, selector health
+src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
+src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port
 src/render    software renderer (PNG screenshots without a GPU) and binary STL
 src/mcp       the MCP server and the reference it serves
-src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab
+src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
 scripts       headless CLI, FreeCAD verification, log replay
 examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet)
-tests         unit, kernel, agent and MCP tests (Vitest, Node)
+tests         unit, kernel, agent, MCP and ask tests (Vitest, Node)
 e2e           browser tests (Playwright)
 ```
 

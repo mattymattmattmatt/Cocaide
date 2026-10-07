@@ -2,6 +2,7 @@
 // Every change is a document command; rejected moves say why.
 
 import { useState } from "react";
+import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import type { RebuildView } from "../worker/protocol";
 import { OP_LABEL } from "./PropertyPanel";
@@ -14,9 +15,11 @@ interface Props {
   onEditSketch(id: string): void;
   dispatch(cmd: Command): string | null;
   onError(message: string): void;
+  /** Right-click: ask about a feature, or about its failed rebuild. */
+  onAsk?(target: AskTarget, x: number, y: number): void;
 }
 
-export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dispatch, onError }: Props) {
+export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dispatch, onError, onAsk }: Props) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const features = (doc?.features ?? []) as Record<string, unknown>[];
@@ -71,6 +74,11 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   className="feature-row"
                   onClick={() => onSelect(selectedId === id ? null : id)}
                   onDoubleClick={() => f.op === "sketch" && onEditSketch(id)}
+                  onContextMenu={(e) => {
+                    if (!onAsk) return;
+                    e.preventDefault();
+                    onAsk({ kind: "feature", id }, e.clientX, e.clientY);
+                  }}
                   title={f.op === "sketch" ? "Double-click to edit the sketch" : undefined}
                 >
                   <span
@@ -118,7 +126,16 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                 </span>
               </div>
               {s?.error && !suppressed && (
-                <div className="feature-error">
+                <div
+                  className="feature-error"
+                  data-testid={`feature-error-${id}`}
+                  title="Right-click to ask about this error"
+                  onContextMenu={(e) => {
+                    if (!onAsk) return;
+                    e.preventDefault();
+                    onAsk({ kind: "failed", id }, e.clientX, e.clientY);
+                  }}
+                >
                   {s.error.split("\n").map((line) => (
                     <div key={line}>{line.replace(`${id}: `, "")}</div>
                   ))}

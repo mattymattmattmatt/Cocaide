@@ -109,40 +109,7 @@ export function hitEntity(entities: SketchEntity[], p: Vec2, tol: number): Sketc
   return best;
 }
 
-export function nextEntityId(entities: SketchEntity[], prefix: string): string {
-  const used = new Set(entities.map((e) => e.id));
-  for (let n = 1; ; n++) if (!used.has(`${prefix}${n}`)) return `${prefix}${n}`;
-}
-
-export const ID_PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s" };
-
-/** Removes entities and every constraint that mentions them. */
-export function removeEntities(entities: SketchEntity[], constraints: Constraint[], ids: string[]): { entities: SketchEntity[]; constraints: Constraint[] } {
-  const gone = new Set(ids);
-  return {
-    entities: entities.filter((e) => !gone.has(e.id)),
-    constraints: constraints.filter((k) => !constraintEntities(k).some((id) => gone.has(id))),
-  };
-}
-
-/** Entity ids a constraint refers to. */
-export function constraintEntities(k: Constraint): string[] {
-  const fromRef = (ref: string) => (ref === "origin" ? [] : [ref.split(".")[0]]);
-  switch (k.type) {
-    case "coincident":
-      return k.points.flatMap(fromRef);
-    case "horizontal":
-    case "vertical":
-    case "radius":
-      return [k.entity];
-    case "distance":
-    case "distanceX":
-    case "distanceY":
-      return k.entity ? [k.entity] : k.points!.flatMap(fromRef);
-    case "equal":
-      return [...k.entities];
-  }
-}
+export { constraintEntities, nextEntityId, removeEntities, ENTITY_PREFIX as ID_PREFIX } from "../../doc/sketch";
 
 export interface Suggestion {
   label: string;

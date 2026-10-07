@@ -33,9 +33,10 @@ interface Props {
   dispatch(cmd: Command): string | null;
   onEditSketch(id: string): void;
   onSelectFeature(id: string | null): void;
+  onAsk?(target: { kind: "failed"; id: string }, x: number, y: number): void;
 }
 
-export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEditSketch, onSelectFeature }: Props) {
+export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEditSketch, onSelectFeature, onAsk }: Props) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setError(null), [featureId]);
   const index = doc.features.findIndex((f) => f.id === featureId);
@@ -68,7 +69,16 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         />
       </div>
       {status?.error && (
-        <div className="feature-error standalone" data-testid="prop-feature-error">
+        <div
+          className="feature-error standalone"
+          data-testid="prop-feature-error"
+          title="Right-click to ask about this error"
+          onContextMenu={(e) => {
+            if (!onAsk) return;
+            e.preventDefault();
+            onAsk({ kind: "failed", id: featureId }, e.clientX, e.clientY);
+          }}
+        >
           {status.error.replaceAll(`${featureId}: `, "")}
         </div>
       )}

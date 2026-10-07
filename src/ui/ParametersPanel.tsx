@@ -3,6 +3,7 @@
 // sketches that use it are re-solved.
 
 import { useState } from "react";
+import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, PARAMETER_NAME, parameterRefs } from "../doc/parameters";
 import { NumberInput } from "./fields";
@@ -11,9 +12,10 @@ interface Props {
   doc: RawDocument | null;
   dispatch(cmd: Command): string | null;
   onError(text: string): void;
+  onAsk?(target: AskTarget, x: number, y: number): void;
 }
 
-export function ParametersPanel({ doc, dispatch, onError }: Props) {
+export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   if (!doc) return null;
@@ -44,7 +46,15 @@ export function ParametersPanel({ doc, dispatch, onError }: Props) {
         {Object.entries(params).map(([p, v]) => {
           const users = usedBy(p);
           return (
-            <li key={p} data-testid={`param-${p}`}>
+            <li
+              key={p}
+              data-testid={`param-${p}`}
+              onContextMenu={(e) => {
+                if (!onAsk) return;
+                e.preventDefault();
+                onAsk({ kind: "parameter", name: p }, e.clientX, e.clientY);
+              }}
+            >
               <span className="param-name" title={users.length ? `used by ${users.join(", ")}` : "not used yet"}>
                 {p}
               </span>

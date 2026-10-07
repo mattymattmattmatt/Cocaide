@@ -30,6 +30,8 @@ interface Props {
   selection: Selection;
   /** A click on the part (target) or on empty space (null). `additive` when shift is held. */
   onPick(target: PickTarget | null, additive: boolean): void;
+  /** A right-click (press and release without dragging): what is under the cursor, and where. */
+  onContext?(target: PickTarget | null, clientX: number, clientY: number): void;
 }
 
 const SKETCH_OPACITY = 0.55;
@@ -64,11 +66,13 @@ interface ViewportApi {
   dispose(): void;
 }
 
-export function Viewport({ view, fitToken, selection, onPick }: Props) {
+export function Viewport({ view, fitToken, selection, onPick, onContext }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
   const pickRef = useRef(onPick);
   pickRef.current = onPick;
+  const contextRef = useRef(onContext);
+  contextRef.current = onContext;
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const infoRef = useRef<{ faces: FaceInfo[]; edges: EdgeInfo[] }>({ faces: [], edges: [] });
@@ -334,16 +338,18 @@ export function Viewport({ view, fitToken, selection, onPick }: Props) {
       redrawMarks();
     };
     // A click is a press and release without dragging; drags orbit the view.
-    let down: { x: number; y: number } | null = null;
+    // Right-drag pans; a right press and release in place is a right-click.
+    let down: { x: number; y: number; button: number } | null = null;
     const onDown = (e: PointerEvent) => {
-      if (e.button === 0) down = { x: e.clientX, y: e.clientY };
+      if (e.button === 0 || e.button === 2) down = { x: e.clientX, y: e.clientY, button: e.button };
     };
     const onUp = (e: PointerEvent) => {
-      if (e.button !== 0 || !down) return;
+      if (!down || e.button !== down.button) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
       if (moved > 4) return;
-      pickRef.current(pickAt(e.clientX, e.clientY), e.shiftKey || e.ctrlKey || e.metaKey);
+      if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
+      else pickRef.current(pickAt(e.clientX, e.clientY), e.shiftKey || e.ctrlKey || e.metaKey);
     };
     const canvas = renderer.domElement;
     canvas.addEventListener("pointermove", onMove);

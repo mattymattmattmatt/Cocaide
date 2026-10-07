@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import bracketText from "../../examples/bracket.cocaide.json?raw";
 import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
-import { nextId, type Command } from "../doc/commands";
+import { targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
+import { nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import type { DatumPlane, SketchEntity, SketchFeature, Vec3 } from "../doc/types";
@@ -11,6 +12,9 @@ import { dot3 } from "../geom/vec";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
+import { AskPopover } from "./ask/AskPopover";
+import { AskSettingsDialog } from "./ask/AskSettingsDialog";
+import { useAsk } from "./ask/useAsk";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree } from "./FeatureTree";
 import { ParametersContext, TextInput } from "./fields";
@@ -84,6 +88,11 @@ export function App() {
 
   const { parsed, doc } = d;
   const params = useMemo(() => documentParameters(doc), [doc]);
+  const ask = useAsk({ kernel: kernel.port, doc, replaceDoc: d.replaceDoc });
+  /** In the sketcher: replaces the draft with an accepted ask's sketch. */
+  const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
+  /** What the viewport shows: the document, or an open proposal while it is previewed. */
+  const shown = useMemo(() => ask.previewDoc ?? (parsed.ok ? parsed.value : null), [ask.previewDoc, parsed]);
 
   useEffect(() => {
     kernel.ready.then(
@@ -95,12 +104,12 @@ export function App() {
 
   // Rebuild whenever the document text parses; the newest request wins.
   useEffect(() => {
-    if (!parsed.ok) return;
+    if (shown === null) return;
     const ticket = ++latest.current;
     const timer = setTimeout(async () => {
       setBusy(true);
       try {
-        const { view: v, ms } = await kernel.rebuild(parsed.value);
+        const { view: v, ms } = await kernel.rebuild(shown);
         if (ticket !== latest.current) return;
         setView(v);
         setRebuildMs(ms);
@@ -116,7 +125,7 @@ export function App() {
       }
     }, REBUILD_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [parsed, kernel]);
+  }, [shown, kernel]);
 
   // Keep the working document across reloads.
   useEffect(() => {
@@ -304,6 +313,36 @@ export function App() {
     );
   };
 
+  // ------------------------------------------------------------ right-click ask
+
+  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature) => {
+    if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+    if (ask.previewDoc && (target.kind === "face" || target.kind === "edge")) {
+      return setNotice({ kind: "error", text: "Accept or discard the open proposal first: the viewport is showing it." });
+    }
+    // In the sketcher the ask sees the draft, and accepting updates the draft.
+    let askDoc: RawDocument = doc;
+    let sketchCtx: { id: string; apply(f: SketchFeature): void } | undefined;
+    if (draftSketch) {
+      const f = draftSketch as unknown as Record<string, unknown>;
+      const i = doc.features.findIndex((g) => g.id === draftSketch.id);
+      askDoc = { ...doc, features: i >= 0 ? doc.features.map((g, k) => (k === i ? f : g)) : [...doc.features, f] };
+      sketchCtx = { id: draftSketch.id, apply: (g) => sketchApply.current?.(g) };
+    }
+    const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
+    const op = target.kind === "feature" ? askDoc.features.find((g) => g.id === target.id)?.op : undefined;
+    const kind: PacketKind = target.kind === "feature" ? (op === "sketch" ? "sketch" : "feature") : target.kind;
+    ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, x, y });
+  };
+  const openAskRef = useRef(openAsk);
+  openAskRef.current = openAsk;
+  const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
+    if (!target) return;
+    // Select what was right-clicked, so it stays outlined while the ask is open.
+    setSelection(target.kind === "face" ? { faces: [target.index], edges: [], point: target.point } : { faces: [], edges: [target.index] });
+    openAskRef.current({ kind: target.kind, index: target.index }, x, y);
+  }, []);
+
   const onPick = useCallback((target: PickTarget | null, additive: boolean) => {
     setSelection((sel) => {
       if (!target) return additive ? sel : EMPTY_SELECTION;
@@ -420,6 +459,9 @@ export function App() {
               }}
             />
             <button onClick={save}>Save</button>
+          <button onClick={() => ask.setSettingsOpen(true)} title="Model and key for right-click asks" data-testid="ask-settings-open">
+            Ask…
+          </button>
             <button className="primary" onClick={exportStep} disabled={kernelState.phase !== "ready" || !!sketch}>
               Export STEP
             </button>
@@ -504,8 +546,9 @@ export function App() {
               onEditSketch={editSketch}
               dispatch={d.dispatch}
               onError={(text) => setNotice({ kind: "error", text })}
+              onAsk={sketch ? undefined : openAsk}
             />
-            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} />
+            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : openAsk} />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>
           {sketch ? (
@@ -515,11 +558,20 @@ export function App() {
               reference={reference}
               onFinish={finishSketch}
               onCancel={() => setSketch(null)}
+              applyRef={sketchApply}
+              onAsk={(t, draft, x, y) =>
+                openAsk(t.kind === "entity" ? { kind: "entity", sketch: draft.id, entity: t.entity } : { kind: "constraint", sketch: draft.id, index: t.index }, x, y, draft)
+              }
             />
           ) : (
             <>
               <section className="center">
-                <Viewport view={view} fitToken={fitToken} selection={selection} onPick={onPick} />
+                <Viewport view={view} fitToken={fitToken} selection={selection} onPick={onPick} onContext={onContext} />
+              {ask.previewDoc && (
+                <div className="preview-banner" data-testid="preview-banner">
+                  Previewing the proposal
+                </div>
+              )}
               </section>
               <aside className="side right">
                 <div className="tabs" role="tablist">
@@ -541,6 +593,7 @@ export function App() {
                         dispatch={d.dispatch}
                         onEditSketch={editSketch}
                         onSelectFeature={setSelectedFeature}
+                        onAsk={openAsk}
                       />
                     ) : (
                       <Help />
@@ -553,6 +606,8 @@ export function App() {
             </>
           )}
         </main>
+        <AskPopover ask={ask} />
+        {ask.settingsOpen && <AskSettingsDialog settings={ask.settings} onSave={ask.setSettings} onClose={() => ask.setSettingsOpen(false)} />}
       </div>
     </ParametersContext.Provider>
   );
@@ -569,6 +624,10 @@ function Help() {
         (shift-click for more) for <strong>Fillet</strong> and <strong>Chamfer</strong>; select a feature in the tree to pattern it.
       </p>
       <p>Select a feature in the tree to edit it. Ctrl+Z undoes any change.</p>
+      <p>
+        <strong>Right-click</strong> a feature, a failed rebuild, a face, an edge, a parameter, or (in the sketcher) an entity or constraint to ask
+        about it. The answer or proposed change is scoped to what you clicked.
+      </p>
     </div>
   );
 }

@@ -6,7 +6,7 @@ export const INSTRUCTIONS = `Cocaide is parametric CAD. The part is one JSON fea
 How edits work:
 - Each edit is a transaction: it is applied, the part is rebuilt, and it is kept only if no feature newly fails. Otherwise the result has ok:false and an error string, and the document is unchanged.
 - Each kept edit makes a new revision. undo and redo step through them.
-- writeScope (set by the host, shown by listFeatures) limits what you may change: a feature id lets you edit that feature, "+" lets you add features, "param:<name>" lets you set that parameter, "*" is everything. Features you add are yours to edit. A call outside the scope is rejected.
+- writeScope (set by the host, shown by listFeatures) limits what you may change: a feature id lets you edit that feature, "<sketch>/*" that sketch's entities and constraints, "<sketch>/<entity>" one entity and its constraints, "+" lets you add features, "param:<name>" lets you set that parameter, "*" is everything. Features you add are yours to edit. A call outside the scope is rejected.
 
 Start with listFeatures. Read the resource cocaide://reference for every op, field and selector. Faces and edges are chosen by selector queries (e.g. the largest planar face with normal +Z), never by index; use measure with a selector, or screenshot with highlight, to check what a selector picks before you use it.
 Units are millimetres. Numeric fields may be expressions over document parameters: "=plate_t * 2".`;
@@ -79,6 +79,7 @@ listFeatures, getFeature(id) - read the document and each feature's rebuild stat
 addFeature(feature, index?) - id is optional (one is made from the op). updateFeature(id, patch) - shallow merge; null removes a field.
 deleteFeature(id), reorderFeature(id, index), suppressFeature(id, suppressed).
 setParameter(name, value), deleteParameter(name), setDimension(sketch, index, value) - index into the sketch's constraints.
+addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
 exportSTEP(file?), exportSTL(file?) - written to the output folder. screenshot(view | direction, highlight?) - one PNG.
 undo, redo.

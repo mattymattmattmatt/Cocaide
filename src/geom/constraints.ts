@@ -92,3 +92,8 @@ export function point(ref: string, byId: Map<string, SketchEntity>): Vec2 {
 function fmt(x: number): string {
   return String(Math.round(x * 1e6) / 1e6);
 }
+
+/** What a constraint measures on the current geometry, and what it asks for. */
+export function measureConstraint(entities: SketchEntity[], k: Constraint): { label: string; actual: number; expected: number } {
+  return evaluate(k, new Map(entities.map((e) => [e.id, e])));
+}

@@ -11,7 +11,7 @@ import { checkConstraints } from "../geom/constraints";
 import { planeFrame, to3D } from "../geom/frame";
 import { buildProfile, entityPolylines } from "../geom/profile";
 import { measure, volumeOf, type Measurements } from "./measure";
-import { countSubShapes } from "./topology";
+import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { getOC, type OC, scoped } from "./oc";
 import { edgeTreatment, extrudeOrCut, hole, OpError, pattern, type BooleanKind, type SketchProfile, type ToolResult } from "./ops";
 
@@ -41,18 +41,31 @@ export interface RebuildResult {
   features: FeatureStatus[];
   sketches: SketchOverlay[];
   name: string;
+  /** With `provenance`: for each face of `solid` (FaceInfo.index order), the feature that first made it. */
+  faceOrigins?: (string | null)[];
   dispose(): void;
 }
 
-export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
+export interface RebuildOptions {
+  /** Record which feature first made each face (costs a face scan per feature). */
+  provenance?: boolean;
+}
+
+export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions = {}): RebuildResult {
   const v = validateDocument(input);
   const errors = [...v.headerErrors];
   const features: FeatureStatus[] = [];
   const sketches: SketchOverlay[] = [];
   let body: TopoDS_Shape | null = null;
 
+  /** Face signature -> the feature that first made a face like it. */
+  const origins = new Map<string, string>();
+  let current = "";
+
   const result = (): RebuildResult => {
     const solid = body;
+    const faceOrigins =
+      opts.provenance && solid ? scoped((s) => describeFaces(oc, s, solid).infos.map((f) => origins.get(faceSignature(f)) ?? null)) : undefined;
     return {
       ok: errors.length === 0 && solid !== null,
       solid,
@@ -61,6 +74,7 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
       features,
       sketches,
       name: v.name || "untitled",
+      ...(faceOrigins ? { faceOrigins } : {}),
       dispose: () => solid?.delete(),
     };
   };
@@ -83,6 +97,14 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
     }
     body = next;
     before?.delete();
+    if (opts.provenance) {
+      scoped((s) => {
+        for (const f of describeFaces(oc, s, next).infos) {
+          const sig = faceSignature(f);
+          if (!origins.has(sig)) origins.set(sig, current);
+        }
+      });
+    }
   };
   const keepTool = (id: string, r: ToolResult): TopoDS_Shape => {
     tools.set(id, { tool: r.tool, kind: r.kind });
@@ -105,6 +127,7 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
       continue;
     }
     try {
+      current = raw.id;
       switch (raw.op) {
         case "sketch":
           profiles.set(raw.id, null);

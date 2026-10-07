@@ -21,6 +21,8 @@ interface Props {
   /** A new entity, plus coincidences between its points and the points it snapped to. */
   onCreate(entity: SketchEntity, coincident: [string, string][]): void;
   onDrag(phase: "move" | "end", handle: string, from: Vec2, to: Vec2): void;
+  /** A right-click in place (not a right-drag pan): the entity under the cursor, if any. */
+  onContext?(entityId: string | null, clientX: number, clientY: number): void;
 }
 
 interface ViewState {
@@ -170,6 +172,12 @@ export function SketchCanvas(props: Props) {
     }
     if (g?.kind === "click") {
       select(g.item, g.additive);
+      return;
+    }
+    if (g?.kind === "pan" && e.button === 2 && Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) < 4) {
+      const handle = hitHandle(entities, p, PICK_PX * unit);
+      const ent = handle && handle.ref !== "origin" ? handle.ref.split(".")[0] : (hitEntity(entities, p, PICK_PX * unit)?.id ?? null);
+      props.onContext?.(ent, e.clientX, e.clientY);
       return;
     }
     if (g?.kind === "pan" || e.button !== 0 || tool === "select") return;

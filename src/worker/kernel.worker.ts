@@ -16,6 +16,7 @@ import {
   type OC,
   type RebuildResult,
 } from "../kernel";
+import { LocalKernel } from "../ask/kernel";
 import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -27,6 +28,11 @@ let oc: OC | null = null;
 /** The last rebuild, kept so an export of the same document does not rebuild again. */
 let last: { key: string; result: RebuildResult } | null = null;
 const queue: KernelRequest[] = [];
+/** Serves the right-click ask's kernel queries; keeps its own last rebuild. */
+const local = new LocalKernel(() => {
+  if (!oc) throw new Error("the kernel is not loaded");
+  return oc;
+});
 
 function post(msg: KernelResponse, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer);
@@ -42,9 +48,14 @@ function rebuildCached(kernel: OC, doc: unknown): RebuildResult {
   return result;
 }
 
-function handle(kernel: OC, req: KernelRequest) {
+async function handle(kernel: OC, req: KernelRequest) {
   try {
-    if (req.type === "rebuild") {
+    if (req.type === "port") {
+      const fn = local[req.method] as (...args: unknown[]) => Promise<unknown>;
+      const result = await fn.apply(local, req.args);
+      const png = (result as { png?: Uint8Array } | null)?.png;
+      post({ id: req.id, type: "port", result }, png ? [png.buffer as ArrayBuffer] : []);
+    } else if (req.type === "rebuild") {
       const t0 = performance.now();
       const result = rebuildCached(kernel, req.doc);
       const mesh = result.solid ? tessellate(kernel, result.solid) : null;
@@ -82,13 +93,25 @@ function handle(kernel: OC, req: KernelRequest) {
 }
 
 /** Drains the queue; swaps in a fresh kernel when the heap has grown too large. */
+let draining = false;
 async function drain() {
+  if (draining) return; // one request at a time, even while one awaits
+  draining = true;
+  try {
+    await drainQueue();
+  } finally {
+    draining = false;
+  }
+}
+
+async function drainQueue() {
   while (oc && queue.length) {
-    handle(oc, queue.shift()!);
+    await handle(oc, queue.shift()!);
     if (heapBytes(oc) > recycleAt) {
       const before = heapBytes(oc);
       last?.result.dispose();
       last = null;
+      local.reset();
       oc = null;
       const t0 = performance.now();
       oc = await recycleOC();
@@ -101,7 +124,7 @@ async function drain() {
 
 self.onmessage = (event: MessageEvent<KernelRequest>) => {
   queue.push(event.data);
-  if (oc && queue.length === 1) void drain();
+  if (oc) void drain();
 };
 
 const t0 = performance.now();

@@ -72,6 +72,26 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: 'Change one sketch dimension (the constraint at index in the sketch\'s constraints) to a number or "=expression", and re-solve the sketch geometry.',
     input: { sketch: z.string(), index: z.number().int(), value: z.union([z.number(), z.string()]) },
   },
+  addEntity: {
+    description: "Add an entity (line, circle, arc, rect, slot) to a sketch; id is optional. The sketch re-solves.",
+    input: { sketch: z.string(), entity: obj },
+  },
+  updateEntity: {
+    description: "Change fields of a sketch entity (null removes one, e.g. construction). The fields you set are held while the sketch re-solves; a change its constraints forbid is refused.",
+    input: { sketch: z.string(), id: z.string(), patch: obj },
+  },
+  deleteEntity: {
+    description: "Delete a sketch entity and every constraint on it.",
+    input: { sketch: z.string(), id: z.string() },
+  },
+  addConstraint: {
+    description: "Add a constraint to a sketch; the geometry moves to meet it. A constraint the sketch already implies, or that contradicts it, is refused.",
+    input: { sketch: z.string(), constraint: obj },
+  },
+  deleteConstraint: {
+    description: "Delete the constraint at index in a sketch's constraints.",
+    input: { sketch: z.string(), index: z.number().int() },
+  },
   rebuild: {
     description: "Rebuild the part from the document and report each failing feature.",
     readOnly: true,
