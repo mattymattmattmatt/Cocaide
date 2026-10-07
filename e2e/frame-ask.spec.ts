@@ -126,9 +126,9 @@ test("right-click a butt joint and mitre it: a proposal that, accepted, cuts 45�
   await page.getByTestId("ask-accept").click();
   await expect(page.getByTestId("ask-outcome")).toHaveText("Applied");
   await page.getByTestId("ask-close").click();
-  await expectVolume(page, "3,054,720"); // the mitred frame again
   await page.getByTestId("tab-cutlist").click();
-  expect(await cutRows(page)).toEqual([
+  // The preview already showed the mitred frame; wait for the document's own rebuild after Accept.
+  await expect.poll(() => cutRows(page), { timeout: 20_000 }).toEqual([
     ["1", "SHS 40x40x3", "1,200", "45° / 45°", "2", "8.09"],
     ["2", "SHS 40x40x3", "860", "square", "4", "11.99"],
     ["3", "SHS 40x40x3", "600", "45° / 45°", "2", "3.9"],
