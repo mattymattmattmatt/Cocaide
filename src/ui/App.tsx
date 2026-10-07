@@ -341,10 +341,16 @@ export function App() {
   /** A dropped drawing (PDF or image) opens the part-level ask with it attached. */
   const openDrawing = async (file: File, x: number, y: number) => {
     if (file.size > 20 * 2 ** 20) return setNotice({ kind: "error", text: `${file.name} is over 20 MB; send a smaller drawing.` });
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let bin = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    openAsk({ kind: "part" }, x, y, undefined, { name: file.name, mediaType: file.type, data: btoa(bin) });
+    setNotice({ kind: "info", text: `Reading ${file.name}…` });
+    try {
+      // Rasterise at 200 dpi (pdf.js loads on first use), keep the text layer, measure legibility.
+      const { prepareDrawing } = await import("../drawing/rasterize");
+      const drawing = await prepareDrawing({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) });
+      setNotice(null);
+      openAskRef.current({ kind: "part" }, x, y, undefined, drawing);
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not open ${file.name} as a drawing: ${(e as Error).message}` });
+    }
   };
   const openAskRef = useRef(openAsk);
   openAskRef.current = openAsk;

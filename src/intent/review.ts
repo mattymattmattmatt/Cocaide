@@ -14,13 +14,15 @@ export const CONFIDENT = 0.8;
 export const METRIC_CLEARANCE: Record<string, number> = { M2: 2.4, M2_5: 2.9, M3: 3.4, M4: 4.5, M5: 5.5, M6: 6.6, M8: 9, M10: 11, M12: 13.5, M16: 17.5, M20: 22 };
 export const METRIC_TAP_DRILL: Record<string, number> = { M2: 1.6, M2_5: 2.05, M3: 2.5, M4: 3.3, M5: 4.2, M6: 5, M8: 6.8, M10: 8.5, M12: 10.2, M16: 14, M20: 17.5 };
 
-export type RowKind = "number" | "placement" | "points" | "question";
+export type RowKind = "number" | "placement" | "points" | "question" | "choice" | "text";
 
 export interface Row {
   /** Where the value lives: "thickness", "holes[0].diameter", "holes[0].placement", "questions[1]". */
   path: string;
   label: string;
   kind: RowKind;
+  /** For a choice row. */
+  options?: { value: string; label: string }[];
   value: number | string | { x: number; y: number }[] | null;
   unit: string;
   evidence: string;
@@ -44,10 +46,14 @@ export interface Review {
 }
 
 export interface Source {
-  /** The request text. Numbers marked stated must appear in it. */
+  /** The request text. Numbers marked stated must appear in it (or on the drawing). */
   text?: string;
-  /** The request came with a drawing: printed numbers are trusted at high confidence. */
-  drawing?: boolean;
+  /**
+   * The request came with a drawing. `text` is its PDF text layer ("" for a
+   * scan): a number read from a drawing that has one must be printed in it.
+   * Nothing is trusted from a drawing too blurry to read.
+   */
+  drawing?: { text: string; legible: boolean };
   /** Paths the user filled in the card. */
   confirmed?: Set<string>;
 }
@@ -101,7 +107,7 @@ export function reviewIntent(input: Intent, src: Source): Review {
     });
   }
 
-  intent.holes.forEach((h, i) => reviewHoles(h, i, intent, num, rows, problems, confirmed));
+  intent.holes.forEach((h, i) => reviewHoles(h, i, intent, num, rows, problems, confirmed, src));
 
   const blanks = rows.filter((r) => r.blank);
   return { intent, rows, blanks, problems, ready: blanks.length === 0 && problems.length === 0 };
@@ -109,9 +115,12 @@ export function reviewIntent(input: Intent, src: Source): Review {
 
 type Num = (f: NumberField, path: string, label: string, opts: { required: boolean; askFirst?: boolean; count?: boolean; optionalNote?: string }) => boolean;
 
-function reviewHoles(h: HoleGroup, i: number, intent: Intent, num: Num, rows: Row[], problems: string[], confirmed: Set<string>) {
+function reviewHoles(h: HoleGroup, i: number, intent: Intent, num: Num, rows: Row[], problems: string[], confirmed: Set<string>, src: Source) {
   const p = `holes[${i}]`;
   const label = (s: string) => `Holes${intent.holes.length > 1 ? ` ${i + 1}` : ""}: ${s}`;
+  // Where the holes go, read off a sheet nobody can read, is as invented as a number would be.
+  const blurry = !!src.drawing && !src.drawing.legible && !confirmed.has(`${p}.placement`);
+  if (blurry) h.placement = "unspecified";
   num(h.diameter, `${p}.diameter`, label("diameter"), { required: true, askFirst: true });
   num(h.depth, `${p}.depth`, label("depth"), { required: false, optionalNote: "not given: through" });
 
@@ -125,7 +134,7 @@ function reviewHoles(h: HoleGroup, i: number, intent: Intent, num: Num, rows: Ro
     source: confirmed.has(`${p}.placement`) ? "entered" : h.placement === "unspecified" ? "missing" : "stated",
     confidence: h.placement === "unspecified" ? 0 : 1,
     blank: h.placement === "unspecified",
-    note: h.placement === "unspecified" ? "the request does not say where the holes go" : undefined,
+    note: h.placement !== "unspecified" ? undefined : blurry ? TOO_BLURRY : `${from(src)} does not say where the holes go`,
   };
   rows.push(placementRow);
   if (intent.kind === "disc" && (h.placement === "corners" || h.placement === "grid")) {
@@ -149,7 +158,7 @@ function reviewHoles(h: HoleGroup, i: number, intent: Intent, num: Num, rows: Ro
       break;
     }
     case "points": {
-      const ok = trustedPoints(h.points, `${p}.points`, confirmed);
+      const { ok, why } = trustedPoints(h.points, `${p}.points`, confirmed, src);
       if (!ok) h.points.value = null;
       rows.push({
         path: `${p}.points`,
@@ -161,7 +170,7 @@ function reviewHoles(h: HoleGroup, i: number, intent: Intent, num: Num, rows: Ro
         source: confirmed.has(`${p}.points`) ? "entered" : h.points.source,
         confidence: h.points.confidence,
         blank: !ok,
-        note: ok ? undefined : "the request does not give the hole positions",
+        note: ok ? undefined : why,
       });
       if (ok) fixCount(h, h.points.value!.length, `${p}.count`, label("count"), rows, problems);
       break;
@@ -188,25 +197,46 @@ function fixCount(h: HoleGroup, n: number, path: string, label: string, rows: Ro
 /** Whether a value can be used without asking, and if not, why. */
 function trusted(f: NumberField, path: string, confirmed: Set<string>, src: Source, isCount: boolean): { ok: boolean; why?: string } {
   if (confirmed.has(path)) return { ok: f.value !== null, why: "enter a value" };
-  if (f.value === null || f.source === "missing") return { ok: false, why: "the request does not say" };
+  if (f.value === null || f.source === "missing") return { ok: false, why: `${from(src)} does not say` };
   if (!Number.isFinite(f.value)) return { ok: false, why: "not a number" };
   const conf = Math.max(0, Math.min(1, f.confidence));
-  if (f.source === "inferred") return { ok: false, why: "a guess: the request does not say" };
+  if (f.source === "inferred") return { ok: false, why: `a guess: ${from(src)} does not say` };
   if (conf < CONFIDENT) return { ok: false, why: `read with low confidence (${Math.round(conf * 100)}%)` };
   if (f.source === "standard") {
     return standardValue(f) ? { ok: true } : { ok: false, why: `"${f.evidence}" does not give ${f.value}` };
   }
-  // Stated: the number has to be in what the user wrote. A drawing's numbers are trusted at high confidence (Phase F checks them against the page).
-  if (src.text === undefined) return src.drawing ? { ok: true } : { ok: false, why: "nothing to check it against" };
-  if (numbersIn(src.text, isCount).some((x) => Math.abs(x - f.value!) <= 1e-9 * Math.max(1, Math.abs(x)))) return { ok: true };
-  if (src.drawing) return { ok: true };
-  return { ok: false, why: `${f.value} is not in the request` };
+  return printed(f.value, src, isCount);
 }
 
-function trustedPoints(f: PointsField, path: string, confirmed: Set<string>): boolean {
-  if (confirmed.has(path)) return !!f.value?.length;
-  return !!f.value?.length && f.source === "stated" && f.confidence >= CONFIDENT;
+/** A stated number must be written somewhere: in what the user typed, or on the drawing. */
+function printed(v: number, src: Source, isCount: boolean): { ok: boolean; why?: string } {
+  const has = (text?: string) => !!text && numbersIn(text, isCount).some((x) => Math.abs(x - v) <= 1e-9 * Math.max(1, Math.abs(x)));
+  if (has(src.text)) return { ok: true };
+  if (src.drawing) {
+    if (!src.drawing.legible) return { ok: false, why: TOO_BLURRY };
+    // A vector PDF says exactly what is printed on it; a scan has only the model's reading, at its confidence.
+    if (src.drawing.text) return has(src.drawing.text) ? { ok: true } : { ok: false, why: `${v} is not printed on the drawing` };
+    return { ok: true };
+  }
+  return { ok: false, why: src.text === undefined ? "nothing to check it against" : `${v} is not in the request` };
 }
+
+function trustedPoints(f: PointsField, path: string, confirmed: Set<string>, src: Source): { ok: boolean; why?: string } {
+  if (confirmed.has(path)) return f.value?.length ? { ok: true } : { ok: false, why: "enter the positions" };
+  if (!f.value?.length || f.source === "missing") return { ok: false, why: `${from(src)} does not give the hole positions` };
+  if (f.source !== "stated") return { ok: false, why: `a guess: ${from(src)} does not give the hole positions` };
+  if (f.confidence < CONFIDENT) return { ok: false, why: `read with low confidence (${Math.round(f.confidence * 100)}%)` };
+  for (const pt of f.value) {
+    for (const v of [pt.x, pt.y]) {
+      const r = printed(v, src, false);
+      if (!r.ok) return r;
+    }
+  }
+  return { ok: true };
+}
+
+const TOO_BLURRY = "the drawing is too blurry to read this";
+const from = (src: Source) => (src.drawing ? "the drawing" : "the request");
 
 /** "M6" in the evidence names the value: its clearance hole or tap drill. */
 function standardValue(f: NumberField): boolean {
@@ -249,6 +279,11 @@ export function answerIntent(intent: Intent, answers: Record<string, number | st
     if (!holder) continue;
     if (key === "placement") holder.placement = value as Placement;
     else holder[key] = { value, evidence: "entered in the card", source: "stated", confidence: 1 };
+    // Positions typed in are the placement, too.
+    if (m && key === "points") {
+      holder.placement = "points";
+      confirmed.add(`holes[${m[1]}].placement`);
+    }
     confirmed.add(path);
   }
   return { intent: next, confirmed };

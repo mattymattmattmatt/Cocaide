@@ -451,3 +451,11 @@ button.danger { color: var(--bad); }
 .ask-checks li.bad { color: var(--bad); }
 .ask-note { font-size: 12px; color: var(--muted); }
 .ask-drawing { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--panel-2); border: 1px dashed var(--border); }
+
+/* drawing beside its confirmation card */
+.ask.ask-done:has(.intent-drawing) { width: 560px; }
+.intent-drawing { display: flex; gap: 10px; align-items: flex-start; }
+.drawing-thumb { padding: 0 !important; height: auto !important; border: 1px solid var(--border); border-radius: 6px; background: #fff !important; cursor: zoom-in; flex: none; }
+.drawing-thumb img { display: block; width: 200px; height: auto; border-radius: 6px; }
+.drawing-full { max-width: calc(100vw - 48px); max-height: calc(100vh - 48px); background: #fff; border-radius: 6px; cursor: zoom-out; box-shadow: 0 16px 48px rgb(0 0 0 / 0.4); }
+.ask-drawing .why, .intent-drawing .why { color: var(--accent-2); }

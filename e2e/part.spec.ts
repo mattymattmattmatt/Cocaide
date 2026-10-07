@@ -76,7 +76,7 @@ test('"80 x 40 x 6 plate, four 6.6 holes 8 mm from corners" produces the plate w
   await page.getByTestId("ask-input").press("Enter");
 
   await expect(page.getByTestId("ask-outcome")).toHaveText("Proposed change");
-  await expect(page.getByTestId("ask-text")).toHaveText('A 80 × 40 × 6 mm plate with 4 holes ("bracket"). Checked against the request: 6 of 6 checks pass.');
+  await expect(page.getByTestId("ask-text")).toHaveText('An 80 × 40 × 6 mm plate with 4 holes ("bracket"). Checked against the request: 6 of 6 checks pass.');
   await expect(page.getByTestId("ask-checks").locator("li.ok")).toHaveCount(6);
   await expect(page.getByTestId("intent-card")).toHaveCount(0); // nothing to ask
   await expectVolume(page, FOUR_HOLES.toLocaleString("en-US", { maximumFractionDigits: 3 }));
@@ -129,28 +129,6 @@ test('"a plate with some holes" asks instead of guessing, then builds from the a
   await expect(page.getByTestId("ask-checks").locator("li.ok")).toHaveCount(6);
   await page.getByTestId("ask-accept").click();
   await expectVolume(page, FOUR_HOLES.toLocaleString("en-US", { maximumFractionDigits: 3 }));
-});
-
-test("a dropped drawing opens the part-level ask with the drawing attached", async ({ page }) => {
-  const sent = await scriptModel(page, [[text(bracketIntent)]]);
-  await page.evaluate(() => {
-    // A 1×1 PNG stands in for the drawing.
-    const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
-    const dt = new DataTransfer();
-    dt.items.add(new File([png], "bracket.png", { type: "image/png" }));
-    const target = document.querySelector("[data-testid=viewport]")!;
-    const r = target.getBoundingClientRect();
-    target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true, clientX: r.left + 80, clientY: r.top + 80 }));
-  });
-  await expect(page.getByTestId("ask-drawing")).toHaveText("Drawing: bracket.png");
-  await expect(page.getByTestId("ask-target")).toHaveText("the whole part");
-  await page.getByTestId("ask-submit").click(); // no text needed with a drawing
-  await expect(page.getByTestId("ask-outcome")).toHaveText("Proposed change");
-  await expect(page.getByTestId("ask-accept")).toHaveText("Accept: replace the part");
-
-  const content = sent[0].body.messages[0].content as { type: string; source?: { media_type: string }; text?: string }[];
-  expect(content[0]).toMatchObject({ type: "image", source: { media_type: "image/png" } });
-  expect(content[1].text).toContain("A drawing is attached: bracket.png");
 });
 
 test("a question about the whole part is answered without writing", async ({ page }) => {

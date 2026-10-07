@@ -6,11 +6,17 @@
 // rebuild -> critic -> at most one correction -> proposal. When the review
 // finds missing numbers it asks for them instead of guessing; the answers
 // come back through continuePartAsk.
+//
+// A drawing (spec 5.2) goes rasterised pages -> structured reading ->
+// confirmation card, always: nothing is built until the user confirms the
+// numbers against the drawing.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { RawDocument } from "../doc/commands";
+import type { PreparedDrawing } from "../drawing/rasterize";
 import { critique, type Critique } from "../intent/critic";
-import { planPart } from "../intent/plan";
+import { answerDrawing, DrawingReading, reviewDrawing } from "../intent/drawing";
+import { planPart, type PlanSource } from "../intent/plan";
 import { answerIntent, reviewIntent, type Review } from "../intent/review";
 import { Intent } from "../intent/schema";
 import { round6 } from "../kernel/inspect";
@@ -19,13 +25,8 @@ import type { KernelPort } from "./kernel";
 import type { AskModel } from "./model";
 import { classify } from "./prompt";
 
-export interface Drawing {
-  name: string;
-  /** image/png, image/jpeg, image/webp, image/gif or application/pdf. */
-  mediaType: string;
-  /** Base64. */
-  data: string;
-}
+/** A dropped drawing, rasterised at 200 dpi with its text layer and legibility (src/drawing/rasterize.ts). */
+export type Drawing = PreparedDrawing;
 
 export interface PartAskRequest {
   doc: RawDocument;
@@ -44,6 +45,9 @@ export interface PartAskResult extends AskResult {
   /** Paths the user has filled in the card so far. */
   confirmed?: string[];
   critique?: Critique;
+  /** From a drawing: what was read from the sheet, and the views found. */
+  reading?: DrawingReading;
+  views?: string[];
 }
 
 export const INTENT_SYSTEM = `You read requests for mechanical parts in Cocaide, a parametric CAD program, into intent JSON. You do not design the part; a planner does that from your intent, and the user confirms anything you are not sure of.
@@ -71,10 +75,30 @@ depth: null value for through holes (the usual case).
 units: "in" only if the user wrote inches; otherwise "mm".
 questions: what you would need to ask before the part can be made, one short question each.`;
 
+export const DRAWING_SYSTEM = `You read 2D engineering drawings for Cocaide, a parametric CAD program, into a structured reading. You do not design the part: the user checks your reading on a confirmation card, then a planner builds it.
+
+Report what is on the sheet, field by field: { value, evidence, source, confidence }.
+- evidence: the exact text on the drawing the value comes from ("Ø6.6 THRU", "80", "UNITS: mm"), or "inferred".
+- source "stated": printed on the drawing. "inferred": your deduction (for example a dimension computed from two others). "missing": not on the drawing, value null.
+- confidence: how sure you are of the reading. Under 0.8 the user is asked. If the scan is hard to read, say so with low confidence or missing; never guess a number you cannot read.
+- Never round or convert: report numbers as printed, in the title block's units.
+
+views: every view on the sheet (top, front, side, section, detail, isometric), with its label.
+projection: from the projection symbol or note ("THIRD ANGLE PROJECTION").
+units, title (the part name), drawingNumber, material: from the title block, as written. The material is a note; quote it.
+notes: thickness notes and other notes, quoted.
+partsShown: how many distinct parts the sheet shows.
+
+part: the part as intent. Map the views to the part: the top view gives the outline (width along X, height along Y) and the holes; a front, side or section view or a thickness note gives the thickness. Do not invent geometry no view shows.
+- kind "plate" for a flat rectangular outline, "disc" for a round one, "other" for anything else.
+- Holes: one group per callout ("4X Ø6.6 THRU" is one group, count 4). placement "points" with centres measured from the outline's lower-left corner (x right, y up) when the drawing dimensions hole positions from the edges; "corners" with inset when it dimensions them as an equal inset from both edges at each corner; "circle" for holes on a pitch circle; "center" for one central hole. depth: null value for THRU.
+- action "create". questions: anything the drawing leaves out that the part needs.`;
+
 /** Runs a part-level ask: answer, edit proposal, new-part proposal, or questions. */
 export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
   const base = { target: { kind: "part" } as const, doc: req.doc, model: req.model, kernel: req.kernel, signal: req.signal, onEvent: req.onEvent };
-  if (!req.drawing && classify(req.text) === "explain") return runAsk({ ...base, text: req.text, mode: "explain" });
+  if (req.drawing) return readDrawing(req, req.drawing);
+  if (classify(req.text) === "explain") return runAsk({ ...base, text: req.text, mode: "explain" });
 
   let intent: Intent;
   try {
@@ -88,9 +112,64 @@ export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
   }
   req.onEvent?.({ type: "intent", intent });
 
-  if (!req.drawing && intent.action === "answer") return runAsk({ ...base, text: req.text, mode: "explain" });
-  if (!req.drawing && intent.action === "edit" && req.doc.features.length > 0) return runAsk({ ...base, text: req.text, mode: "edit" });
+  if (intent.action === "answer") return runAsk({ ...base, text: req.text, mode: "explain" });
+  if (intent.action === "edit" && req.doc.features.length > 0) return runAsk({ ...base, text: req.text, mode: "edit" });
   return createFrom(req, { ...intent, action: "create" }, new Set());
+}
+
+/** A drawing: read the sheet, then the confirmation card. */
+async function readDrawing(req: PartAskRequest, drawing: Drawing): Promise<PartAskResult> {
+  let reading: DrawingReading;
+  try {
+    req.onEvent?.({ type: "thinking", turn: 1 });
+    const raw = await req.model.readIntent({ system: DRAWING_SYSTEM, content: drawingContent(req, drawing), schema: "drawing" }, req.signal);
+    const parsed = DrawingReading.safeParse(raw);
+    if (!parsed.success) return failed(req, `The model's reading of the drawing did not fit the schema: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+    reading = parsed.data;
+  } catch (e) {
+    return failed(req, req.signal?.aborted ? "Cancelled." : `Could not read the drawing: ${(e as Error).message}`);
+  }
+  return fromDrawing(req, drawing, reading, new Set(), false);
+}
+
+/**
+ * The confirmation card for a drawing, or, once the user has confirmed it
+ * and nothing is blank, the part built from it.
+ */
+async function fromDrawing(req: PartAskRequest, drawing: Drawing, reading: DrawingReading, confirmed: Set<string>, userConfirmed: boolean): Promise<PartAskResult> {
+  const legible = !drawing.legibility.blurry;
+  const review = reviewDrawing(reading, { text: req.text, drawing: { text: drawing.text, legible }, confirmed, file: drawing.name });
+  const common: PartAskResult = {
+    outcome: "questions",
+    text: "",
+    mode: "edit",
+    visual: true,
+    packet: null,
+    proposal: null,
+    calls: [],
+    model: req.model.name,
+    turns: 1,
+    intent: review.intent,
+    review,
+    confirmed: [...confirmed],
+    reading,
+    views: review.views,
+  };
+  if (userConfirmed && review.ready) {
+    return build(req, review.intent, { name: review.name, source: review.source }, common, `the drawing ${drawing.name}`);
+  }
+  const read = review.rows.filter((r) => !r.blank && r.value !== null && r.source !== "placement" && r.source !== "entered").length;
+  const n = review.blanks.length;
+  common.text = [
+    legible ? "" : `The drawing is too blurry to read numbers from (legibility ${Math.round(drawing.legibility.score * 100)}%), so nothing read from it is used.`,
+    `Read ${read} value${read === 1 ? "" : "s"} from ${drawing.name}${review.views.length ? ` (views: ${review.views.join(", ")})` : ""}.`,
+    n ? `${n} to fill in: ${review.blanks.map((b) => b.label.toLowerCase()).join(", ")}.` : "",
+    ...review.problems,
+    n === 0 && review.problems.length === 0 ? "Check every number against the drawing, then confirm." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return common;
 }
 
 /** The user answered the card: fill the blanks and try again. */
@@ -100,12 +179,17 @@ export async function continuePartAsk(
   answers: Record<string, number | string | { x: number; y: number }[]>,
 ): Promise<PartAskResult> {
   if (!prev.review) return failed(req, "There is nothing to answer.");
+  if (prev.reading && req.drawing) {
+    // The Build button on a drawing's card is the user's confirmation of everything on it.
+    const { reading, confirmed } = answerDrawing(prev.reading, answers);
+    return fromDrawing(req, req.drawing, reading, new Set([...(prev.confirmed ?? []), ...confirmed]), true);
+  }
   const { intent, confirmed } = answerIntent(prev.review.intent, answers);
   return createFrom(req, intent, new Set([...(prev.confirmed ?? []), ...confirmed]));
 }
 
 async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<string>): Promise<PartAskResult> {
-  const review = reviewIntent(intent, { text: req.drawing ? undefined : req.text, drawing: !!req.drawing, confirmed });
+  const review = reviewIntent(intent, { text: req.text, confirmed });
   const common: PartAskResult = {
     outcome: "questions",
     text: "",
@@ -131,8 +215,12 @@ async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<st
     return common;
   }
   if (review.intent.kind === "other") return buildOther(req, review, common);
+  return build(req, review.intent, {}, common, `the request "${req.text}"`);
+}
 
-  const plan = planPart(review.intent);
+/** Plan, rebuild, criticise, one correction pass, proposal. */
+async function build(req: PartAskRequest, intent: Intent, from: PlanSource, common: PartAskResult, what: string): Promise<PartAskResult> {
+  const plan = planPart(intent, from);
   if (!plan.ok) return { ...common, outcome: "failed", text: `Could not plan the part: ${plan.error}` };
   let doc = plan.doc;
   let check = await req.kernel.check(doc);
@@ -146,7 +234,7 @@ async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<st
       doc,
       target: { kind: "part" },
       mode: "edit",
-      text: `This part was planned from the request "${req.text}". Checked against the request, these measurements disagree:\n- ${crit.findings.join("\n- ")}\nFix the features so they match. One pass; then stop.`,
+      text: `This part was planned from ${what}. Checked against it, these measurements disagree:\n- ${crit.findings.join("\n- ")}\nFix the features so they match. One pass; then stop.`,
       model: req.model,
       kernel: req.kernel,
       signal: req.signal,
@@ -162,7 +250,8 @@ async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<st
 
   const proposal = replaceProposal(req.doc, doc, check.measurements?.volume ?? null, crit, notes);
   const m = check.measurements;
-  const what = describe(review.intent, m ? m.boundingBox!.size : null, m?.holeCount ?? 0);
+  const made = describe(intent, m ? m.boundingBox!.size : null, m?.holeCount ?? 0);
+  const against = req.drawing ? "the drawing" : "the request";
   return {
     ...common,
     outcome: "proposal",
@@ -170,8 +259,8 @@ async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<st
     critique: crit,
     calls: correction?.calls ?? [],
     text: crit.ok
-      ? `${what} Checked against the request: ${crit.checks.length} of ${crit.checks.length} checks pass.`
-      : `${what} It still does not match the request after one correction: ${crit.findings.join("; ")}. Over to you.`,
+      ? `${made} Checked against ${against}: ${crit.checks.length} of ${crit.checks.length} checks pass.`
+      : `${made} It still does not match ${against} after one correction: ${crit.findings.join("; ")}. Over to you.`,
   };
 }
 
@@ -225,23 +314,29 @@ function replaceProposal(base: RawDocument, doc: RawDocument, volume: number | n
 function describe(intent: Intent, size: number[] | null, holes: number): string {
   const s = size ? size.map((v) => round6(v)).join(" × ") : "?";
   const shape = intent.kind === "disc" ? "disc" : "plate";
-  return `A ${s} mm ${shape}${holes ? ` with ${holes} hole${holes === 1 ? "" : "s"}` : ""}${intent.name && intent.name !== shape ? ` ("${intent.name}")` : ""}.`;
+  const article = /^(8|1[18](\D|$))/.test(s) ? "An" : "A";
+  return `${article} ${s} mm ${shape}${holes ? ` with ${holes} hole${holes === 1 ? "" : "s"}` : ""}${intent.name && intent.name !== shape ? ` ("${intent.name}")` : ""}.`;
 }
 
 function intentContent(req: PartAskRequest): Anthropic.ContentBlockParam[] {
-  const blocks: Anthropic.ContentBlockParam[] = [];
-  if (req.drawing) {
-    blocks.push(
-      req.drawing.mediaType === "application/pdf"
-        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: req.drawing.data } }
-        : { type: "image", source: { type: "base64", media_type: req.drawing.mediaType as "image/png", data: req.drawing.data } },
-    );
-  }
   const current = req.doc.features.length
     ? `The current part is "${req.doc.name}", ${req.doc.features.length} features.`
     : "There is no current part: the document is empty.";
-  const ask = req.text.trim() || (req.drawing ? "Read the part from this drawing." : "");
-  blocks.push({ type: "text", text: `${current}${req.drawing ? `\nA drawing is attached: ${req.drawing.name}. Numbers printed on it count as stated; anything you cannot read clearly is missing, not guessed.` : ""}\n\nThe request:\n${ask}` });
+  return [{ type: "text", text: `${current}\n\nThe request:\n${req.text.trim()}` }];
+}
+
+/** The pages at 200 dpi, the PDF's text layer, and the user's note last. */
+function drawingContent(req: PartAskRequest, d: Drawing): Anthropic.ContentBlockParam[] {
+  const blocks: Anthropic.ContentBlockParam[] = d.pages.map((p) => ({ type: "image", source: { type: "base64", media_type: "image/png", data: p.png } }));
+  const lines = [
+    `The drawing: ${d.name}, ${d.pageCount} page${d.pageCount === 1 ? "" : "s"}${d.dpi ? `, rasterised at ${d.dpi} dpi` : " (a scan)"}${d.pageCount > d.pages.length ? `; only the first ${d.pages.length} are shown` : ""}.`,
+    d.text
+      ? `Its text layer, exactly as printed on the sheet:\n${d.text}`
+      : "It has no text layer: read the numbers from the image, and mark anything you cannot read clearly as missing.",
+  ];
+  if (d.legibility.blurry) lines.push("The scan measures as blurry. Do not guess numbers you cannot read: leave them missing.");
+  lines.push(`\nThe user's note:\n${req.text.trim() || "(none)"}`);
+  blocks.push({ type: "text", text: lines.join("\n") });
   return blocks;
 }
 

@@ -2,7 +2,7 @@
 // box, the scoped actions, then progress and the result. A proposal shows
 // what it changes and waits for Accept or Discard.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Change } from "../../ask/agent";
 import { MODELS } from "../../ask/models";
 import { describeScope, scopeFor } from "../../ask/packet";
@@ -29,14 +29,21 @@ export function AskPopover({ ask }: { ask: Ask }) {
     }
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep the popover inside the window.
-  useLayoutEffect(() => {
+  // Keep the popover inside the window, also when it grows on its own (a drawing's thumbnail loading).
+  const place = useCallback(() => {
     if (!s || !box.current) return;
     const r = box.current.getBoundingClientRect();
     const left = Math.max(8, Math.min(s.ctx.x, window.innerWidth - r.width - 8));
     const top = Math.max(8, Math.min(s.ctx.y, window.innerHeight - r.height - 8));
-    if (!pos || pos.left !== left || pos.top !== top) setPos({ left, top });
-  });
+    setPos((pos) => (pos && pos.left === left && pos.top === top ? pos : { left, top }));
+  }, [s]);
+  useLayoutEffect(place);
+  useEffect(() => {
+    if (!box.current) return;
+    const observer = new ResizeObserver(place);
+    observer.observe(box.current);
+    return () => observer.disconnect();
+  }, [place]);
 
   useEffect(() => {
     if (!s) return;
@@ -87,6 +94,10 @@ export function AskPopover({ ask }: { ask: Ask }) {
           {ctx.drawing && (
             <div className="ask-drawing" data-testid="ask-drawing">
               Drawing: <strong>{ctx.drawing.name}</strong>
+              {ctx.drawing.dpi
+                ? ` · ${ctx.drawing.pageCount} page${ctx.drawing.pageCount === 1 ? "" : "s"} at ${ctx.drawing.dpi} dpi`
+                : " · scan"}
+              {ctx.drawing.legibility.blurry && <span className="why"> · looks too blurry to read</span>}
             </div>
           )}
           <form
@@ -188,14 +199,16 @@ export function AskPopover({ ask }: { ask: Ask }) {
         <div className="ask-body">
           <blockquote className="ask-prompt">{s.prompt}</blockquote>
           <div className={`ask-outcome ${s.result.outcome}`} data-testid="ask-outcome">
-            {s.accepted ? "Applied" : OUTCOME[s.result.outcome]}
+            {s.accepted ? "Applied" : s.result.outcome === "questions" && s.result.review?.ready ? "Check the reading" : OUTCOME[s.result.outcome]}
           </div>
           {s.result.text && (
             <div className="ask-text" data-testid="ask-text">
               {s.result.text}
             </div>
           )}
-          {s.result.outcome === "questions" && s.result.review && <IntentCard review={s.result.review} onBuild={(answers) => ask.answer(s, answers)} />}
+          {s.result.outcome === "questions" && s.result.review && (
+            <IntentCard review={s.result.review} drawing={ctx.drawing} views={s.result.views} onBuild={(answers) => ask.answer(s, answers)} />
+          )}
           {s.result.proposal?.checks && (
             <ul className="ask-checks" data-testid="ask-checks">
               {s.result.proposal.checks.map((c) => (

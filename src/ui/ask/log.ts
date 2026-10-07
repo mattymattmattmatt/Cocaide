@@ -20,6 +20,8 @@ export interface AskRecord {
   baseHash: string;
   calls: AskResult["calls"];
   accepted?: { at: string; hash: string };
+  /** A drawing the ask read: which, and how legible it measured. */
+  drawing?: { name: string; pages: number; dpi: number | null; textLayer: boolean; legibility: number };
   /** Numbers the user gave in the confirmation card. */
   answers?: Record<string, unknown>;
   discarded?: { at: string; reason?: string };

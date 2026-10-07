@@ -15,8 +15,24 @@ export interface CocaideDocument {
   parameters?: Record<string, number>;
   /** Used for the mass measurement. Defaults to steel (7850 kg/m³) when absent. */
   material?: Material;
+  /** Where the part came from, kept as notes (a drawing's title block). Stored, never simulated. */
+  source?: DocumentSource;
   features: Feature[];
 }
+
+export interface DocumentSource {
+  /** The drawing file the part was built from. */
+  drawing?: string;
+  drawingNumber?: string;
+  /** "first-angle" or "third-angle", as the user declared it. */
+  projection?: string;
+  /** The title block's material note, as written. It does not set the density. */
+  material?: string;
+  /** The title block's units, as written. The document itself is always mm. */
+  units?: string;
+}
+
+export const SOURCE_KEYS = ["drawing", "drawingNumber", "projection", "material", "units"] as const;
 
 export interface Material {
   name?: string;

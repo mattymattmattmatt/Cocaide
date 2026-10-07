@@ -10,6 +10,7 @@ import {
   FEATURE_OPS,
   PATTERNABLE_OPS,
   PICKS,
+  SOURCE_KEYS,
   type ChamferFeature,
   type CircularPatternFeature,
   type CocaideDocument,
@@ -78,7 +79,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "features"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "features"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -101,6 +102,16 @@ export function validateDocument(input: unknown): ValidationResult {
       if (density !== undefined) {
         result.material = { densityKgPerM3: density };
         if (typeof m.name === "string") result.material.name = m.name;
+      }
+    }
+  }
+  if (input.source !== undefined) {
+    if (!isObject(input.source)) {
+      header.fail("source", `must be an object of notes (got ${describe(input.source)})`);
+    } else {
+      header.keys(input.source, "source", [...SOURCE_KEYS]);
+      for (const [k, v] of Object.entries(input.source)) {
+        if (typeof v !== "string") header.fail(`source.${k}`, `must be a string (got ${describe(v)})`);
       }
     }
   }

@@ -144,6 +144,17 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
         text: result.text,
         baseHash: await hashDoc(ctx.doc),
         calls: result.calls,
+        ...(ctx.drawing
+          ? {
+              drawing: {
+                name: ctx.drawing.name,
+                pages: ctx.drawing.pageCount,
+                dpi: ctx.drawing.dpi,
+                textLayer: ctx.drawing.text.length > 0,
+                legibility: Math.round(ctx.drawing.legibility.score * 1000) / 1000,
+              },
+            }
+          : {}),
       });
       const done: Extract<AskState, { phase: "done" }> = { phase: "done", ctx, prompt: text, applyNow, result, recordId, preview: true, accepted: false };
       setState(done);

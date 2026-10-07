@@ -38,7 +38,7 @@ describe("part-level prompt", () => {
     expect(r.review!.blanks).toEqual([]);
     expect(r.proposal!.replace).toBe(true);
     expect(r.proposal!.checks!.every((c) => c.ok)).toBe(true);
-    expect(r.text).toBe('A 80 × 40 × 6 mm plate with 4 holes ("bracket"). Checked against the request: 6 of 6 checks pass.');
+    expect(r.text).toBe('An 80 × 40 × 6 mm plate with 4 holes ("bracket"). Checked against the request: 6 of 6 checks pass.');
     expect(r.calls).toEqual([]); // no correction was needed
     expect(model.requests).toEqual([]); // and no agent turns: the planner built it
 
@@ -146,22 +146,6 @@ describe("part-level prompt", () => {
     expect(r.proposal!.notes).toContain("The holes are 2 mm from the edges but 3 mm in radius, so they break out of the edges.");
     expect(r.text).toMatch(/still does not match the request after one correction: Hole count: expected 4, measured 0/);
     expect(r.text.endsWith("Over to you.")).toBe(true);
-  });
-
-  it("a dropped drawing goes to the model as a document; unclear numbers are blanks", async () => {
-    const intent: Intent = {
-      ...bracketIntent(),
-      thickness: { value: 6, evidence: "t=6?", source: "stated", confidence: 0.5 },
-    };
-    const model = new ScriptedModel([], [intent]);
-    const drawing = { name: "bracket.pdf", mediaType: "application/pdf", data: "JVBERi0xLjQK" };
-    const r = await runPartAsk({ doc: EMPTY, text: "", drawing, model, kernel });
-    expect(r.outcome).toBe("questions");
-    expect(r.review!.blanks.map((b) => [b.path, b.note])).toEqual([["thickness", "read with low confidence (50%)"]]);
-    const content = model.intentRequests[0].content;
-    expect(content[0]).toMatchObject({ type: "document", source: { type: "base64", media_type: "application/pdf" } });
-    // Printed numbers read clearly are trusted without a text to match them against.
-    expect(r.review!.rows.find((x) => x.path === "width")!.blank).toBe(false);
   });
 
   it("a malformed reading fails cleanly", async () => {

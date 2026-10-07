@@ -1,8 +1,10 @@
 // The confirmation card (spec 5.1, 5.2): what was read from the request or
 // drawing, where each number came from, and blanks for what is missing or
-// unsure. Nothing is built until every blank is filled.
+// unsure. Nothing is built until every blank is filled. A drawing's card is
+// shown beside the drawing, and building it is the user's confirmation.
 
 import { useState } from "react";
+import type { PreparedDrawing } from "../../drawing/rasterize";
 import type { Review, Row } from "../../intent/review";
 import { PLACEMENTS } from "../../intent/constants";
 
@@ -11,6 +13,9 @@ type Answer = number | string | { x: number; y: number }[];
 interface Props {
   review: Review;
   onBuild(answers: Record<string, Answer>): void;
+  /** The drawing the rows were read from: shown beside them. */
+  drawing?: PreparedDrawing;
+  views?: string[];
 }
 
 const PLACEMENT_LABEL: Record<string, string> = {
@@ -21,8 +26,9 @@ const PLACEMENT_LABEL: Record<string, string> = {
   circle: "on a circle",
 };
 
-export function IntentCard({ review, onBuild }: Props) {
+export function IntentCard({ review, onBuild, drawing, views }: Props) {
   const [values, setValues] = useState<Record<string, string>>({});
+  const [zoom, setZoom] = useState(false);
   const editable = review.rows.filter((r) => r.source !== "placement");
   const parsed = (r: Row): Answer | undefined => parse(r, values[r.path]);
   const missing = review.blanks.filter((r) => parsed(r) === undefined);
@@ -36,8 +42,29 @@ export function IntentCard({ review, onBuild }: Props) {
     onBuild(answers);
   };
 
+  const page = drawing?.pages[0];
+  const src = page ? `data:image/png;base64,${page.png}` : null;
   return (
     <div className="intent-card" data-testid="intent-card">
+      {drawing && src && (
+        <div className="intent-drawing">
+          <button className="drawing-thumb" onClick={() => setZoom(true)} title="Open the drawing to check the numbers" data-testid="drawing-thumb">
+            <img src={src} alt={`${drawing.name}, page 1`} />
+          </button>
+          <div className="muted small">
+            {drawing.name}
+            {drawing.dpi ? ` · ${drawing.pageCount} page${drawing.pageCount === 1 ? "" : "s"} at ${drawing.dpi} dpi` : " · scan"}
+            {drawing.text ? " · text layer" : ""}
+            {drawing.legibility.blurry && <span className="why"> · too blurry to read</span>}
+            {views?.length ? <div>Views: {views.join(", ")}</div> : null}
+          </div>
+        </div>
+      )}
+      {zoom && src && (
+        <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setZoom(false)} data-testid="drawing-zoom">
+          <img className="drawing-full" src={src} alt={drawing!.name} onClick={() => setZoom(false)} />
+        </div>
+      )}
       {review.problems.map((p) => (
         <div key={p} className="command-error" role="alert">
           {p}
@@ -63,9 +90,9 @@ export function IntentCard({ review, onBuild }: Props) {
       </table>
       <div className="ask-buttons">
         <button className="primary" disabled={missing.length > 0 || review.problems.length > 0} onClick={build} data-testid="intent-build">
-          Build
+          {drawing ? "Confirm and build" : "Build"}
         </button>
-        <span className="muted small">{missing.length ? `${missing.length} to fill` : "Ready to build"}</span>
+        <span className="muted small">{missing.length ? `${missing.length} to fill` : drawing ? "Check each value against the drawing" : "Ready to build"}</span>
       </div>
     </div>
   );
@@ -74,6 +101,18 @@ export function IntentCard({ review, onBuild }: Props) {
 function input(r: Row, draft: string | undefined, set: (v: string) => void) {
   const shown = draft ?? (r.value === null ? "" : r.kind === "points" ? formatPoints(r.value as { x: number; y: number }[]) : String(r.value));
   const id = `intent-input-${r.path}`;
+  if (r.kind === "choice") {
+    return (
+      <select value={shown} onChange={(e) => set(e.target.value)} data-testid={id} aria-label={r.label}>
+        <option value="">choose…</option>
+        {(r.options ?? []).map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
   if (r.kind === "placement") {
     return (
       <select value={shown} onChange={(e) => set(e.target.value)} data-testid={id} aria-label={r.label}>
@@ -91,7 +130,7 @@ function input(r: Row, draft: string | undefined, set: (v: string) => void) {
       <input
         value={shown}
         inputMode={r.kind === "number" ? "decimal" : "text"}
-        placeholder={r.kind === "points" ? "x,y; x,y" : r.kind === "question" ? "your answer" : r.blank ? "?" : ""}
+        placeholder={r.kind === "points" ? "x,y; x,y" : r.kind === "question" ? "your answer" : r.blank ? "?" : r.kind === "text" ? "—" : ""}
         onChange={(e) => set(e.target.value)}
         data-testid={id}
         aria-label={r.label}
@@ -120,7 +159,8 @@ function parse(r: Row, draft: string | undefined): Answer | undefined {
       return Number.isFinite(n) && n >= 0 ? n : undefined;
     }
     case "placement":
-      return text;
+    case "choice":
+    case "text":
     case "question":
       return text;
     case "points": {

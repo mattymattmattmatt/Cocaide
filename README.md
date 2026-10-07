@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase E (part-level prompt) done.**
+**Status: Phase F (drawing ingest) done.**
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -19,6 +19,10 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - The request is read into intent JSON. Every number records where it came from, and a number the request doesn't contain is never used.
   - What's missing is asked for in a confirmation card. A deterministic planner then builds a parametric feature document.
   - A critic checks the rebuilt part against the request, and the agent gets one correction pass.
+- Phase F adds drawing ingest: drop a PDF or an image of a drawing, and the part is read off the sheet.
+  - Pages are rasterised at 200 dpi. A PDF's text layer goes with them, and how legible the pixels are is measured.
+  - The model returns a structured reading: views, overall sizes, hole callouts, thickness, units, projection and title block, each with its evidence and confidence.
+  - Every number lands in the confirmation card. A number not printed on the PDF, read from a blurry scan, or under 0.8 confidence is a blank. Nothing is built until the user confirms.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -27,9 +31,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 209 unit, kernel and agent tests, including the Phase A, C, D and E acceptance logic
-                       #   (+5 live-model Phase D/E tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 22 browser tests (Playwright, Chromium), including the Phase B, D and E acceptance suites
+npm test               # 216 unit, kernel and agent tests, including the Phase A, C, D, E and F acceptance logic
+                       #   (+7 live-model Phase D/E/F tests, run when ANTHROPIC_API_KEY is set)
+npm run test:e2e       # 24 browser tests (Playwright, Chromium), including the Phase B, D, E and F acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -57,6 +61,27 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 
 ## Acceptance
 
+### Phase F: drawing ingest
+
+The fixtures are a real dimensioned drawing of the spec bracket (`examples/drawings`, made by `npx tsx scripts/make-drawings.ts`): a vector PDF printed by Chromium, a clean 200 dpi scan, and a blurry scan. The drawing shows a top view and a front view, dimensions 80, 40, 6, 70 and 20, the callout "Ø6.6 THRU", and a title block: BRACKET, CD-0001, S275 STEEL, mm, third angle.
+
+| Check | Result |
+|---|---|
+| A clean one-part dimensioned PDF of the bracket lands in the confirmation card with the right numbers, and builds after confirm | Drop `bracket.pdf` on the window. pdf.js rasterises the page at 200 dpi (2339 × 1655) and extracts its text layer, and both go to the model. The card shows 80, 40, 6, Ø6.6 at (70, 20), mm, third angle, BRACKET, CD-0001 and S275 STEEL, each with its quoted evidence and confidence, and no blanks. Nothing is built until **Confirm and build**. The planner then builds `sketch_1`, `ext_1` and `hole_1`, and the critic passes 6 of 6 checks. Accept, and the part is 18,994.728 mm³, the spec bracket. It is named BRACKET, and the drawing, projection, units, drawing number and material are stored in `source`. |
+| A blurry drawing leaves fields blank rather than inventing them | Drop `bracket-blurry.png`. Its legibility is measured on the pixels: 2%, against 100% for the clean scan. The ask says it looks too blurry before anything is sent. The scripted model returns a confident, complete reading anyway. Every number, the units, the projection and where the holes go come back blank, with "the drawing is too blurry to read this", and Build stays disabled. Filled in from the paper copy, it builds. |
+
+These checks are covered at three levels:
+- **Browser** (`e2e/drawing.spec.ts`): the real PDF goes through pdf.js in Chromium, legibility is measured on the real pixels, and the real SDK runs with the API answered by a script. The test checks what the page sent: the 200 dpi PNG, the text layer, and a JSON-schema output format. It also opens the drawing full size from the card.
+- **Node** (`tests/drawing.test.ts`): the same logic with a scripted reading, plus:
+  - a misread number that is not printed on the PDF ("6.5 is not printed on the drawing");
+  - legibility thresholds (a box blur of radius 3 still reads, radius 4 does not);
+  - a clean scan with no text layer, read at the model's confidence;
+  - the v1 limits: one part per drawing, plates and discs only;
+  - an inch drawing, converted once.
+- **Live model** (`tests/phase-f-acceptance.test.ts`): runs both checks against Claude when `ANTHROPIC_API_KEY` is set. **No key was available where this was built, so the live-model tests for Phases D, E and F have not been run yet.**
+
+![The drawing's confirmation card: the page, the views found, and every number with the text it was read from](docs/phase-f-card.png)
+
 ### Phase E: part-level prompt
 
 | Check | Result |
@@ -65,7 +90,7 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 | "a plate with some holes" asks instead of guessing | The result is **Needs your numbers**, with blanks for width, height, thickness, hole diameter, where the holes go, and how many. Nothing is built until they're filled. The check is in code: when a scripted model *invents* 80 × 40 × 6 with Ø6.6 holes and calls them stated, each comes back as "80 is not in the request" and is still a blank. |
 
 These checks are covered at three levels:
-- **Browser** (`e2e/part.spec.ts`): the real SDK with the API answered by a script, filling the card through to a built part. It also covers a dropped drawing and a question about the whole part.
+- **Browser** (`e2e/part.spec.ts`): the real SDK with the API answered by a script, filling the card through to a built part. It also covers a question about the whole part.
 - **Node** (`tests/part-ask.test.ts`, `tests/intent.test.ts`): runs the same logic with a scripted model, plus:
   - M6 standard sizes;
   - inch conversion;
@@ -206,7 +231,7 @@ Right-click empty space, or drop a drawing (PDF or image) on the window. This ta
 - `standard` is accepted only when the evidence names a metric size whose clearance hole or tap drill gives that value.
 - Thickness and hole diameter are ask-first: a guess is never used.
 - Anything the part needs that is missing, guessed or under 0.8 confidence becomes a blank in the confirmation card. What the user typed is used exactly.
-- A drawing has no text to check against, so its numbers are trusted at 0.8 confidence or above. Phase F checks them against the page.
+- A number read from a drawing must be printed in the PDF's text layer. A scan has no text layer, so its numbers are trusted at 0.8 confidence or above, and none are trusted from a blurry one (see [Drawing ingest](#drawing-ingest)).
 
 **Plan, rebuild, criticise** (`src/intent/plan.ts`, `src/intent/critic.ts`).
 - The planner is deterministic. A request in inches is converted once, and the conversion is reported.
@@ -217,7 +242,33 @@ Right-click empty space, or drop a drawing (PDF or image) on the window. This ta
 
 Accepting a new part replaces the document, as one undo step. Any edit to the document while the proposal is open drops it.
 
-**Drawings.** A dropped PDF or image goes to the model with the request. Numbers it can't read clearly come back as blanks rather than guesses. Phase F will make this a proper drawing ingest: rasterising pages, mapping views to features, and testing against real drawings.
+## Drawing ingest
+
+Drop a PDF or an image (PNG, JPEG, WebP, GIF; up to 20 MB) on the window. This opens the part-level ask with the drawing attached; a note typed with it goes along, but none is needed (spec 5.2).
+
+1. **Rasterise** (`src/drawing/rasterize.ts`, in the browser). pdf.js renders each page at 200 dpi, up to 3 pages, and extracts the text layer. An image is used at its own resolution, flattened onto white. pdf.js and its worker load only when a PDF is dropped.
+2. **Measure legibility** (`src/drawing/legibility.ts`). This is computed from the pixels, not judged by the model. It combines the contrast between paper and ink with how much of the ink is solid rather than smeared grey. Under 50% the drawing is too blurry to read, and the ask says so before anything is sent.
+3. **Read** (`src/intent/drawing.ts`, `DRAWING_SYSTEM` in `src/ask/part.ts`). The pages go to the model as images, with the text layer "exactly as printed on the sheet". It returns structured output only:
+   - the views found (top, front, side, section, detail);
+   - the projection, the title block's units, the part name, the drawing number and the material;
+   - notes, such as thickness notes;
+   - the part as intent: overall sizes and hole callouts.
+
+   Every field is `{ value, evidence, source, confidence }`, where evidence is the quoted text or "inferred". The top view gives the outline and the holes; a front, side or section view or a thickness note gives the thickness. The model is told not to invent geometry no view shows.
+4. **Confirm** (the card). The card is always shown, with the page (click it to open full size), the views found, and each value with its evidence. A value is a blank the user fills when:
+   - it is missing, inferred or under 0.8 confidence;
+   - on a PDF, the number is not in the text layer;
+   - the drawing is too blurry, in which case nothing read from it is used, not even where the holes go.
+
+   The units and the projection are required. If the sheet doesn't state them, the user declares them. **Confirm and build** is the user's confirmation of everything on the card.
+5. **Build.** The confirmed reading goes through the same planner, critic and single correction pass as a typed request. Numbers are in the title block's units and are converted once. The result is a proposal to accept.
+
+v1 limits:
+- One part per drawing. A sheet showing more gets a message on the card, and Build stays disabled.
+- Flat plates and discs: one outline with holes through it. For anything else the card says to build it by hand or describe it.
+- No GD&T solver. Tolerances are not read into the part.
+- The projection is stored. v1's flat parts read the same in either projection, because only the arrangement of the views differs.
+- The material note is stored in the document's `source`, never simulated: mass still uses the document's `material` density.
 
 ## Agents (MCP)
 
@@ -280,6 +331,8 @@ File extension `.cocaide.json`. Units are millimetres, always. Unknown fields ar
   "name": "bracket",
   "parameters": { "plate_t": 6 },                            // optional named numbers
   "material": { "name": "S275", "densityKgPerM3": 7850 },   // optional; default steel 7850
+  "source": { "drawing": "bracket.pdf", "projection": "third-angle", "units": "mm",
+              "drawingNumber": "CD-0001", "material": "S275 STEEL" },   // optional: the drawing it was read from
   "features": [ /* run in order */ ]
 }
 ```
@@ -363,13 +416,15 @@ src/kernel    OCCT: operations, selectors, picking -> selector synthesis, measur
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
 src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt
-src/intent    intent JSON, the ask-if-missing review, the planner, the critic
-src/render    software renderer (PNG screenshots without a GPU) and binary STL
+src/intent    intent JSON, the ask-if-missing review, the drawing reading and its review, the planner, the critic
+src/drawing   drawing ingest in the browser: pdf.js rasterising at 200 dpi, text layer, legibility
+src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
-scripts       headless CLI, FreeCAD verification, log replay
-examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet)
+scripts       headless CLI, FreeCAD verification, log replay, the drawing fixtures (make-drawings.ts)
+examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet);
+              drawings/: the bracket as a PDF, a clean scan and a blurry scan
 tests         unit, kernel, agent, MCP and ask tests (Vitest, Node)
 e2e           browser tests (Playwright)
 ```

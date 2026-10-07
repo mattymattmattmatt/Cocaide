@@ -25,7 +25,13 @@ export type Plan = { ok: true; doc: RawDocument; expect: Expectation; notes: str
 
 const TOP = { type: "planar", normal: [0, 0, 1], pick: "largest" };
 
-export function planPart(intent: Intent): Plan {
+/** Notes kept with the document: where the part came from (a drawing's title block). */
+export interface PlanSource {
+  name?: string | null;
+  source?: Record<string, string>;
+}
+
+export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   if (intent.kind === "other") return { ok: false, error: "only plates and discs have a planner; other parts are built by the agent" };
   const k = intent.units === "in" ? 25.4 : 1;
   const notes: string[] = [];
@@ -185,7 +191,8 @@ export function planPart(intent: Intent): Plan {
   });
 
   if (conversions.length) notes.unshift(`Converted from inches once (× 25.4): ${conversions.join("; ")}.`);
-  const doc: RawDocument = { version: 1, units: "mm", name: intent.name.trim() || (disc ? "disc" : "plate"), parameters: params, features };
+  const name = from.name?.trim() || intent.name.trim() || (disc ? "disc" : "plate");
+  const doc: RawDocument = { version: 1, units: "mm", name, parameters: params, ...(from.source ? { source: from.source } : {}), features };
   const errors = allErrors(validateDocument(doc));
   if (errors.length) return { ok: false, error: `the plan does not validate: ${errors.join("; ")}` };
   return { ok: true, doc, expect: { size, holes }, notes };
