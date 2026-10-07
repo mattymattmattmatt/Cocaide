@@ -299,6 +299,14 @@ describe("errors the agent can read", () => {
     ]);
   });
 
+  it("rejects an op that would remove the whole part", () => {
+    const doc = load("bracket");
+    (doc.features[2] as { diameter: number }).diameter = 500;
+    const r = build(doc);
+    expect(r.errors).toEqual(["hole_1: removes all the material: nothing of the part would be left"]);
+    expect(r.volume).toBeCloseTo(80 * 40 * 6, 6); // the body before the hole
+  });
+
   it("keeps rebuilding after a failed feature", () => {
     const doc = plate([
       {

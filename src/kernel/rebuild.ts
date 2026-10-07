@@ -10,7 +10,8 @@ import { validateDocument } from "../doc/validate";
 import { checkConstraints } from "../geom/constraints";
 import { planeFrame, to3D } from "../geom/frame";
 import { buildProfile, entityPolylines } from "../geom/profile";
-import { measure, type Measurements } from "./measure";
+import { measure, volumeOf, type Measurements } from "./measure";
+import { countSubShapes } from "./topology";
 import { getOC, type OC, scoped } from "./oc";
 import { edgeTreatment, extrudeOrCut, hole, OpError, pattern, type BooleanKind, type SketchProfile, type ToolResult } from "./ops";
 
@@ -74,7 +75,13 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
     suppressed.has(id) ? `${what} "${id}" is suppressed` : `${what} "${id}" failed`;
   const advance = (step: (before: TopoDS_Shape | null) => TopoDS_Shape) => {
     const before: TopoDS_Shape | null = body;
-    body = step(before);
+    const next = step(before);
+    // Each op checks that it changed the body; none may leave nothing at all.
+    if (scoped((s) => countSubShapes(oc, s, next, "solid") === 0 || volumeOf(oc, s, next) <= 1e-9)) {
+      next.delete();
+      throw new OpError("removes all the material: nothing of the part would be left");
+    }
+    body = next;
     before?.delete();
   };
   const keepTool = (id: string, r: ToolResult): TopoDS_Shape => {
@@ -131,6 +138,12 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
     } catch (e) {
       const messages = e instanceof OpError ? e.message.split("\n") : [`kernel error: ${kernelMessage(oc, e)}`];
       const prefixed = messages.map((m) => `${raw.id}: ${m}`);
+      // A failed feature leaves no tool body behind for a pattern to repeat.
+      const tool = tools.get(raw.id);
+      if (tool) {
+        tool.tool.delete();
+        tools.delete(raw.id);
+      }
       errors.push(...prefixed);
       features.push({ id: raw.id, op, ok: false, error: prefixed.join("\n") });
     }

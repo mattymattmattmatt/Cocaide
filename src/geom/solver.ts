@@ -25,6 +25,11 @@ export type HandleRef = string;
 export interface SolveOptions {
   /** Pin handles to these positions (a drag). */
   drag?: { handle: HandleRef; to: Vec2; from?: Vec2 }[];
+  /**
+   * Numbers that must not move: "r1.w", or "l1.start" (both coordinates), or
+   * "l1.start.1" (one coordinate). Used for fields driven by expressions.
+   */
+  fixed?: string[];
 }
 
 export type SolveResult =
@@ -263,6 +268,18 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     base = equations(l, constraints).fns;
   } catch (e) {
     return { ok: false, error: (e as Error).message };
+  }
+  for (const ref of opts.fixed ?? []) {
+    const parts = ref.split(".");
+    const i = l.at.get(`${parts[0]}.${parts[1]}`);
+    if (i === undefined) return { ok: false, error: `unknown field ${ref}` };
+    const e = entityById(l, parts[0]);
+    const width = FIELDS[e.type].find(([f]) => f === parts[1])![1];
+    const comps = parts[2] !== undefined ? [Number(parts[2])] : Array.from({ length: width }, (_, k) => k);
+    for (const k of comps) {
+      const v = l.x[i + k];
+      base.push((x) => x[i + k] - v);
+    }
   }
   const attempts: Fn[][] = [];
   if (opts.drag?.length) {

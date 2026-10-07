@@ -27,6 +27,7 @@ import {
   type Vec2,
   type Vec3,
 } from "./types";
+import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 
 export interface ValidatedFeature {
   index: number;
@@ -43,6 +44,7 @@ export interface ValidationResult {
   /** Errors that make the document as a whole unusable. */
   headerErrors: string[];
   name: string;
+  parameters: Parameters;
   material: Material | undefined;
   features: ValidatedFeature[];
 }
@@ -63,19 +65,20 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
     name: v.name,
     features: v.features.map((f) => f.feature as Feature),
   };
+  if (Object.keys(v.parameters).length) doc.parameters = v.parameters;
   if (v.material) doc.material = v.material;
   return doc;
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", material: undefined, features: [] };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [] };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "material", "features"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "features"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -101,6 +104,17 @@ export function validateDocument(input: unknown): ValidationResult {
       }
     }
   }
+  if (input.parameters !== undefined) {
+    if (!isObject(input.parameters)) {
+      header.fail("parameters", `must be an object of name: number (got ${describe(input.parameters)})`);
+    } else {
+      for (const [k, v] of Object.entries(input.parameters)) {
+        if (!PARAMETER_NAME.test(k)) header.fail(`parameters.${k}`, "a parameter name is letters, digits and _ and starts with a letter");
+        else if (typeof v !== "number" || !Number.isFinite(v)) header.fail(`parameters.${k}`, `must be a number (got ${describe(v)})`);
+        else result.parameters[k] = v;
+      }
+    }
+  }
   if (!Array.isArray(input.features)) {
     header.fail("features", `must be an array (got ${describe(input.features)})`);
     result.headerErrors = header.errors;
@@ -109,10 +123,14 @@ export function validateDocument(input: unknown): ValidationResult {
   result.headerErrors = header.errors;
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
-  input.features.forEach((raw, index) => {
-    const rawId = isObject(raw) && typeof raw.id === "string" && raw.id !== "" ? raw.id : `features[${index}]`;
+  input.features.forEach((original, index) => {
+    const rawId = isObject(original) && typeof original.id === "string" && original.id !== "" ? original.id : `features[${index}]`;
     const c = new Checker(rawId);
     let feature: Feature | null = null;
+    // Expressions become numbers first; a bad expression fails this feature only.
+    const exprErrors: string[] = [];
+    const raw = isObject(original) ? (resolveExpressions(original, result.parameters, exprErrors) as Record<string, unknown>) : original;
+    for (const e of exprErrors) c.fail("", e);
     if (!isObject(raw)) {
       c.fail("", `must be an object (got ${describe(raw)})`);
     } else {
@@ -121,7 +139,8 @@ export function validateDocument(input: unknown): ValidationResult {
       } else if (seen.has(raw.id)) {
         c.fail("id", `duplicate id "${raw.id}"`);
       }
-      feature = validateFeature(raw, c, seen);
+      // A bad expression already says what is wrong with that field.
+      if (exprErrors.length === 0) feature = validateFeature(raw, c, seen);
       if (typeof raw.id === "string" && !seen.has(raw.id)) seen.set(raw.id, String(raw.op));
     }
     result.features.push({

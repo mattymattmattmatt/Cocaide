@@ -16,13 +16,17 @@
     "test:watch": "vitest",
     "cocaide": "tsx scripts/cocaide.ts",
     "verify:freecad": "tsx scripts/verify-freecad.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "mcp": "tsx src/mcp/server.ts",
+    "replay": "tsx scripts/replay.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "replicad-opencascadejs": "1.1.0",
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

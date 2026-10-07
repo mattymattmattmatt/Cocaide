@@ -6,7 +6,11 @@
 // was, if it would introduce a validation error that was not there before
 // (a bad field, a broken reference, a duplicate id).
 
-import type { Feature } from "./types";
+import { checkConstraints } from "../geom/constraints";
+import { solveSketch } from "../geom/solver";
+import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolveExpressions, type Parameters } from "./parameters";
+import { scopeProblem, type WriteScope } from "./scope";
+import type { Constraint, Feature, SketchEntity } from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
@@ -20,14 +24,27 @@ export type Command =
   | { type: "deleteFeature"; id: string }
   | { type: "reorderFeature"; id: string; index: number }
   | { type: "suppressFeature"; id: string; suppressed: boolean }
-  | { type: "setName"; name: string };
+  | { type: "setName"; name: string }
+  /** Sets a document parameter; sketches whose dimensions use it are re-solved. */
+  | { type: "setParameter"; name: string; value: number }
+  /** Removes a parameter nothing uses. */
+  | { type: "deleteParameter"; name: string }
+  /** Changes one dimension of a sketch (a constraint's value, or "=expr") and re-solves the sketch. */
+  | { type: "setDimension"; sketch: string; index: number; value: number | string };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
-export function apply(input: unknown, cmd: Command): ApplyResult {
+export interface ApplyOptions {
+  /** When given, the command must fall inside it (see scope.ts). */
+  writeScope?: WriteScope;
+}
+
+export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): ApplyResult {
   if (!isObject(input) || !Array.isArray(input.features)) {
     return { ok: false, error: "document: not a document (needs a features array)" };
   }
+  const outside = scopeProblem(input as RawDocument, cmd, opts.writeScope);
+  if (outside) return { ok: false, error: outside };
   const doc = structuredClone(input) as RawDocument;
   const features = doc.features;
   const indexOf = (id: string) => features.findIndex((f) => isObject(f) && f.id === id);
@@ -106,6 +123,53 @@ export function apply(input: unknown, cmd: Command): ApplyResult {
     case "setName":
       doc.name = cmd.name;
       break;
+    case "setParameter": {
+      if (typeof cmd.name !== "string" || !PARAMETER_NAME.test(cmd.name)) {
+        return { ok: false, error: `setParameter: "${String(cmd.name)}" is not a parameter name (letters, digits, _)` };
+      }
+      if (typeof cmd.value !== "number" || !Number.isFinite(cmd.value)) {
+        return { ok: false, error: `setParameter: value must be a number (got ${JSON.stringify(cmd.value)})` };
+      }
+      doc.parameters = { ...documentParameters(doc), [cmd.name]: cmd.value };
+      const params = documentParameters(doc);
+      for (let i = 0; i < features.length; i++) {
+        const f = features[i];
+        if (!isObject(f) || f.op !== "sketch" || !parameterRefs(f).has(cmd.name)) continue;
+        const r = resolveSketch(f, params);
+        if (!r.ok) return { ok: false, error: `setParameter: ${cmd.name} = ${cmd.value}: ${r.error}` };
+        features[i] = r.feature;
+      }
+      break;
+    }
+    case "deleteParameter": {
+      const params = documentParameters(doc);
+      if (!(cmd.name in params)) return { ok: false, error: `deleteParameter: no parameter "${cmd.name}"` };
+      const users = features.filter((f) => isObject(f) && parameterRefs(f).has(cmd.name)).map((f) => String(f.id));
+      if (users.length) return { ok: false, error: `deleteParameter: ${cmd.name} is used by ${users.join(", ")}` };
+      delete params[cmd.name];
+      if (Object.keys(params).length) doc.parameters = params;
+      else delete doc.parameters;
+      break;
+    }
+    case "setDimension": {
+      const i = need(cmd.sketch);
+      if (typeof i === "string") return { ok: false, error: i };
+      const f = structuredClone(features[i]);
+      if (f.op !== "sketch") return { ok: false, error: `setDimension: "${cmd.sketch}" is a ${String(f.op)}, not a sketch` };
+      const constraints = Array.isArray(f.constraints) ? (f.constraints as Record<string, unknown>[]) : [];
+      const k = constraints[cmd.index];
+      if (!isObject(k) || !("value" in k)) {
+        return { ok: false, error: `setDimension: ${cmd.sketch} has no dimension at index ${cmd.index} (it has ${constraints.length} constraints)` };
+      }
+      if (!(typeof cmd.value === "number" && Number.isFinite(cmd.value)) && !isExpression(cmd.value)) {
+        return { ok: false, error: `setDimension: value must be a number or "=expression" (got ${JSON.stringify(cmd.value)})` };
+      }
+      k.value = cmd.value;
+      const r = resolveSketch(f, documentParameters(doc));
+      if (!r.ok) return { ok: false, error: `setDimension: ${r.error}` };
+      features[i] = r.feature;
+      break;
+    }
     default:
       return { ok: false, error: `unknown command ${JSON.stringify((cmd as { type?: unknown }).type)}` };
   }
@@ -116,6 +180,47 @@ export function apply(input: unknown, cmd: Command): ApplyResult {
     return { ok: false, error: `${cmd.type} rejected: ${introduced.join("; ")}` };
   }
   return { ok: true, doc };
+}
+
+/**
+ * Brings a sketch's geometry back in line with its constraints after a
+ * dimension or parameter changed: solve, with fields that are themselves
+ * expressions held fixed, and write the solved numbers back. A sketch whose
+ * constraints already hold, or that does not validate, is returned as is.
+ */
+export function resolveSketch(raw: Record<string, unknown>, params: Parameters): { ok: true; feature: Record<string, unknown> } | { ok: false; error: string } {
+  const errors: string[] = [];
+  const resolved = resolveExpressions(raw, params, errors) as { entities?: SketchEntity[]; constraints?: Constraint[] };
+  if (errors.length || !Array.isArray(resolved.entities)) return { ok: true, feature: raw };
+  const constraints = resolved.constraints ?? [];
+  try {
+    if (checkConstraints(resolved.entities, constraints).length === 0) return { ok: true, feature: raw };
+  } catch {
+    return { ok: true, feature: raw }; // malformed: validation will say why
+  }
+  const rawEntities = raw.entities as Record<string, unknown>[];
+  const fixed: string[] = [];
+  for (const e of rawEntities) {
+    for (const [field, v] of Object.entries(e)) {
+      if (isExpression(v)) fixed.push(`${String(e.id)}.${field}`);
+      else if (Array.isArray(v)) v.forEach((c, k) => isExpression(c) && fixed.push(`${String(e.id)}.${field}.${k}`));
+    }
+  }
+  const r = solveSketch(resolved.entities, constraints, { fixed });
+  if (!r.ok) return { ok: false, error: `${String(raw.id)}: ${r.error}` };
+  const out = structuredClone(raw);
+  (out.entities as Record<string, unknown>[]).forEach((e, n) => {
+    const solved = r.entities[n] as unknown as Record<string, unknown>;
+    for (const [field, v] of Object.entries(e)) {
+      if (typeof v === "number") e[field] = clean(solved[field] as number);
+      else if (Array.isArray(v)) e[field] = v.map((c, k) => (isExpression(c) ? c : clean((solved[field] as number[])[k])));
+    }
+  });
+  return { ok: true, feature: out };
+}
+
+function clean(x: number): number {
+  return Math.round(x * 1e9) / 1e9 + 0;
 }
 
 /** Ids of features that reference `id` (an extrude's sketch, a pattern's feature). */

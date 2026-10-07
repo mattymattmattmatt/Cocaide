@@ -11,6 +11,8 @@ export interface CocaideDocument {
   /** Document units. v1 stores millimetres only; conversions happen before a value enters the document. */
   units: "mm";
   name: string;
+  /** Named numbers. Any numeric field of a feature may be an expression over them: "=plate_t * 2". */
+  parameters?: Record<string, number>;
   /** Used for the mass measurement. Defaults to steel (7850 kg/m³) when absent. */
   material?: Material;
   features: Feature[];
