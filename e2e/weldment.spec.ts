@@ -72,7 +72,7 @@ test("draw an SHS, save it to the section library, and make members of it in ano
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0).locator("td")).toHaveText(["SHS 40x40x3", "900", "1", "3.14"]);
   await expect(rows.nth(1).locator("td")).toHaveText(["SHS 50x50x3", "600", "1", "2.66"]);
-  await expect(page.getByTestId("prop-member-measured")).toHaveText("SHS 50x50x3 · 600 mm · 2.66 kg");
+  await expect(page.getByTestId("prop-member-measured")).toHaveText("SHS 50x50x3 · 600 mm · square · 2.66 kg");
 
   // The part keeps a copy of the profile, with the library id and version.
   const frame = (await savedDocument(page)) as { profiles: Record<string, { library: unknown; sizes: unknown[] }>; features: unknown[] };
