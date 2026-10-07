@@ -3,12 +3,13 @@
 
 import { useEffect, useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
+import { documentParameters, resolveExpressions } from "../doc/parameters";
 import type { EdgeSelector, FaceSelector, Vec3 } from "../doc/types";
 import { sketchDof } from "../geom/solver";
 import { describeEdgeSelector, describeWanted } from "../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import type { RebuildView } from "../worker/protocol";
-import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input } from "./fields";
+import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
 import type { Selection } from "./Viewport";
 
 export const OP_LABEL: Record<string, string> = {
@@ -48,7 +49,10 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
   };
   const update = (patch: Raw) => run({ type: "updateFeature", id: featureId, patch });
   const status = view?.features.find((s) => s.id === featureId);
-  const before = doc.features.slice(0, index) as Raw[];
+  // Fields show what the document holds ("=plate_t"); anything computed uses the numbers.
+  const params = documentParameters(doc);
+  const resolved = resolveExpressions(f, params, []) as Raw;
+  const before = resolveExpressions(doc.features.slice(0, index), params, []) as Raw[];
   const op = String(f.op);
 
   return (
@@ -69,9 +73,9 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         </div>
       )}
       <div className="prop-body">
-        {op === "sketch" && <SketchProps f={f} onEdit={() => onEditSketch(featureId)} />}
+        {op === "sketch" && <SketchProps f={resolved} onEdit={() => onEditSketch(featureId)} />}
         {(op === "extrude" || op === "cut") && <ExtrudeProps f={f} before={before} update={update} />}
-        {op === "hole" && <HoleProps f={f} update={update} selection={selection} view={view} setError={setError} />}
+        {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
         {(op === "fillet" || op === "chamfer") && (
           <EdgeTreatmentProps f={f} update={update} selection={selection} view={view} setError={setError} />
         )}
@@ -197,21 +201,23 @@ function ExtrudeProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: 
 
 function HoleProps({
   f,
+  resolved,
   update,
   selection,
   view,
   setError,
 }: {
   f: Raw;
+  resolved: Raw;
   update(p: Raw): string | null | void;
   selection: Selection;
   view: RebuildView | null;
   setError(e: string | null): void;
 }) {
-  const center = f.center as [number, number];
+  const center = f.center as [NumberValue, NumberValue];
   const through = f.depth === "through";
   const type = f.counterbore ? "counterbore" : f.countersink ? "countersink" : "simple";
-  const d = f.diameter as number;
+  const d = resolved.diameter as number;
   return (
     <>
       <Field label="Face">
@@ -234,7 +240,7 @@ function HoleProps({
         <NumberInput value={center[1]} onCommit={(v) => update({ center: [center[0], v] })} testId="prop-center-y" />
       </Field>
       <Field label="Diameter">
-        <NumberInput value={d} min={0} onCommit={(v) => update({ diameter: v })} testId="prop-diameter" />
+        <NumberInput value={f.diameter as NumberValue} min={0} onCommit={(v) => update({ diameter: v })} testId="prop-diameter" />
       </Field>
       <Field label="Depth">
         <span className="inline">
@@ -261,7 +267,7 @@ function HoleProps({
           ]}
           onChange={(v) =>
             update({
-              counterbore: v === "counterbore" ? { diameter: round(d * 1.8), depth: through ? 2 : Math.min(2, (f.depth as number) / 2) } : null,
+              counterbore: v === "counterbore" ? { diameter: round(d * 1.8), depth: through ? 2 : Math.min(2, (resolved.depth as number) / 2) } : null,
               countersink: v === "countersink" ? { diameter: round(d * 2), angle: 90 } : null,
             })
           }

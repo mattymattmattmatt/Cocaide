@@ -4,6 +4,7 @@ import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
 import { nextId, type Command } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
+import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import type { DatumPlane, SketchEntity, SketchFeature, Vec3 } from "../doc/types";
 import { facePlaneFrame, planeFrame, to2D } from "../geom/frame";
 import { dot3 } from "../geom/vec";
@@ -12,8 +13,9 @@ import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree } from "./FeatureTree";
-import { TextInput } from "./fields";
+import { ParametersContext, TextInput } from "./fields";
 import { MeasurementsPanel } from "./MeasurementsPanel";
+import { ParametersPanel } from "./ParametersPanel";
 import { PropertyPanel } from "./PropertyPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
@@ -81,6 +83,7 @@ export function App() {
   const needsFit = useRef(true);
 
   const { parsed, doc } = d;
+  const params = useMemo(() => documentParameters(doc), [doc]);
 
   useEffect(() => {
     kernel.ready.then(
@@ -197,7 +200,9 @@ export function App() {
   // ------------------------------------------------------------ tools
 
   const features = (doc?.features ?? []) as Record<string, unknown>[];
-  const selected = features.find((f) => f.id === selectedFeature);
+  /** The features with expressions evaluated, for anything that computes with their numbers. */
+  const resolved = useMemo(() => (doc ? (resolvedDocument(doc).features as Record<string, unknown>[]) : []), [doc]);
+  const selected = resolved.find((f) => f.id === selectedFeature);
 
   const startSketch = (plane: DatumPlane) => {
     setPlaneMenu(false);
@@ -217,7 +222,8 @@ export function App() {
   };
 
   const editSketch = (id: string) => {
-    const f = features.find((g) => g.id === id) as Partial<SketchFeature> | undefined;
+    // The sketcher works on numbers; finishSketch puts back the expressions it did not change.
+    const f = resolved.find((g) => g.id === id) as Partial<SketchFeature> | undefined;
     if (!f || f.op !== "sketch" || !f.plane) return;
     setSketch({
       id,
@@ -232,7 +238,10 @@ export function App() {
 
   const finishSketch = (feature: SketchFeature) => {
     if (!sketch) return;
-    const problem = sketch.isNew ? run({ type: "addFeature", feature }) : run({ type: "replaceFeature", id: sketch.id, feature });
+    const original = features.find((g) => g.id === sketch.id);
+    const problem = sketch.isNew
+      ? run({ type: "addFeature", feature })
+      : run({ type: "replaceFeature", id: sketch.id, feature: restoreExpressions(original, feature, params) as Record<string, unknown> });
     if (problem) return; // stay in the sketch; the notice says why
     setSketch(null);
     setSelectedFeature(feature.id);
@@ -241,7 +250,7 @@ export function App() {
   };
 
   const sketchFor = (): Record<string, unknown> | undefined =>
-    selected?.op === "sketch" ? selected : [...features].reverse().find((f) => f.op === "sketch");
+    selected?.op === "sketch" ? selected : [...resolved].reverse().find((f) => f.op === "sketch");
 
   const extrude = (op: "extrude" | "cut") => {
     const sk = sketchFor();
@@ -348,201 +357,204 @@ export function App() {
               : "Waiting for kernel…";
 
   return (
-    <div
-      className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}`}
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes("Files")) return;
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragging(false);
-      }}
-      onDrop={(e) => {
-        if (!e.dataTransfer.files.length) return;
-        e.preventDefault();
-        setDragging(false);
-        openFile(e.dataTransfer.files[0]);
-      }}
-    >
-      <header className="topbar">
-        <div className="brand">
-          <img src="/cocaide-mark-256.png" alt="" width={28} height={28} />
-          <span className="wordmark">Cocaide</span>
-        </div>
-        <div className="doc-title" title={dirty ? "Unsaved changes" : "Click to rename"}>
-          {doc && typeof doc.name === "string" ? (
-            <TextInput value={doc.name} onCommit={(name) => run({ type: "setName", name })} testId="doc-name" />
-          ) : (
-            "—"
-          )}
-          {FILE_EXTENSION}
-          {dirty && <span className="dirty">•</span>}
-        </div>
-        <nav className="actions">
-          <select
-            aria-label="Open an example"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) replaceDocument(EXAMPLES[e.target.value], `Opened example "${e.target.value}"`);
-            }}
-          >
-            <option value="">Examples…</option>
-            {Object.keys(EXAMPLES).map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
-          <button onClick={() => replaceDocument(BLANK, "New part")} data-testid="new-part">
-            New
-          </button>
-          <button onClick={() => fileInput.current?.click()}>Open</button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".json,application/json"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) openFile(file);
-              e.target.value = "";
-            }}
-          />
-          <button onClick={save}>Save</button>
-          <button className="primary" onClick={exportStep} disabled={kernelState.phase !== "ready" || !!sketch}>
-            Export STEP
-          </button>
-        </nav>
-        <div
-          className={`status ${(view && !view.ok && status !== "No solid yet") || kernelState.phase === "failed" ? "bad" : ""}`}
-          data-testid="status"
-        >
-          {status}
-        </div>
-      </header>
-
-      {!sketch && (
-        <div className="toolbar" role="toolbar" aria-label="Modelling">
-          <button onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" data-testid="undo">
-            ↶ Undo
-          </button>
-          <button onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" data-testid="redo">
-            ↷ Redo
-          </button>
-          <span className="sep" />
-          <div className="menu">
-            <button onClick={() => setPlaneMenu((m) => !m)} aria-expanded={planeMenu} data-testid="tool-sketch">
-              Sketch ▾
-            </button>
-            {planeMenu && (
-              <div className="menu-items" role="menu">
-                {PLANES.map(([label, plane]) => (
-                  <button key={label} role="menuitem" onClick={() => startSketch(plane)} data-testid={`plane-${label.split(" ")[0].toLowerCase()}`}>
-                    {label}
-                  </button>
-                ))}
-                <button role="menuitem" onClick={sketchOnFace} disabled={selection.faces.length !== 1}>
-                  On selected face
-                </button>
-              </div>
-            )}
+    <ParametersContext.Provider value={params}>
+      <div
+        className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}`}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDragging(false);
+          openFile(e.dataTransfer.files[0]);
+        }}
+      >
+        <header className="topbar">
+          <div className="brand">
+            <img src="/cocaide-mark-256.png" alt="" width={28} height={28} />
+            <span className="wordmark">Cocaide</span>
           </div>
-          <button onClick={() => extrude("extrude")} data-testid="tool-extrude">
-            Extrude
-          </button>
-          <button onClick={() => extrude("cut")} data-testid="tool-cut">
-            Cut
-          </button>
-          <button onClick={hole} data-testid="tool-hole" title="Click a flat face, then Hole">
-            Hole
-          </button>
-          <button onClick={() => edgeFeature("fillet")} data-testid="tool-fillet" title="Click edges, then Fillet">
-            Fillet
-          </button>
-          <button onClick={() => edgeFeature("chamfer")} data-testid="tool-chamfer" title="Click edges, then Chamfer">
-            Chamfer
-          </button>
-          <button onClick={() => patternFeature("linearPattern")} data-testid="tool-linear-pattern" title="Select a feature in the tree, then Pattern">
-            Linear pattern
-          </button>
-          <button onClick={() => patternFeature("circularPattern")} data-testid="tool-circular-pattern">
-            Circular pattern
-          </button>
-        </div>
-      )}
+          <div className="doc-title" title={dirty ? "Unsaved changes" : "Click to rename"}>
+            {doc && typeof doc.name === "string" ? (
+              <TextInput value={doc.name} onCommit={(name) => run({ type: "setName", name })} testId="doc-name" />
+            ) : (
+              "—"
+            )}
+            {FILE_EXTENSION}
+            {dirty && <span className="dirty">•</span>}
+          </div>
+          <nav className="actions">
+            <select
+              aria-label="Open an example"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) replaceDocument(EXAMPLES[e.target.value], `Opened example "${e.target.value}"`);
+              }}
+            >
+              <option value="">Examples…</option>
+              {Object.keys(EXAMPLES).map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+            <button onClick={() => replaceDocument(BLANK, "New part")} data-testid="new-part">
+              New
+            </button>
+            <button onClick={() => fileInput.current?.click()}>Open</button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) openFile(file);
+                e.target.value = "";
+              }}
+            />
+            <button onClick={save}>Save</button>
+            <button className="primary" onClick={exportStep} disabled={kernelState.phase !== "ready" || !!sketch}>
+              Export STEP
+            </button>
+          </nav>
+          <div
+            className={`status ${(view && !view.ok && status !== "No solid yet") || kernelState.phase === "failed" ? "bad" : ""}`}
+            data-testid="status"
+          >
+            {status}
+          </div>
+        </header>
 
-      {notice && (
-        <div className={`notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"} data-testid="notice">
-          <span>{notice.text}</span>
-          <button aria-label="Dismiss" onClick={() => setNotice(null)}>
-            ×
-          </button>
-        </div>
-      )}
-
-      <main className="workspace">
-        <aside className="side left">
-          <FeatureTree
-            doc={doc}
-            view={view}
-            selectedId={selectedFeature}
-            onSelect={(id) => {
-              setSelectedFeature(id);
-              if (id) setRightTab("properties");
-            }}
-            onEditSketch={editSketch}
-            dispatch={d.dispatch}
-            onError={(text) => setNotice({ kind: "error", text })}
-          />
-          <MeasurementsPanel measurements={view?.measurements ?? null} />
-        </aside>
-        {sketch ? (
-          <SketchMode
-            key={sketch.id}
-            session={sketch}
-            reference={reference}
-            onFinish={finishSketch}
-            onCancel={() => setSketch(null)}
-          />
-        ) : (
-          <>
-            <section className="center">
-              <Viewport view={view} fitToken={fitToken} selection={selection} onPick={onPick} />
-            </section>
-            <aside className="side right">
-              <div className="tabs" role="tablist">
-                <button role="tab" aria-selected={rightTab === "properties"} onClick={() => setRightTab("properties")}>
-                  Properties
-                </button>
-                <button role="tab" aria-selected={rightTab === "document"} onClick={() => setRightTab("document")} data-testid="tab-document">
-                  Document
-                </button>
-              </div>
-              {rightTab === "properties" ? (
-                <section className="panel">
-                  {doc && selectedFeature ? (
-                    <PropertyPanel
-                      doc={doc}
-                      featureId={selectedFeature}
-                      view={view}
-                      selection={selection}
-                      dispatch={d.dispatch}
-                      onEditSketch={editSketch}
-                      onSelectFeature={setSelectedFeature}
-                    />
-                  ) : (
-                    <Help />
-                  )}
-                </section>
-              ) : (
-                <DocumentEditor ref={editor} text={d.text} onChange={d.setText} parseError={parsed.ok ? null : parsed.error} />
+        {!sketch && (
+          <div className="toolbar" role="toolbar" aria-label="Modelling">
+            <button onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" data-testid="undo">
+              ↶ Undo
+            </button>
+            <button onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" data-testid="redo">
+              ↷ Redo
+            </button>
+            <span className="sep" />
+            <div className="menu">
+              <button onClick={() => setPlaneMenu((m) => !m)} aria-expanded={planeMenu} data-testid="tool-sketch">
+                Sketch ▾
+              </button>
+              {planeMenu && (
+                <div className="menu-items" role="menu">
+                  {PLANES.map(([label, plane]) => (
+                    <button key={label} role="menuitem" onClick={() => startSketch(plane)} data-testid={`plane-${label.split(" ")[0].toLowerCase()}`}>
+                      {label}
+                    </button>
+                  ))}
+                  <button role="menuitem" onClick={sketchOnFace} disabled={selection.faces.length !== 1}>
+                    On selected face
+                  </button>
+                </div>
               )}
-            </aside>
-          </>
+            </div>
+            <button onClick={() => extrude("extrude")} data-testid="tool-extrude">
+              Extrude
+            </button>
+            <button onClick={() => extrude("cut")} data-testid="tool-cut">
+              Cut
+            </button>
+            <button onClick={hole} data-testid="tool-hole" title="Click a flat face, then Hole">
+              Hole
+            </button>
+            <button onClick={() => edgeFeature("fillet")} data-testid="tool-fillet" title="Click edges, then Fillet">
+              Fillet
+            </button>
+            <button onClick={() => edgeFeature("chamfer")} data-testid="tool-chamfer" title="Click edges, then Chamfer">
+              Chamfer
+            </button>
+            <button onClick={() => patternFeature("linearPattern")} data-testid="tool-linear-pattern" title="Select a feature in the tree, then Pattern">
+              Linear pattern
+            </button>
+            <button onClick={() => patternFeature("circularPattern")} data-testid="tool-circular-pattern">
+              Circular pattern
+            </button>
+          </div>
         )}
-      </main>
-    </div>
+
+        {notice && (
+          <div className={`notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"} data-testid="notice">
+            <span>{notice.text}</span>
+            <button aria-label="Dismiss" onClick={() => setNotice(null)}>
+              ×
+            </button>
+          </div>
+        )}
+
+        <main className="workspace">
+          <aside className="side left">
+            <FeatureTree
+              doc={doc}
+              view={view}
+              selectedId={selectedFeature}
+              onSelect={(id) => {
+                setSelectedFeature(id);
+                if (id) setRightTab("properties");
+              }}
+              onEditSketch={editSketch}
+              dispatch={d.dispatch}
+              onError={(text) => setNotice({ kind: "error", text })}
+            />
+            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} />
+            <MeasurementsPanel measurements={view?.measurements ?? null} />
+          </aside>
+          {sketch ? (
+            <SketchMode
+              key={sketch.id}
+              session={sketch}
+              reference={reference}
+              onFinish={finishSketch}
+              onCancel={() => setSketch(null)}
+            />
+          ) : (
+            <>
+              <section className="center">
+                <Viewport view={view} fitToken={fitToken} selection={selection} onPick={onPick} />
+              </section>
+              <aside className="side right">
+                <div className="tabs" role="tablist">
+                  <button role="tab" aria-selected={rightTab === "properties"} onClick={() => setRightTab("properties")}>
+                    Properties
+                  </button>
+                  <button role="tab" aria-selected={rightTab === "document"} onClick={() => setRightTab("document")} data-testid="tab-document">
+                    Document
+                  </button>
+                </div>
+                {rightTab === "properties" ? (
+                  <section className="panel">
+                    {doc && selectedFeature ? (
+                      <PropertyPanel
+                        doc={doc}
+                        featureId={selectedFeature}
+                        view={view}
+                        selection={selection}
+                        dispatch={d.dispatch}
+                        onEditSketch={editSketch}
+                        onSelectFeature={setSelectedFeature}
+                      />
+                    ) : (
+                      <Help />
+                    )}
+                  </section>
+                ) : (
+                  <DocumentEditor ref={editor} text={d.text} onChange={d.setText} parseError={parsed.ok ? null : parsed.error} />
+                )}
+              </aside>
+            </>
+          )}
+        </main>
+      </div>
+    </ParametersContext.Provider>
   );
 }
 
