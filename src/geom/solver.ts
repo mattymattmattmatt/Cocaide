@@ -1,0 +1,462 @@
+// 2D sketch constraint solver.
+//
+// Every number that defines an entity is an unknown; every constraint is one
+// or two equations that must be zero. Newton steps with the minimum-norm
+// update (dx = -Jᵀ(JJᵀ + λI)⁻¹ r) move the sketch as little as possible, so
+// typing a dimension changes what it must and leaves the rest alone. Dragging
+// pins the dragged handle to the cursor and solves the rest around it.
+//
+// The document still stores solved geometry: the rebuild checks constraints,
+// it does not solve them. This module is what keeps the two in step.
+
+import type { Constraint, SketchEntity, Vec2 } from "../doc/types";
+
+const TOL = 1e-9;
+/** Accepting tolerance; the rebuild checks constraints to 1e-6. */
+const ACCEPT = 1e-7;
+
+/**
+ * A draggable handle: any point ref ("l1.end", "r1.center"), or
+ * "<rect>.corner0".."corner3", "<circle>.edge" (sets the radius) and
+ * "<entity>.body" (moves the whole entity).
+ */
+export type HandleRef = string;
+
+export interface SolveOptions {
+  /** Pin handles to these positions (a drag). */
+  drag?: { handle: HandleRef; to: Vec2; from?: Vec2 }[];
+}
+
+export type SolveResult =
+  | { ok: true; entities: SketchEntity[]; dof: number }
+  | { ok: false; error: string };
+
+type Fn = (x: Float64Array) => number;
+
+interface Layout {
+  x: Float64Array;
+  /** "id.field" -> index of its first number. */
+  at: Map<string, number>;
+  entities: SketchEntity[];
+}
+
+const FIELDS: Record<SketchEntity["type"], [string, 1 | 2][]> = {
+  line: [["start", 2], ["end", 2]],
+  circle: [["center", 2], ["radius", 1]],
+  arc: [["center", 2], ["start", 2], ["end", 2]],
+  rect: [["center", 2], ["w", 1], ["h", 1]],
+  slot: [["center1", 2], ["center2", 2], ["width", 1]],
+};
+
+function layout(entities: SketchEntity[]): Layout {
+  const values: number[] = [];
+  const at = new Map<string, number>();
+  for (const e of entities) {
+    for (const [field, n] of FIELDS[e.type]) {
+      at.set(`${e.id}.${field}`, values.length);
+      const v = (e as unknown as Record<string, number | Vec2>)[field];
+      if (n === 1) values.push(v as number);
+      else values.push(...(v as Vec2));
+    }
+  }
+  return { x: Float64Array.from(values), at, entities };
+}
+
+function unpack(l: Layout, x: Float64Array): SketchEntity[] {
+  return l.entities.map((e) => {
+    const out = structuredClone(e) as unknown as Record<string, unknown>;
+    for (const [field, n] of FIELDS[e.type]) {
+      const i = l.at.get(`${e.id}.${field}`)!;
+      out[field] = n === 1 ? x[i] : [x[i], x[i + 1]];
+    }
+    return out as unknown as SketchEntity;
+  });
+}
+
+/** Accessor for a point ref: returns functions reading its x and y. */
+function pointOf(l: Layout, ref: string): [Fn, Fn] {
+  if (ref === "origin") return [() => 0, () => 0];
+  const i = l.at.get(ref);
+  if (i === undefined) throw new Error(`unknown point ${ref}`);
+  return [(x) => x[i], (x) => x[i + 1]];
+}
+
+const len = (ax: Fn, ay: Fn, bx: Fn, by: Fn): Fn => (x) => Math.hypot(bx(x) - ax(x), by(x) - ay(x));
+
+function entityById(l: Layout, id: string): SketchEntity {
+  return l.entities.find((e) => e.id === id)!;
+}
+
+/** The two points a distance on an entity measures between. */
+function span(l: Layout, id: string): [[Fn, Fn], [Fn, Fn]] {
+  const e = entityById(l, id);
+  return e.type === "slot" ? [pointOf(l, `${id}.center1`), pointOf(l, `${id}.center2`)] : [pointOf(l, `${id}.start`), pointOf(l, `${id}.end`)];
+}
+
+function radiusOf(l: Layout, id: string): Fn {
+  const e = entityById(l, id);
+  if (e.type === "circle") {
+    const i = l.at.get(`${id}.radius`)!;
+    return (x) => x[i];
+  }
+  const [cx, cy] = pointOf(l, `${id}.center`);
+  const [sx, sy] = pointOf(l, `${id}.start`);
+  return len(cx, cy, sx, sy);
+}
+
+/** Equations for the constraints plus the ones built into entities. */
+function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: number[] } {
+  const fns: Fn[] = [];
+  const owners: number[] = []; // constraint index per equation, -1 for built-in
+  const push = (owner: number, ...f: Fn[]) => {
+    fns.push(...f);
+    for (let k = 0; k < f.length; k++) owners.push(owner);
+  };
+  const x0 = l.x;
+  const sign = (f: Fn) => (f(x0) < 0 ? -1 : 1);
+
+  for (const e of l.entities) {
+    if (e.type === "arc") {
+      const [cx, cy] = pointOf(l, `${e.id}.center`);
+      const [sx, sy] = pointOf(l, `${e.id}.start`);
+      const [ex, ey] = pointOf(l, `${e.id}.end`);
+      const rs = len(cx, cy, sx, sy);
+      const re = len(cx, cy, ex, ey);
+      push(-1, (x) => rs(x) - re(x));
+    }
+  }
+
+  constraints.forEach((k, i) => {
+    switch (k.type) {
+      case "coincident": {
+        const [px, py] = pointOf(l, k.points[0]);
+        const [qx, qy] = pointOf(l, k.points[1]);
+        push(i, (x) => px(x) - qx(x), (x) => py(x) - qy(x));
+        break;
+      }
+      case "horizontal":
+      case "vertical": {
+        const [[ax, ay], [bx, by]] = span(l, k.entity);
+        push(i, k.type === "horizontal" ? (x) => by(x) - ay(x) : (x) => bx(x) - ax(x));
+        break;
+      }
+      case "distance":
+      case "distanceX":
+      case "distanceY": {
+        const target = k.entity ? entityById(l, k.entity) : null;
+        if (target?.type === "rect") {
+          const idx = l.at.get(`${k.entity}.${k.type === "distanceX" ? "w" : "h"}`)!;
+          push(i, (x) => x[idx] - k.value);
+          break;
+        }
+        const [[ax, ay], [bx, by]] = k.entity ? span(l, k.entity) : [pointOf(l, k.points![0]), pointOf(l, k.points![1])];
+        if (k.type === "distance") {
+          if (k.value === 0) push(i, (x) => bx(x) - ax(x), (x) => by(x) - ay(x));
+          else {
+            const d = len(ax, ay, bx, by);
+            push(i, (x) => d(x) - k.value);
+          }
+        } else {
+          const delta: Fn = k.type === "distanceX" ? (x) => bx(x) - ax(x) : (x) => by(x) - ay(x);
+          const s = sign(delta); // keep the current side; the check uses the absolute value
+          push(i, (x) => s * delta(x) - k.value);
+        }
+        break;
+      }
+      case "radius": {
+        const r = radiusOf(l, k.entity);
+        push(i, (x) => r(x) - k.value);
+        break;
+      }
+      case "equal": {
+        const size = (id: string): Fn => {
+          const e = entityById(l, id);
+          if (e.type === "line") {
+            const [[ax, ay], [bx, by]] = span(l, id);
+            return len(ax, ay, bx, by);
+          }
+          return radiusOf(l, id);
+        };
+        const a = size(k.entities[0]);
+        const b = size(k.entities[1]);
+        push(i, (x) => a(x) - b(x));
+        break;
+      }
+    }
+  });
+  return { fns, owners };
+}
+
+/** Equations that pin the dragged handles. */
+function dragEquations(l: Layout, drag: NonNullable<SolveOptions["drag"]>): Fn[] {
+  const fns: Fn[] = [];
+  for (const d of drag) {
+    const [id, name] = d.handle.split(".");
+    const e = entityById(l, id);
+    if (!e) throw new Error(`unknown handle ${d.handle}`);
+    if (name === "body") {
+      // Move every defining point by the drag delta.
+      const from = d.from ?? d.to;
+      const dx = d.to[0] - from[0];
+      const dy = d.to[1] - from[1];
+      for (const [field, n] of FIELDS[e.type]) {
+        if (n !== 2) continue;
+        const i = l.at.get(`${id}.${field}`)!;
+        const tx = l.x[i] + dx;
+        const ty = l.x[i + 1] + dy;
+        fns.push((x) => x[i] - tx, (x) => x[i + 1] - ty);
+      }
+    } else if (name === "edge" && e.type === "circle") {
+      const [cx, cy] = pointOf(l, `${id}.center`);
+      const r = l.at.get(`${id}.radius`)!;
+      fns.push((x) => x[r] - Math.hypot(d.to[0] - cx(x), d.to[1] - cy(x)));
+    } else if (name.startsWith("corner") && e.type === "rect") {
+      const k = Number(name.slice(6));
+      const sx = k === 0 || k === 3 ? -1 : 1;
+      const sy = k < 2 ? -1 : 1;
+      const c = l.at.get(`${id}.center`)!;
+      const w = l.at.get(`${id}.w`)!;
+      const h = l.at.get(`${id}.h`)!;
+      fns.push((x) => x[c] + (sx * x[w]) / 2 - d.to[0], (x) => x[c + 1] + (sy * x[h]) / 2 - d.to[1]);
+    } else {
+      const [px, py] = pointOf(l, d.handle);
+      fns.push((x) => px(x) - d.to[0], (x) => py(x) - d.to[1]);
+    }
+  }
+  return fns;
+}
+
+/**
+ * Extra equations that keep what the user expects to stay still: the corner
+ * opposite a dragged rect corner, the centre of a circle whose edge is
+ * dragged. They are dropped if the constraints do not allow them.
+ */
+function anchorEquations(l: Layout, drag: NonNullable<SolveOptions["drag"]>): Fn[] {
+  const fns: Fn[] = [];
+  for (const d of drag) {
+    const [id, name] = d.handle.split(".");
+    const e = entityById(l, id);
+    if (e?.type === "circle" && name === "edge") {
+      const c = l.at.get(`${id}.center`)!;
+      const [cx, cy] = [l.x[c], l.x[c + 1]];
+      fns.push((x) => x[c] - cx, (x) => x[c + 1] - cy);
+      continue;
+    }
+    if (e?.type !== "rect" || !name.startsWith("corner")) continue;
+    const k = (Number(name.slice(6)) + 2) % 4;
+    const sx = k === 0 || k === 3 ? -1 : 1;
+    const sy = k < 2 ? -1 : 1;
+    const c = l.at.get(`${id}.center`)!;
+    const w = l.at.get(`${id}.w`)!;
+    const h = l.at.get(`${id}.h`)!;
+    const ox = l.x[c] + (sx * l.x[w]) / 2;
+    const oy = l.x[c + 1] + (sy * l.x[h]) / 2;
+    fns.push((x) => x[c] + (sx * x[w]) / 2 - ox, (x) => x[c + 1] + (sy * x[h]) / 2 - oy);
+  }
+  return fns;
+}
+
+export function solveSketch(entities: SketchEntity[], constraints: Constraint[], opts: SolveOptions = {}): SolveResult {
+  const l = layout(entities);
+  let base: Fn[];
+  try {
+    base = equations(l, constraints).fns;
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+  const attempts: Fn[][] = [];
+  if (opts.drag?.length) {
+    let pins: Fn[];
+    try {
+      pins = dragEquations(l, opts.drag);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    const anchors = anchorEquations(l, opts.drag);
+    if (anchors.length) attempts.push([...base, ...pins, ...anchors]);
+    attempts.push([...base, ...pins]);
+  } else {
+    attempts.push(base);
+  }
+
+  for (const fns of attempts) {
+    const x = newton(l.x, fns);
+    if (!x) continue;
+    // The drag pins are wishes; the constraints are not. Re-check the constraints alone.
+    if (maxAbs(evaluate(base, x)) > ACCEPT) continue;
+    const solved = unpack(l, x);
+    const bad = invalidGeometry(solved);
+    if (bad) return { ok: false, error: bad };
+    return { ok: true, entities: solved, dof: freedom(x, base) };
+  }
+  return {
+    ok: false,
+    error: opts.drag?.length
+      ? "the constraints do not let that move"
+      : "the constraints conflict or cannot all be met; remove or change one",
+  };
+}
+
+/** Degrees of freedom left in a sketch: unknowns minus independent equations. */
+export function sketchDof(entities: SketchEntity[], constraints: Constraint[]): number {
+  const l = layout(entities);
+  return freedom(l.x, equations(l, constraints).fns);
+}
+
+/** True when adding `extra` takes away no freedom: it repeats or contradicts what the sketch already says. */
+export function wouldOverDefine(entities: SketchEntity[], constraints: Constraint[], extra: Constraint): boolean {
+  const l = layout(entities);
+  const before = freedom(l.x, equations(l, constraints).fns);
+  const after = freedom(l.x, equations(l, [...constraints, extra]).fns);
+  return after === before;
+}
+
+function invalidGeometry(entities: SketchEntity[]): string | null {
+  for (const e of entities) {
+    if (e.type === "circle" && e.radius <= 0) return `circle "${e.id}" would get a radius of ${round(e.radius)}`;
+    if (e.type === "rect" && (e.w <= 0 || e.h <= 0)) return `rect "${e.id}" would get a size of ${round(e.w)} x ${round(e.h)}`;
+    if (e.type === "slot" && e.width <= 0) return `slot "${e.id}" would get a width of ${round(e.width)}`;
+    if (e.type === "line" && Math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1]) < 1e-9) return `line "${e.id}" would have zero length`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------- numerics
+
+function evaluate(fns: Fn[], x: Float64Array): Float64Array {
+  return Float64Array.from(fns, (f) => f(x));
+}
+
+function maxAbs(r: Float64Array): number {
+  let m = 0;
+  for (const v of r) m = Math.max(m, Math.abs(v));
+  return m;
+}
+
+function jacobian(fns: Fn[], x: Float64Array): Float64Array[] {
+  const n = x.length;
+  const rows = fns.map(() => new Float64Array(n));
+  const probe = Float64Array.from(x);
+  for (let j = 0; j < n; j++) {
+    const h = 1e-6 * Math.max(1, Math.abs(x[j]));
+    probe[j] = x[j] + h;
+    const up = fns.map((f) => f(probe));
+    probe[j] = x[j] - h;
+    const down = fns.map((f) => f(probe));
+    probe[j] = x[j];
+    for (let i = 0; i < fns.length; i++) rows[i][j] = (up[i] - down[i]) / (2 * h);
+  }
+  return rows;
+}
+
+/** Minimum-norm damped Newton. Returns null if it does not converge. */
+function newton(x0: Float64Array, fns: Fn[]): Float64Array | null {
+  let x = Float64Array.from(x0);
+  if (fns.length === 0) return x;
+  let r = evaluate(fns, x);
+  for (let iter = 0; iter < 100; iter++) {
+    const err = maxAbs(r);
+    if (err < TOL) return x;
+    const J = jacobian(fns, x);
+    const m = fns.length;
+    // (J Jᵀ + λI) y = r
+    const A = Array.from({ length: m }, (_, i) => {
+      const row = new Float64Array(m);
+      for (let k = 0; k < m; k++) {
+        let s = 0;
+        const a = J[i];
+        const b = J[k];
+        for (let j = 0; j < a.length; j++) s += a[j] * b[j];
+        row[k] = s;
+      }
+      row[i] += 1e-12 + 1e-9 * row[i];
+      return row;
+    });
+    const y = gaussSolve(A, Float64Array.from(r));
+    if (!y) return null;
+    const dx = new Float64Array(x.length);
+    for (let i = 0; i < m; i++) for (let j = 0; j < x.length; j++) dx[j] -= J[i][j] * y[i];
+    // Backtracking: take the largest step that reduces the residual.
+    let step = 1;
+    let accepted = false;
+    for (let k = 0; k < 20; k++) {
+      const trial = Float64Array.from(x, (v, j) => v + step * dx[j]);
+      const rt = evaluate(fns, trial);
+      if (norm(rt) < norm(r) || maxAbs(rt) < TOL) {
+        x = trial;
+        r = rt;
+        accepted = true;
+        break;
+      }
+      step /= 2;
+    }
+    if (!accepted) return maxAbs(r) < ACCEPT ? x : null;
+  }
+  return maxAbs(r) < ACCEPT ? x : null;
+}
+
+function norm(v: Float64Array): number {
+  let s = 0;
+  for (const a of v) s += a * a;
+  return Math.sqrt(s);
+}
+
+function gaussSolve(A: Float64Array[], b: Float64Array): Float64Array | null {
+  const n = b.length;
+  const M = A.map((row) => Float64Array.from(row));
+  const v = Float64Array.from(b);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-300) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    [v[c], v[p]] = [v[p], v[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / M[c][c];
+      if (f === 0) continue;
+      for (let k = c; k < n; k++) M[r][k] -= f * M[c][k];
+      v[r] -= f * v[c];
+    }
+  }
+  const out = new Float64Array(n);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = v[r];
+    for (let k = r + 1; k < n; k++) s -= M[r][k] * out[k];
+    out[r] = s / M[r][r];
+  }
+  return out;
+}
+
+/** Unknowns minus the rank of the Jacobian. */
+function freedom(x: Float64Array, fns: Fn[]): number {
+  if (fns.length === 0) return x.length;
+  const J = jacobian(fns, x).map((row) => Float64Array.from(row));
+  const n = x.length;
+  let rank = 0;
+  const scale = Math.max(1, ...J.map((row) => Math.max(...row.map(Math.abs))));
+  const used = new Array(J.length).fill(false);
+  for (let c = 0; c < n; c++) {
+    let p = -1;
+    let best = 1e-7 * scale;
+    for (let r = 0; r < J.length; r++) {
+      if (!used[r] && Math.abs(J[r][c]) > best) {
+        best = Math.abs(J[r][c]);
+        p = r;
+      }
+    }
+    if (p < 0) continue;
+    used[p] = true;
+    rank++;
+    for (let r = 0; r < J.length; r++) {
+      if (r === p) continue;
+      const f = J[r][c] / J[p][c];
+      if (f === 0) continue;
+      for (let k = c; k < n; k++) J[r][k] -= f * J[p][k];
+    }
+  }
+  return n - rank;
+}
+
+function round(x: number): number {
+  return Math.round(x * 1e4) / 1e4;
+}
