@@ -97,7 +97,8 @@ export type Feature =
   | FilletFeature
   | ChamferFeature
   | LinearPatternFeature
-  | CircularPatternFeature;
+  | CircularPatternFeature
+  | CombineFeature;
 export type FeatureOp = Feature["op"];
 export const FEATURE_OPS: readonly FeatureOp[] = [
   "sketch",
@@ -108,7 +109,18 @@ export const FEATURE_OPS: readonly FeatureOp[] = [
   "chamfer",
   "linearPattern",
   "circularPattern",
+  "combine",
 ];
+
+// ----------------------------------------------------------------- bodies
+
+/**
+ * A part is one or more named solids (bodies). A feature that adds material
+ * names the body it adds to; one that names none adds to the default body.
+ * A name that doesn't exist is an error, never a new body.
+ */
+export const DEFAULT_BODY = "main";
+export const BODY_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /** Fields every feature may carry. */
 export interface FeatureBase {
@@ -237,6 +249,12 @@ export interface ExtrudeFeature extends FeatureBase {
   distance?: number;
   /** Default: the sketch plane normal. Must not lie in the sketch plane. */
   direction?: Vec3;
+  /** extrude: the body to add to (default "main"). */
+  body?: string;
+  /** extrude: start a new body with this name instead. */
+  newBody?: string;
+  /** cut: the bodies to cut. Default: every body it reaches. Each listed one must lose material. */
+  bodies?: string[];
 }
 
 // ------------------------------------------------------------------ hole
@@ -254,6 +272,8 @@ export interface HoleFeature extends FeatureBase {
   depth: number | "through";
   counterbore?: { diameter: number; depth: number };
   countersink?: { diameter: number; angle: number };
+  /** The bodies to drill. Default: every body it reaches. Each listed one must lose material. */
+  bodies?: string[];
 }
 
 // ---------------------------------------------------- fillet and chamfer
@@ -305,6 +325,17 @@ export interface CircularPatternFeature extends FeatureBase {
   angle?: number;
 }
 
+// ---------------------------------------------------------------- combine
+
+/** Adds, subtracts or intersects bodies into `target`. The tool bodies are consumed. */
+export interface CombineFeature extends FeatureBase {
+  op: "combine";
+  operation: "add" | "subtract" | "common";
+  target: string;
+  tools: string[];
+}
+export const COMBINE_OPERATIONS = ["add", "subtract", "common"] as const;
+
 // ------------------------------------------------------------- selectors
 
 /** Which of the matching faces to keep. "all" keeps every match. */
@@ -320,6 +351,8 @@ export interface PlanarFaceSelector {
   offset?: number;
   /** Optional: of the matches, the one whose centre is nearest this point (for otherwise identical faces). */
   near?: Vec3;
+  /** Optional: only faces of this body. */
+  body?: string;
 }
 
 export interface CylindricalFaceSelector {
@@ -330,6 +363,8 @@ export interface CylindricalFaceSelector {
   /** Optional: of the matches, the one whose centre is nearest this point. */
   near?: Vec3;
   pick: Pick;
+  /** Optional: only faces of this body. */
+  body?: string;
 }
 
 export type FaceSelector = PlanarFaceSelector | CylindricalFaceSelector;
@@ -356,4 +391,6 @@ export interface EdgeSelector {
   length?: number;
   near?: Vec3;
   pick: EdgePick;
+  /** Optional: only edges of this body. */
+  body?: string;
 }

@@ -48,7 +48,12 @@ interface Props {
   underlay?: Underlay | null;
   /** While set, a click on the photo reports the pixel clicked instead of picking the part. */
   onPhotoPoint?: ((px: Vec2) => void) | null;
+  /** Bodies not drawn (and not picked). */
+  hiddenBodies?: ReadonlySet<string>;
 }
+
+/** Body colours, in the order bodies are made, for a part of more than one. */
+export const BODY_COLORS = ["#c4cad3", "#8fb8e3", "#e3b98f", "#a9d39f", "#d3a9d6", "#e09c9c", "#94d1cf", "#d6cf96"];
 
 const SKETCH_OPACITY = 0.55;
 const PICK_PIXELS = 6;
@@ -78,6 +83,7 @@ function cssColor(el: Element, name: string, fallback: string): THREE.Color {
 
 interface ViewportApi {
   setModel(view: RebuildView | null): void;
+  setHiddenBodies(hidden: ReadonlySet<string>): void;
   setSelection(sel: Selection): void;
   setSketchesVisible(visible: boolean): void;
   setUnderlay(u: Underlay | null): void;
@@ -89,7 +95,9 @@ interface ViewportApi {
   dispose(): void;
 }
 
-export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null }: Props) {
+const NO_BODIES: ReadonlySet<string> = new Set();
+
+export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
   const pickRef = useRef(onPick);
@@ -147,6 +155,10 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     let edgeSegments: Float32Array = new Float32Array(0);
     let selection: Selection = EMPTY_SELECTION;
     let hovered: PickTarget | null = null;
+    let shownView: RebuildView | null = null;
+    let hidden: ReadonlySet<string> = NO_BODIES;
+    /** Is this face or edge in a hidden body? */
+    const isHidden = (body: string | undefined) => body !== undefined && hidden.has(body);
 
     let radius = 50;
     let center = new THREE.Vector3();
@@ -266,6 +278,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     };
 
     const setModel = (v: RebuildView | null) => {
+      shownView = v;
       disposeGroup(model);
       disposeGroup(overlays);
       mesh = null;
@@ -280,23 +293,26 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
         g.setAttribute("normal", new THREE.BufferAttribute(v.mesh.normals, 3));
         g.setIndex(new THREE.BufferAttribute(v.mesh.indices, 1));
         g.computeBoundingSphere();
-        mesh = new THREE.Mesh(
-          g,
-          new THREE.MeshStandardMaterial({
-            color: cssColor(el, "--part", "#c4cad3"),
-            metalness: 0.15,
-            roughness: 0.55,
-            polygonOffset: true,
-            polygonOffsetFactor: 1,
-            polygonOffsetUnits: 1,
-          }),
-        );
+        const surface = (color: THREE.ColorRepresentation, visible = true) =>
+          new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, visible });
+        // A part of several bodies: one colour each, as triangle groups (each body's faces are contiguous).
+        const bodies = v.bodies ?? [];
+        if (bodies.length > 1) {
+          bodies.forEach((b, i) => {
+            const first = faceRanges[b.faces[0]];
+            const last = faceRanges[b.faces[1] - 1];
+            if (first && last) g.addGroup(first.start, last.start + last.count - first.start, i);
+          });
+          mesh = new THREE.Mesh(g, bodies.map((b, i) => surface(BODY_COLORS[i % BODY_COLORS.length], !hidden.has(b.name))));
+        } else {
+          mesh = new THREE.Mesh(g, surface(cssColor(el, "--part", "#c4cad3")));
+        }
         model.add(mesh);
         // Draw every edge except seams; remember which edge each segment belongs to.
         const pts: number[] = [];
         const owners: number[] = [];
         edgeRanges.forEach((r, i) => {
-          if (v.edges[i]?.seam) return;
+          if (v.edges[i]?.seam || isHidden(v.edges[i]?.body)) return;
           for (let k = r.start; k < r.start + r.count; k++) {
             for (let c = 0; c < 6; c++) pts.push(edgeSegments[k * 6 + c]);
             owners.push(i);
@@ -396,7 +412,13 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const faceHit = raycaster.intersectObject(mesh, false)[0];
+      const faceAt = (h: THREE.Intersection) => {
+        if (h.faceIndex === undefined || h.faceIndex === null) return -1;
+        const tri = h.faceIndex * 3;
+        return faceRanges.findIndex((r) => tri >= r.start && tri < r.start + r.count);
+      };
+      // Hidden bodies are still in the mesh: look through them.
+      const faceHit = raycaster.intersectObject(mesh, false).find((h) => !isHidden(shownView?.faces[faceAt(h)]?.body));
       const worldPerPixel = (2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / rect.height;
       raycaster.params.Line = { threshold: PICK_PIXELS * worldPerPixel };
       const edgeHit = edgeLines ? raycaster.intersectObject(edgeLines, false)[0] : undefined;
@@ -404,9 +426,8 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       if (frontEdge && edgeHit.index !== undefined) {
         return { kind: "edge", index: segmentEdge[Math.floor(edgeHit.index / 2)], point: edgeHit.point.toArray() as Vec3 };
       }
-      if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null) {
-        const tri = faceHit.faceIndex * 3;
-        const index = faceRanges.findIndex((r) => tri >= r.start && tri < r.start + r.count);
+      if (faceHit) {
+        const index = faceAt(faceHit);
         if (index >= 0) return { kind: "face", index, point: faceHit.point.toArray() as Vec3 };
       }
       return null;
@@ -490,13 +511,18 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       },
       setGhost(ghost: boolean) {
         if (mesh) {
-          const m = mesh.material as THREE.MeshStandardMaterial;
-          m.transparent = ghost;
-          m.opacity = ghost ? 0.25 : 1;
-          m.depthWrite = !ghost;
-          m.needsUpdate = true;
+          for (const m of [mesh.material].flat() as THREE.MeshStandardMaterial[]) {
+            m.transparent = ghost;
+            m.opacity = ghost ? 0.25 : 1;
+            m.depthWrite = !ghost;
+            m.needsUpdate = true;
+          }
         }
         render();
+      },
+      setHiddenBodies(next: ReadonlySet<string>) {
+        hidden = next;
+        setModel(shownView);
       },
       fit,
       dispose() {
@@ -526,6 +552,10 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
   useEffect(() => {
     api.current?.setModel(view);
   }, [view]);
+
+  useEffect(() => {
+    api.current?.setHiddenBodies(hiddenBodies);
+  }, [hiddenBodies]);
 
   useEffect(() => {
     api.current?.setSelection(selection);
@@ -573,16 +603,18 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
 
 function describeFace(f: FaceInfo | undefined): string {
   if (!f) return "face";
-  if (f.type === "plane" && f.normal) return `planar face · normal ${formatDirection(f.normal)} · offset ${fmt(f.offset ?? 0)}`;
-  if (f.type === "cylinder" && f.cylinder) return `cylindrical face · Ø${fmt(2 * f.cylinder.radius)} · ${f.cylinder.concave ? "hole wall" : "boss"}`;
-  return f.type === "cone" ? "conical face" : "freeform face";
+  const of = f.body ? ` of ${f.body}` : "";
+  if (f.type === "plane" && f.normal) return `planar face${of} · normal ${formatDirection(f.normal)} · offset ${fmt(f.offset ?? 0)}`;
+  if (f.type === "cylinder" && f.cylinder) return `cylindrical face${of} · Ø${fmt(2 * f.cylinder.radius)} · ${f.cylinder.concave ? "hole wall" : "boss"}`;
+  return (f.type === "cone" ? "conical face" : "freeform face") + of;
 }
 
 function describeEdge(e: EdgeInfo | undefined): string {
   if (!e) return "edge";
-  if (e.kind === "line") return `straight edge · ${formatDirection(e.direction!)} · length ${fmt(e.length)}`;
-  if (e.kind === "circle") return `circular edge · Ø${fmt(2 * e.radius!)}`;
-  return `curved edge · length ${fmt(e.length)}`;
+  const of = e.body ? ` of ${e.body}` : "";
+  if (e.kind === "line") return `straight edge${of} · ${formatDirection(e.direction!)} · length ${fmt(e.length)}`;
+  if (e.kind === "circle") return `circular edge${of} · Ø${fmt(2 * e.radius!)}`;
+  return `curved edge${of} · length ${fmt(e.length)}`;
 }
 
 function PickTip({ hover, faces, edges }: { hover: Hover; faces: FaceInfo[]; edges: EdgeInfo[] }) {

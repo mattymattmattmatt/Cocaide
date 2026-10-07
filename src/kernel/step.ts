@@ -1,12 +1,18 @@
 // STEP export and import through OCCT's own translator (AP214, the OCCT default).
+// A part of several bodies goes out as an assembly of named solids (XCAF), so
+// the next tool shows "base" and "upright", not "Solid1" and "Solid2".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import { type OC, scoped } from "./oc";
 
 let counter = 0;
 
-/** Returns the STEP file text. Lengths are written in millimetres. `description` goes in the header. */
-export function exportSTEP(oc: OC, shape: TopoDS_Shape, name: string, description?: string | null): string {
+/**
+ * Returns the STEP file text. Lengths are written in millimetres. `description`
+ * goes in the header. With more than one body, each is its own named solid.
+ */
+export function exportSTEP(oc: OC, shape: TopoDS_Shape, name: string, description?: string | null, bodies?: { name: string; shape: TopoDS_Shape }[]): string {
+  if (bodies && bodies.length > 1) return exportNamed(oc, name, bodies, description);
   const path = `/cocaide-export-${++counter}.step`;
   const productName = stepSafe(name);
   return scoped((s) => {
@@ -26,6 +32,35 @@ export function exportSTEP(oc: OC, shape: TopoDS_Shape, name: string, descriptio
     text = text.replace("FILE_NAME('Open CASCADE Shape Model'", `FILE_NAME('${productName}.step'`);
     if (description) text = text.replace(/FILE_DESCRIPTION\(\('[^']*'\)/, () => `FILE_DESCRIPTION(('${stepString(description)}')`);
     return text;
+  });
+}
+
+/** An assembly named after the part, with one named component per body. */
+function exportNamed(oc: OC, name: string, bodies: { name: string; shape: TopoDS_Shape }[], description?: string | null): string {
+  const path = `/cocaide-export-${++counter}.step`;
+  return scoped((s) => {
+    const text = (v: string) => s.track(new oc.TCollection_ExtendedString(stepSafe(v), false));
+    // The document is not tracked: OCCT owns it through its handle, and deleting it here would crash.
+    const doc = new oc.TDocStd_Document(text("XmlXCAF"));
+    const shapes = oc.XCAFDoc_DocumentTool.ShapeTool(s.track(doc.Main()));
+    const assembly = s.track(shapes.NewShape());
+    oc.TDataStd_Name.Set(assembly, text(name));
+    for (const b of bodies) {
+      const label = s.track(shapes.AddShape(b.shape, false, false));
+      oc.TDataStd_Name.Set(label, text(b.name));
+      oc.TDataStd_Name.Set(s.track(shapes.AddComponent(assembly, label, s.track(new oc.TopLoc_Location()))), text(b.name));
+    }
+    shapes.UpdateAssemblies();
+    oc.Interface_Static.SetCVal("write.step.unit", "MM");
+    const writer = s.track(new oc.STEPCAFControl_Writer());
+    writer.SetNameMode(true);
+    if (!writer.Perform(doc, path, s.track(new oc.Message_ProgressRange()))) throw new Error("STEP write failed");
+    const bytes = oc.FS.readFile(path) as Uint8Array;
+    oc.FS.unlink(path);
+    let out = new TextDecoder().decode(bytes);
+    out = out.replace("FILE_NAME('Open CASCADE Shape Model'", `FILE_NAME('${stepSafe(name)}.step'`);
+    if (description) out = out.replace(/FILE_DESCRIPTION\(\('[^']*'\)/, () => `FILE_DESCRIPTION(('${stepString(description)}')`);
+    return out;
   });
 }
 

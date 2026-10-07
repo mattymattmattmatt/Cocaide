@@ -48,7 +48,7 @@ describe("apply", () => {
   it("rejects an update that breaks the feature", () => {
     expect(apply(bracket, { type: "updateFeature", id: "ext_1", patch: { distnace: 10 } })).toEqual({
       ok: false,
-      error: 'updateFeature rejected: ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction)',
+      error: 'updateFeature rejected: ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction, body, newBody)',
     });
   });
 

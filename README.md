@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase G (photo underlay) done: every phase in the plan is built.**
+**Status: Phase H (multibody parts) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldments) and J (a profile library).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -27,6 +27,11 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - A photo has no scale. The model reports where the part's edges and holes are in the photo's pixels; code scales them from one dimension the user knows.
   - Every size is marked as an estimate, and what the photo doesn't show (the thickness, from above) is a guess.
   - STEP and STL export are refused until the user confirms the scale on the photo and sets every guess. An agent can't confirm it.
+- Phase H adds multibody parts: one part, many named solids, the groundwork for weldments.
+  - A feature says which body it adds to or starts (`"newBody": "upright"`), and which bodies it cuts. A name that doesn't exist is an error, never a new body.
+  - Every rebuild measures each body and reports every pair that overlaps, with the overlap volume.
+  - STEP keeps the names: FreeCAD opens `base` and `upright`, not `Solid1` and `Solid2`.
+  - Right-click a body to ask about it: the agent may change that body only, and the API enforces it.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -35,9 +40,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 226 unit, kernel and agent tests, including the Phase A, C, D, E, F and G acceptance logic
+npm test               # 242 unit, kernel and agent tests, including the Phase A, C, D, E, F, G and H acceptance logic
                        #   (+9 live-model Phase D–G tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 27 browser tests (Playwright, Chromium), including the Phase B, D, E, F and G acceptance suites
+npm run test:e2e       # 30 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G and H acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -64,6 +69,31 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase H: multibody parts
+
+The example is `examples/stand.cocaide.json` (in **Examples…** as "stand (two bodies)"). It is a 120 × 80 × 8 base plate with two Ø10 holes, and a 120 × 8 × 60 upright plate standing on it, as two bodies.
+
+| Check | Result |
+|---|---|
+| A part of two bodies rebuilds as two named solids, each measured, with no interference | `base` is 75,543.363 mm³ and `upright` is 57,600 mm³. They touch, so the overlap check reports nothing. Each is its own solid: 2 solids, 14 faces. |
+| Pushed 2 mm into the base, the overlap is reported in mm³ | Set `base_t` to 10. The upright still stands at `upright_z` = 8, so the rebuild reports "base and upright overlap by 1,920 mm³" (120 × 8 × 2). Set it back, and the warning goes. |
+| A hole scoped to the base leaves the upright whole | `hole_1` has `"bodies": ["base"]`. The upright stays exactly 57,600 mm³. The same hole with no list, drilled from the upright's top face, goes through both bodies. A listed body that loses nothing is an error: `hole_1: removed no material from body "upright"`. |
+| STEP exports two named solids, and FreeCAD opens them by name | The STEP is an assembly `stand` with components `base` and `upright` (XCAF). FreeCAD 26.3 imports objects `base` and `upright`, with the same volume, area, faces and bounding box as Cocaide (`npm run verify:freecad`). A one-body part exports exactly as before. |
+| Combine merges them into one body whose volume is the sum | **Combine** adds `upright` into `base`: one body, one solid, 133,143.363 mm³. A later feature that names `upright` is rejected, because the upright no longer exists. Subtract and common work too, and common of two bodies that only touch is an error. |
+| Each body has its own colour and can be hidden; a right-click asks about that body only, and the API rejects an edit to the other | The **Bodies** panel lists each body with its colour, volume and an eye to hide it. Right-click `upright`: the scope is `ext_2` plus new features on `upright` alone. When the scripted model tries to drill the base, the API returns `writeScope: addFeature … is outside the scope [ext_2, body:upright]`, and the document is unchanged. |
+
+These checks are covered at two levels:
+- **Node** (`tests/bodies.test.ts`): everything above, plus:
+  - patterns of a new body (`foot`, `foot_2`, `foot_3`);
+  - selectors that name a body;
+  - name errors at validation;
+  - `renameBody`, including renaming the default `main`;
+  - the body ask packet;
+  - the measurement summary the agent reads.
+- **Browser** (`e2e/bodies.spec.ts`): the bodies panel, hiding a body, the overlap warning, the hole's body checkboxes, the STEP download, Combine, and the body ask with the API answered by a script.
+
+![Two bodies, coloured, with the overlap reported when the base is made thicker](docs/phase-h-bodies.png)
 
 ### Phase G: photo underlay
 
@@ -380,6 +410,7 @@ File extension `.cocaide.json`. Units are millimetres, always. Unknown fields ar
   "material": { "name": "S275", "densityKgPerM3": 7850 },   // optional; default steel 7850
   "source": { "drawing": "bracket.pdf", "projection": "third-angle", "units": "mm",
               "drawingNumber": "CD-0001", "material": "S275 STEEL" },   // optional: the drawing it was read from
+  // features may say which body they make: "newBody": "upright", "body": "upright"; cuts: "bodies": ["base"]
   "photo": { "image": "bracket-photo.jpg", "sha256": "…", "width": 1400, "height": 1000, "origin": [620, 420],
              "scale": { "from": [300, 420], "to": [940, 420], "length": 80, "what": "the plate's long edge",
                         "source": "typed", "parameter": "plate_w", "confirmed": false },
@@ -404,6 +435,19 @@ Every feature has an `id` and may be `"suppressed": true` (kept, but skipped by 
 | `circularPattern` | `feature`, `axis: { origin, direction }`, `count` (including the original), `angle?` (total sweep, default 360) |
 
 A pattern repeats the seed feature's tool body. An instance that adds or removes no material is an error that names the instance (`instance 5 (offset [-80, 0, 0]) removes no material`).
+
+### Bodies
+
+A part is one or more named solids. SolidWorks has bodies too; Cocaide's rules are stricter, so an agent can work with them:
+- **Where material goes.** An `extrude` adds to the body `main` unless it says otherwise. `"newBody": "upright"` starts a body, and `"body": "upright"` adds to one. A name that hasn't been made by an earlier feature is a validation error, not a new body.
+- **What a cut removes.** A `cut` or `hole` takes `"bodies": ["base"]` to cut only those, and each listed body must lose material. Without the list it cuts every body it reaches.
+- **Selectors.** Any face or edge selector can add `"body": "base"`. A face picked in a part of several bodies gets its body in the generated selector, so the pick keeps meaning that face when other bodies change.
+- **Patterns follow their seed.** A pattern of a cut cuts the same bodies, and a pattern of an extrude into a body adds to it. A pattern of a new body makes new bodies: `foot`, `foot_2`, `foot_3`.
+- **`combine`.** `{ "op": "combine", "operation": "add" | "subtract" | "common", "target": "base", "tools": ["upright"] }`. The tools are used up. Adding bodies that don't touch is an error, because it would make one body of separate solids.
+- **`renameBody`** is one command. Every feature and selector that names the body follows, and so do a pattern's copies. Renaming `main` writes the name into the extrude that makes it.
+- **Measurements.** They list each body (volume, mass, size, holes) and `interference`: every pair that shares volume, and how much. Bodies that only touch don't count.
+- **STEP.** A part of several bodies is written as an assembly named after the part, with one solid per body, named. A part of one body is written exactly as before.
+- **Agents.** Right-click a body (in the Bodies panel) to ask about it. The write scope is the features that make it, plus `body:<name>`: new features that touch only that body. A cut that lists only it counts; a cut that reaches every body does not.
 
 Sketch entities: `line {start, end}`, `circle {center, radius}`, `arc {center, start, end, clockwise?}` (counter-clockwise by default), `rect {center, w, h}`, `slot {center1, center2, width}`. Any entity can be `"construction": true`. Closed loops are found by chaining endpoints. A loop inside a loop is a hole, and a loop inside that is an island. Loops must not cross or touch.
 
@@ -463,7 +507,7 @@ When a parameter or dimension changes, the sketches it affects are re-solved. Fi
 ```
 src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules   (no kernel)
 src/geom      plane frames, 2D profiles, constraint checks, the constraint solver     (no kernel)
-src/kernel    OCCT: operations, selectors, picking -> selector synthesis, measurements, mesh, STEP, rebuild()
+src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis, measurements, interference, mesh, STEP (named bodies), rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
 src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt
@@ -475,7 +519,7 @@ src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
 scripts       headless CLI, FreeCAD verification, log replay, the drawing and photo fixtures (make-drawings.ts, make-photos.ts)
-examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet);
+examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet), stand (two bodies);
               drawings/: the bracket as a PDF, a clean scan and a blurry scan; photos/: the bracket, and a freeform part
 tests         unit, kernel, agent, MCP and ask tests (Vitest, Node)
 e2e           browser tests (Playwright)

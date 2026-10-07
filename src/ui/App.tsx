@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import bracketText from "../../examples/bracket.cocaide.json?raw";
 import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
+import standText from "../../examples/stand.cocaide.json?raw";
 import { targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
 import { nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import type { DatumPlane, SketchEntity, SketchFeature, Vec2, Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type DatumPlane, type SketchEntity, type SketchFeature, type Vec2, type Vec3 } from "../doc/types";
+import { validateDocument } from "../doc/validate";
 import { facePlaneFrame, planeFrame, to2D } from "../geom/frame";
 import { dot3 } from "../geom/vec";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
@@ -15,6 +17,7 @@ import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog } from "./ask/AskSettingsDialog";
+import { BodiesPanel } from "./BodiesPanel";
 import { useAsk } from "./ask/useAsk";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
@@ -24,12 +27,12 @@ import { ParametersContext, TextInput } from "./fields";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { ParametersPanel } from "./ParametersPanel";
 import { PhotoBar } from "./PhotoBar";
-import { PropertyPanel } from "./PropertyPanel";
+import { nextBodyName, PropertyPanel } from "./PropertyPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
 import { EMPTY_SELECTION, Viewport, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
-const EXAMPLES: Record<string, string> = { bracket: bracketText, "mounting plate": plateText, flange: flangeText };
+const EXAMPLES: Record<string, string> = { bracket: bracketText, "mounting plate": plateText, flange: flangeText, "stand (two bodies)": standText };
 const STORAGE_KEY = "cocaide.document.v1";
 const REBUILD_DELAY_MS = 250;
 const BLANK = formatDocument({ version: 1, units: "mm", name: "part", features: [] });
@@ -87,6 +90,7 @@ export function App() {
   const [rightTab, setRightTab] = useState<"properties" | "document">("properties");
   const [sketch, setSketch] = useState<SketchSession | null>(null);
   const [planeMenu, setPlaneMenu] = useState(false);
+  const [hiddenBodies, setHiddenBodies] = useState<ReadonlySet<string>>(new Set());
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef(0);
@@ -333,6 +337,10 @@ export function App() {
     if (!doc || !sk) return setNotice({ kind: "error", text: `Make a sketch first, then ${op === "cut" ? "Cut" : "Extrude"}.` });
     const plane = sk.plane as DatumPlane;
     const feature: Record<string, unknown> = { id: nextId(doc, op), op, sketch: sk.id, distance: op === "cut" ? 5 : 10 };
+    // Where new material goes: the one body there is, or, in a part of several, a new body.
+    const bodies = validateDocument(doc).bodies;
+    if (op === "extrude" && bodies.length === 1 && bodies[0] !== DEFAULT_BODY) feature.body = bodies[0];
+    if (op === "extrude" && bodies.length > 1) feature.newBody = nextBodyName(bodies);
     if (op === "cut" && view?.measurements?.boundingBox) {
       // Cut toward the material: if nothing of the part lies in front of the sketch plane, cut backwards.
       const { min, max } = view.measurements.boundingBox;
@@ -356,7 +364,18 @@ export function App() {
     if (!s.ok || f.type !== "plane") return setNotice({ kind: "error", text: s.ok ? "A hole needs a flat face." : s.error });
     const frame = facePlaneFrame(f.normal!, f.point!);
     const c = to2D(frame, selection.point).map(round3) as [number, number];
-    create({ id: nextId(doc, "hole"), op: "hole", face: s.selector, center: c, diameter: 5, depth: "through" });
+    // In a part of several bodies, the hole drills the body that was clicked.
+    create({ id: nextId(doc, "hole"), op: "hole", face: s.selector, center: c, diameter: 5, depth: "through", ...(f.body ? { bodies: [f.body] } : {}) });
+  };
+
+  const combine = () => {
+    const names = view?.bodies.map((b) => b.name) ?? [];
+    if (!doc || names.length < 2) return setNotice({ kind: "error", text: "Combine needs two bodies or more." });
+    // The clicked face's body goes into the first other body; change either in Properties.
+    const picked = selection.faces.length ? view?.faces[selection.faces[0]]?.body : undefined;
+    const tool = picked ?? names[1];
+    const target = names.find((n) => n !== tool)!;
+    create({ id: nextId(doc, "combine"), op: "combine", operation: "add", target, tools: [tool] });
   };
 
   const edgeFeature = (op: "fillet" | "chamfer") => {
@@ -626,6 +645,11 @@ export function App() {
             <button onClick={() => patternFeature("circularPattern")} data-testid="tool-circular-pattern">
               Circular pattern
             </button>
+            {(view?.bodies.length ?? 0) > 1 && (
+              <button onClick={combine} data-testid="tool-combine" title="Join, subtract or intersect bodies">
+                Combine
+              </button>
+            )}
           </div>
         )}
 
@@ -654,6 +678,21 @@ export function App() {
               onAsk={sketch ? undefined : openAsk}
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : openAsk} />
+            <BodiesPanel
+              measurements={view?.measurements ?? null}
+              bodies={view?.bodies ?? []}
+              hidden={hiddenBodies}
+              onToggle={(name) =>
+                setHiddenBodies((h) => {
+                  const next = new Set(h);
+                  if (next.has(name)) next.delete(name);
+                  else next.add(name);
+                  return next;
+                })
+              }
+              onSelect={(b) => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] })}
+              onAsk={sketch ? undefined : (name, x, y) => openAsk({ kind: "body", name }, x, y)}
+            />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>
           {sketch ? (
@@ -679,6 +718,7 @@ export function App() {
                   onContext={onContext}
                   underlay={underlay}
                   onPhotoPoint={photoPick ? onPhotoPoint : null}
+                  hiddenBodies={hiddenBodies}
                 />
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">

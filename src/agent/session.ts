@@ -56,6 +56,7 @@ export const EDIT_TOOLS = [
   "suppressFeature",
   "setParameter",
   "deleteParameter",
+  "renameBody",
   "setDimension",
   "addEntity",
   "updateEntity",
@@ -223,6 +224,8 @@ export class AgentSession {
         return this.edit({ type: "setParameter", name: String(a.name), value: a.value as number });
       case "deleteParameter":
         return this.edit({ type: "deleteParameter", name: String(a.name) });
+      case "renameBody":
+        return this.edit({ type: "renameBody", from: String(a.from), to: String(a.to) });
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), index: a.index as number, value: a.value as number | string });
       case "addEntity":
@@ -421,7 +424,7 @@ export class AgentSession {
   private select(selector: unknown, tool: string): Picked | string {
     const solid = this.built.solid;
     if (!solid) return `${tool}: there is no solid yet`;
-    return selectOn(this.oc, solid, selector, tool);
+    return selectOn(this.oc, solid, selector, tool, this.built.bodies);
   }
 
   private exportFile(tool: "exportSTEP" | "exportSTL", file: unknown): CallResult {
@@ -435,7 +438,7 @@ export class AgentSession {
     const ext = tool === "exportSTEP" ? ".step" : ".stl";
     const name = typeof file === "string" && file.trim() ? basename(file.trim()) : `${safeName(this.built.name)}${ext}`;
     const path = join(this.outDir, name.endsWith(ext) ? name : `${name}${ext}`);
-    const bytes = tool === "exportSTEP" ? new TextEncoder().encode(exportSTEP(this.oc, solid, this.built.name, photoNote(this.doc))) : encodeSTL(tessellate(this.oc, solid), this.built.name);
+    const bytes = tool === "exportSTEP" ? new TextEncoder().encode(exportSTEP(this.oc, solid, this.built.name, photoNote(this.doc), this.built.bodies)) : encodeSTL(tessellate(this.oc, solid), this.built.name);
     mkdirSync(this.outDir, { recursive: true });
     writeFileSync(path, bytes);
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision } };

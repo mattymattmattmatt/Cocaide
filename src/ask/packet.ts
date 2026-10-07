@@ -9,7 +9,7 @@ import { references, type RawDocument } from "../doc/commands";
 import { documentParameters, parameterRefs, resolveExpressions } from "../doc/parameters";
 import { photoGuesses, photoOf } from "../doc/photo";
 import { constraintEntities } from "../doc/sketch";
-import type { Constraint, SketchEntity } from "../doc/types";
+import { DEFAULT_BODY, type Constraint, type SketchEntity } from "../doc/types";
 import { isObject } from "../doc/validate";
 import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
@@ -29,10 +29,12 @@ export type AskTarget =
   | { kind: "face"; index: number }
   | { kind: "edge"; index: number }
   | { kind: "parameter"; name: string }
+  /** One body of a part of several (Phase H): its features, and new features that touch only it. */
+  | { kind: "body"; name: string }
   /** Empty space: the whole part, the weakest scope (spec 6). Never applied without the user accepting. */
   | { kind: "part" };
 
-export type PacketKind = "feature" | "sketch" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter" | "part";
+export type PacketKind = "feature" | "sketch" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter" | "body" | "part";
 
 export interface Packet {
   target: { kind: PacketKind; label: string } & Record<string, unknown>;
@@ -69,9 +71,30 @@ export function scopeFor(doc: RawDocument, target: AskTarget): string[] {
       return ["+"];
     case "parameter":
       return [`param:${target.name}`];
+    case "body":
+      return [...bodyFeatures(doc, target.name), `body:${target.name}`];
     case "part":
       return ["*"];
   }
+}
+
+/**
+ * The features that make a body or work on it alone: the extrude that starts
+ * it and those that add to it, cuts and holes that list only it, a combine
+ * into it, and patterns of any of these. A cut that reaches every body is not
+ * the body's: changing it would change the others.
+ */
+export function bodyFeatures(doc: RawDocument, name: string): string[] {
+  const ids = new Set<string>();
+  for (const f of doc.features) {
+    const id = String(f.id);
+    const only = (list: unknown) => Array.isArray(list) && list.length > 0 && list.every((b) => b === name);
+    if (f.op === "extrude" && (f.newBody ?? f.body ?? DEFAULT_BODY) === name) ids.add(id);
+    else if ((f.op === "cut" || f.op === "hole") && only(f.bodies)) ids.add(id);
+    else if (f.op === "combine" && f.target === name) ids.add(id);
+    else if ((f.op === "linearPattern" || f.op === "circularPattern") && ids.has(String(f.feature))) ids.add(id);
+  }
+  return [...ids];
 }
 
 /** The write scope in words, for the menu. */
@@ -82,6 +105,7 @@ export function describeScope(scope: string[]): string {
       if (t === "+") return "add one feature that uses it";
       if (t === "*") return "anything";
       if (t.startsWith("param:")) return `parameter ${t.slice(6)}`;
+      if (t.startsWith("body:")) return `new features on body ${t.slice(5)} alone`;
       const [sketch, part] = t.split("/");
       if (part === "*") return `the geometry of ${sketch}`;
       if (part) return `${part} in ${sketch} and its constraints`;
@@ -112,6 +136,8 @@ export function targetLabel(doc: RawDocument, target: AskTarget, topo?: PartTopo
     }
     case "parameter":
       return target.name;
+    case "body":
+      return `body ${target.name}`;
     case "part":
       return doc.features.length ? "the whole part" : "a new part";
   }
@@ -134,6 +160,25 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
   };
 
   switch (target.kind) {
+    case "body": {
+      const m = check.measurements?.bodies.find((b) => b.name === target.name);
+      const made = bodyFeatures(doc, target.name);
+      const status = new Map(check.features.map((s) => [s.id, s]));
+      return {
+        target: { kind: "body", name: target.name, label },
+        ...base,
+        body: m
+          ? { name: m.name, volume: round6(m.volume), massKg: round6(m.massKg), size: m.boundingBox?.size.map(round6), holeCount: m.holeCount }
+          : { name: target.name, missing: "the body is not in the rebuilt part: the feature that makes it failed or is suppressed" },
+        parent: null,
+        children: doc.features.filter((f) => made.includes(String(f.id))).map((f) => ({ ...brief(f), ok: status.get(String(f.id))?.ok ?? false })),
+        measurements: {
+          otherBodies: (check.measurements?.bodies ?? []).filter((b) => b.name !== target.name).map((b) => b.name),
+          interference: (check.measurements?.interference ?? []).filter((i) => i.bodies.includes(target.name)),
+        },
+        error: null,
+      };
+    }
     case "feature":
     case "failed": {
       const f = doc.features.find((x) => x.id === target.id);

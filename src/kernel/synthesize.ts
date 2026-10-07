@@ -38,7 +38,8 @@ export function faceSelectorFor(faces: FaceInfo[], index: number): Synthesis<Fac
   } else {
     return { ok: false, error: `a ${f.type === "other" ? "freeform" : f.type} face cannot be selected yet; pick a flat or cylindrical face` };
   }
-  for (const c of candidates) {
+  // In a part of several bodies the selector names the face's body: it keeps meaning this face when other bodies change.
+  for (const c of f.body ? candidates.map((x) => ({ ...x, body: f.body })) : candidates) {
     const r = selectFaces(faces, c);
     if (!r.tie && r.matches.length === 1 && r.matches[0].index === index) return { ok: true, selector: c };
   }
@@ -75,7 +76,7 @@ export function edgeSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], index: num
   if (e.kind === "circle") candidates.push({ type: "edge", kind: "circle", radius: cleanScalar(e.radius!), near, pick: "all" });
   if (e.kind === "line") candidates.push({ type: "edge", kind: "line", direction: clean(e.direction!), near, pick: "all" });
   candidates.push({ type: "edge", near, pick: "all" });
-  for (const c of candidates) {
+  for (const c of e.body ? candidates.map((x) => ({ ...x, body: e.body })) : candidates) {
     const r = selectEdges(edges, faces, c);
     if (!r.error && !r.tie && r.matches.length === 1 && r.matches[0].index === index) return { ok: true, selector: c };
   }

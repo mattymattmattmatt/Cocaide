@@ -41,7 +41,7 @@ async function main() {
         process.exit(1);
       }
       const target = out ?? `${basename(file).replace(/\.cocaide\.json$|\.json$/, "")}.step`;
-      writeFileSync(target, exportSTEP(oc, result.solid, result.name, photoNote(parsed.value)));
+      writeFileSync(target, exportSTEP(oc, result.solid, result.name, photoNote(parsed.value), result.bodies));
       console.log(JSON.stringify({ ...summary, exported: target }, null, 2));
     }
     if (!result.ok) process.exit(1);

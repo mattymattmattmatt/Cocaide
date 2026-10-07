@@ -35,6 +35,25 @@ export interface Measurements {
   mass: { kg: number; densityKgPerM3: number; material: string };
   solids: number;
   faces: number;
+  /** Each body on its own, in the order they were made. A part that names no body is one body, "main". */
+  bodies: BodyMeasurement[];
+  /** Every pair of bodies that overlap, with the volume they share. Bodies that only touch don't. */
+  interference: Interference[];
+}
+
+export interface BodyMeasurement {
+  name: string;
+  volume: number;
+  massKg: number;
+  boundingBox: { min: Vec3; max: Vec3; size: Vec3 } | null;
+  holeCount: number;
+  solids: number;
+}
+
+export interface Interference {
+  bodies: [string, string];
+  /** mm³ the two share. */
+  volume: number;
 }
 
 export function volumeOf(oc: OC, s: Scope, shape: TopoDS_Shape): number {
@@ -62,12 +81,13 @@ export function isValidShape(oc: OC, s: Scope, shape: TopoDS_Shape): boolean {
   return s.track(new oc.BRepCheck_Analyzer(shape, true, false, false)).IsValid();
 }
 
-export function measure(oc: OC, s: Scope, shape: TopoDS_Shape, material: Material | undefined): Measurements {
+export function measure(oc: OC, s: Scope, shape: TopoDS_Shape, material: Material | undefined, bodies?: Map<string, TopoDS_Shape>): Measurements {
   const bb = boundingBoxOf(oc, s, shape);
   const volume = volumeOf(oc, s, shape);
   const { infos } = describeFaces(oc, s, shape);
   const holes = findHoles(infos.flatMap((f) => (f.cylinder ? [f.cylinder] : [])));
   const mat = material ?? DEFAULT_MATERIAL;
+  const each = bodies && bodies.size > 1 ? bodies : new Map([[bodies?.keys().next().value ?? "main", shape]]);
   return {
     units: "mm",
     boundingBox: bb && { min: bb.min, max: bb.max, size: sub3(bb.max, bb.min) },
@@ -83,7 +103,41 @@ export function measure(oc: OC, s: Scope, shape: TopoDS_Shape, material: Materia
     },
     solids: countSubShapes(oc, s, shape, "solid"),
     faces: infos.length,
+    bodies: [...each].map(([name, body]) => measureBody(oc, s, name, body, mat.densityKgPerM3)),
+    interference: interference(oc, s, each),
   };
+}
+
+function measureBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, density: number): BodyMeasurement {
+  const bb = boundingBoxOf(oc, s, body);
+  const volume = volumeOf(oc, s, body);
+  const { infos } = describeFaces(oc, s, body);
+  return {
+    name,
+    volume,
+    massKg: volume * 1e-9 * density,
+    boundingBox: bb && { min: bb.min, max: bb.max, size: sub3(bb.max, bb.min) },
+    holeCount: findHoles(infos.flatMap((f) => (f.cylinder ? [f.cylinder] : []))).length,
+    solids: countSubShapes(oc, s, body, "solid"),
+  };
+}
+
+/** Pairs of bodies that share volume. Only pairs whose boxes meet are tested. */
+export function interference(oc: OC, s: Scope, bodies: Map<string, TopoDS_Shape>): Interference[] {
+  const list = [...bodies].map(([name, shape]) => ({ name, shape, box: boundingBoxOf(oc, s, shape) }));
+  const out: Interference[] = [];
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i];
+      const b = list[j];
+      if (!a.box || !b.box || ![0, 1, 2].every((k) => a.box!.min[k] < b.box!.max[k] - TOL && b.box!.min[k] < a.box!.max[k] - TOL)) continue;
+      const common = s.track(new oc.BRepAlgoAPI_Common(a.shape, b.shape, s.track(new oc.Message_ProgressRange())));
+      if (!common.IsDone()) continue;
+      const v = volumeOf(oc, s, s.track(common.Shape()));
+      if (v > 1e-6) out.push({ bodies: [a.name, b.name], volume: roundTo(v, 6) });
+    }
+  }
+  return out;
 }
 
 const TOL = 1e-6;

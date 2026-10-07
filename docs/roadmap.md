@@ -10,6 +10,8 @@ weldment is many bodies in one part, so multibody parts come first.
 
 ## Phase H — multibody parts
 
+**Done.** See the README's Phase H acceptance.
+
 One part, many solids. SolidWorks has this, but its bodies are the weak
 spot: they are named by the feature that happened to make them
 ("Boss-Extrude3[2]"), they merge silently, and nothing tells you when two

@@ -1,12 +1,14 @@
-// The Phase A operations. Each takes the current body and returns a new one,
-// or throws OpError with a message the agent can act on. Every result is
-// verified (valid solid, material actually added or removed) before it is
-// accepted.
+// The operations. Each builds its tool and applies it to one body or several
+// (Phase H), or throws OpError with a message the agent can act on. Every
+// result is verified (valid solid, material actually added or removed) before
+// it is accepted.
 
 import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
+import type { TopoDS_Edge } from "replicad-opencascadejs";
 import type {
   ChamferFeature,
   CircularPatternFeature,
+  CombineFeature,
   ExtrudeFeature,
   FilletFeature,
   HoleFeature,
@@ -19,19 +21,11 @@ import { arcMid, type Loop, type Region } from "../geom/profile";
 import { add3, dot3, formatDirection, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
 import { type OC, type Scope } from "./oc";
+import type { DescribedPart } from "./bodies";
 import { edgeSelectionError, selectEdges, selectFaces, selectionError } from "./selectors";
-import { describeEdges, describeFaces } from "./topology";
+import { countSubShapes } from "./topology";
 
 export class OpError extends Error {}
-
-/** A feature that adds or removes one tool body; patterns replay the tool. */
-export interface ToolResult {
-  /** The new body. Owned by the caller. */
-  body: TopoDS_Shape;
-  /** The tool solid, before the boolean. Owned by the caller. */
-  tool: TopoDS_Shape;
-  kind: BooleanKind;
-}
 
 /** What a sketch feature leaves behind for the features that consume it. */
 export interface SketchProfile {
@@ -155,28 +149,25 @@ function reachAlong(oc: OC, s: Scope, shape: TopoDS_Shape, from: Vec3, d: Vec3):
 
 // ------------------------------------------------------- extrude and cut
 
-/** Returns the new body and the tool. The caller owns both; everything else is in scope `s`. */
-export function extrudeOrCut(
-  oc: OC,
-  s: Scope,
-  f: ExtrudeFeature,
-  profile: SketchProfile,
-  body: TopoDS_Shape | null,
-): ToolResult {
+/**
+ * The extrude or cut's tool: the profile swept along its direction. `reach`
+ * is what throughAll goes through (the bodies the feature works on).
+ */
+export function extrudeTool(oc: OC, s: Scope, f: ExtrudeFeature, profile: SketchProfile, reach: TopoDS_Shape | null): TopoDS_Shape {
   if (profile.regions.length === 0) throw new OpError(`sketch "${f.sketch}" has no closed profile to ${f.op}`);
   const { frame } = profile;
   const d = normalize3(f.direction ?? frame.z);
   if (Math.abs(dot3(d, frame.z)) < 1e-6) {
     throw new OpError(`direction ${formatDirection(d)} lies in the sketch plane; it must leave the plane`);
   }
-  if (f.op === "cut" && !body) throw new OpError("nothing to cut: there is no solid before this feature");
+  if (f.op === "cut" && !reach) throw new OpError("nothing to cut: there is no solid before this feature");
 
   const extent = f.extent ?? "blind";
   let offset: Vec3 = [0, 0, 0];
   let length: number;
   if (extent === "throughAll") {
-    if (!body) throw new OpError("throughAll needs an existing solid to go through");
-    length = reachAlong(oc, s, body, frame.origin, d);
+    if (!reach) throw new OpError("throughAll needs an existing solid to go through");
+    length = reachAlong(oc, s, reach, frame.origin, d);
     if (length <= 1e-6) {
       throw new OpError(`the solid is entirely behind the sketch plane in direction ${formatDirection(d)}`);
     }
@@ -184,39 +175,80 @@ export function extrudeOrCut(
     length = f.distance!;
     if (extent === "midplane") offset = scale3(d, -length / 2);
   }
-  const tool = prism(oc, s, profileFaces(oc, s, profile), offset, scale3(d, length));
+  return prism(oc, s, profileFaces(oc, s, profile), offset, scale3(d, length));
+}
 
-  const kind: BooleanKind = f.op === "extrude" ? "fuse" : "cut";
+/** Why a cut removed nothing, in the cut's own terms. */
+export function cutMissed(f: ExtrudeFeature, profile: SketchProfile): string {
+  const d = normalize3(f.direction ?? profile.frame.z);
+  return `the cut does not reach the solid in direction ${formatDirection(d)}` + ((f.extent ?? "blind") === "throughAll" ? "" : "; check direction and distance, or use extent throughAll");
+}
+
+/** The body with the tool added, or the tool itself as a new body. In scope `s`. */
+export function fuseInto(oc: OC, s: Scope, body: TopoDS_Shape | null, tool: TopoDS_Shape, what: string): TopoDS_Shape {
   if (!body) {
-    if (!isValidShape(oc, s, tool)) throw new OpError("the extrusion produced an invalid solid");
-    return { body: copyOut(tool), tool: copyOut(tool), kind };
+    if (!isValidShape(oc, s, tool)) throw new OpError(`the ${what} produced an invalid solid`);
+    return tool;
   }
   const before = volumeOf(oc, s, body);
-  const result = boolean(oc, s, kind, body, tool);
+  const result = boolean(oc, s, "fuse", body, tool);
   const after = volumeOf(oc, s, result);
-  if (!isValidShape(oc, s, result)) throw new OpError(`the ${f.op} produced an invalid solid`);
-  if (f.op === "extrude" && after - before <= VOLUME_EPS * Math.max(1, before)) {
-    throw new OpError("added no material: the extrusion lies entirely inside the existing solid");
+  if (!isValidShape(oc, s, result)) throw new OpError(`the ${what} produced an invalid solid`);
+  if (after - before <= VOLUME_EPS * Math.max(1, before)) {
+    throw new OpError(`added no material: the ${what} lies entirely inside the existing solid`);
   }
-  if (f.op === "cut" && before - after <= VOLUME_EPS * Math.max(1, before)) {
-    throw new OpError(
-      `removed no material: the cut does not reach the solid in direction ${formatDirection(d)}` +
-        (extent === "throughAll" ? "" : "; check direction and distance, or use extent throughAll"),
-    );
+  return result;
+}
+
+/**
+ * Cuts the tool from each target body. A body the tool misses is left as it
+ * is, unless it was listed by name: then it must lose material. At least one
+ * body must. Returns the changed bodies, in scope `s`.
+ */
+export function removeFrom(
+  oc: OC,
+  s: Scope,
+  targets: [string, TopoDS_Shape][],
+  tool: TopoDS_Shape,
+  opts: { listed: boolean; what: string; missed: string },
+): Map<string, TopoDS_Shape> {
+  const changed = new Map<string, TopoDS_Shape>();
+  const single = targets.length === 1 && !opts.listed;
+  const toolBox = boundingBoxOf(oc, s, tool);
+  for (const [name, body] of targets) {
+    if (!single && toolBox && !boxesMeet(toolBox, boundingBoxOf(oc, s, body))) {
+      if (opts.listed) throw new OpError(`removed no material from body "${name}"${opts.missed ? `: ${opts.missed}` : ""}`);
+      continue;
+    }
+    const before = volumeOf(oc, s, body);
+    const result = boolean(oc, s, "cut", body, tool);
+    const after = volumeOf(oc, s, result);
+    if (!isValidShape(oc, s, result)) throw new OpError(`the ${opts.what} produced an invalid solid${single ? "" : ` in body "${name}"`}`);
+    if (before - after <= VOLUME_EPS * Math.max(1, before)) {
+      if (opts.listed) throw new OpError(`removed no material from body "${name}"${opts.missed ? `: ${opts.missed}` : ""}`);
+      continue;
+    }
+    changed.set(name, result);
   }
-  return { body: copyOut(result), tool: copyOut(tool), kind };
+  if (changed.size === 0) throw new OpError(opts.missed ? `removed no material: ${opts.missed}` : "removed no material");
+  return changed;
+}
+
+function boxesMeet(a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 } | null): boolean {
+  if (!b) return false;
+  const tol = 1e-6;
+  return [0, 1, 2].every((i) => a.min[i] <= b.max[i] + tol && b.min[i] <= a.max[i] + tol);
 }
 
 // ------------------------------------------------------------------ hole
 
-export function hole(oc: OC, s: Scope, f: HoleFeature, body: TopoDS_Shape | null): ToolResult {
-  if (!body) throw new OpError("nothing to drill: there is no solid before this feature");
-  const { faces, infos } = describeFaces(oc, s, body);
-  const selection = selectFaces(infos, f.face);
+/** The hole's tool, drilled into the selected face of the part. `reach` is what a through hole goes through. */
+export function drillTool(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart, reach: TopoDS_Shape): TopoDS_Shape {
+  const selection = selectFaces(part.faceInfos, f.face);
   const problem = selectionError(f.face, selection, 1);
   if (problem) throw new OpError(problem);
   const info = selection.matches[0];
-  const face = faces[info.index];
+  const face = part.faces[info.index];
 
   const frame = facePlaneFrame(info.normal!, info.point!);
   const entry = to3D(frame, f.center);
@@ -231,15 +263,8 @@ export function hole(oc: OC, s: Scope, f: HoleFeature, body: TopoDS_Shape | null
 
   const into = scale3(frame.z, -1);
   const through = f.depth === "through";
-  const length = through ? reachAlong(oc, s, body, entry, into) : (f.depth as number);
-  const tool = holeTool(oc, s, f, entry, into, frame.x, length);
-
-  const before = volumeOf(oc, s, body);
-  const result = boolean(oc, s, "cut", body, tool);
-  const after = volumeOf(oc, s, result);
-  if (!isValidShape(oc, s, result)) throw new OpError("the hole produced an invalid solid");
-  if (before - after <= VOLUME_EPS * Math.max(1, before)) throw new OpError("removed no material");
-  return { body: copyOut(result), tool: copyOut(tool), kind: "cut" };
+  const length = through ? reachAlong(oc, s, reach, entry, into) : (f.depth as number);
+  return holeTool(oc, s, f, entry, into, frame.x, length);
 }
 
 /**
@@ -277,50 +302,46 @@ function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Vec3, rad
 
 // ---------------------------------------------------- fillet and chamfer
 
-export function edgeTreatment(oc: OC, s: Scope, f: FilletFeature | ChamferFeature, body: TopoDS_Shape | null): TopoDS_Shape {
-  if (!body) throw new OpError(`nothing to ${f.op}: there is no solid before this feature`);
-  const { faces, infos: faceInfos } = describeFaces(oc, s, body);
-  const { edges, infos } = describeEdges(oc, s, body, faces);
+/** The edges a fillet or chamfer selects across the part, by index. */
+export function selectTreatedEdges(f: FilletFeature | ChamferFeature, part: DescribedPart): number[] {
   const selectors = Array.isArray(f.edges) ? f.edges : [f.edges];
   const chosen = new Set<number>();
   selectors.forEach((sel, i) => {
     const path = Array.isArray(f.edges) ? `edges[${i}]` : "edges";
-    const result = selectEdges(infos, faceInfos, sel, path);
+    const result = selectEdges(part.edgeInfos, part.faceInfos, sel, path);
     const problem = edgeSelectionError(sel, result, path);
     if (problem) throw new OpError(problem);
     for (const e of result.matches) chosen.add(e.index);
   });
+  return [...chosen];
+}
 
+/** One body with a fillet or chamfer on some of its edges. In scope `s`. */
+export function treatEdges(oc: OC, s: Scope, f: FilletFeature | ChamferFeature, body: TopoDS_Shape, edges: TopoDS_Edge[], name: string | null): TopoDS_Shape {
   const size = f.op === "fillet" ? f.radius : f.distance;
   const builder = s.track(f.op === "fillet" ? new oc.BRepFilletAPI_MakeFillet(body) : new oc.BRepFilletAPI_MakeChamfer(body));
-  for (const i of chosen) builder.Add(size, edges[i]);
+  for (const e of edges) builder.Add(size, e);
   builder.Build(s.track(new oc.Message_ProgressRange()));
-  const n = chosen.size;
+  const n = edges.length;
+  const where = name ? ` of body "${name}"` : "";
   if (!builder.IsDone()) {
     throw new OpError(
-      `the ${f.op} failed in the kernel on ${n} edge${n === 1 ? "" : "s"}; ${f.op === "fillet" ? "radius" : "distance"} ${size} is probably too large for them`,
+      `the ${f.op} failed in the kernel on ${n} edge${n === 1 ? "" : "s"}${where}; ${f.op === "fillet" ? "radius" : "distance"} ${size} is probably too large for them`,
     );
   }
   const result = s.track(builder.Shape());
-  if (!isValidShape(oc, s, result)) throw new OpError(`the ${f.op} produced an invalid solid`);
+  if (!isValidShape(oc, s, result)) throw new OpError(`the ${f.op} produced an invalid solid${where}`);
   const before = volumeOf(oc, s, body);
   if (Math.abs(volumeOf(oc, s, result) - before) <= VOLUME_EPS * Math.max(1, before)) {
-    throw new OpError(`the ${f.op} changed nothing`);
+    throw new OpError(`the ${f.op} changed nothing${where}`);
   }
-  return copyOut(result);
+  return result;
 }
 
 // -------------------------------------------------------------- patterns
 
-/** Applies copies of a seed feature's tool. Every instance must add or remove material. */
-export function pattern(
-  oc: OC,
-  s: Scope,
-  f: LinearPatternFeature | CircularPatternFeature,
-  seed: { tool: TopoDS_Shape; kind: BooleanKind },
-  body: TopoDS_Shape | null,
-): TopoDS_Shape {
-  if (!body) throw new OpError("nothing to pattern onto: there is no solid before this feature");
+/** The copies a pattern makes (not the original): a label for messages and the transform. */
+export function patternInstances(oc: OC, s: Scope, f: LinearPatternFeature | CircularPatternFeature): { label: string; trsf: ReturnType<typeof identity> }[] {
   const instances: { label: string; trsf: ReturnType<typeof identity> }[] = [];
   if (f.op === "linearPattern") {
     const d1 = normalize3(f.direction);
@@ -346,21 +367,45 @@ export function pattern(
       instances.push({ label: `instance ${k + 1} (${roundTo(k * step, 4)} deg)`, trsf: t });
     }
   }
+  return instances;
+}
 
-  let current = body;
-  for (const inst of instances) {
-    const moved = s.track(s.track(new oc.BRepBuilderAPI_Transform(seed.tool, inst.trsf, true, false)).Shape());
+export function transformed(oc: OC, s: Scope, shape: TopoDS_Shape, trsf: ReturnType<typeof identity>): TopoDS_Shape {
+  return s.track(s.track(new oc.BRepBuilderAPI_Transform(shape, trsf, true, false)).Shape());
+}
+
+// --------------------------------------------------------------- combine
+
+/** The target with the tools added, subtracted or intersected. In scope `s`. */
+export function combineBodies(oc: OC, s: Scope, f: CombineFeature, target: TopoDS_Shape, tools: TopoDS_Shape[]): TopoDS_Shape {
+  const progress = s.track(new oc.Message_ProgressRange());
+  let current = target;
+  f.tools.forEach((name, i) => {
+    const tool = tools[i];
     const before = volumeOf(oc, s, current);
-    const next = boolean(oc, s, seed.kind, current, moved);
+    const op = s.track(
+      f.operation === "add"
+        ? new oc.BRepAlgoAPI_Fuse(current, tool, progress)
+        : f.operation === "subtract"
+          ? new oc.BRepAlgoAPI_Cut(current, tool, progress)
+          : new oc.BRepAlgoAPI_Common(current, tool, progress),
+    );
+    if (!op.IsDone()) throw new OpError(`the ${f.operation} of "${name}" failed in the kernel`);
+    const next = unify(oc, s, s.track(op.Shape()));
     const after = volumeOf(oc, s, next);
-    const changed = seed.kind === "fuse" ? after - before : before - after;
-    if (changed <= VOLUME_EPS * Math.max(1, before)) {
-      throw new OpError(`${inst.label} ${seed.kind === "fuse" ? "adds" : "removes"} no material`);
+    if (f.operation !== "subtract" && countSubShapes(oc, s, next, "solid") > 1) {
+      throw new OpError(`"${f.target}" and "${name}" don't touch: adding them would make one body of separate solids`);
+    }
+    if (after <= VOLUME_EPS) {
+      throw new OpError(f.operation === "common" ? `"${f.target}" and "${name}" don't overlap: their common part is empty` : `subtracting "${name}" leaves nothing of "${f.target}"`);
+    }
+    if (f.operation === "subtract" && before - after <= VOLUME_EPS * Math.max(1, before)) {
+      throw new OpError(`"${name}" doesn't overlap "${f.target}": subtracting it removes nothing`);
     }
     current = next;
-  }
-  if (!isValidShape(oc, s, current)) throw new OpError("the pattern produced an invalid solid");
-  return copyOut(current);
+  });
+  if (!isValidShape(oc, s, current)) throw new OpError("the combine produced an invalid solid");
+  return current;
 }
 
 function identity(oc: OC, s: Scope) {
@@ -375,7 +420,7 @@ function fmt3(v: Vec3): string {
  * A second embind handle to the same C++ shape. The scope deletes its own
  * handle; the object lives until this one is deleted too.
  */
-function copyOut(shape: TopoDS_Shape): TopoDS_Shape {
+export function copyOut(shape: TopoDS_Shape): TopoDS_Shape {
   return (shape as unknown as { clone(): TopoDS_Shape }).clone();
 }
 

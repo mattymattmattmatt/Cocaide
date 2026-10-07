@@ -39,6 +39,7 @@ export function selectFaces(infos: FaceInfo[], selector: FaceSelector): Selectio
 }
 
 function matchesFace(f: FaceInfo, sel: FaceSelector): boolean {
+  if (sel.body !== undefined && f.body !== sel.body) return false;
   if (sel.type === "planar") {
     if (f.type !== "plane" || !f.normal) return false;
     if (dot3(f.normal, normalize3(sel.normal)) < 1 - ANGLE_TOL) return false;
@@ -55,14 +56,15 @@ function matchesFace(f: FaceInfo, sel: FaceSelector): boolean {
 export function describeWanted(sel: FaceSelector, count: number): string {
   const noun = count === 1 ? "face" : "faces";
   const near = sel.near ? ` nearest ${fmtPoint(sel.near)}` : "";
+  const of = sel.body ? ` of body "${sel.body}"` : "";
   if (sel.type === "planar") {
     const at = sel.offset === undefined ? "" : ` at offset ${sel.offset}`;
-    return `${count} planar ${noun} normal ${formatDirection(sel.normal)}${at}${near}`;
+    return `${count} planar ${noun} normal ${formatDirection(sel.normal)}${at}${near}${of}`;
   }
   const parts = [`${count} cylindrical ${noun}`];
   if (sel.radius !== undefined) parts.push(`radius ${sel.radius}`);
   if (sel.axis !== undefined) parts.push(`axis ${formatDirection(sel.axis)}`);
-  return parts.join(" ") + near;
+  return parts.join(" ") + near + of;
 }
 
 /** Error text for a selection that is not exactly `wanted` faces, or null when it is. */
@@ -105,6 +107,7 @@ export function selectEdges(edges: EdgeInfo[], faces: FaceInfo[], sel: EdgeSelec
   }
   let matches = edges.filter((e) => {
     if (e.seam) return false;
+    if (sel.body !== undefined && e.body !== sel.body) return false;
     if (sel.kind && e.kind !== sel.kind) return false;
     if (sel.direction && (e.kind !== "line" || Math.abs(dot3(e.direction!, normalize3(sel.direction))) < 1 - ANGLE_TOL)) return false;
     if (sel.radius !== undefined && (e.kind !== "circle" || Math.abs(e.radius! - sel.radius) > LENGTH_TOL)) return false;
@@ -141,6 +144,7 @@ export function describeEdgeSelector(sel: EdgeSelector): string {
     );
   }
   if (sel.near) parts.push(`nearest ${fmtPoint(sel.near)}`);
+  if (sel.body) parts.push(`of body "${sel.body}"`);
   if (sel.pick !== "all") parts.push(`(${sel.pick})`);
   return parts.join(" ");
 }

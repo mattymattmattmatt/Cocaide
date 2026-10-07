@@ -45,7 +45,7 @@ describe("validation", () => {
     const doc = base();
     doc.features[1].distnace = 6;
     expect(allErrors(validateDocument(doc))).toEqual([
-      'ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction)',
+      'ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction, body, newBody)',
     ]);
   });
 
@@ -53,7 +53,7 @@ describe("validation", () => {
     const doc = base();
     doc.features.push({ id: "loft_1", op: "loft", sections: [] });
     expect(allErrors(validateDocument(doc))).toEqual([
-      'loft_1: op: unknown op "loft" (supported: sketch, extrude, cut, hole, fillet, chamfer, linearPattern, circularPattern)',
+      'loft_1: op: unknown op "loft" (supported: sketch, extrude, cut, hole, fillet, chamfer, linearPattern, circularPattern, combine)',
     ]);
   });
 

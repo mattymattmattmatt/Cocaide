@@ -6,6 +6,9 @@
 // the part can still rebuild.
 
 import {
+  BODY_NAME,
+  COMBINE_OPERATIONS,
+  DEFAULT_BODY,
   EDGE_PICKS,
   FEATURE_OPS,
   PATTERNABLE_OPS,
@@ -16,6 +19,7 @@ import {
   SOURCE_KEYS,
   type ChamferFeature,
   type CircularPatternFeature,
+  type CombineFeature,
   type CocaideDocument,
   type Constraint,
   type EdgeSelector,
@@ -51,6 +55,8 @@ export interface ValidationResult {
   parameters: Parameters;
   material: Material | undefined;
   features: ValidatedFeature[];
+  /** The body names the features make, in order of first use. */
+  bodies: string[];
 }
 
 const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -75,7 +81,7 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [] };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [] };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
@@ -138,6 +144,7 @@ export function validateDocument(input: unknown): ValidationResult {
   result.headerErrors = header.errors;
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
+  const bodies = new BodyNames();
   input.features.forEach((original, index) => {
     const rawId = isObject(original) && typeof original.id === "string" && original.id !== "" ? original.id : `features[${index}]`;
     const c = new Checker(rawId);
@@ -156,6 +163,7 @@ export function validateDocument(input: unknown): ValidationResult {
       }
       // A bad expression already says what is wrong with that field.
       if (exprErrors.length === 0) feature = validateFeature(raw, c, seen);
+      if (feature) bodies.check(feature, c);
       if (typeof raw.id === "string" && !seen.has(raw.id)) seen.set(raw.id, String(raw.op));
     }
     result.features.push({
@@ -166,6 +174,7 @@ export function validateDocument(input: unknown): ValidationResult {
       errors: c.errors,
     });
   });
+  result.bodies = bodies.all();
   return result;
 }
 
@@ -194,6 +203,9 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
     case "linearPattern":
     case "circularPattern":
       feature = validatePattern(raw, c, earlier);
+      break;
+    case "combine":
+      feature = validateCombine(raw, c);
       break;
     default:
       c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
@@ -465,7 +477,7 @@ function validateExtrude(
   c: Checker,
   earlier: Map<string, string>,
 ): ExtrudeFeature | null {
-  c.keys(raw, "", ["id", "op", "sketch", "extent", "distance", "direction"]);
+  c.keys(raw, "", raw.op === "extrude" ? ["id", "op", "sketch", "extent", "distance", "direction", "body", "newBody"] : ["id", "op", "sketch", "extent", "distance", "direction", "bodies"]);
   if (typeof raw.sketch !== "string") {
     c.fail("sketch", `must be the id of a sketch feature (got ${describe(raw.sketch)})`);
   } else if (!earlier.has(raw.sketch)) {
@@ -484,18 +496,28 @@ function validateExtrude(
     distance = c.num(raw, "distance", "", { positive: true });
   }
   const direction = raw.direction === undefined ? undefined : c.unitVec(raw, "direction", "");
+  // Where the material goes: an extrude names a body; a cut, the bodies it cuts. (keys() reports the other fields.)
+  const extrude = raw.op === "extrude";
+  const body = extrude && raw.body !== undefined ? bodyName(raw.body, "body", c) : undefined;
+  const newBody = extrude && raw.newBody !== undefined ? bodyName(raw.newBody, "newBody", c) : undefined;
+  if (extrude && raw.body !== undefined && raw.newBody !== undefined) c.fail("", "give body (add to it) or newBody (start one), not both");
+  const bodies = !extrude && raw.bodies !== undefined ? bodyList(raw.bodies, "bodies", c) : undefined;
   if (c.errors.length > 0) return null;
   const feature: ExtrudeFeature = { id: raw.id as string, op: raw.op as "extrude" | "cut", sketch: raw.sketch as string };
   if (raw.extent !== undefined) feature.extent = extent as ExtrudeFeature["extent"];
   if (distance !== undefined) feature.distance = distance;
   if (direction) feature.direction = direction;
+  if (body) feature.body = body;
+  if (newBody) feature.newBody = newBody;
+  if (bodies) feature.bodies = bodies;
   return feature;
 }
 
 // ------------------------------------------------------------------ hole
 
 function validateHole(raw: Record<string, unknown>, c: Checker): HoleFeature | null {
-  c.keys(raw, "", ["id", "op", "face", "center", "diameter", "depth", "counterbore", "countersink"]);
+  c.keys(raw, "", ["id", "op", "face", "center", "diameter", "depth", "counterbore", "countersink", "bodies"]);
+  const bodies = raw.bodies === undefined ? undefined : bodyList(raw.bodies, "bodies", c);
   const face = validateFaceSelector(raw.face, "face", c);
   if (face && face.type !== "planar") c.fail("face", `a hole needs a planar face selector (got "${face.type}")`);
   const center = c.vec2(raw, "center", "");
@@ -550,6 +572,7 @@ function validateHole(raw: Record<string, unknown>, c: Checker): HoleFeature | n
   const hole: HoleFeature = { id: raw.id as string, op: "hole", face, center, diameter, depth };
   if (counterbore) hole.counterbore = counterbore;
   if (countersink) hole.countersink = countersink;
+  if (bodies) hole.bodies = bodies;
   return hole;
 }
 
@@ -579,7 +602,8 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
     return null;
   }
   const before = c.errors.length;
-  c.keys(raw, path, ["type", "kind", "onFace", "between", "direction", "radius", "length", "near", "pick"]);
+  c.keys(raw, path, ["type", "kind", "onFace", "between", "direction", "radius", "length", "near", "pick", "body"]);
+  const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
   if (raw.type !== "edge") c.fail(`${path}.type`, `must be "edge" (got ${describe(raw.type)})`);
   if (!EDGE_PICKS.includes(raw.pick as never)) {
     c.fail(`${path}.pick`, `must be one of ${EDGE_PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(raw.pick)})`);
@@ -617,6 +641,7 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
   if (radius !== undefined) sel.radius = radius;
   if (length !== undefined) sel.length = length;
   if (near) sel.near = near;
+  if (body) sel.body = body;
   return sel;
 }
 
@@ -706,32 +731,146 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
   }
   switch (raw.type) {
     case "planar": {
-      c.keys(raw, path, ["type", "normal", "pick", "offset", "near"]);
+      c.keys(raw, path, ["type", "normal", "pick", "offset", "near", "body"]);
       const normal = c.unitVec(raw, "normal", path);
       const offset = raw.offset === undefined ? undefined : c.num(raw, "offset", path, {});
       const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
+      const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
       if (!normal || c.errors.length > before) return null;
       const s: FaceSelector = { type: "planar", normal, pick: pick as FaceSelector["pick"] };
       if (offset !== undefined) s.offset = offset;
       if (near) s.near = near;
+      if (body) s.body = body;
       return s;
     }
     case "cylindrical": {
-      c.keys(raw, path, ["type", "radius", "axis", "pick", "near"]);
+      c.keys(raw, path, ["type", "radius", "axis", "pick", "near", "body"]);
       const radius = raw.radius === undefined ? undefined : c.num(raw, "radius", path, { positive: true });
       const axis = raw.axis === undefined ? undefined : c.unitVec(raw, "axis", path);
       const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
+      const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
       if (c.errors.length > before) return null;
       const s: FaceSelector = { type: "cylindrical", pick: pick as FaceSelector["pick"] };
       if (radius !== undefined) s.radius = radius;
       if (axis) s.axis = axis;
       if (near) s.near = near;
+      if (body) s.body = body;
       return s;
     }
     default:
       c.fail(`${path}.type`, `must be "planar" or "cylindrical" (got ${describe(raw.type)})`);
       return null;
   }
+}
+
+// ---------------------------------------------------------------- combine
+
+function validateCombine(raw: Record<string, unknown>, c: Checker): CombineFeature | null {
+  c.keys(raw, "", ["id", "op", "operation", "target", "tools"]);
+  if (!COMBINE_OPERATIONS.includes(raw.operation as never)) {
+    c.fail("operation", `must be one of ${COMBINE_OPERATIONS.map((o) => `"${o}"`).join(", ")} (got ${describe(raw.operation)})`);
+  }
+  const target = bodyName(raw.target, "target", c);
+  const tools = bodyList(raw.tools, "tools", c);
+  if (target && tools?.includes(target)) c.fail("tools", `must not include the target "${target}"`);
+  if (c.errors.length > 0 || !target || !tools) return null;
+  return { id: raw.id as string, op: "combine", operation: raw.operation as CombineFeature["operation"], target, tools };
+}
+
+// ----------------------------------------------------------------- bodies
+
+function bodyName(v: unknown, path: string, c: Checker): string | undefined {
+  if (typeof v === "string" && BODY_NAME.test(v)) return v;
+  c.fail(path, `must be a body name like "base" (letters, digits, _ and -) (got ${describe(v)})`);
+  return undefined;
+}
+
+function bodyList(v: unknown, path: string, c: Checker): string[] | undefined {
+  if (!Array.isArray(v) || v.length === 0) {
+    c.fail(path, `must be a list of body names (got ${describe(v)})`);
+    return undefined;
+  }
+  const names = v.map((x, i) => bodyName(x, `${path}[${i}]`, c));
+  if (names.some((n) => n === undefined)) return undefined;
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) {
+    c.fail(path, `lists "${dup}" twice`);
+    return undefined;
+  }
+  return names as string[];
+}
+
+/**
+ * The body names the features so far make, in order: a name a feature uses
+ * must be made before it. Whether the body really exists (its feature may
+ * have failed) is the rebuild's to say.
+ */
+class BodyNames {
+  private readonly names = new Set<string>();
+  /** newBody names by the feature that starts them, for patterns of it. */
+  private readonly made = new Map<string, string>();
+
+  check(f: Feature, c: Checker): void {
+    const need = (name: string, path: string) => {
+      if (!this.names.has(name)) c.fail(path, `no body "${name}" before this feature (${this.list()})`);
+    };
+    switch (f.op) {
+      case "extrude":
+        if (f.body) need(f.body, "body");
+        if (f.newBody && this.names.has(f.newBody)) c.fail("newBody", `a body "${f.newBody}" already exists; use "body" to add to it`);
+        break;
+      case "cut":
+      case "hole":
+        f.bodies?.forEach((b, i) => need(b, `bodies[${i}]`));
+        break;
+      case "combine":
+        need(f.target, "target");
+        f.tools.forEach((b, i) => need(b, `tools[${i}]`));
+        break;
+    }
+    for (const [path, name] of selectorBodies(f)) need(name, path);
+    if (c.errors.length > 0) return;
+    // What this feature makes, for the features after it.
+    if (f.op === "extrude") {
+      const name = f.newBody ?? f.body ?? DEFAULT_BODY;
+      this.names.add(name);
+      if (f.newBody) this.made.set(f.id, f.newBody);
+    } else if ((f.op === "linearPattern" || f.op === "circularPattern") && this.made.has(f.feature)) {
+      const seed = this.made.get(f.feature)!;
+      const total = f.count * (f.op === "linearPattern" ? (f.count2 ?? 1) : 1);
+      const copies = Array.from({ length: total - 1 }, (_, i) => `${seed}_${i + 2}`);
+      const taken = copies.filter((n) => this.names.has(n));
+      if (taken.length) c.fail("feature", `its copies of body "${seed}" would be named ${taken.join(", ")}, which ${taken.length === 1 ? "is" : "are"} already a body`);
+      else for (const n of copies) this.names.add(n);
+    } else if (f.op === "combine") {
+      for (const t of f.tools) this.names.delete(t);
+    }
+  }
+
+  all(): string[] {
+    return [...this.names];
+  }
+
+  private list(): string {
+    return this.names.size ? `bodies so far: ${[...this.names].join(", ")}` : "no bodies yet";
+  }
+}
+
+/** Every selector in a feature that names a body, with its path. */
+export function selectorBodies(f: Feature): [string, string][] {
+  const out: [string, string][] = [];
+  const face = (s: FaceSelector | undefined, path: string) => s?.body && out.push([`${path}.body`, s.body]);
+  const edge = (s: EdgeSelector, path: string) => {
+    if (s.body) out.push([`${path}.body`, s.body]);
+    face(s.onFace, `${path}.onFace`);
+    s.between?.forEach((b, i) => face(b, `${path}.between[${i}]`));
+  };
+  if (f.op === "hole") face(f.face, "face");
+  if (f.op === "fillet" || f.op === "chamfer") {
+    if (Array.isArray(f.edges)) f.edges.forEach((e, i) => edge(e, `edges[${i}]`));
+    else edge(f.edges, "edges");
+  }
+  return out;
 }
 
 // ------------------------------------------------------------- utilities

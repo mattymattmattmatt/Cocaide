@@ -370,7 +370,7 @@ describe("errors the agent can read", () => {
     delete doc.features[2].diameter;
     const r = build(doc);
     expect(r.errors).toEqual([
-      'hole_1: unknown field "diamter" (allowed: id, op, face, center, diameter, depth, counterbore, countersink)',
+      'hole_1: unknown field "diamter" (allowed: id, op, face, center, diameter, depth, counterbore, countersink, bodies)',
       "hole_1: diameter: must be a number (got nothing)",
     ]);
     expect(r.volume).toBeCloseTo(80 * 40 * 6, 6);

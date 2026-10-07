@@ -34,6 +34,8 @@ export interface FaceInfo {
   /** Signed distance of the plane from the origin along `normal`. */
   offset?: number;
   cylinder?: CylinderInfo;
+  /** The body the face belongs to, when the part has been described body by body. */
+  body?: string;
 }
 
 export function listFaces(oc: OC, s: Scope, shape: TopoDS_Shape): TopoDS_Face[] {
@@ -142,6 +144,8 @@ export interface EdgeInfo {
    * face only and is not a feature edge: selectors and the viewport skip it.
    */
   seam: boolean;
+  /** The body the edge belongs to, when the part has been described body by body. */
+  body?: string;
 }
 
 const HASH_BOUND = 1 << 30;

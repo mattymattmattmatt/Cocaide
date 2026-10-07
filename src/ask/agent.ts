@@ -401,6 +401,8 @@ function toCommand(name: string, a: Record<string, unknown>): Command | string {
       return { type: "deleteFeature", id: str("id") };
     case "setParameter":
       return { type: "setParameter", name: str("name"), value: a.value as number };
+    case "renameBody":
+      return { type: "renameBody", from: str("from"), to: str("to") };
     case "setDimension":
       return { type: "setDimension", sketch: str("sketch"), index: a.index as number, value: a.value as number | string };
     case "addEntity":

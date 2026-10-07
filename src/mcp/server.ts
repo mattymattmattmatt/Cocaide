@@ -64,6 +64,10 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: 'Set a document parameter (creating it if new). Fields written as "=name" follow it; sketches whose dimensions use it are re-solved.',
     input: { name: z.string(), value: z.number() },
   },
+  renameBody: {
+    description: "Rename a body. Every feature and selector that names it follows.",
+    input: { from: z.string(), to: z.string() },
+  },
   deleteParameter: {
     description: "Delete a parameter that nothing uses.",
     input: { name: z.string() },

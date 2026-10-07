@@ -89,6 +89,13 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   </span>
                   <span className="feature-op">{OP_LABEL[String(f.op)] ?? String(f.op)}</span>
                   <span className="feature-id">{id}</span>
+                  {/* Which body it makes or adds to, in a part that names bodies. */}
+                  {typeof (f.newBody ?? f.body) === "string" && (
+                    <span className="feature-body" title={f.newBody ? "starts this body" : "adds to this body"}>
+                      {f.newBody ? "new " : "→ "}
+                      {String(f.newBody ?? f.body)}
+                    </span>
+                  )}
                 </button>
                 <span className="row-actions">
                   <button

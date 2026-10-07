@@ -4,7 +4,8 @@
 import { useEffect, useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import type { EdgeSelector, FaceSelector, Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type EdgeSelector, type FaceSelector, type Vec3 } from "../doc/types";
+import { validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
 import { describeEdgeSelector, describeWanted } from "../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
@@ -21,7 +22,13 @@ export const OP_LABEL: Record<string, string> = {
   chamfer: "Chamfer",
   linearPattern: "Linear pattern",
   circularPattern: "Circular pattern",
+  combine: "Combine",
 };
+
+/** The first free body name of the form body_1, body_2, ... */
+export function nextBodyName(taken: string[]): string {
+  for (let n = 1; ; n++) if (!taken.includes(`body_${n}`)) return `body_${n}`;
+}
 
 type Raw = Record<string, unknown>;
 
@@ -55,6 +62,9 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
   const resolved = resolveExpressions(f, params, []) as Raw;
   const before = resolveExpressions(doc.features.slice(0, index), params, []) as Raw[];
   const op = String(f.op);
+  /** The bodies made before this feature: what it can add to, cut or combine. */
+  const bodiesBefore = validateDocument({ ...doc, features: doc.features.slice(0, index) }).bodies;
+  const rename = (from: string, to: string) => run({ type: "renameBody", from, to });
 
   return (
     <div className="properties" data-testid="properties">
@@ -85,7 +95,10 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
       <div className="prop-body">
         {op === "sketch" && <SketchProps f={resolved} onEdit={() => onEditSketch(featureId)} />}
         {(op === "extrude" || op === "cut") && <ExtrudeProps f={f} before={before} update={update} />}
+        {op === "extrude" && <BodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
+        {(op === "cut" || op === "hole") && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
+        {op === "combine" && <CombineProps f={f} bodies={bodiesBefore} update={update} />}
         {(op === "fillet" || op === "chamfer") && (
           <EdgeTreatmentProps f={f} update={update} selection={selection} view={view} setError={setError} />
         )}
@@ -116,6 +129,98 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         </div>
       )}
     </div>
+  );
+}
+
+/** Where an extrude's material goes: an existing body, or a new one with a name. */
+function BodyProps({ f, bodies, update, rename }: { f: Raw; bodies: string[]; update(p: Raw): unknown; rename(from: string, to: string): unknown }) {
+  const newBody = typeof f.newBody === "string" ? f.newBody : null;
+  const value = newBody ? "__new" : typeof f.body === "string" ? f.body : DEFAULT_BODY;
+  const names = bodies.includes(DEFAULT_BODY) ? bodies : [DEFAULT_BODY, ...bodies];
+  const options: [string, string][] = [...names.map((n): [string, string] => [n, n === DEFAULT_BODY && !bodies.includes(n) ? `${n} (new)` : `add to ${n}`]), ["__new", "New body"]];
+  return (
+    <>
+      <Field label="Body">
+        <Select
+          value={value}
+          options={options}
+          testId="prop-body"
+          onChange={(v) => update(v === "__new" ? { body: null, newBody: nextBodyName(bodies) } : { newBody: null, body: v === DEFAULT_BODY ? null : v })}
+        />
+      </Field>
+      {newBody && (
+        <Field label="Name">
+          <TextInput value={newBody} onCommit={(to) => to !== newBody && rename(newBody, to)} testId="prop-body-name" />
+        </Field>
+      )}
+    </>
+  );
+}
+
+/** Which bodies a cut or hole removes material from. None ticked: every body it reaches. */
+function BodiesScope({ f, bodies, update }: { f: Raw; bodies: string[]; update(p: Raw): unknown }) {
+  const listed = Array.isArray(f.bodies) ? (f.bodies as string[]) : [];
+  const toggle = (name: string, on: boolean) => {
+    const next = on ? [...listed, name] : listed.filter((n) => n !== name);
+    update({ bodies: next.length ? bodies.filter((b) => next.includes(b)) : null });
+  };
+  return (
+    <Field label="Bodies">
+      <span className="body-checks" data-testid="prop-bodies">
+        {bodies.map((b) => (
+          <label key={b} className="check">
+            <input type="checkbox" checked={listed.includes(b)} onChange={(e) => toggle(b, e.target.checked)} data-testid={`prop-bodies-${b}`} />
+            {b}
+          </label>
+        ))}
+        <span className="muted small">{listed.length ? "only these, and each must lose material" : "none ticked: every body it reaches"}</span>
+      </span>
+    </Field>
+  );
+}
+
+function CombineProps({ f, bodies, update }: { f: Raw; bodies: string[]; update(p: Raw): unknown }) {
+  const target = String(f.target);
+  const tools = Array.isArray(f.tools) ? (f.tools as string[]) : [];
+  return (
+    <>
+      <Field label="Operation">
+        <Select
+          value={f.operation as "add" | "subtract" | "common"}
+          testId="prop-operation"
+          options={[
+            ["add", "Add (join)"],
+            ["subtract", "Subtract"],
+            ["common", "Common (intersect)"],
+          ]}
+          onChange={(v) => update({ operation: v })}
+        />
+      </Field>
+      <Field label="Into">
+        <Select value={target} options={bodies.map((b): [string, string] => [b, b])} testId="prop-target" onChange={(v) => update({ target: v, tools: tools.filter((t) => t !== v).length ? tools.filter((t) => t !== v) : bodies.filter((b) => b !== v).slice(0, 1) })} />
+      </Field>
+      <Field label="Bodies">
+        <span className="body-checks">
+          {bodies
+            .filter((b) => b !== target)
+            .map((b) => (
+              <label key={b} className="check">
+                <input
+                  type="checkbox"
+                  checked={tools.includes(b)}
+                  data-testid={`prop-tools-${b}`}
+                  onChange={(e) => {
+                    const next = e.target.checked ? [...tools, b] : tools.filter((t) => t !== b);
+                    if (next.length) update({ tools: bodies.filter((x) => next.includes(x)) });
+                  }}
+                />
+                {b}
+              </label>
+            ))}
+          <span className="muted small">used up: they become part of {target}</span>
+        </span>
+      </Field>
+    </>
   );
 }
 

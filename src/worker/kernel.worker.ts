@@ -18,6 +18,7 @@ import {
 } from "../kernel";
 import { LocalKernel } from "../ask/kernel";
 import { exportRefusal, photoNote } from "../doc/photo";
+import { labelBodies } from "../kernel/bodies";
 import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -66,6 +67,8 @@ async function handle(kernel: OC, req: KernelRequest) {
             return { faces: f.infos, edges: describeEdges(kernel, s, result.solid!, f.faces).infos };
           })
         : { faces: [], edges: [] };
+      const bodies = result.bodies.map(({ name, faces, edges }) => ({ name, faces, edges }));
+      if (bodies.length > 1) labelBodies(topo, bodies);
       const view: RebuildView = {
         ok: result.ok,
         name: result.name,
@@ -76,6 +79,7 @@ async function handle(kernel: OC, req: KernelRequest) {
         mesh,
         faces: topo.faces,
         edges: topo.edges,
+        bodies,
       };
       const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
       post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);
@@ -91,7 +95,7 @@ async function handle(kernel: OC, req: KernelRequest) {
         post({ id: req.id, type: "step", ok: false, errors });
         return;
       }
-      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportSTEP(kernel, result.solid, result.name, photoNote(req.doc)) });
+      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportSTEP(kernel, result.solid, result.name, photoNote(req.doc), result.bodies) });
     }
   } catch (e) {
     post({ id: req.id, type: "error", message: e instanceof Error ? e.message : String(e) });

@@ -73,6 +73,12 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Where is this used?", prompt: "Where is this parameter used?", submit: true },
         { label: "Change it", prompt: "Change this parameter to ", submit: false },
       ];
+    case "body":
+      return [
+        { label: "What is this body?", prompt: "What is this body, and which features make it?", submit: true },
+        { label: "Does it clash?", prompt: "Does this body overlap any other body? Do not change anything.", submit: true },
+        { label: "Rename it", prompt: "Rename this body to ", submit: false },
+      ];
     case "part":
       return [
         { label: "New part from a description", prompt: "", submit: false },
@@ -98,7 +104,7 @@ Pick the smallest response that does what was asked:
 4. Escalate: if the request cannot be done inside writeScope, call escalate with the reason. Never try to widen the scope.
 
 Rules:
-- writeScope is enforced by the program: an edit outside it is rejected and changes nothing. Its tokens: a feature id (change that feature, or add a feature that uses it), "<sketch>/*" (that sketch's entities and constraints only), "<sketch>/<entity>" (that entity and the constraints on it), "param:<name>", and "+" (add one new feature; from a face or edge it must use that face or edge, normally through the packet's selection).
+- writeScope is enforced by the program: an edit outside it is rejected and changes nothing. Its tokens: a feature id (change that feature, or add a feature that uses it), "<sketch>/*" (that sketch's entities and constraints only), "<sketch>/<entity>" (that entity and the constraints on it), "param:<name>", "body:<name>" (add features that touch only that body: an extrude with "body": name, a cut or hole with "bodies": [name], selectors naming it; and rename it), and "+" (add one new feature; from a face or edge it must use that face or edge, normally through the packet's selection).
 - Every edit is checked: the part is rebuilt and the edit is kept only if nothing newly fails. A failed edit returns the error; read it and fix the call, or stop and say why.
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
@@ -155,6 +161,11 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     name: "setParameter",
     description: "Set a document parameter.",
     input_schema: obj({ name: { type: "string" }, value: { type: "number" } }, ["name", "value"]),
+  },
+  {
+    name: "renameBody",
+    description: "Rename a body; every feature and selector that names it follows.",
+    input_schema: obj({ from: { type: "string" }, to: { type: "string" } }, ["from", "to"]),
   },
 ];
 

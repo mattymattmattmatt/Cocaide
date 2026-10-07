@@ -2,6 +2,7 @@
 // MCP session (Node), the right-click ask in the browser (kernel worker) and
 // tests. Plain data in, plain data out.
 
+import { labelBodies, type BodyRange } from "./bodies";
 import type { EdgeSelector, FaceSelector } from "../doc/types";
 import { Checker, isObject, validateEdgeSelector, validateFaceSelector } from "../doc/validate";
 import { render, type Camera, type Image } from "../render/raster";
@@ -50,6 +51,11 @@ export function measurementSummary(m: Measurements): Record<string, unknown> {
     holeDiameters: m.holeDiameters.map(round6),
     solids: m.solids,
     faces: m.faces,
+    // A part of several bodies: each one, and every pair that overlaps.
+    ...(m.bodies.length > 1
+      ? { bodies: m.bodies.map((b) => ({ name: b.name, volume: round6(b.volume), size: b.boundingBox?.size.map(round6), holeCount: b.holeCount })) }
+      : {}),
+    ...(m.interference.length ? { interference: m.interference } : {}),
   };
 }
 
@@ -70,27 +76,30 @@ export function newFailures(before: Built, after: Built): string[] {
 
 export type Picked = { faces: FaceInfo[]; edges?: undefined } | { edges: EdgeInfo[]; faces?: undefined };
 
-/** Runs a face or edge selector (raw JSON, validated here) on a solid. */
-export function selectOn(oc: OC, solid: TopoDS_Shape, selector: unknown, tool: string): Picked | string {
+/** Runs a face or edge selector (raw JSON, validated here) on a solid. With bodies, faces and edges know theirs. */
+export function selectOn(oc: OC, solid: TopoDS_Shape, selector: unknown, tool: string, bodies: BodyRange[] = []): Picked | string {
   const c = new Checker(tool);
   const isEdge = isObject(selector) && selector.type === "edge";
   const sel = isEdge ? validateEdgeSelector(selector, "selector", c) : validateFaceSelector(selector, "selector", c);
   if (!sel || c.errors.length) return c.errors.join("; ") || `${tool}: selector: not a selector`;
   return scoped((s) => {
     const faces = describeFaces(oc, s, solid);
+    const edges = isEdge ? describeEdges(oc, s, solid, faces.faces).infos : [];
+    if (bodies.length > 1) labelBodies({ faces: faces.infos, edges }, bodies);
     if (!isEdge) return { faces: selectFaces(faces.infos, sel as FaceSelector).matches };
-    const edges = describeEdges(oc, s, solid, faces.faces).infos;
     const r = selectEdges(edges, faces.infos, sel as EdgeSelector, "selector");
     if (r.error) return `${tool}: ${r.error}`;
     return { edges: r.matches };
   });
 }
 
-/** Faces and edges of a solid, as plain data. */
-export function topologyOf(oc: OC, solid: TopoDS_Shape): { faces: FaceInfo[]; edges: EdgeInfo[] } {
+/** Faces and edges of a solid, as plain data. With bodies, each knows its body. */
+export function topologyOf(oc: OC, solid: TopoDS_Shape, bodies: BodyRange[] = []): { faces: FaceInfo[]; edges: EdgeInfo[] } {
   return scoped((s) => {
     const f = describeFaces(oc, s, solid);
-    return { faces: f.infos, edges: describeEdges(oc, s, solid, f.faces).infos };
+    const topo = { faces: f.infos, edges: describeEdges(oc, s, solid, f.faces).infos };
+    if (bodies.length > 1) labelBodies(topo, bodies);
+    return topo;
   });
 }
 

@@ -10,6 +10,7 @@
 //   "param:<name>"  change that parameter
 //   "name"          rename the document
 //   "photo"         move or rescale the photo's scale (never confirm it: only the user can)
+//   "body:<name>"   add features that touch only that body (sketches touch none); rename it
 //   "*"             anything (the whole part)
 // A parameter change is also allowed when every feature that uses the
 // parameter is in scope.
@@ -19,6 +20,7 @@ import { references } from "./commands";
 import { isObject } from "./validate";
 import { documentParameters, parameterRefs } from "./parameters";
 import { rawConstraintEntities } from "./sketch";
+import { DEFAULT_BODY } from "./types";
 
 export type WriteScope = string[];
 
@@ -32,7 +34,7 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
     case "addFeature": {
       const f = cmd.feature as Record<string, unknown>;
       what = `addFeature "${String(f.id)}"`;
-      allowed = has("+") || references(f).some(has);
+      allowed = has("+") || references(f).some(has) || onlyBodies(doc, f, scope);
       break;
     }
     case "updateFeature":
@@ -86,6 +88,10 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = "setPhotoScale";
       allowed = has("photo");
       break;
+    case "renameBody":
+      what = `renameBody "${cmd.from}"`;
+      allowed = has(`body:${cmd.from}`);
+      break;
     default:
       return "writeScope: unknown command";
   }
@@ -109,4 +115,40 @@ function onlyContentsChanged(before: Record<string, unknown>, after: Record<stri
     if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) return false;
   }
   return true;
+}
+
+/**
+ * True when a new feature touches only bodies the scope names ("body:base"):
+ * an extrude into one of them, a cut or hole that lists only them, an edge
+ * treatment whose selectors all name one, a combine of them, a pattern of
+ * such a feature. A sketch touches no body. Anything that would reach every
+ * body (a cut with no list) does not count.
+ */
+function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteScope, depth = 0): boolean {
+  const bodies = scope.filter((t) => t.startsWith("body:")).map((t) => t.slice(5));
+  if (bodies.length === 0 || depth > 8) return false;
+  const inScope = (n: unknown) => typeof n === "string" && bodies.includes(n);
+  switch (f.op) {
+    case "sketch":
+      return true;
+    case "extrude":
+      return inScope(f.newBody ?? f.body ?? DEFAULT_BODY);
+    case "cut":
+    case "hole":
+      return Array.isArray(f.bodies) && f.bodies.length > 0 && f.bodies.every(inScope);
+    case "fillet":
+    case "chamfer": {
+      const list = Array.isArray(f.edges) ? f.edges : [f.edges];
+      return list.length > 0 && list.every((e) => isObject(e) && inScope(e.body));
+    }
+    case "combine":
+      return inScope(f.target) && Array.isArray(f.tools) && f.tools.every(inScope);
+    case "linearPattern":
+    case "circularPattern": {
+      const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);
+      return !!seed && onlyBodies(doc, seed, scope, depth + 1);
+    }
+    default:
+      return false;
+  }
 }

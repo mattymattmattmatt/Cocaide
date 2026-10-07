@@ -3,6 +3,7 @@
 
 import type { KernelMethod } from "../ask/kernel";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
+import type { BodyRange } from "../kernel/bodies";
 
 export type KernelRequest =
   | { id: number; type: "rebuild"; doc: unknown }
@@ -21,6 +22,8 @@ export interface RebuildView {
   /** B-rep faces and edges of the result, indexed like the mesh ranges. Plain data: picking and selector synthesis use them. */
   faces: FaceInfo[];
   edges: EdgeInfo[];
+  /** The bodies, in order, with their face and edge index ranges. With more than one, faces and edges carry their body's name. */
+  bodies: BodyRange[];
 }
 
 export type KernelResponse =

@@ -74,13 +74,13 @@ export class LocalKernel implements KernelPort {
   async topology(doc: unknown): Promise<PartTopology | null> {
     const r = this.built(doc, true);
     if (!r.solid) return null;
-    return { ...topologyOf(this.oc(), r.solid), faceOrigins: r.faceOrigins ?? [] };
+    return { ...topologyOf(this.oc(), r.solid, r.bodies), faceOrigins: r.faceOrigins ?? [] };
   }
 
   async select(doc: unknown, selector: unknown): Promise<SelectResult> {
     const r = this.built(doc);
     if (!r.solid) return { ok: false, error: "there is no solid yet" };
-    const picked = selectOn(this.oc(), r.solid, selector, "selector");
+    const picked = selectOn(this.oc(), r.solid, selector, "selector", r.bodies);
     if (typeof picked === "string") return { ok: false, error: picked };
     return picked.faces
       ? { ok: true, kind: "faces", indices: picked.faces.map((f) => f.index), faces: picked.faces }

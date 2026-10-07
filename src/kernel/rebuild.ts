@@ -1,19 +1,36 @@
 // rebuild(doc) -> { ok, solid, measurements, errors[] }
 //
-// Features run in order against one body. A failed feature contributes
-// nothing and the rebuild carries on, so one bad hole does not hide the rest
-// of the part; every failure is reported as "<feature id>: <reason>".
+// Features run in order against the part's bodies: named solids (Phase H).
+// A part that names no body is one body, "main", as before. A feature is
+// applied whole or not at all: a failed feature contributes nothing and the
+// rebuild carries on, so one bad hole does not hide the rest of the part;
+// every failure is reported as "<feature id>: <reason>".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import type { SketchFeature, Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type CircularPatternFeature, type LinearPatternFeature, type SketchFeature, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { checkConstraints } from "../geom/constraints";
 import { planeFrame, to3D } from "../geom/frame";
 import { buildProfile, entityPolylines } from "../geom/profile";
+import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
 import { measure, volumeOf, type Measurements } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
-import { getOC, type OC, scoped } from "./oc";
-import { edgeTreatment, extrudeOrCut, hole, OpError, pattern, type BooleanKind, type SketchProfile, type ToolResult } from "./ops";
+import { getOC, type OC, type Scope, scoped } from "./oc";
+import {
+  combineBodies,
+  copyOut,
+  cutMissed,
+  drillTool,
+  extrudeTool,
+  fuseInto,
+  OpError,
+  patternInstances,
+  removeFrom,
+  selectTreatedEdges,
+  transformed,
+  treatEdges,
+  type SketchProfile,
+} from "./ops";
 
 export interface FeatureStatus {
   id: string;
@@ -34,8 +51,10 @@ export interface SketchOverlay {
 
 export interface RebuildResult {
   ok: boolean;
-  /** The body after the last successful feature. Owned by the result; call dispose(). */
+  /** The part after the last successful feature: its one body, or a compound of its bodies. Owned by the result; call dispose(). */
   solid: TopoDS_Shape | null;
+  /** The bodies, in the order they were made, with their face and edge ranges in `solid`. Owned by the result. */
+  bodies: (BodyRange & { shape: TopoDS_Shape })[];
   measurements: Measurements | null;
   errors: string[];
   features: FeatureStatus[];
@@ -56,60 +75,84 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   const errors = [...v.headerErrors];
   const features: FeatureStatus[] = [];
   const sketches: SketchOverlay[] = [];
-  let body: TopoDS_Shape | null = null;
+  /** The part's bodies, in the order they were first made. */
+  const bodies = new Map<string, TopoDS_Shape>();
 
   /** Face signature -> the feature that first made a face like it. */
   const origins = new Map<string, string>();
-  let current = "";
 
   const result = (): RebuildResult => {
-    const solid = body;
+    const solid = bodies.size === 0 ? null : bodies.size === 1 ? [...bodies.values()][0] : scoped((s) => copyOut(compound(oc, s, [...bodies.values()])));
+    const ranges = scoped((s) => bodyRanges(oc, s, bodies));
     const faceOrigins =
       opts.provenance && solid ? scoped((s) => describeFaces(oc, s, solid).infos.map((f) => origins.get(faceSignature(f)) ?? null)) : undefined;
     return {
       ok: errors.length === 0 && solid !== null,
       solid,
-      measurements: solid ? scoped((s) => measure(oc, s, solid, v.material)) : null,
+      bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
+      measurements: solid ? scoped((s) => measure(oc, s, solid, v.material, bodies)) : null,
       errors,
       features,
       sketches,
       name: v.name || "untitled",
       ...(faceOrigins ? { faceOrigins } : {}),
-      dispose: () => solid?.delete(),
+      dispose: () => {
+        for (const b of bodies.values()) b.delete();
+        if (bodies.size > 1) solid?.delete();
+      },
     };
   };
 
   if (v.headerErrors.length > 0) return result();
 
   const profiles = new Map<string, SketchProfile | null>();
-  /** Tool bodies of extrude, cut and hole features, for patterns. Disposed before returning. */
-  const tools = new Map<string, { tool: TopoDS_Shape; kind: BooleanKind }>();
+  /** The tool of each extrude, cut and hole, and where it went, for patterns. Disposed before returning. */
+  const tools = new Map<string, Seed>();
   const suppressed = new Set<string>();
   const missing = (id: string, what: string) =>
     suppressed.has(id) ? `${what} "${id}" is suppressed` : `${what} "${id}" failed`;
-  const advance = (step: (before: TopoDS_Shape | null) => TopoDS_Shape) => {
-    const before: TopoDS_Shape | null = body;
-    const next = step(before);
-    // Each op checks that it changed the body; none may leave nothing at all.
-    if (scoped((s) => countSubShapes(oc, s, next, "solid") === 0 || volumeOf(oc, s, next) <= 1e-9)) {
-      next.delete();
-      throw new OpError("removes all the material: nothing of the part would be left");
+  const need = (name: string): TopoDS_Shape => {
+    const b = bodies.get(name);
+    if (!b) throw new OpError(`no body "${name}" (${bodies.size ? `bodies: ${[...bodies.keys()].join(", ")}` : "no bodies yet"}); the feature that makes it failed or is suppressed`);
+    return b;
+  };
+  /** The bodies a cut or hole works on: the ones it lists, or every body. */
+  const targets = (listed: string[] | undefined | null): [string, TopoDS_Shape][] => (listed ? listed.map((n) => [n, need(n)] as [string, TopoDS_Shape]) : [...bodies]);
+
+  /**
+   * Commits a feature's changes to the bodies, all or none. Each changed body
+   * must still be material. The shapes in `changed` belong to scope `s`.
+   */
+  const commit = (changed: Map<string, TopoDS_Shape>, removed: string[] = []) => {
+    const out = new Map<string, TopoDS_Shape>();
+    scoped((s) => {
+      for (const [name, next] of changed) {
+        if (countSubShapes(oc, s, next, "solid") === 0 || volumeOf(oc, s, next) <= 1e-9) {
+          throw new OpError(bodies.size <= 1 ? "removes all the material: nothing of the part would be left" : `removes all of body "${name}"`);
+        }
+      }
+    });
+    for (const [name, next] of changed) out.set(name, copyOut(next));
+    for (const [name, next] of out) {
+      bodies.get(name)?.delete();
+      bodies.set(name, next);
     }
-    body = next;
-    before?.delete();
+    for (const name of removed) {
+      bodies.get(name)?.delete();
+      bodies.delete(name);
+    }
     if (opts.provenance) {
       scoped((s) => {
-        for (const f of describeFaces(oc, s, next).infos) {
+        const shape = partShape(oc, s, bodies);
+        if (!shape) return;
+        for (const f of describeFaces(oc, s, shape).infos) {
           const sig = faceSignature(f);
           if (!origins.has(sig)) origins.set(sig, current);
         }
       });
     }
   };
-  const keepTool = (id: string, r: ToolResult): TopoDS_Shape => {
-    tools.set(id, { tool: r.tool, kind: r.kind });
-    return r.body;
-  };
+  let current = "";
 
   for (const vf of v.features) {
     const raw = vf.feature;
@@ -135,25 +178,67 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           profiles.set(raw.id, buildSketch(raw));
           sketches[sketches.length - 1].ok = true;
           break;
-        case "extrude":
+        case "extrude": {
+          const profile = profiles.get(raw.sketch);
+          if (!profile) throw new OpError(`${missing(raw.sketch, "sketch")}, so there is no profile to ${raw.op}`);
+          const name = raw.newBody ?? raw.body ?? DEFAULT_BODY;
+          if (raw.newBody && bodies.has(raw.newBody)) throw new OpError(`a body "${raw.newBody}" already exists; use "body" to add to it`);
+          const into = raw.newBody ? null : raw.body ? need(raw.body) : (bodies.get(DEFAULT_BODY) ?? null);
+          scoped((s) => {
+            const tool = extrudeTool(oc, s, raw, profile, partShape(oc, s, bodies));
+            commit(new Map([[name, fuseInto(oc, s, into, tool, "extrusion")]]));
+            tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", into: raw.newBody ? undefined : name, newBody: raw.newBody });
+          });
+          break;
+        }
         case "cut": {
           const profile = profiles.get(raw.sketch);
           if (!profile) throw new OpError(`${missing(raw.sketch, "sketch")}, so there is no profile to ${raw.op}`);
-          advance((before) => keepTool(raw.id, scoped((s) => extrudeOrCut(oc, s, raw, profile, before))));
+          const on = targets(raw.bodies);
+          scoped((s) => {
+            const tool = extrudeTool(oc, s, raw, profile, partShape(oc, s, on.map(([, b]) => b)));
+            commit(removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "cut", missed: cutMissed(raw, profile) }));
+            tools.set(raw.id, { tool: copyOut(tool), kind: "cut", bodies: raw.bodies ?? null });
+          });
           break;
         }
-        case "hole":
-          advance((before) => keepTool(raw.id, scoped((s) => hole(oc, s, raw, before))));
+        case "hole": {
+          if (bodies.size === 0) throw new OpError("nothing to drill: there is no solid before this feature");
+          const on = targets(raw.bodies);
+          scoped((s) => {
+            const tool = drillTool(oc, s, raw, describePart(oc, s, bodies, false), partShape(oc, s, on.map(([, b]) => b))!);
+            commit(removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "hole", missed: "" }));
+            tools.set(raw.id, { tool: copyOut(tool), kind: "cut", bodies: raw.bodies ?? null });
+          });
           break;
+        }
         case "fillet":
-        case "chamfer":
-          advance((before) => scoped((s) => edgeTreatment(oc, s, raw, before)));
+        case "chamfer": {
+          if (bodies.size === 0) throw new OpError(`nothing to ${raw.op}: there is no solid before this feature`);
+          scoped((s) => {
+            const part = describePart(oc, s, bodies);
+            const chosen = selectTreatedEdges(raw, part);
+            const changed = new Map<string, TopoDS_Shape>();
+            for (const r of part.ranges) {
+              const mine = chosen.filter((i) => i >= r.edges[0] && i < r.edges[1]).map((i) => part.edges[i]);
+              if (mine.length) changed.set(r.name, treatEdges(oc, s, raw, bodies.get(r.name)!, mine, bodies.size > 1 ? r.name : null));
+            }
+            commit(changed);
+          });
           break;
+        }
         case "linearPattern":
         case "circularPattern": {
           const seed = tools.get(raw.feature);
           if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
-          advance((before) => scoped((s) => pattern(oc, s, raw, seed, before)));
+          if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
+          scoped((s) => commit(...repeat(s, raw, seed)));
+          break;
+        }
+        case "combine": {
+          const target = need(raw.target);
+          const others = raw.tools.map(need);
+          scoped((s) => commit(new Map([[raw.target, combineBodies(oc, s, raw, target, others)]]), raw.tools));
           break;
         }
       }
@@ -161,7 +246,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     } catch (e) {
       const messages = e instanceof OpError ? e.message.split("\n") : [`kernel error: ${kernelMessage(oc, e)}`];
       const prefixed = messages.map((m) => `${raw.id}: ${m}`);
-      // A failed feature leaves no tool body behind for a pattern to repeat.
+      // A failed feature leaves no tool behind for a pattern to repeat.
       const tool = tools.get(raw.id);
       if (tool) {
         tool.tool.delete();
@@ -172,8 +257,55 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     }
   }
   for (const t of tools.values()) t.tool.delete();
-  if (!body && errors.length === 0) errors.push("document: no solid; add an extrude");
+  if (bodies.size === 0 && errors.length === 0) errors.push("document: no solid; add an extrude");
   return result();
+
+  /**
+   * A pattern's copies of its seed, where the seed went: added to the same
+   * body, as new bodies (seed_2, seed_3, ...), or cut from the same bodies.
+   * Every copy must add or remove material.
+   */
+  function repeat(s: Scope, f: LinearPatternFeature | CircularPatternFeature, seed: Seed): [Map<string, TopoDS_Shape>] {
+    const changed = new Map<string, TopoDS_Shape>();
+    const now = (name: string) => changed.get(name) ?? need(name);
+    patternInstances(oc, s, f).forEach((inst, k) => {
+      const copy = transformed(oc, s, seed.tool, inst.trsf);
+      if (seed.kind === "fuse" && seed.newBody) {
+        const name = `${seed.newBody}_${k + 2}`;
+        if (bodies.has(name) || changed.has(name)) throw new OpError(`${inst.label}: a body "${name}" already exists`);
+        changed.set(name, fuseInto(oc, s, null, copy, "pattern"));
+      } else if (seed.kind === "fuse") {
+        const name = seed.into!;
+        try {
+          changed.set(name, fuseInto(oc, s, now(name), copy, "pattern"));
+        } catch (e) {
+          throw e instanceof OpError && e.message.startsWith("added no material") ? new OpError(`${inst.label} adds no material`) : e;
+        }
+      } else {
+        const on = (seed.bodies ?? [...bodies.keys()]).map((n) => [n, now(n)] as [string, TopoDS_Shape]);
+        let cut: Map<string, TopoDS_Shape>;
+        try {
+          cut = removeFrom(oc, s, on, copy, { listed: false, what: "pattern", missed: "" });
+        } catch (e) {
+          throw e instanceof OpError && e.message.startsWith("removed no material") ? new OpError(`${inst.label} removes no material`) : e;
+        }
+        for (const [n, b] of cut) changed.set(n, b);
+      }
+    });
+    return [changed];
+  }
+}
+
+/** What a pattern repeats: a feature's tool, and where it went. */
+interface Seed {
+  tool: TopoDS_Shape;
+  kind: "fuse" | "cut";
+  /** fuse: the body it was added to. */
+  into?: string;
+  /** fuse: the body it started. */
+  newBody?: string;
+  /** cut: the bodies it was limited to (null: every body). */
+  bodies?: string[] | null;
 }
 
 function buildSketch(f: SketchFeature): SketchProfile {

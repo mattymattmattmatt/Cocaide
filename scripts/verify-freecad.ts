@@ -1,6 +1,7 @@
 // Exports each example to STEP and opens it in FreeCAD, comparing what
-// FreeCAD measures with what Cocaide measured. A .step argument is opened
-// as it is (for a file the browser exported) and must be one valid solid.
+// FreeCAD measures with what Cocaide measured. A part of several bodies must
+// come in with each body as an object of its own name. A .step argument is
+// opened as it is (for a file the browser exported) and must be one valid solid.
 //
 //   FREECAD_CMD=/path/to/freecadcmd npm run verify:freecad [-- doc.cocaide.json | part.step ...]
 //
@@ -47,15 +48,18 @@ async function main() {
         continue;
       }
       const step = resolve("out", `${basename(file, ".cocaide.json")}.step`);
-      writeFileSync(step, exportSTEP(oc, result.solid, result.name));
+      writeFileSync(step, exportSTEP(oc, result.solid, result.name, null, result.bodies));
       const fc = openInFreeCAD(step);
       const m = result.measurements!;
       const bb = m.boundingBox!;
       const rel = (a: number, b: number) => Math.abs(a - b) / Math.max(1, Math.abs(b));
+      const names = result.bodies.map((b) => b.name);
       const checks: [string, boolean][] = [
-        ["FreeCAD imported one object", fc.importedObjects.length === 1],
+        names.length > 1
+          ? [`FreeCAD imported each body by name (${names.join(", ")})`, names.every((n) => fc.importedObjects.includes(n))]
+          : ["FreeCAD imported one object", fc.importedObjects.length === 1],
         ["shape is valid", fc.valid === true],
-        ["one solid", fc.solids === m.solids],
+        [`${m.solids} solid${m.solids === 1 ? "" : "s"}`, fc.solids === m.solids],
         ["same face count", fc.faces === m.faces],
         ["same volume (1e-6)", rel(fc.volume, m.volume) < 1e-6],
         ["same area (1e-6)", rel(fc.area, m.surfaceArea) < 1e-6],

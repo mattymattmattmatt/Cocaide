@@ -67,6 +67,16 @@ depth: a number or "through". Optional "counterbore": { "diameter", "depth" } or
 { "id": "pat_2", "op": "circularPattern", "feature": "hole_1", "axis": { "origin": [0,0,0], "direction": [0,0,1] }, "count": 6, "angle": 360 }
 count includes the original.
 
+## bodies (one part, many named solids)
+An extrude adds to the body "main" unless it says otherwise: "newBody": "upright" starts a body, "body": "upright" adds to one.
+A name that doesn't exist is an error. A cut or hole takes "bodies": ["base"] to cut only those (each must lose material);
+without it, it cuts every body it reaches. Face and edge selectors take "body": "base" to look in one body only.
+A pattern of a feature that starts a body makes new bodies: upright_2, upright_3, ...
+{ "id": "combine_1", "op": "combine", "operation": "add" | "subtract" | "common", "target": "base", "tools": ["upright"] }
+joins the tool bodies into the target (they are used up).
+Measurements list each body (name, volume, size) and every pair that overlaps ("interference", in mm³).
+STEP exports each body as a solid of its name.
+
 ## Face selectors
 { "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "near": [x,y,z] (optional) }
 { "type": "cylindrical", "radius": 3.3 (optional), "axis": [0,0,1] (optional), "pick": ..., "near": [x,y,z] (optional) }
@@ -84,6 +94,7 @@ listFeatures, getFeature(id) - read the document and each feature's rebuild stat
 addFeature(feature, index?) - id is optional (one is made from the op). updateFeature(id, patch) - shallow merge; null removes a field.
 deleteFeature(id), reorderFeature(id, index), suppressFeature(id, suppressed).
 setParameter(name, value), deleteParameter(name), setDimension(sketch, index, value) - index into the sketch's constraints.
+renameBody(from, to) - every feature and selector that names the body follows.
 addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
 exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.

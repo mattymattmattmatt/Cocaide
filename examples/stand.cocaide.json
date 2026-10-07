@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "stand",
+  "parameters": { "base_t": 8, "upright_z": 8, "upright_t": 8, "upright_h": 60 },
+  "features": [
+    {
+      "id": "sketch_1",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+      "entities": [
+        { "id": "r1", "type": "rect", "center": [0, 0], "w": 120, "h": 80 }
+      ],
+      "constraints": [
+        { "type": "distanceX", "entity": "r1", "value": 120 },
+        { "type": "distanceY", "entity": "r1", "value": 80 },
+        { "type": "coincident", "points": ["r1.center", "origin"] }
+      ]
+    },
+    { "id": "ext_1", "op": "extrude", "sketch": "sketch_1", "distance": "=base_t", "newBody": "base" },
+    {
+      "id": "sketch_2",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, "=upright_t / 2", 0] },
+      "entities": [
+        { "id": "r1", "type": "rect", "center": [0, "=upright_z + upright_h / 2"], "w": 120, "h": "=upright_h" }
+      ]
+    },
+    { "id": "ext_2", "op": "extrude", "sketch": "sketch_2", "distance": "=upright_t", "newBody": "upright" },
+    {
+      "id": "hole_1",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest", "body": "base" },
+      "center": [40, 25],
+      "diameter": 10,
+      "depth": "through",
+      "bodies": ["base"]
+    },
+    { "id": "pattern_1", "op": "linearPattern", "feature": "hole_1", "direction": [-1, 0, 0], "spacing": 80, "count": 2 }
+  ]
+}
