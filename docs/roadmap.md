@@ -57,17 +57,54 @@ volume is the sum. In the browser, each body has its own colour and can be
 hidden. A right-click on one asks about that body only, and the API rejects
 an edit to the other.
 
-## Phase I — weldments
+## Phase I — weldment profiles and the section library
 
-Structural members swept along a frame of nodes, one body per member.
+Sections are not typed in from tables: they are drawn, in the same sketcher as
+everything else, and the library grows as parts are made. In SolidWorks a
+profile is a separate file in a folder tree, set up in options, edited by
+opening another document. In Cocaide it is one tick box away from any sketch.
+
+- **Any sketch can be a weldment profile.** The sketcher has a "Weldment
+  profile" tick box. Ticked, finishing the sketch opens the profile card:
+  - **Name** of the family ("SHS").
+  - **Sizes.** The parameters the sketch's dimensions use (`=b`, `=b - 2 * t`)
+    are its size parameters. The current values are the first size, and more
+    rows can be added with a designation each ("SHS 50×50×3"). One sketch is a
+    whole family.
+  - **Anchor.** What sits on the member line: the centroid, or the sketch origin.
+  - **Tags.** Suggested from the geometry (hollow, open or solid; square,
+    rectangular, round; the envelope), plus free tags, a material note, and a
+    favourite star.
+  - **Computed per size:** area, kg/m (at the part's density), and the
+    envelope, shown with a drawing of the section.
+  The profile must be closed loops, or the card says why.
+- **The section library** is a panel in the app, not a folder: search by name,
+  designation or tag, favourites first, then the most used. Each entry shows
+  its drawing, sizes, area and kg/m. Profiles are kept in this browser, and
+  can be exported and imported as a file.
+- **Copies, not links.** A part keeps a copy of every profile it uses, with
+  the library id and version, so it opens anywhere and never changes under
+  you. "Update from library" is a command you choose, and it can be undone.
+- **Straight members.** `{ "op": "member", "profile": "SHS", "size": "SHS
+  40×40×3", "from": [...], "to": [...], "rotation": 0 }` sweeps the profile
+  along a line. A horizontal member's profile is upright. Each member is its
+  own body, named by its id. Its length, designation and mass are measured.
+
+Acceptance: draw a 40 × 40 × 3 square hollow section as a normal sketch, with
+its sizes as parameters `b` and `t`. Tick "Weldment profile" and finish. The
+card finds `b` and `t`, shows 444 mm² and 3.49 kg/m, and suggests "hollow" and
+"square". Add the size 50 × 50 × 3 and save, and the profile is in the section
+library. In another part, add a 900 mm member of SHS 40×40×3 and a 600 mm member
+of SHS 50×50×3. Each is its own body with the right volume, and the members are
+listed with their lengths. Clear the library: the part still opens and
+rebuilds from its own copy.
+
+## Phase J — frames, joints and the cut list
 
 - **A frame is points and members, not a 3D sketch.**
   - Nodes: `{ "A": [0, 0, 0], "B": ["=frame_w", 0, 0] }`, where coordinates can be expressions.
-  - Members join two nodes, with a profile and a rotation.
-  - Every member is a body named by its id, so it has a stable name to ask about.
-- **Profiles are parametric sketches.**
-  - Standard sections come from published tables, never typed from memory.
-  - A part keeps a copy of every profile it uses, so it opens anywhere.
+  - Members join two nodes, with a profile, a size and a rotation.
+  - Every member is a body named by its id.
 - **Joints.** At each node: which member runs through, butt or mitre, and the
   gap. End caps and gussets come later in the phase.
 - **Cut list.** Profile, length, end angles, quantity and kg per item, read
@@ -75,35 +112,24 @@ Structural members swept along a frame of nodes, one body per member.
 - **Welds are notes.** Size, type and length go in a weld table. They are
   stored, not modelled, like the material note.
 
-Acceptance: a 1200 × 600 table frame, 900 high, in 40 × 40 × 3 SHS with
-mitred top corners, builds with no interference between members. The cut
-list's lengths and angles match the measured bodies. Switching every member
-to 50 × 50 × 3 rebuilds the frame and updates the cut list.
+Acceptance: a 1200 × 600 table frame, 900 high, in SHS 40×40×3 from the
+library, with mitred top corners, builds with no interference between members.
+The cut list's lengths and angles match the measured bodies. Switching every
+member to SHS 50×50×3 rebuilds the frame and updates the cut list.
 
-Open: which section standards first (UK/EN: SHS, RHS, CHS, angles, PFC,
-UB/UC?), and the published source for their dimensions.
+## Phase K — the agent on weldments
 
-## Phase J — profile library and the agent on frames
+- "A 1200 × 600 table frame, 900 high, SHS 40×40×3" goes through the
+  confirmation card. The profile and size come from the library, and are
+  asked for, never guessed.
+- Right-click a joint to mitre it, or a member to swap its size.
+- In the profile card, the agent suggests a name, tags and the anchor.
+- The critic checks fabrication: every member connected, no clashes after
+  trimming, no member longer than stock bar, and identical members grouped.
 
-- **Custom profiles.** Draw one in the sketcher, mark its size parameters and
-  the point that sits on the frame line, and save it.
-- **The library.**
-  - Tags, favourites and search.
-  - Properties are computed and used as tags: hollow or open, the envelope, area, kg/m.
-  - The agent suggests a name and tags, and says when a custom sketch is really a standard section.
-  - Most-used profiles come first.
-- **Copies, not links.** A part keeps a copy of each profile with its library
-  id and version. "Update from library" is a command you choose, shows what
-  changes, and can be undone.
-- **The agent on frames.**
-  - "A 1200 × 600 table frame, 900 high, 40×40×3 SHS" goes through the confirmation card, and the profile size is asked for, never guessed.
-  - Right-click a joint to mitre it, or a member to swap its profile.
-  - The critic checks fabrication: every member connected, no clashes after trimming, no member longer than stock bar, and identical members grouped.
+Acceptance: the table frame prompt builds after the card, from the library's
+profile.
 
-Acceptance: a custom profile saved from one part is found by tag search in
-another part and used there. The second part still opens and rebuilds after
-the library is cleared. The table frame prompt builds after the card.
-
-Open: whether the library lives in one browser (with export and import) or
-is shared across a team. A shared library needs storage and accounts, which
-v1 avoids.
+Open: whether the library stays in one browser (with export and import) or is
+shared across a team. A shared library needs storage and accounts, which v1
+avoids.
