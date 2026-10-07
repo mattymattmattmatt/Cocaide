@@ -14,7 +14,7 @@ import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
 import { sketchDof } from "../geom/solver";
 import { dist2 } from "../geom/vec";
-import { edgeSummary, faceSummary, round6 } from "../kernel/inspect";
+import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/inspect";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
@@ -27,9 +27,11 @@ export type AskTarget =
   | { kind: "constraint"; sketch: string; index: number }
   | { kind: "face"; index: number }
   | { kind: "edge"; index: number }
-  | { kind: "parameter"; name: string };
+  | { kind: "parameter"; name: string }
+  /** Empty space: the whole part, the weakest scope (spec 6). Never applied without the user accepting. */
+  | { kind: "part" };
 
-export type PacketKind = "feature" | "sketch" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter";
+export type PacketKind = "feature" | "sketch" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter" | "part";
 
 export interface Packet {
   target: { kind: PacketKind; label: string } & Record<string, unknown>;
@@ -66,6 +68,8 @@ export function scopeFor(doc: RawDocument, target: AskTarget): string[] {
       return ["+"];
     case "parameter":
       return [`param:${target.name}`];
+    case "part":
+      return ["*"];
   }
 }
 
@@ -107,6 +111,8 @@ export function targetLabel(doc: RawDocument, target: AskTarget, topo?: PartTopo
     }
     case "parameter":
       return target.name;
+    case "part":
+      return doc.features.length ? "the whole part" : "a new part";
   }
 }
 
@@ -115,6 +121,7 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
   const resolved = resolveExpressions(doc, params, []) as RawDocument;
   const check = await kernel.check(doc);
   const needsTopology = target.kind === "face" || target.kind === "edge" || target.kind === "feature" || target.kind === "failed";
+  if (target.kind === "part") return partPacket(doc, check, targetLabel(doc, target), scopeFor(doc, target));
   const topo = needsTopology ? await kernel.topology(doc) : null;
   const label = targetLabel(doc, target, topo);
   const writeScope = scopeFor(doc, target);
@@ -240,6 +247,29 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
       };
     }
   }
+}
+
+/** The whole part as a target: its features as one line each, its parameters and measurements. */
+function partPacket(doc: RawDocument, check: CheckResult, label: string, writeScope: string[]): Packet {
+  const status = new Map(check.features.map((s) => [s.id, s]));
+  const params = documentParameters(doc);
+  return {
+    target: { kind: "part", label },
+    units: "mm",
+    writeScope,
+    part: {
+      name: doc.name,
+      ...(Object.keys(params).length ? { parameters: params } : {}),
+      features: doc.features.map((f) => {
+        const s = status.get(String(f.id));
+        return { ...brief(f), ok: s?.ok ?? false, ...(s?.error ? { error: s.error } : {}), ...(s?.suppressed ? { suppressed: true } : {}) };
+      }),
+    },
+    parent: null,
+    children: [],
+    measurements: check.measurements ? measurementSummary(check.measurements) : { solid: false },
+    error: check.errors.filter((e) => e.startsWith("document:") && !e.startsWith("document: no solid")).join("; ") || null,
+  };
 }
 
 /**

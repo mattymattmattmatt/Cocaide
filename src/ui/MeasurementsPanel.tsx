@@ -25,7 +25,7 @@ export function MeasurementsPanel({ measurements: m }: { measurements: Measureme
           <dd data-testid="holes">
             {m.holeCount === 0
               ? "none"
-              : `${m.holeCount} · Ø ${m.holes.map((h) => h.diameters.map((d) => n(d)).join("/")).join(", ")}`}
+              : `${m.holeCount} · Ø ${groupHoles(m.holes.map((h) => h.diameters.map((d) => n(d)).join("/")))}`}
           </dd>
           <dt>Topology</dt>
           <dd>
@@ -35,4 +35,11 @@ export function MeasurementsPanel({ measurements: m }: { measurements: Measureme
       )}
     </section>
   );
+}
+
+/** "6.6, 6.6, 9/14" -> "6.6 × 2, 9/14": equal holes counted once. */
+function groupHoles(sizes: string[]): string {
+  const counts = new Map<string, number>();
+  for (const sz of sizes) counts.set(sz, (counts.get(sz) ?? 0) + 1);
+  return [...counts].map(([sz, k]) => (k > 1 ? `${sz} × ${k}` : sz)).join(", ");
 }

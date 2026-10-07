@@ -56,3 +56,45 @@ export async function commit(page: Page, testId: string, value: string) {
 export async function savedDocument(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(() => JSON.parse(JSON.parse(localStorage.getItem("cocaide.document.v1")!).text));
 }
+
+// ------------------------------------------------ the model, answered by a script
+
+export type Block = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown };
+export interface Sent {
+  body: Record<string, unknown> & { messages: { role: string; content: unknown }[]; tools: { name: string }[] };
+  headers: Record<string, string>;
+}
+
+let n = 0;
+export const text = (t: string): Block => ({ type: "text", text: t });
+export const tool = (name: string, input: unknown): Block => ({ type: "tool_use", id: `toolu_${++n}`, name, input });
+
+/** Answers the page's Messages API calls with the given turns, in order. */
+export async function scriptModel(page: Page, turns: Block[][]): Promise<Sent[]> {
+  const sent: Sent[] = [];
+  await page.route("https://api.anthropic.com/v1/messages**", async (route) => {
+    sent.push({ body: route.request().postDataJSON(), headers: route.request().headers() });
+    const content = turns.shift() ?? [text("(no more scripted turns)")];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: `msg_${sent.length}`,
+        type: "message",
+        role: "assistant",
+        model: "claude-opus-5-5",
+        content,
+        stop_reason: content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10 },
+      }),
+    });
+  });
+  return sent;
+}
+
+export async function useKey(page: Page) {
+  await page.evaluate(() => localStorage.setItem("cocaide.ask.settings.v1", JSON.stringify({ apiKey: "sk-test", model: "claude-opus-5-5", effort: "low" })));
+  await page.reload();
+  await waitForRebuild(page);
+}

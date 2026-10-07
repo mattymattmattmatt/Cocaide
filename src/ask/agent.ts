@@ -25,6 +25,8 @@ export interface AskRequest {
   doc: RawDocument;
   target: AskTarget;
   text: string;
+  /** Overrides the question/request reading of the text. */
+  mode?: AskMode;
   model: AskModel;
   kernel: KernelPort;
   signal?: AbortSignal;
@@ -54,6 +56,12 @@ export interface Change {
 }
 
 export interface Proposal {
+  /** A whole new part (from a description): accepting replaces the document. Only from empty space. */
+  replace?: boolean;
+  /** The critic's checks of the result against the request. */
+  checks?: { label: string; ok: boolean; expected: string; actual: string }[];
+  /** Things the user should know: an inch conversion, holes breaking an edge. */
+  notes?: string[];
   /** The commands, in order. Accepting replays them on the document as it is then. */
   commands: Command[];
   /** Scope the commands ran under (with the ids the ask added). */
@@ -69,7 +77,8 @@ export interface Proposal {
 }
 
 export interface AskResult {
-  outcome: "answer" | "proposal" | "refused" | "failed";
+  /** questions: a part-level request is missing numbers; nothing is built until the user gives them. */
+  outcome: "answer" | "proposal" | "refused" | "failed" | "questions";
   text: string;
   mode: AskMode;
   visual: boolean;
@@ -81,7 +90,7 @@ export interface AskResult {
 }
 
 export async function runAsk(req: AskRequest): Promise<AskResult> {
-  const mode = classify(req.text);
+  const mode = req.mode ?? classify(req.text);
   const visual = isVisual(req.text, req.target);
   const result: AskResult = { outcome: "failed", text: "", mode, visual, packet: null, proposal: null, calls: [], model: req.model.name, turns: 0 };
   let packet: Packet;
@@ -170,6 +179,7 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
  * then make any command invalid.
  */
 export function applyProposal(doc: RawDocument, p: Proposal): { ok: true; doc: RawDocument } | { ok: false; error: string } {
+  if (p.replace) return { ok: true, doc: structuredClone(p.doc) };
   let current = doc;
   for (const cmd of p.commands) {
     const r = apply(current, cmd, { writeScope: p.scope });
@@ -181,6 +191,8 @@ export function applyProposal(doc: RawDocument, p: Proposal): { ok: true; doc: R
 
 /** Features a user edit changed, compared with the document a proposal was made from. */
 export function conflictsWith(p: Proposal, doc: RawDocument): string[] {
+  // A new part replaces everything, so any edit since it was made conflicts.
+  if (p.replace) return formatDocument(doc) === formatDocument(p.base) ? [] : ["the part"];
   const now = new Map(doc.features.map((f) => [String(f.id), JSON.stringify(f)]));
   const then = new Map(p.base.features.map((f) => [String(f.id), JSON.stringify(f)]));
   return p.touched.filter((id) => now.get(id) !== then.get(id));
@@ -227,6 +239,8 @@ class Sandbox {
   /** Ids the packet names: the agent may read these and nothing else. */
   private context(): Set<string> {
     const ids = new Set<string>();
+    // The whole part is the target from empty space: all of it is in context.
+    if (this.target.kind === "part") for (const f of this.doc.features) ids.add(String(f.id));
     const add = (v: unknown) => {
       if (Array.isArray(v)) v.forEach(add);
       else if (isObject(v) && typeof v.id === "string") ids.add(v.id);

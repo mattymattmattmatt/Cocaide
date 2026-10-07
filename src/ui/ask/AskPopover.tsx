@@ -7,6 +7,7 @@ import type { Change } from "../../ask/agent";
 import { MODELS } from "../../ask/models";
 import { describeScope, scopeFor } from "../../ask/packet";
 import { scopedActions } from "../../ask/prompt";
+import { IntentCard } from "./IntentCard";
 import type { useAsk } from "./useAsk";
 import { canAsk } from "./settings";
 
@@ -59,7 +60,8 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const ready = canAsk(ask.settings);
   const scope = scopeFor(ctx.doc, ctx.target);
   const model = MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model;
-  const submit = (text: string) => ask.submit(ctx, text, applyNow);
+  const part = ctx.target.kind === "part";
+  const submit = (text: string) => ask.submit(ctx, text || (ctx.drawing ? "Read the part from this drawing." : ""), applyNow && !part);
 
   return (
     <div
@@ -82,6 +84,11 @@ export function AskPopover({ ask }: { ask: Ask }) {
 
       {s.phase === "menu" && (
         <>
+          {ctx.drawing && (
+            <div className="ask-drawing" data-testid="ask-drawing">
+              Drawing: <strong>{ctx.drawing.name}</strong>
+            </div>
+          )}
           <form
             className="ask-form"
             onSubmit={(e) => {
@@ -94,7 +101,15 @@ export function AskPopover({ ask }: { ask: Ask }) {
               autoFocus
               rows={2}
               value={draft}
-              placeholder="Ask about it, or say what to change…"
+              placeholder={
+                part
+                  ? ctx.drawing
+                    ? "Anything to add? (optional)"
+                    : ctx.doc.features.length
+                      ? "Describe a new part, or ask about this one…"
+                      : "Describe the part: “80 x 40 x 6 plate, four 6.6 holes 8 mm from corners”"
+                  : "Ask about it, or say what to change…"
+              }
               data-testid="ask-input"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -104,7 +119,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
                 }
               }}
             />
-            <button type="submit" className="primary" disabled={!draft.trim()} data-testid="ask-submit">
+            <button type="submit" className="primary" disabled={!draft.trim() && !ctx.drawing} data-testid="ask-submit">
               Ask
             </button>
           </form>
@@ -128,10 +143,14 @@ export function AskPopover({ ask }: { ask: Ask }) {
             ))}
           </div>
           <footer className="ask-foot">
-            <label className="check" title="Off: you see the proposal and accept it. On: it is applied as soon as it checks out (undo still works).">
-              <input type="checkbox" checked={applyNow} onChange={(e) => setApplyNow(e.target.checked)} data-testid="ask-apply-now" />
-              Apply immediately
-            </label>
+            {part ? (
+              <span title="The whole part is the weakest scope: a change from here is always a proposal you accept.">Always a proposal</span>
+            ) : (
+              <label className="check" title="Off: you see the proposal and accept it. On: it is applied as soon as it checks out (undo still works).">
+                <input type="checkbox" checked={applyNow} onChange={(e) => setApplyNow(e.target.checked)} data-testid="ask-apply-now" />
+                Apply immediately
+              </label>
+            )}
             <span className="ask-scope" title={`What this ask may change (${scope.join(", ")}). The program enforces it.`} data-testid="ask-scope">
               may change: {describeScope(scope)}
             </span>
@@ -176,7 +195,22 @@ export function AskPopover({ ask }: { ask: Ask }) {
               {s.result.text}
             </div>
           )}
-          {s.result.proposal && (
+          {s.result.outcome === "questions" && s.result.review && <IntentCard review={s.result.review} onBuild={(answers) => ask.answer(s, answers)} />}
+          {s.result.proposal?.checks && (
+            <ul className="ask-checks" data-testid="ask-checks">
+              {s.result.proposal.checks.map((c) => (
+                <li key={c.label} className={c.ok ? "ok" : "bad"} title={c.ok ? undefined : `expected ${c.expected}`}>
+                  {c.ok ? "✓" : "✗"} {c.label}: {c.actual}
+                </li>
+              ))}
+            </ul>
+          )}
+          {s.result.proposal?.notes?.map((n) => (
+            <div key={n} className="ask-note">
+              {n}
+            </div>
+          ))}
+          {s.result.proposal && !s.result.proposal.replace && (
             <div className="ask-proposal" data-testid="ask-proposal">
               <ul className="ask-changes">
                 {s.result.proposal.changes.flatMap((c) => changeLines(c)).map((line, i) => (
@@ -204,7 +238,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
             {s.result.proposal && !s.accepted ? (
               <>
                 <button className="primary" onClick={() => ask.accept(s)} data-testid="ask-accept">
-                  Accept
+                  {s.result.proposal.replace && s.result.proposal.base.features.length ? "Accept: replace the part" : "Accept"}
                 </button>
                 <button onClick={ask.discard} data-testid="ask-discard">
                   Discard
@@ -234,6 +268,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
 }
 
 const OUTCOME: Record<string, string> = {
+  questions: "Needs your numbers",
   answer: "Answer",
   proposal: "Proposed change",
   refused: "Out of scope",

@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase D (right-click ask) done.**
+**Status: Phase E (part-level prompt) done.**
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -15,6 +15,10 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - The model sees a context packet for that one thing, never the whole tree.
   - It may change only what the right-click scopes, and the API enforces that.
   - It answers, or proposes an edit you accept or discard.
+- Phase E adds the part-level prompt: right-click empty space, or drop a drawing, and describe a part.
+  - The request is read into intent JSON. Every number records where it came from, and a number the request doesn't contain is never used.
+  - What's missing is asked for in a confirmation card. A deterministic planner then builds a parametric feature document.
+  - A critic checks the rebuilt part against the request, and the agent gets one correction pass.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -23,9 +27,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 187 unit, kernel and agent tests, including the Phase A and C acceptance suites
-                       #   (+3 live-model Phase D tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 18 browser tests (Playwright, Chromium), including the Phase B and D acceptance suites
+npm test               # 209 unit, kernel and agent tests, including the Phase A, C, D and E acceptance logic
+                       #   (+5 live-model Phase D/E tests, run when ANTHROPIC_API_KEY is set)
+npm run test:e2e       # 22 browser tests (Playwright, Chromium), including the Phase B, D and E acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -52,6 +56,25 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase E: part-level prompt
+
+| Check | Result |
+|---|---|
+| "80 x 40 x 6 plate, four 6.6 holes 8 mm from corners" produces the plate without a human fix | Right-click empty space and type the request. Every number is in the request, so there is nothing to ask. The planner builds `sketch_1` (80 × 40, fully defined), `ext_1` (6) and `hole_1` (Ø6.6, 8 mm in from both edges), plus a 2 × 2 `pattern_1`. Their sizes are parameters `plate_w`, `plate_h`, `part_t`, `hole_d` and `hole_inset`. The critic passes 6 of 6 checks: rebuilds, one solid, 80 × 40 × 6, 4 holes, Ø6.6 each, centres at (±32, ±12) through 6 mm. Accept, and the part is 18,378.913 mm³. |
+| "a plate with some holes" asks instead of guessing | The result is **Needs your numbers**, with blanks for width, height, thickness, hole diameter, where the holes go, and how many. Nothing is built until they're filled. The check is in code: when a scripted model *invents* 80 × 40 × 6 with Ø6.6 holes and calls them stated, each comes back as "80 is not in the request" and is still a blank. |
+
+These checks are covered at three levels:
+- **Browser** (`e2e/part.spec.ts`): the real SDK with the API answered by a script, filling the card through to a built part. It also covers a dropped drawing and a question about the whole part.
+- **Node** (`tests/part-ask.test.ts`, `tests/intent.test.ts`): runs the same logic with a scripted model, plus:
+  - M6 standard sizes;
+  - inch conversion;
+  - grid, circle and point patterns;
+  - the critic catching a wrong part;
+  - the single correction pass.
+- **Live model** (`tests/phase-e-acceptance.test.ts`): runs both checks against Claude when `ANTHROPIC_API_KEY` is set. **No key was available where this was built, so the live-model tests for Phases D and E have not been run yet.**
+
+![The confirmation card: what was read, where each number came from, and blanks for the rest](docs/phase-e-card.png)
 
 ### Phase D: right-click ask
 
@@ -131,7 +154,7 @@ Right-click any of these to ask about it:
 - a parameter;
 - in the sketcher, an entity or a constraint row.
 
-The menu is labelled with the target ("Ask about hole_1"). Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch* and *Fix this error*. Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Asking about the whole part, from empty space, is Phase E.
+The menu is labelled with the target ("Ask about hole_1"). Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch* and *Fix this error*. Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Right-click empty space to ask about the whole part (see below).
 
 **The packet is the prompt** (`src/ask/packet.ts`). It holds:
 - the target node, its parent and its direct children;
@@ -168,6 +191,33 @@ Every ask is logged in the browser next to the revisions it produced:
 **Ask… → Download ask log** saves it as JSON Lines.
 
 **Model.** The default is Claude Opus 5.5 at low effort; Sonnet 5.5 and Haiku 4.5 can be chosen under **Ask…**. The SDK is loaded on the first ask, not with the app. What leaves the machine is the packet, plus the one framed image for a visual prompt. Modelling and STEP export never need a key.
+
+## The part-level prompt
+
+Right-click empty space, or drop a drawing (PDF or image) on the window. This target is the whole part, the weakest scope, so the result is always a proposal; there is no "apply immediately" here (spec 6.2).
+- A question about the part is answered from a packet of the whole part: each feature in one line with its status, the parameters and the measurements. It gets no write tools.
+- A change to the existing part runs the ordinary ask with scope `*`.
+- A new part goes through intent (spec 5.1).
+
+**Intent** (`src/intent/schema.ts`). The model reads the request (and the drawing) into intent JSON as structured output, for example a plate with hole groups at corners, centre, grid, points or on a circle. Each number is `{ value, evidence, source, confidence }`, where source is `stated`, `standard` (M6 → 6.6), `inferred` or `missing`. The model never converts units.
+
+**Ask if missing** (`src/intent/review.ts`). This is enforced in code, not left to the prompt:
+- A number marked stated must actually appear in the request; otherwise it is a guess.
+- `standard` is accepted only when the evidence names a metric size whose clearance hole or tap drill gives that value.
+- Thickness and hole diameter are ask-first: a guess is never used.
+- Anything the part needs that is missing, guessed or under 0.8 confidence becomes a blank in the confirmation card. What the user typed is used exactly.
+- A drawing has no text to check against, so its numbers are trusted at 0.8 confidence or above. Phase F checks them against the page.
+
+**Plan, rebuild, criticise** (`src/intent/plan.ts`, `src/intent/critic.ts`).
+- The planner is deterministic. A request in inches is converted once, and the conversion is reported.
+- Its output is parametric: the user's numbers become document parameters, and the holes are expressions over them. A wider plate keeps its holes 8 mm from the corners.
+- The critic reads the rebuilt part's measurements, not the plan: size, solid count, hole count, diameters, and each hole's centre and depth.
+- If anything disagrees, the agent gets one correction pass with the findings. Then the part goes back to the human, with the checks on the proposal.
+- A part that is not a plate or a disc is built by the agent from the confirmed description.
+
+Accepting a new part replaces the document, as one undo step. Any edit to the document while the proposal is open drops it.
+
+**Drawings.** A dropped PDF or image goes to the model with the request. Numbers it can't read clearly come back as blanks rather than guesses. Phase F will make this a proper drawing ingest: rasterising pages, mapping views to features, and testing against real drawings.
 
 ## Agents (MCP)
 
@@ -312,7 +362,8 @@ src/geom      plane frames, 2D profiles, constraint checks, the constraint solve
 src/kernel    OCCT: operations, selectors, picking -> selector synthesis, measurements, mesh, STEP, rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
-src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port
+src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt
+src/intent    intent JSON, the ask-if-missing review, the planner, the critic
 src/render    software renderer (PNG screenshots without a GPU) and binary STL
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover

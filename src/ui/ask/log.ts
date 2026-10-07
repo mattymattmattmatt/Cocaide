@@ -20,6 +20,8 @@ export interface AskRecord {
   baseHash: string;
   calls: AskResult["calls"];
   accepted?: { at: string; hash: string };
+  /** Numbers the user gave in the confirmation card. */
+  answers?: Record<string, unknown>;
   discarded?: { at: string; reason?: string };
 }
 

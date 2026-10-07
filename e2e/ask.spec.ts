@@ -3,48 +3,8 @@
 // Messages API responses and records what was sent, so these tests check the
 // packet, the tools offered, the scope, and what reaches the document.
 
-import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, waitForRebuild } from "./helpers";
-
-type Block = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown };
-interface Sent {
-  body: Record<string, unknown> & { messages: { role: string; content: unknown }[]; tools: { name: string }[] };
-  headers: Record<string, string>;
-}
-
-let n = 0;
-const text = (t: string): Block => ({ type: "text", text: t });
-const tool = (name: string, input: unknown): Block => ({ type: "tool_use", id: `toolu_${++n}`, name, input });
-
-/** Answers the page's Messages API calls with the given turns, in order. */
-async function scriptModel(page: Page, turns: Block[][]): Promise<Sent[]> {
-  const sent: Sent[] = [];
-  await page.route("https://api.anthropic.com/v1/messages**", async (route) => {
-    sent.push({ body: route.request().postDataJSON(), headers: route.request().headers() });
-    const content = turns.shift() ?? [text("(no more scripted turns)")];
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        id: `msg_${sent.length}`,
-        type: "message",
-        role: "assistant",
-        model: "claude-opus-5-5",
-        content,
-        stop_reason: content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn",
-        stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 10 },
-      }),
-    });
-  });
-  return sent;
-}
-
-async function useKey(page: Page) {
-  await page.evaluate(() => localStorage.setItem("cocaide.ask.settings.v1", JSON.stringify({ apiKey: "sk-test", model: "claude-opus-5-5", effort: "low" })));
-  await page.reload();
-  await waitForRebuild(page);
-}
+import { expect, test } from "@playwright/test";
+import { commit, expectVolume, openApp, savedDocument, scriptModel, text, tool, useKey, type Sent } from "./helpers";
 
 /** The text of the first user turn: the packet and the request. */
 function packetText(s: Sent): string {

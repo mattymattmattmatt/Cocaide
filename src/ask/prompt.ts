@@ -73,6 +73,12 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Where is this used?", prompt: "Where is this parameter used?", submit: true },
         { label: "Change it", prompt: "Change this parameter to ", submit: false },
       ];
+    case "part":
+      return [
+        { label: "New part from a description", prompt: "", submit: false },
+        { label: "Explain this part", prompt: "What is this part, and how is it built?", submit: true },
+        { label: "Check it", prompt: "Does this part rebuild cleanly, and is anything fragile?", submit: true },
+      ];
     default:
       return [
         { label: "Explain this", prompt: "Explain what this feature does.", submit: true },

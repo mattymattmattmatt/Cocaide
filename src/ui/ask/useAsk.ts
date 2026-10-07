@@ -4,9 +4,10 @@
 // touches drops the proposal and keeps the prompt (spec 6.4).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent, type AskResult } from "../../ask/agent";
+import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent } from "../../ask/agent";
 import type { KernelPort } from "../../ask/kernel";
 import type { AskTarget, PacketKind } from "../../ask/packet";
+import type { Drawing, PartAskResult } from "../../ask/part";
 import type { RawDocument } from "../../doc/commands";
 import type { SketchFeature } from "../../doc/types";
 import { logAsk, updateAsk } from "./log";
@@ -22,6 +23,8 @@ export interface AskContext {
   doc: RawDocument;
   /** In the sketcher, accepting updates the draft instead of the document. */
   sketch?: { id: string; apply(feature: SketchFeature): void };
+  /** A dropped drawing, for a part-level ask. */
+  drawing?: Drawing;
   x: number;
   y: number;
 }
@@ -34,7 +37,7 @@ export type AskState =
       ctx: AskContext;
       prompt: string;
       applyNow: boolean;
-      result: AskResult;
+      result: PartAskResult;
       recordId: string;
       preview: boolean;
       accepted: boolean;
@@ -121,7 +124,12 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
         else steps.push(`${e.name} ${e.ok ? "✓" : `✗ ${e.error ?? ""}`}`);
         if (!controller.signal.aborted) show();
       };
-      const result = await runAsk({ doc: ctx.doc, target: ctx.target, text, model: await modelFor(settings), kernel, signal: controller.signal, onEvent });
+      const model = await modelFor(settings);
+      // The part-level prompt (intent schema, planner) loads on first use.
+      const result: PartAskResult =
+        ctx.target.kind === "part"
+          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, model, kernel, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
+          : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, signal: controller.signal, onEvent });
       if (controller.signal.aborted) return;
       const recordId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
       logAsk({
@@ -139,9 +147,28 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
       });
       const done: Extract<AskState, { phase: "done" }> = { phase: "done", ctx, prompt: text, applyNow, result, recordId, preview: true, accepted: false };
       setState(done);
-      if (applyNow && result.proposal) await accept(done);
+      // From empty space a change is always a proposal (spec 6.2): never applied immediately.
+      if (applyNow && result.proposal && ctx.target.kind !== "part") await accept(done);
     },
     [settings, kernel, accept],
+  );
+
+  /** The user filled the confirmation card: build with their numbers. */
+  const answer = useCallback(
+    async (s: Extract<AskState, { phase: "done" }>, answers: Record<string, number | string | { x: number; y: number }[]>) => {
+      abort.current?.abort();
+      const controller = new AbortController();
+      abort.current = controller;
+      const steps = ["Building with your numbers…"];
+      setState({ phase: "running", ctx: s.ctx, prompt: s.prompt, applyNow: false, steps });
+      const model = await modelFor(settings);
+      const { continuePartAsk } = await import("../../ask/part");
+      const result = await continuePartAsk({ doc: s.ctx.doc, text: s.prompt, drawing: s.ctx.drawing, model, kernel, signal: controller.signal }, s.result, answers);
+      if (controller.signal.aborted) return;
+      updateAsk(s.recordId, { outcome: result.outcome, text: result.text, calls: [...s.result.calls, ...result.calls], answers });
+      setState({ ...s, result, preview: true, accepted: false, dropped: undefined, error: undefined });
+    },
+    [settings, kernel],
   );
 
   const discard = useCallback(() => {
@@ -170,5 +197,5 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
   /** The document to show while a proposal is open and previewed. */
   const previewDoc = state?.phase === "done" && state.preview && !state.accepted && !state.ctx.sketch ? (state.result.proposal?.doc ?? null) : null;
 
-  return { state, open, close, submit, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen };
+  return { state, open, close, submit, answer, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen };
 }

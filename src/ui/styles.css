@@ -54,7 +54,7 @@ button, select { font: inherit; color: inherit; }
 
 .app { display: flex; flex-direction: column; height: 100%; }
 .app.dragging::after {
-  content: "Drop a .cocaide.json to open it";
+  content: "Drop a .cocaide.json to open it, or a drawing (PDF, PNG, JPG) to build from it";
   position: fixed; inset: 12px; display: grid; place-items: center;
   border: 2px dashed var(--accent); border-radius: 12px;
   background: color-mix(in srgb, var(--panel) 85%, transparent);
@@ -428,3 +428,26 @@ button.danger { color: var(--bad); }
 .modal-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .modal-buttons button:disabled { opacity: 0.45; cursor: default; }
 .feature-error[title] { cursor: context-menu; }
+
+/* part-level ask: the confirmation card and the critic's checks */
+.ask.ask-done:has(.intent-card) { width: 480px; }
+.intent-card { display: flex; flex-direction: column; gap: 8px; }
+.intent-rows { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.intent-rows th { text-align: left; font-weight: 500; padding: 4px 6px 4px 0; white-space: nowrap; vertical-align: middle; }
+.intent-rows td { padding: 3px 4px; vertical-align: middle; }
+.intent-rows tr.blank th { color: var(--accent-2); }
+.intent-rows tr.blank input, .intent-rows tr.blank select { border-color: var(--accent-2); }
+.intent-rows input, .intent-rows select {
+  height: 26px; width: 100%; min-width: 0; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--text); font: inherit; font-size: 12.5px;
+}
+.intent-input { display: flex; align-items: center; gap: 4px; }
+.intent-input .unit { color: var(--muted); font-size: 11px; }
+.intent-source { color: var(--muted); font-size: 11.5px; max-width: 150px; }
+.intent-source .why { color: var(--accent-2); }
+.ask-first { color: var(--accent-2); margin-left: 2px; }
+.ask-checks { margin: 0; padding: 0; list-style: none; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.ask-checks li.ok { color: var(--ok); }
+.ask-checks li.bad { color: var(--bad); }
+.ask-note { font-size: 12px; color: var(--muted); }
+.ask-drawing { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--panel-2); border: 1px dashed var(--border); }

@@ -15,6 +15,7 @@ import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog } from "./ask/AskSettingsDialog";
 import { useAsk } from "./ask/useAsk";
+import type { Drawing } from "../ask/part";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree } from "./FeatureTree";
 import { ParametersContext, TextInput } from "./fields";
@@ -64,6 +65,8 @@ function fileBase(name: string): string {
 }
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000 + 0;
+/** Files that open the part-level ask as a drawing rather than as a document. */
+const DRAWING_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"];
 
 export function App() {
   const kernel = useMemo(() => new KernelClient(), []);
@@ -315,9 +318,9 @@ export function App() {
 
   // ------------------------------------------------------------ right-click ask
 
-  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature) => {
+  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, drawing?: Drawing) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
-    if (ask.previewDoc && (target.kind === "face" || target.kind === "edge")) {
+    if (ask.previewDoc && (target.kind === "face" || target.kind === "edge" || target.kind === "part")) {
       return setNotice({ kind: "error", text: "Accept or discard the open proposal first: the viewport is showing it." });
     }
     // In the sketcher the ask sees the draft, and accepting updates the draft.
@@ -332,12 +335,22 @@ export function App() {
     const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
     const op = target.kind === "feature" ? askDoc.features.find((g) => g.id === target.id)?.op : undefined;
     const kind: PacketKind = target.kind === "feature" ? (op === "sketch" ? "sketch" : "feature") : target.kind;
-    ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, x, y });
+    ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, drawing, x, y });
+  };
+
+  /** A dropped drawing (PDF or image) opens the part-level ask with it attached. */
+  const openDrawing = async (file: File, x: number, y: number) => {
+    if (file.size > 20 * 2 ** 20) return setNotice({ kind: "error", text: `${file.name} is over 20 MB; send a smaller drawing.` });
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    openAsk({ kind: "part" }, x, y, undefined, { name: file.name, mediaType: file.type, data: btoa(bin) });
   };
   const openAskRef = useRef(openAsk);
   openAskRef.current = openAsk;
   const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
-    if (!target) return;
+    // Empty space: the whole part, the weakest scope.
+    if (!target) return openAskRef.current({ kind: "part" }, x, y);
     // Select what was right-clicked, so it stays outlined while the ask is open.
     setSelection(target.kind === "face" ? { faces: [target.index], edges: [], point: target.point } : { faces: [], edges: [target.index] });
     openAskRef.current({ kind: target.kind, index: target.index }, x, y);
@@ -411,7 +424,9 @@ export function App() {
           if (!e.dataTransfer.files.length) return;
           e.preventDefault();
           setDragging(false);
-          openFile(e.dataTransfer.files[0]);
+          const file = e.dataTransfer.files[0];
+          if (DRAWING_TYPES.includes(file.type)) void openDrawing(file, e.clientX, e.clientY);
+          else openFile(file);
         }}
       >
         <header className="topbar">
@@ -626,7 +641,8 @@ function Help() {
       <p>Select a feature in the tree to edit it. Ctrl+Z undoes any change.</p>
       <p>
         <strong>Right-click</strong> a feature, a failed rebuild, a face, an edge, a parameter, or (in the sketcher) an entity or constraint to ask
-        about it. The answer or proposed change is scoped to what you clicked.
+        about it. The answer or proposed change is scoped to what you clicked. Right-click empty space to ask about the whole part or describe a
+        new one, or drop a drawing (PDF or image) on the window.
       </p>
     </div>
   );
