@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent } from "../../ask/agent";
 import type { KernelPort } from "../../ask/kernel";
 import type { AskTarget, PacketKind } from "../../ask/packet";
-import type { Drawing, PartAskResult } from "../../ask/part";
+import type { Drawing, PartAskResult, Photo } from "../../ask/part";
 import type { RawDocument } from "../../doc/commands";
 import type { SketchFeature } from "../../doc/types";
 import { logAsk, updateAsk } from "./log";
@@ -25,6 +25,10 @@ export interface AskContext {
   sketch?: { id: string; apply(feature: SketchFeature): void };
   /** A dropped drawing, for a part-level ask. */
   drawing?: Drawing;
+  /** A dropped image, prepared as a photo too: the user picks which it is. */
+  photo?: Photo;
+  /** What a dropped image is read as. A PDF is always a drawing. */
+  readAs?: "drawing" | "photo";
   x: number;
   y: number;
 }
@@ -128,7 +132,7 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
       // The part-level prompt (intent schema, planner) loads on first use.
       const result: PartAskResult =
         ctx.target.kind === "part"
-          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, model, kernel, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
+          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
           : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, signal: controller.signal, onEvent });
       if (controller.signal.aborted) return;
       const recordId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -155,6 +159,7 @@ export function useAsk({ kernel, doc, replaceDoc }: Options) {
               },
             }
           : {}),
+        ...(ctx.photo ? { photo: { name: ctx.photo.name, sha256: ctx.photo.sha256, width: ctx.photo.width, height: ctx.photo.height } } : {}),
       });
       const done: Extract<AskState, { phase: "done" }> = { phase: "done", ctx, prompt: text, applyNow, result, recordId, preview: true, accepted: false };
       setState(done);

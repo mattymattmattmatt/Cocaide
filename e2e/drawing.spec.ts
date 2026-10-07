@@ -3,9 +3,8 @@
 // pixels, and the real SDK sends the pages; Playwright answers the API with a
 // scripted reading. The card, the review rules and the build are real.
 
-import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
-import { expectVolume, openApp, savedDocument, scriptModel, text, useKey } from "./helpers";
+import { expect, test } from "@playwright/test";
+import { dropFile, expectVolume, openApp, savedDocument, scriptModel, text, useKey } from "./helpers";
 
 const field = (value: number | null, evidence = String(value ?? ""), confidence = value === null ? 0 : 0.97) => ({
   value,
@@ -59,22 +58,6 @@ const bracketReading = JSON.stringify({
   },
 });
 
-/** Drops a fixture file on the viewport, as a user would. */
-async function drop(page: Page, file: string, type: string) {
-  const b64 = readFileSync(`examples/drawings/${file}`).toString("base64");
-  await page.evaluate(
-    ([b64, file, type]) => {
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const dt = new DataTransfer();
-      dt.items.add(new File([bytes], file, { type }));
-      const target = document.querySelector("[data-testid=viewport]")!;
-      const r = target.getBoundingClientRect();
-      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true, clientX: r.left + 60, clientY: r.top + 60 }));
-    },
-    [b64, file, type],
-  );
-}
-
 test.beforeEach(async ({ page }) => {
   const problems = await openApp(page);
   (page as unknown as { problems: string[] }).problems = problems;
@@ -88,7 +71,7 @@ test.afterEach(async ({ page }) => {
 
 test("a clean PDF of the bracket lands in the card with the right numbers, and builds after confirm", async ({ page }) => {
   const sent = await scriptModel(page, [[text(bracketReading)]]);
-  await drop(page, "bracket.pdf", "application/pdf");
+  await dropFile(page, "examples/drawings/bracket.pdf", "application/pdf");
   await expect(page.getByTestId("ask-drawing")).toHaveText("Drawing: bracket.pdf · 1 page at 200 dpi");
   await page.getByTestId("ask-submit").click();
 
@@ -128,7 +111,7 @@ test("a clean PDF of the bracket lands in the card with the right numbers, and b
 test("a blurry drawing leaves fields blank rather than inventing them", async ({ page }) => {
   // The scripted model claims a confident, complete reading anyway.
   const sent = await scriptModel(page, [[text(bracketReading)]]);
-  await drop(page, "bracket-blurry.png", "image/png");
+  await dropFile(page, "examples/drawings/bracket-blurry.png", "image/png");
   await expect(page.getByTestId("ask-drawing")).toContainText("looks too blurry to read");
   await page.getByTestId("ask-submit").click();
 
@@ -148,7 +131,7 @@ test("a blurry drawing leaves fields blank rather than inventing them", async ({
 
 test("the drawing opens full size from the card", async ({ page }) => {
   await scriptModel(page, [[text(bracketReading)]]);
-  await drop(page, "bracket-scan.png", "image/png");
+  await dropFile(page, "examples/drawings/bracket-scan.png", "image/png");
   await expect(page.getByTestId("ask-drawing")).toHaveText("Drawing: bracket-scan.png · scan");
   await page.getByTestId("ask-submit").click();
   await page.getByTestId("drawing-thumb").click();

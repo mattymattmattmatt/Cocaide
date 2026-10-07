@@ -23,6 +23,11 @@ A document:
 Every feature has "id" (letters, digits, _; unique) and "op", and may have "suppressed": true.
 Unknown fields are errors. Any numeric field may be "=expression" using + - * / ( ) and parameter names.
 
+A part estimated from a photo also has "photo": the image it was read from, its "scale" (two points on the photo
+and the real length between them, "confirmed" only when the user has checked it in the app) and "estimated" (the
+parameters measured on the photo; null marks a guess the photo doesn't show). Those sizes are estimates, never
+exact. exportSTEP and exportSTL refuse until the user confirms the scale and sets every guess; an agent cannot.
+
 ## sketch
 { "id": "sketch_1", "op": "sketch",
   "plane": { "type": "datum", "normal": [0,0,1], "origin": [0,0,0], "xDir": [1,0,0] (optional) },
@@ -81,6 +86,6 @@ deleteFeature(id), reorderFeature(id, index), suppressFeature(id, suppressed).
 setParameter(name, value), deleteParameter(name), setDimension(sketch, index, value) - index into the sketch's constraints.
 addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
-exportSTEP(file?), exportSTL(file?) - written to the output folder. screenshot(view | direction, highlight?) - one PNG.
+exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.
 undo, redo.
 `;

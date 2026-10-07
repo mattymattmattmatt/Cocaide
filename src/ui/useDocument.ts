@@ -78,7 +78,8 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     (cmd: Command): string | null => {
       const current = parseDocumentText(textRef.current);
       if (!current.ok) return `fix the JSON first: ${current.error}`;
-      const result = apply(current.value, cmd);
+      // Everything dispatched here is the person at the app.
+      const result = apply(current.value, cmd, { user: true });
       if (!result.ok) return result.error;
       commitTyping();
       const next = formatDocument(result.doc);

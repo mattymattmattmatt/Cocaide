@@ -9,9 +9,10 @@
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
 import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolveExpressions, type Parameters } from "./parameters";
+import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
-import type { Constraint, Feature, SketchEntity } from "./types";
+import type { Constraint, Feature, PhotoUnderlay, SketchEntity, Vec2 } from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
@@ -39,13 +40,21 @@ export type Command =
   /** Removes the entity and every constraint on it. */
   | { type: "deleteEntity"; sketch: string; id: string }
   | { type: "addConstraint"; sketch: string; constraint: Record<string, unknown> }
-  | { type: "deleteConstraint"; sketch: string; index: number };
+  | { type: "deleteConstraint"; sketch: string; index: number }
+  /**
+   * Moves the photo's scale points or changes the length between them, which
+   * rescales every size estimated from the photo. `confirm` marks the scale
+   * confirmed; only the user can, in the app.
+   */
+  | { type: "setPhotoScale"; from?: Vec2; to?: Vec2; length?: number; what?: string; confirm?: boolean };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
 export interface ApplyOptions {
   /** When given, the command must fall inside it (see scope.ts). */
   writeScope?: WriteScope;
+  /** The person at the app made this edit, not an agent. Only they can confirm a photo's scale. */
+  user?: boolean;
 }
 
 export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): ApplyResult {
@@ -140,14 +149,10 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         return { ok: false, error: `setParameter: value must be a number (got ${JSON.stringify(cmd.value)})` };
       }
       doc.parameters = { ...documentParameters(doc), [cmd.name]: cmd.value };
-      const params = documentParameters(doc);
-      for (let i = 0; i < features.length; i++) {
-        const f = features[i];
-        if (!isObject(f) || f.op !== "sketch" || !parameterRefs(f).has(cmd.name)) continue;
-        const r = resolveSketch(f, params);
-        if (!r.ok) return { ok: false, error: `setParameter: ${cmd.name} = ${cmd.value}: ${r.error}` };
-        features[i] = r.feature;
-      }
+      const problem = resolveSketchesUsing(doc, [cmd.name]);
+      if (problem) return { ok: false, error: `setParameter: ${cmd.name} = ${cmd.value}: ${problem}` };
+      // A size the user sets is theirs, not an estimate from the photo.
+      forgetEstimate(doc, cmd.name);
       break;
     }
     case "deleteParameter": {
@@ -158,6 +163,53 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       delete params[cmd.name];
       if (Object.keys(params).length) doc.parameters = params;
       else delete doc.parameters;
+      forgetEstimate(doc, cmd.name);
+      break;
+    }
+    case "setPhotoScale": {
+      const photo = photoOf(doc);
+      if (!photo) return { ok: false, error: "setPhotoScale: this part has no photo" };
+      const scale = { ...photo.scale };
+      for (const k of ["from", "to"] as const) {
+        const v = cmd[k];
+        if (v === undefined) continue;
+        if (!Array.isArray(v) || v.length !== 2 || !v.every((x) => typeof x === "number" && Number.isFinite(x))) {
+          return { ok: false, error: `setPhotoScale: ${k} must be a pixel position [x, y] (got ${JSON.stringify(v)})` };
+        }
+        scale[k] = [v[0], v[1]];
+      }
+      if (cmd.length !== undefined) {
+        if (typeof cmd.length !== "number" || !Number.isFinite(cmd.length) || cmd.length <= 0) {
+          return { ok: false, error: `setPhotoScale: length must be a number of mm greater than 0 (got ${JSON.stringify(cmd.length)})` };
+        }
+        scale.length = cmd.length;
+      }
+      if (Math.hypot(scale.to[0] - scale.from[0], scale.to[1] - scale.from[1]) < 1) {
+        return { ok: false, error: "setPhotoScale: the two points must be at least a pixel apart" };
+      }
+      const moved = String(scale.from) !== String(photo.scale.from) || String(scale.to) !== String(photo.scale.to);
+      if (moved) {
+        delete scale.parameter; // the line no longer measures that size of the part
+        scale.what = "the line picked on the photo";
+      }
+      if (typeof cmd.what === "string" && cmd.what.trim()) scale.what = cmd.what.trim();
+      if (cmd.length !== undefined) scale.source = "typed";
+      if (moved || scale.length !== photo.scale.length) scale.confirmed = false;
+      if (cmd.confirm) {
+        if (!opts.user) return { ok: false, error: "setPhotoScale: only the user can confirm a photo's scale, in the app" };
+        if (scale.source === "guess") return { ok: false, error: "setPhotoScale: the length is a guess; type the real length to confirm it" };
+        scale.confirmed = true;
+      }
+      const next: PhotoUnderlay = { ...photo, scale };
+      doc.photo = next;
+      const values = rescaled(next, mmPerPixel(scale));
+      const params = documentParameters(doc);
+      const changed = Object.keys(values).filter((name) => params[name] !== values[name]);
+      if (changed.length) {
+        doc.parameters = { ...params, ...values };
+        const problem = resolveSketchesUsing(doc, changed);
+        if (problem) return { ok: false, error: `setPhotoScale: ${problem}` };
+      }
       break;
     }
     case "setDimension": {
@@ -201,6 +253,32 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
     return { ok: false, error: `${cmd.type} rejected: ${introduced.join("; ")}` };
   }
   return { ok: true, doc };
+}
+
+/** Re-solves the sketches that use any of these parameters. The error text, or null. */
+function resolveSketchesUsing(doc: RawDocument, names: string[]): string | null {
+  const params = documentParameters(doc);
+  for (let i = 0; i < doc.features.length; i++) {
+    const f = doc.features[i];
+    if (!isObject(f) || f.op !== "sketch") continue;
+    const refs = parameterRefs(f);
+    if (!names.some((n) => refs.has(n))) continue;
+    const r = resolveSketch(f, params);
+    if (!r.ok) return r.error;
+    doc.features[i] = r.feature;
+  }
+  return null;
+}
+
+/** The parameter is no longer an estimate from the photo, nor the photo's scale. */
+function forgetEstimate(doc: RawDocument, name: string): void {
+  const photo = photoOf(doc);
+  if (!photo || (!(name in photo.estimated) && photo.scale.parameter !== name)) return;
+  const estimated = { ...photo.estimated };
+  delete estimated[name];
+  const scale = { ...photo.scale };
+  if (scale.parameter === name) delete scale.parameter;
+  doc.photo = { ...photo, estimated, scale };
 }
 
 type SketchCommand = Extract<Command, { type: "addEntity" | "updateEntity" | "deleteEntity" | "addConstraint" | "deleteConstraint" }>;

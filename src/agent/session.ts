@@ -12,6 +12,7 @@ import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument } from "../doc/format";
 import { createHistory, record, redo, undo, canRedo, canUndo, type History } from "../doc/history";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
+import { exportRefusal, photoNote } from "../doc/photo";
 import type { Constraint, SketchEntity, Vec3 } from "../doc/types";
 import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
@@ -424,6 +425,8 @@ export class AgentSession {
   }
 
   private exportFile(tool: "exportSTEP" | "exportSTL", file: unknown): CallResult {
+    const refused = exportRefusal(this.doc);
+    if (refused) return this.fail(`${tool}: ${refused}`);
     const solid = this.built.solid;
     if (!solid || !this.built.ok) {
       const why = this.built.errors.length ? this.built.errors.join("; ") : "there is no solid yet";
@@ -432,7 +435,7 @@ export class AgentSession {
     const ext = tool === "exportSTEP" ? ".step" : ".stl";
     const name = typeof file === "string" && file.trim() ? basename(file.trim()) : `${safeName(this.built.name)}${ext}`;
     const path = join(this.outDir, name.endsWith(ext) ? name : `${name}${ext}`);
-    const bytes = tool === "exportSTEP" ? new TextEncoder().encode(exportSTEP(this.oc, solid, this.built.name)) : encodeSTL(tessellate(this.oc, solid), this.built.name);
+    const bytes = tool === "exportSTEP" ? new TextEncoder().encode(exportSTEP(this.oc, solid, this.built.name, photoNote(this.doc))) : encodeSTL(tessellate(this.oc, solid), this.built.name);
     mkdirSync(this.outDir, { recursive: true });
     writeFileSync(path, bytes);
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision } };

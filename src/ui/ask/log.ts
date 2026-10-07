@@ -22,6 +22,8 @@ export interface AskRecord {
   accepted?: { at: string; hash: string };
   /** A drawing the ask read: which, and how legible it measured. */
   drawing?: { name: string; pages: number; dpi: number | null; textLayer: boolean; legibility: number };
+  /** A photo the ask read: which, and its size in pixels. */
+  photo?: { name: string; sha256: string; width: number; height: number };
   /** Numbers the user gave in the confirmation card. */
   answers?: Record<string, unknown>;
   discarded?: { at: string; reason?: string };

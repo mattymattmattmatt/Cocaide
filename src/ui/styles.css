@@ -459,3 +459,35 @@ button.danger { color: var(--bad); }
 .drawing-thumb img { display: block; width: 200px; height: auto; border-radius: 6px; }
 .drawing-full { max-width: calc(100vw - 48px); max-height: calc(100vh - 48px); background: #fff; border-radius: 6px; cursor: zoom-out; box-shadow: 0 16px 48px rgb(0 0 0 / 0.4); }
 .ask-drawing .why, .intent-drawing .why { color: var(--accent-2); }
+
+/* photo underlay (Phase G) */
+.photo-bar {
+  position: absolute; top: 12px; right: 12px; z-index: 5; width: min(430px, calc(100% - 24px));
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; font-size: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--accent-2);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+}
+.photo-bar.confirmed { border-color: var(--ok); }
+.photo-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.photo-name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.photo-status { margin-left: auto; font-weight: 600; }
+.photo-status.warn { color: var(--accent-2); }
+.photo-status.ok { color: var(--ok); }
+.photo-bar input[inputmode] { width: 70px; height: 26px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+.photo-bar button { height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; }
+.photo-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.photo-bar button:disabled { opacity: 0.45; cursor: default; }
+.photo-bar .why { color: var(--accent-2); }
+.photo-opacity { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.photo-opacity input { width: 80px; }
+.viewport.picking-photo .viewport-canvas { cursor: crosshair; }
+.param-mark {
+  margin-left: 5px; padding: 0 4px; border-radius: 4px; font-size: 10px; font-family: inherit;
+  background: color-mix(in srgb, var(--accent-2) 16%, transparent); color: var(--accent-2);
+}
+.parameters li.guess .param-mark { background: var(--bad-bg); color: var(--bad); }
+.parameters li.scale .param-mark { background: var(--info-bg); color: var(--accent); }
+.parameters button.keep { color: var(--ok); }
+.ask-read-as { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.ask-read-as button { height: 24px; padding: 0 8px; font-size: 12px; }
+.ask-read-as button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }

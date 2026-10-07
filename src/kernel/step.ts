@@ -5,8 +5,8 @@ import { type OC, scoped } from "./oc";
 
 let counter = 0;
 
-/** Returns the STEP file text. Lengths are written in millimetres. */
-export function exportSTEP(oc: OC, shape: TopoDS_Shape, name: string): string {
+/** Returns the STEP file text. Lengths are written in millimetres. `description` goes in the header. */
+export function exportSTEP(oc: OC, shape: TopoDS_Shape, name: string, description?: string | null): string {
   const path = `/cocaide-export-${++counter}.step`;
   const productName = stepSafe(name);
   return scoped((s) => {
@@ -24,6 +24,7 @@ export function exportSTEP(oc: OC, shape: TopoDS_Shape, name: string): string {
     // OCCT suffixes the product with a per-session counter (" 1", " 2", ...); keep the name exact.
     text = text.replace(new RegExp(`'${escapeRegExp(productName)} \\d+'`, "g"), `'${productName}'`);
     text = text.replace("FILE_NAME('Open CASCADE Shape Model'", `FILE_NAME('${productName}.step'`);
+    if (description) text = text.replace(/FILE_DESCRIPTION\(\('[^']*'\)/, () => `FILE_DESCRIPTION(('${stepString(description)}')`);
     return text;
   });
 }
@@ -51,6 +52,11 @@ export function importSTEP(oc: OC, data: string | Uint8Array): TopoDS_Shape {
 function stepSafe(name: string): string {
   const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/'/g, "_").trim();
   return ascii || "cocaide-part";
+}
+
+/** Text for a STEP string: plain ASCII, a quote doubled. */
+function stepString(s: string): string {
+  return s.replace(/[^\x20-\x7e]/g, "_").replace(/'/g, "''");
 }
 
 function escapeRegExp(s: string): string {

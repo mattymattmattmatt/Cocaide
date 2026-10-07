@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { parseDocumentText } from "../src/doc/format";
+import { exportRefusal, photoNote } from "../src/doc/photo";
 import { exportSTEP, loadOC, rebuild } from "../src/kernel";
 
 async function main() {
@@ -33,8 +34,14 @@ async function main() {
         console.error("not exported: fix the rebuild errors first");
         process.exit(1);
       }
+      const refused = exportRefusal(parsed.value);
+      if (refused) {
+        console.log(JSON.stringify({ ...summary, exported: null }, null, 2));
+        console.error(refused);
+        process.exit(1);
+      }
       const target = out ?? `${basename(file).replace(/\.cocaide\.json$|\.json$/, "")}.step`;
-      writeFileSync(target, exportSTEP(oc, result.solid, result.name));
+      writeFileSync(target, exportSTEP(oc, result.solid, result.name, photoNote(parsed.value)));
       console.log(JSON.stringify({ ...summary, exported: target }, null, 2));
     }
     if (!result.ok) process.exit(1);

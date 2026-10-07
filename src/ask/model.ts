@@ -4,6 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { DrawingReading } from "../intent/drawing";
+import { PhotoReading } from "../intent/photo";
 import { Intent } from "../intent/schema";
 import { DEFAULT_MODEL, MODELS, type Effort } from "./models";
 
@@ -19,7 +20,7 @@ export interface IntentRequest {
   system: string;
   content: Anthropic.ContentBlockParam[];
   /** Which structured output: a prompt's intent (default) or a drawing's reading. */
-  schema?: "intent" | "drawing";
+  schema?: "intent" | "drawing" | "photo";
 }
 
 export interface AskModel {
@@ -79,7 +80,7 @@ export class AnthropicModel implements AskModel {
         max_tokens: 8000,
         system: req.system,
         messages: [{ role: "user", content: req.content }],
-        output_config: { format: zodOutputFormat(req.schema === "drawing" ? DrawingReading : Intent), ...(effort ? { effort: this.effort } : {}) },
+        output_config: { format: zodOutputFormat(req.schema === "drawing" ? DrawingReading : req.schema === "photo" ? PhotoReading : Intent), ...(effort ? { effort: this.effort } : {}) },
       },
       { signal },
     );

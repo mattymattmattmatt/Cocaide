@@ -21,7 +21,16 @@ export interface Expectation {
   holes: ExpectedHole[];
 }
 
-export type Plan = { ok: true; doc: RawDocument; expect: Expectation; notes: string[] } | { ok: false; error: string };
+export type Plan =
+  | {
+      ok: true;
+      doc: RawDocument;
+      expect: Expectation;
+      notes: string[];
+      /** Where each parameter's value came from in the intent: "width", "holes[0].diameter", "holes[0].points[1].x". */
+      paths: Record<string, string>;
+    }
+  | { ok: false; error: string };
 
 const TOP = { type: "planar", normal: [0, 0, 1], pick: "largest" };
 
@@ -29,6 +38,8 @@ const TOP = { type: "planar", normal: [0, 0, 1], pick: "largest" };
 export interface PlanSource {
   name?: string | null;
   source?: Record<string, string>;
+  /** Each hole position its own parameter (hole_1_x, hole_1_y), so it can be corrected or rescaled on its own. */
+  pointParams?: boolean;
 }
 
 export function planPart(intent: Intent, from: PlanSource = {}): Plan {
@@ -46,6 +57,11 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   };
 
   const params: Record<string, number> = {};
+  const paths: Record<string, string> = {};
+  const param = (name: string, value: number, path: string) => {
+    params[name] = value;
+    paths[name] = path;
+  };
   const features: Record<string, unknown>[] = [];
   const disc = intent.kind === "disc";
   let size: [number, number, number];
@@ -53,7 +69,8 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
 
   if (disc) {
     const d = mm(intent.diameter, "diameter");
-    Object.assign(params, { disc_d: d, part_t: t });
+    param("disc_d", d, "diameter");
+    param("part_t", t, "thickness");
     size = [d, d, t];
     features.push({
       id: "sketch_1",
@@ -68,7 +85,9 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   } else {
     const w = mm(intent.width, "width");
     const h = mm(intent.height, "height");
-    Object.assign(params, { plate_w: w, plate_h: h, part_t: t });
+    param("plate_w", w, "width");
+    param("plate_h", h, "height");
+    param("part_t", t, "thickness");
     size = [w, h, t];
     features.push({
       id: "sketch_1",
@@ -85,7 +104,7 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   features.push({ id: "ext_1", op: "extrude", sketch: "sketch_1", distance: "=part_t", direction: [0, 0, 1] });
 
   if (!disc && intent.cornerRadius.value !== null && intent.cornerRadius.value > 0) {
-    params.corner_r = mm(intent.cornerRadius, "corner radius");
+    param("corner_r", mm(intent.cornerRadius, "corner radius"), "cornerRadius");
     features.push({ id: "fillet_1", op: "fillet", edges: { type: "edge", kind: "line", direction: [0, 0, 1], pick: "all" }, radius: "=corner_r" });
   }
 
@@ -95,9 +114,9 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   intent.holes.forEach((g, gi) => {
     const p = gi === 0 ? "hole" : `hole${gi + 1}`;
     const d = mm(g.diameter, `hole diameter`);
-    params[`${p}_d`] = d;
+    param(`${p}_d`, d, `holes[${gi}].diameter`);
     const depth = g.depth.value !== null ? mm(g.depth, "hole depth") : null;
-    if (depth !== null) params[`${p}_depth`] = depth;
+    if (depth !== null) param(`${p}_depth`, depth, `holes[${gi}].depth`);
     const hole = (center: unknown[], _at: [number, number]) => {
       const id = `hole_${++holeN}`;
       features.push({ id, op: "hole", face: TOP, center, diameter: `=${p}_d`, depth: depth === null ? "through" : `=${p}_depth` });
@@ -113,7 +132,7 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
         break;
       case "corners": {
         const inset = mm(g.inset, "hole inset");
-        params[`${p}_inset`] = inset;
+        param(`${p}_inset`, inset, `holes[${gi}].inset`);
         const x = W / 2 - inset;
         const y = H / 2 - inset;
         const seed = hole([`=plate_w / 2 - ${p}_inset`, `=plate_h / 2 - ${p}_inset`], [x, y]);
@@ -142,8 +161,8 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
         const cols = g.columns.value!;
         const px = cols > 1 ? mm(g.pitchX, "grid pitch X") : 0;
         const py = rows > 1 ? mm(g.pitchY, "grid pitch Y") : 0;
-        if (cols > 1) params[`${p}_px`] = px;
-        if (rows > 1) params[`${p}_py`] = py;
+        if (cols > 1) param(`${p}_px`, px, `holes[${gi}].pitchX`);
+        if (rows > 1) param(`${p}_py`, py, `holes[${gi}].pitchY`);
         const x0 = (-(cols - 1) / 2) * px;
         const y0 = (-(rows - 1) / 2) * py;
         const seed = hole([cols > 1 ? `=-${p}_px * ${(cols - 1) / 2}` : 0, rows > 1 ? `=-${p}_py * ${(rows - 1) / 2}` : 0], [x0, y0]);
@@ -157,10 +176,16 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
         break;
       }
       case "points": {
-        for (const pt of g.points.value!) {
+        for (const [n, pt] of g.points.value!.entries()) {
           const x = mm({ ...g.diameter, value: pt.x }, "hole x");
           const y = mm({ ...g.diameter, value: pt.y }, "hole y");
-          if (disc) {
+          if (from.pointParams) {
+            const [px, py] = [`${p}_${n + 1}_x`, `${p}_${n + 1}_y`];
+            param(px, x, `holes[${gi}].points[${n}].x`);
+            param(py, y, `holes[${gi}].points[${n}].y`);
+            hole(disc ? [`=${px}`, `=${py}`] : [`=${px} - plate_w / 2`, `=${py} - plate_h / 2`], [x, y]);
+            expectAt([disc ? [x, y] : [x - W / 2, y - H / 2]]);
+          } else if (disc) {
             hole([x, y], [x, y]);
             expectAt([[x, y]]);
           } else {
@@ -173,7 +198,7 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
       }
       case "circle": {
         const bc = mm(g.circleDiameter, "hole circle diameter");
-        params[`${p}_circle`] = bc;
+        param(`${p}_circle`, bc, `holes[${gi}].circleDiameter`);
         const n = g.count.value!;
         const seed = hole([`=${p}_circle / 2`, 0], [bc / 2, 0]);
         if (n > 1) {
@@ -195,7 +220,7 @@ export function planPart(intent: Intent, from: PlanSource = {}): Plan {
   const doc: RawDocument = { version: 1, units: "mm", name, parameters: params, ...(from.source ? { source: from.source } : {}), features };
   const errors = allErrors(validateDocument(doc));
   if (errors.length) return { ok: false, error: `the plan does not validate: ${errors.join("; ")}` };
-  return { ok: true, doc, expect: { size, holes }, notes };
+  return { ok: true, doc, expect: { size, holes }, notes, paths };
 }
 
 function planError(g: HoleGroup): never {

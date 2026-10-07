@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, PARAMETER_NAME, parameterRefs } from "../doc/parameters";
+import { photoOf } from "../doc/photo";
 import { NumberInput } from "./fields";
 
 interface Props {
@@ -15,11 +16,18 @@ interface Props {
   onAsk?(target: AskTarget, x: number, y: number): void;
 }
 
+const MARK_TITLE = {
+  estimate: "Measured on the photo and scaled from its one known dimension. Set it, or keep it, to make it yours.",
+  guess: "The photo doesn't show this: a placeholder. Export waits until you set it.",
+  scale: "The photo's known dimension: the scale every estimate is measured from. Set it on the photo.",
+};
+
 export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   if (!doc) return null;
   const params = documentParameters(doc);
+  const photo = photoOf(doc);
   const usedBy = (p: string) => doc.features.filter((f) => parameterRefs(f).has(p)).map((f) => String(f.id));
   const run = (cmd: Command) => {
     const problem = dispatch(cmd);
@@ -45,9 +53,13 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
       <ul>
         {Object.entries(params).map(([p, v]) => {
           const users = usedBy(p);
+          // From a photo: an estimate (measured on it, scaled), a guess (it doesn't show), or the scale itself.
+          const px = photo?.estimated[p];
+          const mark = photo && px !== undefined ? (px === null ? "guess" : photo.scale.parameter === p ? "scale" : "estimate") : null;
           return (
             <li
               key={p}
+              className={mark ? `from-photo ${mark}` : undefined}
               data-testid={`param-${p}`}
               onContextMenu={(e) => {
                 if (!onAsk) return;
@@ -57,6 +69,11 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
             >
               <span className="param-name" title={users.length ? `used by ${users.join(", ")}` : "not used yet"}>
                 {p}
+                {mark && (
+                  <span className="param-mark" data-testid={`param-mark-${p}`} title={MARK_TITLE[mark]}>
+                    {mark === "estimate" ? "≈ photo" : mark}
+                  </span>
+                )}
               </span>
               <NumberInput
                 value={v}
@@ -67,15 +84,21 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
                   else onError("a parameter's value is a number, not an expression");
                 }}
               />
-              <button
-                className="icon"
-                aria-label={`Delete ${p}`}
-                disabled={users.length > 0}
-                title={users.length ? `used by ${users.join(", ")}` : "Delete"}
-                onClick={() => run({ type: "deleteParameter", name: p })}
-              >
-                ×
-              </button>
+              {mark ? (
+                <button className="icon keep" aria-label={`Keep ${p}`} title="Keep this value: it becomes yours, not the photo's" onClick={() => run({ type: "setParameter", name: p, value: v })}>
+                  ✓
+                </button>
+              ) : (
+                <button
+                  className="icon"
+                  aria-label={`Delete ${p}`}
+                  disabled={users.length > 0}
+                  title={users.length ? `used by ${users.join(", ")}` : "Delete"}
+                  onClick={() => run({ type: "deleteParameter", name: p })}
+                >
+                  ×
+                </button>
+              )}
             </li>
           );
         })}

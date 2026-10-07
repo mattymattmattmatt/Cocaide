@@ -19,6 +19,8 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState("");
   const [applyNow, setApplyNow] = useState(false);
+  /** A dropped image: read as a drawing or as a photo. */
+  const [readAs, setReadAs] = useState<"drawing" | "photo">("drawing");
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const key = s ? `${JSON.stringify(s.ctx.target)}@${s.ctx.x},${s.ctx.y}` : "";
 
@@ -26,6 +28,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
     if (s?.phase === "menu") {
       setDraft(s.draft);
       setApplyNow(false);
+      setReadAs(s.ctx.readAs ?? "drawing");
     }
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -68,7 +71,14 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const scope = scopeFor(ctx.doc, ctx.target);
   const model = MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model;
   const part = ctx.target.kind === "part";
-  const submit = (text: string) => ask.submit(ctx, text || (ctx.drawing ? "Read the part from this drawing." : ""), applyNow && !part);
+  const asPhoto = !!ctx.photo && readAs === "photo";
+  const dropped = !!ctx.drawing || !!ctx.photo;
+  const submit = (text: string) => {
+    // Only what the user chose goes with the ask: the drawing, or the photo.
+    const sent: typeof ctx = !dropped ? ctx : asPhoto ? { ...ctx, drawing: undefined, readAs } : { ...ctx, photo: undefined, readAs };
+    const fallback = asPhoto ? "Read the part from this photo." : ctx.drawing ? "Read the part from this drawing." : "";
+    ask.submit(sent, text || fallback, applyNow && !part);
+  };
 
   return (
     <div
@@ -91,14 +101,30 @@ export function AskPopover({ ask }: { ask: Ask }) {
 
       {s.phase === "menu" && (
         <>
-          {ctx.drawing && (
-            <div className="ask-drawing" data-testid="ask-drawing">
-              Drawing: <strong>{ctx.drawing.name}</strong>
-              {ctx.drawing.dpi
-                ? ` · ${ctx.drawing.pageCount} page${ctx.drawing.pageCount === 1 ? "" : "s"} at ${ctx.drawing.dpi} dpi`
-                : " · scan"}
-              {ctx.drawing.legibility.blurry && <span className="why"> · looks too blurry to read</span>}
+          {ctx.photo && (
+            <div className="ask-read-as" role="radiogroup" aria-label="Read the image as" data-testid="ask-read-as">
+              <span className="muted">Read it as</span>
+              {(["drawing", "photo"] as const).map((k) => (
+                <button key={k} role="radio" aria-checked={readAs === k} className={readAs === k ? "on" : ""} onClick={() => setReadAs(k)} data-testid={`ask-read-as-${k}`}>
+                  {k === "drawing" ? "a drawing" : "a photo"}
+                </button>
+              ))}
             </div>
+          )}
+          {asPhoto && ctx.photo ? (
+            <div className="ask-drawing" data-testid="ask-drawing">
+              Photo: <strong>{ctx.photo.name}</strong> · {ctx.photo.width} × {ctx.photo.height} px · sizes are estimated from one you know
+            </div>
+          ) : (
+            ctx.drawing && (
+              <div className="ask-drawing" data-testid="ask-drawing">
+                Drawing: <strong>{ctx.drawing.name}</strong>
+                {ctx.drawing.dpi
+                  ? ` · ${ctx.drawing.pageCount} page${ctx.drawing.pageCount === 1 ? "" : "s"} at ${ctx.drawing.dpi} dpi`
+                  : " · scan"}
+                {ctx.drawing.legibility.blurry && <span className="why"> · looks too blurry to read</span>}
+              </div>
+            )
           )}
           <form
             className="ask-form"
@@ -114,11 +140,13 @@ export function AskPopover({ ask }: { ask: Ask }) {
               value={draft}
               placeholder={
                 part
-                  ? ctx.drawing
-                    ? "Anything to add? (optional)"
-                    : ctx.doc.features.length
-                      ? "Describe a new part, or ask about this one…"
-                      : "Describe the part: “80 x 40 x 6 plate, four 6.6 holes 8 mm from corners”"
+                  ? asPhoto
+                    ? "One size you know: “the long edge is 80 mm” (optional)"
+                    : ctx.drawing
+                      ? "Anything to add? (optional)"
+                      : ctx.doc.features.length
+                        ? "Describe a new part, or ask about this one…"
+                        : "Describe the part: “80 x 40 x 6 plate, four 6.6 holes 8 mm from corners”"
                   : "Ask about it, or say what to change…"
               }
               data-testid="ask-input"
@@ -130,7 +158,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
                 }
               }}
             />
-            <button type="submit" className="primary" disabled={!draft.trim() && !ctx.drawing} data-testid="ask-submit">
+            <button type="submit" className="primary" disabled={!draft.trim() && !dropped} data-testid="ask-submit">
               Ask
             </button>
           </form>

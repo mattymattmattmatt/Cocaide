@@ -6,7 +6,8 @@ import { targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
 import { nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
-import type { DatumPlane, SketchEntity, SketchFeature, Vec3 } from "../doc/types";
+import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
+import type { DatumPlane, SketchEntity, SketchFeature, Vec2, Vec3 } from "../doc/types";
 import { facePlaneFrame, planeFrame, to2D } from "../geom/frame";
 import { dot3 } from "../geom/vec";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
@@ -15,16 +16,18 @@ import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog } from "./ask/AskSettingsDialog";
 import { useAsk } from "./ask/useAsk";
-import type { Drawing } from "../ask/part";
+import type { Drawing, Photo } from "../ask/part";
+import { loadPhoto, savePhoto } from "../photo/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree } from "./FeatureTree";
 import { ParametersContext, TextInput } from "./fields";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { ParametersPanel } from "./ParametersPanel";
+import { PhotoBar } from "./PhotoBar";
 import { PropertyPanel } from "./PropertyPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
-import { EMPTY_SELECTION, Viewport, type PickTarget, type Selection } from "./Viewport";
+import { EMPTY_SELECTION, Viewport, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = { bracket: bracketText, "mounting plate": plateText, flange: flangeText };
 const STORAGE_KEY = "cocaide.document.v1";
@@ -96,6 +99,61 @@ export function App() {
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
   const shown = useMemo(() => ask.previewDoc ?? (parsed.ok ? parsed.value : null), [ask.previewDoc, parsed]);
+
+  // The photo pinned under the part (the document's, or an open proposal's): its pixels live in this browser.
+  const shownPhoto = photoOf(shown);
+  const photos = useRef(new Map<string, Photo>());
+  const [photoImage, setPhotoImage] = useState<{ sha256: string; photo: Photo | null } | null>(null);
+  const [photoOpacity, setPhotoOpacity] = useState(0.7);
+  const [photoPick, setPhotoPick] = useState<{ from?: Vec2 } | null>(null);
+  const photoSha = shownPhoto?.sha256 ?? null;
+  useEffect(() => {
+    if (!photoSha) return;
+    let live = true;
+    const cached = photos.current.get(photoSha);
+    if (cached) setPhotoImage({ sha256: photoSha, photo: cached });
+    else void loadPhoto(photoSha).then((p) => live && setPhotoImage({ sha256: photoSha, photo: p }));
+    return () => {
+      live = false;
+    };
+  }, [photoSha]);
+  const photoShown = photoImage && photoImage.sha256 === photoSha ? photoImage.photo : null;
+  const underlay = useMemo<Underlay | null>(() => {
+    if (!shownPhoto || !photoShown) return null;
+    const { scale } = shownPhoto;
+    return {
+      url: `data:${photoShown.mediaType};base64,${photoShown.data}`,
+      width: shownPhoto.width,
+      height: shownPhoto.height,
+      origin: shownPhoto.origin,
+      mmPerPx: mmPerPixel(scale),
+      scale: { from: scale.from, to: scale.to, confirmed: scale.confirmed },
+      opacity: photoOpacity,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(shownPhoto), photoShown, photoOpacity]);
+  /** Picking the scale's two points on the photo. */
+  const onPhotoPoint = useCallback(
+    (px: Vec2) => {
+      const at: Vec2 = [Math.round(px[0] * 10) / 10, Math.round(px[1] * 10) / 10];
+      if (!photoPick?.from) return setPhotoPick({ from: at });
+      setPhotoPick(null);
+      const problem = d.dispatch({ type: "setPhotoScale", from: photoPick.from, to: at });
+      if (problem) setNotice({ kind: "error", text: problem });
+    },
+    [photoPick, d],
+  );
+  useEffect(() => {
+    if (!photoPick) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPhotoPick(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [photoPick]);
+  /** Keep a dropped photo for the underlay: this session, and this browser. */
+  const keepPhoto = (p: Photo) => {
+    photos.current.set(p.sha256, p);
+    void savePhoto(p);
+  };
 
   useEffect(() => {
     kernel.ready.then(
@@ -199,6 +257,9 @@ export function App() {
       setNotice({ kind: "error", text: `Not exported: ${parsed.error}` });
       return;
     }
+    // A part estimated from a photo waits for its scale (spec 5.3). The worker checks this too.
+    const refused = exportRefusal(parsed.value);
+    if (refused) return setNotice({ kind: "error", text: refused });
     const r = await kernel.exportStep(parsed.value);
     if (!r.ok) {
       const n = r.errors.length;
@@ -206,7 +267,10 @@ export function App() {
       return;
     }
     download(`${fileBase(r.name)}.step`, r.text, "model/step");
-    setNotice({ kind: "info", text: `Exported ${fileBase(r.name)}.step` });
+    setNotice({
+      kind: "info",
+      text: `Exported ${fileBase(r.name)}.step${photoOf(parsed.value) ? ". It was estimated from a photo: check every size against the part before making it." : ""}`,
+    });
   };
 
   // ------------------------------------------------------------ tools
@@ -318,7 +382,7 @@ export function App() {
 
   // ------------------------------------------------------------ right-click ask
 
-  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, drawing?: Drawing) => {
+  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, dropped?: { drawing: Drawing; photo?: Photo; readAs: "drawing" | "photo" }) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
     if (ask.previewDoc && (target.kind === "face" || target.kind === "edge" || target.kind === "part")) {
       return setNotice({ kind: "error", text: "Accept or discard the open proposal first: the viewport is showing it." });
@@ -335,21 +399,41 @@ export function App() {
     const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
     const op = target.kind === "feature" ? askDoc.features.find((g) => g.id === target.id)?.op : undefined;
     const kind: PacketKind = target.kind === "feature" ? (op === "sketch" ? "sketch" : "feature") : target.kind;
-    ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, drawing, x, y });
+    ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, ...dropped, x, y });
   };
 
-  /** A dropped drawing (PDF or image) opens the part-level ask with it attached. */
+  /**
+   * A dropped drawing (PDF or image) opens the part-level ask with it attached.
+   * An image may be a photo instead: it is prepared as both, with a guess the
+   * user can switch. The photo already pinned under the part, dropped again,
+   * just pins it again.
+   */
   const openDrawing = async (file: File, x: number, y: number) => {
     if (file.size > 20 * 2 ** 20) return setNotice({ kind: "error", text: `${file.name} is over 20 MB; send a smaller drawing.` });
     setNotice({ kind: "info", text: `Reading ${file.name}…` });
     try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let photo: Photo | undefined;
+      let readAs: "drawing" | "photo" = "drawing";
+      if (file.type !== "application/pdf") {
+        const { preparePhoto } = await import("../photo/prepare");
+        const prepared = await preparePhoto({ name: file.name, type: file.type, bytes });
+        photo = prepared.photo;
+        readAs = prepared.guess;
+        if (photo.sha256 === photoOf(doc)?.sha256) {
+          keepPhoto(photo);
+          setPhotoImage({ sha256: photo.sha256, photo });
+          return setNotice({ kind: "info", text: `Pinned ${file.name} under the part again.` });
+        }
+        keepPhoto(photo);
+      }
       // Rasterise at 200 dpi (pdf.js loads on first use), keep the text layer, measure legibility.
       const { prepareDrawing } = await import("../drawing/rasterize");
-      const drawing = await prepareDrawing({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) });
+      const drawing = await prepareDrawing({ name: file.name, type: file.type, bytes });
       setNotice(null);
-      openAskRef.current({ kind: "part" }, x, y, undefined, drawing);
+      openAskRef.current({ kind: "part" }, x, y, undefined, { drawing, photo, readAs });
     } catch (e) {
-      setNotice({ kind: "error", text: `Could not open ${file.name} as a drawing: ${(e as Error).message}` });
+      setNotice({ kind: "error", text: `Could not open ${file.name}: ${(e as Error).message}` });
     }
   };
   const openAskRef = useRef(openAsk);
@@ -587,11 +671,32 @@ export function App() {
           ) : (
             <>
               <section className="center">
-                <Viewport view={view} fitToken={fitToken} selection={selection} onPick={onPick} onContext={onContext} />
+                <Viewport
+                  view={view}
+                  fitToken={fitToken}
+                  selection={selection}
+                  onPick={onPick}
+                  onContext={onContext}
+                  underlay={underlay}
+                  onPhotoPoint={photoPick ? onPhotoPoint : null}
+                />
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
                   Previewing the proposal
                 </div>
+              )}
+              {!ask.previewDoc && shownPhoto && doc && (
+                <PhotoBar
+                  photo={shownPhoto}
+                  stored={!photoImage || photoImage.sha256 !== photoSha ? "loading" : photoShown ? "shown" : "missing"}
+                  picking={photoPick ? (photoPick.from ? "to" : "from") : null}
+                  opacity={photoOpacity}
+                  onOpacity={setPhotoOpacity}
+                  onPick={() => setPhotoPick({})}
+                  onCancelPick={() => setPhotoPick(null)}
+                  dispatch={d.dispatch}
+                  onError={(text) => setNotice({ kind: "error", text })}
+                />
               )}
               </section>
               <aside className="side right">
@@ -648,7 +753,7 @@ function Help() {
       <p>
         <strong>Right-click</strong> a feature, a failed rebuild, a face, an edge, a parameter, or (in the sketcher) an entity or constraint to ask
         about it. The answer or proposed change is scoped to what you clicked. Right-click empty space to ask about the whole part or describe a
-        new one, or drop a drawing (PDF or image) on the window.
+        new one, or drop a drawing (PDF or image) or a photo of a part on the window.
       </p>
     </div>
   );

@@ -10,13 +10,19 @@
 // A drawing (spec 5.2) goes rasterised pages -> structured reading ->
 // confirmation card, always: nothing is built until the user confirms the
 // numbers against the drawing.
+//
+// A photo (spec 5.3) goes reading in pixels -> sizes scaled from one known
+// dimension -> a proposal pinned over the photo. Every size is an estimate;
+// the part is not exported until the user confirms the scale on the photo.
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { RawDocument } from "../doc/commands";
 import type { PreparedDrawing } from "../drawing/rasterize";
 import { critique, type Critique } from "../intent/critic";
 import { answerDrawing, DrawingReading, reviewDrawing } from "../intent/drawing";
-import { planPart, type PlanSource } from "../intent/plan";
+import { PhotoReading, planPhoto } from "../intent/photo";
+import type { PreparedPhoto } from "../photo/prepare";
+import { planPart, type Plan } from "../intent/plan";
 import { answerIntent, reviewIntent, type Review } from "../intent/review";
 import { Intent } from "../intent/schema";
 import { round6 } from "../kernel/inspect";
@@ -28,10 +34,14 @@ import { classify } from "./prompt";
 /** A dropped drawing, rasterised at 200 dpi with its text layer and legibility (src/drawing/rasterize.ts). */
 export type Drawing = PreparedDrawing;
 
+/** A dropped photo, scaled to the model's image size (src/photo/prepare.ts). */
+export type Photo = PreparedPhoto;
+
 export interface PartAskRequest {
   doc: RawDocument;
   text: string;
   drawing?: Drawing;
+  photo?: Photo;
   model: AskModel;
   kernel: KernelPort;
   signal?: AbortSignal;
@@ -48,6 +58,8 @@ export interface PartAskResult extends AskResult {
   /** From a drawing: what was read from the sheet, and the views found. */
   reading?: DrawingReading;
   views?: string[];
+  /** From a photo: what was read, in its pixels. */
+  photoReading?: PhotoReading;
 }
 
 export const INTENT_SYSTEM = `You read requests for mechanical parts in Cocaide, a parametric CAD program, into intent JSON. You do not design the part; a planner does that from your intent, and the user confirms anything you are not sure of.
@@ -94,9 +106,25 @@ part: the part as intent. Map the views to the part: the top view gives the outl
 - Holes: one group per callout ("4X Ø6.6 THRU" is one group, count 4). placement "points" with centres measured from the outline's lower-left corner (x right, y up) when the drawing dimensions hole positions from the edges; "corners" with inset when it dimensions them as an equal inset from both edges at each corner; "circle" for holes on a pitch circle; "center" for one central hole. depth: null value for THRU.
 - action "create". questions: anything the drawing leaves out that the part needs.`;
 
+export const PHOTO_SYSTEM = `You read photos of mechanical parts for Cocaide, a parametric CAD program, into a structured reading. A photo has no scale and is never a source of dimensions: report what you see in the photo's pixels, and code turns them into millimetres from one dimension the user knows.
+
+category: "prismatic" (flat faces and straight cuts), "turned" (round, made on a lathe), "freeform" (organic, sculpted curves), or "not-a-part". evidence: what in the photo says so.
+view: "face-on" when the camera looks straight at the face with the outline, else "oblique".
+kind: "plate" for a flat part with a rectangular outline, "disc" for a flat round one, "other" for anything else.
+outline: the box around that face in pixels (x right, y down), tight to its edges.
+holes: each hole through that face: centre x, y and diameter, in pixels.
+thickness: two points across the part's thickness, only where the photo shows an edge side-on; null when it doesn't (a photo from straight above doesn't). Never guess it.
+typedThickness: the thickness only if the user's note gives it, with the words they used; else value null.
+scale: the one known dimension.
+- If the user's note gives a size ("the long edge is 80 mm"), use it: source "typed", length and units as typed, and dimension "width" (left to right), "height" (top to bottom) or "diameter" when it is that size of the outline; else "none" with from and to on the two ends of what they measured.
+- Else, if a reference of known size is in the photo (a rule, a tape), use two marks on it: source "reference", the length between the marks as printed on it, dimension "none".
+- Else give your best guess of the part's longest side: source "guess", dimension "width" or "height".
+Never round or convert. notes: anything else that matters, briefly.`;
+
 /** Runs a part-level ask: answer, edit proposal, new-part proposal, or questions. */
 export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
   const base = { target: { kind: "part" } as const, doc: req.doc, model: req.model, kernel: req.kernel, signal: req.signal, onEvent: req.onEvent };
+  if (req.photo) return readPhoto(req, req.photo);
   if (req.drawing) return readDrawing(req, req.drawing);
   if (classify(req.text) === "explain") return runAsk({ ...base, text: req.text, mode: "explain" });
 
@@ -118,6 +146,36 @@ export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
 }
 
 /** A drawing: read the sheet, then the confirmation card. */
+/** A photo: read in pixels, scaled from one dimension, proposed over the photo. */
+async function readPhoto(req: PartAskRequest, photo: Photo): Promise<PartAskResult> {
+  let reading: PhotoReading;
+  try {
+    req.onEvent?.({ type: "thinking", turn: 1 });
+    const raw = await req.model.readIntent({ system: PHOTO_SYSTEM, content: photoContent(req, photo), schema: "photo" }, req.signal);
+    const parsed = PhotoReading.safeParse(raw);
+    if (!parsed.success) return failed(req, `The model's reading of the photo did not fit the schema: ${parsed.error.issues[0]?.message ?? "invalid"}`);
+    reading = parsed.data;
+  } catch (e) {
+    return failed(req, req.signal?.aborted ? "Cancelled." : `Could not read the photo: ${(e as Error).message}`);
+  }
+  const common: PartAskResult = { ...failed(req, ""), visual: true, turns: 1, photoReading: reading };
+  const p = planPhoto(reading, req.text, photo);
+  if (!p.ok) return { ...common, outcome: "refused", text: p.problems.join(" ") };
+  const built = await build(req, p.intent, { ...p.plan, notes: p.notes }, common, `the photo ${photo.name}`);
+  if (built.outcome !== "proposal") return built;
+  const s = p.photo.scale;
+  const from = s.source === "typed" ? "from your note" : s.source === "reference" ? "read off the photo" : "a guess";
+  const guessed = p.guesses.length
+    ? ` ${p.guesses.join(", ")} ${p.guesses.length === 1 ? "is a guess" : "are guesses"}: the photo doesn't show ${p.guesses.length === 1 ? "it" : "them"}.`
+    : "";
+  built.text = [
+    built.text,
+    `Scale: ${s.what} = ${s.length} mm (${from}); every other size is measured on the photo and scaled from it.${guessed}`,
+    `Export stays off until you confirm the scale on the photo${p.guesses.length ? " and set the guesses" : ""}. It is an estimate, not a part ready to make.`,
+  ].join(" ");
+  return built;
+}
+
 async function readDrawing(req: PartAskRequest, drawing: Drawing): Promise<PartAskResult> {
   let reading: DrawingReading;
   try {
@@ -156,7 +214,7 @@ async function fromDrawing(req: PartAskRequest, drawing: Drawing, reading: Drawi
     views: review.views,
   };
   if (userConfirmed && review.ready) {
-    return build(req, review.intent, { name: review.name, source: review.source }, common, `the drawing ${drawing.name}`);
+    return build(req, review.intent, planPart(review.intent, { name: review.name, source: review.source }), common, `the drawing ${drawing.name}`);
   }
   const read = review.rows.filter((r) => !r.blank && r.value !== null && r.source !== "placement" && r.source !== "entered").length;
   const n = review.blanks.length;
@@ -215,12 +273,11 @@ async function createFrom(req: PartAskRequest, intent: Intent, confirmed: Set<st
     return common;
   }
   if (review.intent.kind === "other") return buildOther(req, review, common);
-  return build(req, review.intent, {}, common, `the request "${req.text}"`);
+  return build(req, review.intent, planPart(review.intent), common, `the request "${req.text}"`);
 }
 
-/** Plan, rebuild, criticise, one correction pass, proposal. */
-async function build(req: PartAskRequest, intent: Intent, from: PlanSource, common: PartAskResult, what: string): Promise<PartAskResult> {
-  const plan = planPart(intent, from);
+/** Rebuild the plan, criticise, one correction pass, proposal. */
+async function build(req: PartAskRequest, intent: Intent, plan: Plan, common: PartAskResult, what: string): Promise<PartAskResult> {
   if (!plan.ok) return { ...common, outcome: "failed", text: `Could not plan the part: ${plan.error}` };
   let doc = plan.doc;
   let check = await req.kernel.check(doc);
@@ -250,8 +307,8 @@ async function build(req: PartAskRequest, intent: Intent, from: PlanSource, comm
 
   const proposal = replaceProposal(req.doc, doc, check.measurements?.volume ?? null, crit, notes);
   const m = check.measurements;
-  const made = describe(intent, m ? m.boundingBox!.size : null, m?.holeCount ?? 0);
-  const against = req.drawing ? "the drawing" : "the request";
+  const made = describe(intent, m ? m.boundingBox!.size : null, m?.holeCount ?? 0, !!req.photo);
+  const against = req.photo ? "what was read from the photo" : req.drawing ? "the drawing" : "the request";
   return {
     ...common,
     outcome: "proposal",
@@ -311,10 +368,10 @@ function replaceProposal(base: RawDocument, doc: RawDocument, volume: number | n
   };
 }
 
-function describe(intent: Intent, size: number[] | null, holes: number): string {
+function describe(intent: Intent, size: number[] | null, holes: number, estimated = false): string {
   const s = size ? size.map((v) => round6(v)).join(" × ") : "?";
   const shape = intent.kind === "disc" ? "disc" : "plate";
-  const article = /^(8|1[18](\D|$))/.test(s) ? "An" : "A";
+  const article = estimated ? "An estimated" : /^(8|1[18](\D|$))/.test(s) ? "An" : "A";
   return `${article} ${s} mm ${shape}${holes ? ` with ${holes} hole${holes === 1 ? "" : "s"}` : ""}${intent.name && intent.name !== shape ? ` ("${intent.name}")` : ""}.`;
 }
 
@@ -326,6 +383,19 @@ function intentContent(req: PartAskRequest): Anthropic.ContentBlockParam[] {
 }
 
 /** The pages at 200 dpi, the PDF's text layer, and the user's note last. */
+function photoContent(req: PartAskRequest, p: Photo): Anthropic.ContentBlockParam[] {
+  return [
+    { type: "image", source: { type: "base64", media_type: p.mediaType, data: p.data } },
+    {
+      type: "text",
+      text: [
+        `The photo: ${p.name}, ${p.width} × ${p.height} pixels. Give every position in this image's pixels: x from its left edge, y down from its top edge.`,
+        `\nThe user's note:\n${req.text.trim() || "(none)"}`,
+      ].join("\n"),
+    },
+  ];
+}
+
 function drawingContent(req: PartAskRequest, d: Drawing): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = d.pages.map((p) => ({ type: "image", source: { type: "base64", media_type: "image/png", data: p.png } }));
   const lines = [

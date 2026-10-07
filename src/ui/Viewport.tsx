@@ -4,7 +4,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import type { Vec3 } from "../doc/types";
+import type { Vec2, Vec3 } from "../doc/types";
 import { formatDirection } from "../geom/vec";
 import type { EdgeInfo, FaceInfo } from "../kernel";
 import type { RebuildView } from "../worker/protocol";
@@ -23,6 +23,19 @@ export interface Selection {
 
 export const EMPTY_SELECTION: Selection = { faces: [], edges: [] };
 
+/** A photo pinned under the part on XY (spec 5.3): pixel x along +X, pixel y along -Y. Never geometry. */
+export interface Underlay {
+  /** The image, as a data URL. */
+  url: string;
+  width: number;
+  height: number;
+  /** The photo pixel at the model origin. */
+  origin: Vec2;
+  mmPerPx: number;
+  scale: { from: Vec2; to: Vec2; confirmed: boolean };
+  opacity: number;
+}
+
 interface Props {
   view: RebuildView | null;
   /** Bump to re-frame the camera on the current model. */
@@ -32,12 +45,17 @@ interface Props {
   onPick(target: PickTarget | null, additive: boolean): void;
   /** A right-click (press and release without dragging): what is under the cursor, and where. */
   onContext?(target: PickTarget | null, clientX: number, clientY: number): void;
+  underlay?: Underlay | null;
+  /** While set, a click on the photo reports the pixel clicked instead of picking the part. */
+  onPhotoPoint?: ((px: Vec2) => void) | null;
 }
 
 const SKETCH_OPACITY = 0.55;
 const PICK_PIXELS = 6;
 const SELECT_COLOR = 0xf28c28;
 const HOVER_COLOR = 0x2f7bff;
+const SCALE_COLOR = 0xe8590c;
+const SCALE_CONFIRMED_COLOR = 0x2b8a3e;
 
 interface Hover {
   x: number;
@@ -62,17 +80,24 @@ interface ViewportApi {
   setModel(view: RebuildView | null): void;
   setSelection(sel: Selection): void;
   setSketchesVisible(visible: boolean): void;
+  setUnderlay(u: Underlay | null): void;
+  /** See the photo through the part (while picking points on it). */
+  setGhost(ghost: boolean): void;
+  /** Frame the whole photo from above. */
+  fitPhoto(): void;
   fit(dir?: Vec3): void;
   dispose(): void;
 }
 
-export function Viewport({ view, fitToken, selection, onPick, onContext }: Props) {
+export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
   const pickRef = useRef(onPick);
   pickRef.current = onPick;
   const contextRef = useRef(onContext);
   contextRef.current = onContext;
+  const photoPointRef = useRef(onPhotoPoint);
+  photoPointRef.current = onPhotoPoint;
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const infoRef = useRef<{ faces: FaceInfo[]; edges: EdgeInfo[] }>({ faces: [], edges: [] });
@@ -107,7 +132,11 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
     const overlays = new THREE.Group();
     const helpers = new THREE.Group();
     const marks = new THREE.Group(); // hover and selection highlights
-    scene.add(helpers, model, overlays, marks);
+    const photoGroup = new THREE.Group(); // the pinned photo and its scale line
+    scene.add(helpers, photoGroup, model, overlays, marks);
+    let photoMesh: THREE.Mesh | null = null;
+    let photo: Underlay | null = null;
+    let photoTexture: { url: string; texture: THREE.Texture } | null = null;
 
     let mesh: THREE.Mesh | null = null;
     let edgeLines: THREE.LineSegments | null = null;
@@ -150,16 +179,17 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
       }
     };
 
-    const fatMaterials = [SELECT_COLOR, HOVER_COLOR].map(
+    const fatMaterials = [SELECT_COLOR, HOVER_COLOR, SCALE_COLOR, SCALE_CONFIRMED_COLOR].map(
       (color) => new LineMaterial({ color, linewidth: 3.5, depthTest: false, transparent: true }),
     );
-    const [selectEdgeMat, hoverEdgeMat] = fatMaterials;
+    const [selectEdgeMat, hoverEdgeMat, scaleMat, scaleConfirmedMat] = fatMaterials;
 
     const rebuildHelpers = () => {
       disposeGroup(helpers);
       const size = Math.max(10, 10 ** Math.ceil(Math.log10(radius * 2.5)));
       const grid = new THREE.GridHelper(size, 20, cssColor(el, "--grid-major", "#b7bcc6"), cssColor(el, "--grid-minor", "#d9dce2"));
       grid.rotation.x = Math.PI / 2; // into the XY plane
+      grid.visible = !photo; // the photo is the backdrop instead
       (grid.material as THREE.Material).transparent = true;
       (grid.material as THREE.Material).opacity = 0.7;
       helpers.add(grid);
@@ -169,16 +199,16 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
       helpers.add(axes);
     };
 
-    const fit = (dir?: Vec3) => {
+    const fit = (dir?: Vec3, on = { center, radius }) => {
       const d = new THREE.Vector3(...(dir ?? (camera.position.clone().sub(controls.target).toArray() as Vec3)));
       if (d.lengthSq() === 0) d.set(...VIEW_DIRS.iso);
       d.normalize();
-      const dist = (radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
-      camera.position.copy(center).addScaledVector(d, dist);
+      const dist = (on.radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
+      camera.position.copy(on.center).addScaledVector(d, dist);
       camera.near = dist / 100;
       camera.far = dist * 100;
       camera.updateProjectionMatrix();
-      controls.target.copy(center);
+      controls.target.copy(on.center);
       controls.update();
       render();
     };
@@ -297,6 +327,67 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
       redrawMarks();
     };
 
+    /** A photo pixel, in the model's XY plane. */
+    const photoToWorld = (u: Underlay, px: Vec2, z = 0) => new THREE.Vector3((px[0] - u.origin[0]) * u.mmPerPx, -(px[1] - u.origin[1]) * u.mmPerPx, z);
+
+    const setUnderlay = (u: Underlay | null) => {
+      disposeGroup(photoGroup);
+      photoMesh = null;
+      photo = u;
+      if (!u) {
+        photoTexture?.texture.dispose();
+        photoTexture = null;
+        rebuildHelpers();
+        render();
+        return;
+      }
+      if (photoTexture?.url !== u.url) {
+        photoTexture?.texture.dispose();
+        const texture = new THREE.TextureLoader().load(u.url, render);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        photoTexture = { url: u.url, texture };
+      }
+      const w = u.width * u.mmPerPx;
+      const h = u.height * u.mmPerPx;
+      const z = -Math.max(0.05, radius * 0.002); // just under the part's bottom face
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ map: photoTexture.texture, transparent: true, opacity: u.opacity, depthWrite: false, side: THREE.DoubleSide }),
+      );
+      plane.position.copy(photoToWorld(u, [u.width / 2, u.height / 2], z));
+      plane.renderOrder = -1;
+      photoMesh = plane;
+      photoGroup.add(plane);
+      // The scale line, with a tick across each end.
+      const a = photoToWorld(u, u.scale.from);
+      const b = photoToWorld(u, u.scale.to);
+      const along = b.clone().sub(a).normalize();
+      const tick = new THREE.Vector3(-along.y, along.x, 0).multiplyScalar(14 * u.mmPerPx);
+      const pts = [a, b, a.clone().add(tick), a.clone().sub(tick), b.clone().add(tick), b.clone().sub(tick)].flatMap((p) => p.toArray());
+      const g = new LineSegmentsGeometry();
+      g.setPositions(pts);
+      const line = new LineSegments2(g, u.scale.confirmed ? scaleConfirmedMat : scaleMat);
+      line.renderOrder = 6;
+      photoGroup.add(line);
+      if (!mesh) {
+        center = photoToWorld(u, [u.width / 2, u.height / 2]);
+        radius = Math.max(w, h) / 2;
+      }
+      rebuildHelpers();
+      render();
+    };
+
+    /** The photo pixel under the cursor, if the cursor is over the photo. */
+    const photoPixelAt = (clientX: number, clientY: number): Vec2 | null => {
+      if (!photoMesh || !photo) return null;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObject(photoMesh, false)[0];
+      if (!hit?.uv) return null;
+      return [hit.uv.x * photo.width, (1 - hit.uv.y) * photo.height];
+    };
+
     // Picking: the nearest edge within a few pixels wins over the face under the cursor.
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -323,7 +414,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
 
     const sameTarget = (a: PickTarget | null, b: PickTarget | null) => a?.kind === b?.kind && a?.index === b?.index;
     const onMove = (e: PointerEvent) => {
-      if (e.buttons !== 0) return;
+      if (e.buttons !== 0 || photoPointRef.current) return;
       const target = pickAt(e.clientX, e.clientY);
       if (!sameTarget(target, hovered)) {
         hovered = target;
@@ -348,6 +439,11 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
       if (moved > 4) return;
+      if (e.button === 0 && photoPointRef.current) {
+        const px = photoPixelAt(e.clientX, e.clientY);
+        if (px) photoPointRef.current(px);
+        return;
+      }
       if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
       else pickRef.current(pickAt(e.clientX, e.clientY), e.shiftKey || e.ctrlKey || e.metaKey);
     };
@@ -365,6 +461,13 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
           const rect = canvas.getBoundingClientRect();
           return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
         },
+        /** A pixel of the pinned photo -> client pixels. */
+        photoPoint(px: Vec2): [number, number] | null {
+          if (!photo) return null;
+          const v = photoToWorld(photo, px, -Math.max(0.05, radius * 0.002)).project(camera);
+          const rect = canvas.getBoundingClientRect();
+          return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
+        },
       };
     }
 
@@ -376,6 +479,23 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
       },
       setSketchesVisible(visible: boolean) {
         overlays.visible = visible;
+        render();
+      },
+      setUnderlay,
+      fitPhoto() {
+        if (!photo) return fit(VIEW_DIRS.top);
+        // Half the view's height that shows the whole photo across and down.
+        const half = (Math.max(photo.height, photo.width / camera.aspect) * photo.mmPerPx) / 2;
+        fit(VIEW_DIRS.top, { center: photoToWorld(photo, [photo.width / 2, photo.height / 2]), radius: half });
+      },
+      setGhost(ghost: boolean) {
+        if (mesh) {
+          const m = mesh.material as THREE.MeshStandardMaterial;
+          m.transparent = ghost;
+          m.opacity = ghost ? 0.25 : 1;
+          m.depthWrite = !ghost;
+          m.needsUpdate = true;
+        }
         render();
       },
       fit,
@@ -390,6 +510,8 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
         disposeGroup(overlays);
         disposeGroup(helpers);
         disposeGroup(marks);
+        disposeGroup(photoGroup);
+        photoTexture?.texture.dispose();
         fatMaterials.forEach((m) => m.dispose());
         renderer.dispose();
         renderer.domElement.remove();
@@ -417,8 +539,18 @@ export function Viewport({ view, fitToken, selection, onPick, onContext }: Props
     api.current?.setSketchesVisible(showSketches);
   }, [showSketches]);
 
+  useEffect(() => {
+    api.current?.setUnderlay(underlay);
+  }, [underlay, view]);
+
+  const picking = !!onPhotoPoint;
+  useEffect(() => {
+    api.current?.setGhost(picking);
+    if (picking) api.current?.fitPhoto(); // points on the photo are placed from straight above
+  }, [picking, view]);
+
   return (
-    <div className="viewport">
+    <div className={`viewport${picking ? " picking-photo" : ""}`}>
       <div ref={host} className="viewport-canvas" data-testid="viewport" />
       <div className="view-buttons" role="toolbar" aria-label="Views">
         {(Object.keys(VIEW_DIRS) as ViewName[]).map((name) => (

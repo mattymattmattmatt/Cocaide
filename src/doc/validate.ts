@@ -9,6 +9,9 @@ import {
   EDGE_PICKS,
   FEATURE_OPS,
   PATTERNABLE_OPS,
+  PHOTO_KEYS,
+  PHOTO_SCALE_KEYS,
+  PHOTO_SCALE_SOURCES,
   PICKS,
   SOURCE_KEYS,
   type ChamferFeature,
@@ -79,7 +82,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "features"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "features"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -126,6 +129,7 @@ export function validateDocument(input: unknown): ValidationResult {
       }
     }
   }
+  if (input.photo !== undefined) checkPhoto(input.photo, result.parameters, header);
   if (!Array.isArray(input.features)) {
     header.fail("features", `must be an array (got ${describe(input.features)})`);
     result.headerErrors = header.errors;
@@ -731,6 +735,47 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
 }
 
 // ------------------------------------------------------------- utilities
+
+/** The photo underlay: its pixels, its scale, and which parameters are estimates. */
+function checkPhoto(p: unknown, parameters: Parameters, c: Checker): void {
+  if (!isObject(p)) {
+    c.fail("photo", `must be an object (got ${describe(p)})`);
+    return;
+  }
+  c.keys(p, "photo", [...PHOTO_KEYS]);
+  for (const k of ["image", "sha256"] as const) {
+    if (typeof p[k] !== "string" || p[k] === "") c.fail(`photo.${k}`, `must be a non-empty string (got ${describe(p[k])})`);
+  }
+  c.num(p, "width", "photo", { positive: true });
+  c.num(p, "height", "photo", { positive: true });
+  c.vec2(p, "origin", "photo");
+  const s = p.scale;
+  if (!isObject(s)) {
+    c.fail("photo.scale", `must be an object (got ${describe(s)})`);
+  } else {
+    c.keys(s, "photo.scale", [...PHOTO_SCALE_KEYS]);
+    const from = c.vec2(s, "from", "photo.scale");
+    const to = c.vec2(s, "to", "photo.scale");
+    if (from && to && Math.hypot(to[0] - from[0], to[1] - from[1]) < 1) c.fail("photo.scale", "the two points must be at least a pixel apart");
+    c.num(s, "length", "photo.scale", { positive: true });
+    if (typeof s.what !== "string") c.fail("photo.scale.what", `must be a string (got ${describe(s.what)})`);
+    if (!PHOTO_SCALE_SOURCES.includes(s.source as never)) c.fail("photo.scale.source", `must be one of ${PHOTO_SCALE_SOURCES.join(", ")} (got ${describe(s.source)})`);
+    if (s.parameter !== undefined && !(typeof s.parameter === "string" && s.parameter in parameters)) {
+      c.fail("photo.scale.parameter", `must name a parameter (got ${describe(s.parameter)})`);
+    }
+    if (typeof s.confirmed !== "boolean") c.fail("photo.scale.confirmed", `must be true or false (got ${describe(s.confirmed)})`);
+  }
+  if (!isObject(p.estimated)) {
+    c.fail("photo.estimated", `must be an object of parameter: pixels or null (got ${describe(p.estimated)})`);
+  } else {
+    for (const [k, v] of Object.entries(p.estimated)) {
+      if (!(k in parameters)) c.fail(`photo.estimated.${k}`, "is not a parameter");
+      else if (v !== null && !(typeof v === "number" && Number.isFinite(v))) {
+        c.fail(`photo.estimated.${k}`, `must be pixels on the photo, or null for a guess (got ${describe(v)})`);
+      }
+    }
+  }
+}
 
 export class Checker {
   readonly errors: string[] = [];

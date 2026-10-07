@@ -17,8 +17,59 @@ export interface CocaideDocument {
   material?: Material;
   /** Where the part came from, kept as notes (a drawing's title block). Stored, never simulated. */
   source?: DocumentSource;
+  /** A photo pinned under the part as a reference. Never geometry. */
+  photo?: PhotoUnderlay;
   features: Feature[];
 }
+
+/**
+ * A photo the part was estimated from (spec 5.3). The document keeps what the
+ * photo says about the part; the pixels stay in the browser that opened it,
+ * found by their SHA-256.
+ *
+ * A photo has no scale until the user gives one: two points on the photo and
+ * the real length between them. Every size measured on the photo is an
+ * estimate, scaled from that one dimension. Until the user confirms the scale,
+ * and sets every size the photo doesn't show, the part is not exported.
+ */
+export interface PhotoUnderlay {
+  /** The photo's file name. */
+  image: string;
+  sha256: string;
+  /** Pixel size of the photo as read: every pixel position below is in this image. */
+  width: number;
+  height: number;
+  /** The photo pixel at the model origin. The photo lies on XY: pixel x along +X, pixel y along -Y. */
+  origin: Vec2;
+  scale: PhotoScale;
+  /**
+   * Parameters that came from the photo. A number is the size (or offset) in
+   * photo pixels: an estimate, rescaled with the scale. null is a guess the
+   * photo doesn't show. A parameter the user sets is no longer listed.
+   */
+  estimated: Record<string, number | null>;
+}
+
+export interface PhotoScale {
+  /** Two points on the photo, in pixels. */
+  from: Vec2;
+  to: Vec2;
+  /** The real distance between them, mm. */
+  length: number;
+  /** What the points are on: "the plate's long edge", "the 0 and 100 marks on the rule". */
+  what: string;
+  /** Where the length came from: typed by the user, read off a reference in the photo, or a guess. */
+  source: PhotoScaleSource;
+  /** The parameter this length is, when it measures the part ("plate_w"). */
+  parameter?: string;
+  /** Set only by the user, in the app. A change to the points or the length clears it. */
+  confirmed: boolean;
+}
+
+export const PHOTO_SCALE_SOURCES = ["typed", "reference", "guess"] as const;
+export type PhotoScaleSource = (typeof PHOTO_SCALE_SOURCES)[number];
+export const PHOTO_KEYS = ["image", "sha256", "width", "height", "origin", "scale", "estimated"] as const;
+export const PHOTO_SCALE_KEYS = ["from", "to", "length", "what", "source", "parameter", "confirmed"] as const;
 
 export interface DocumentSource {
   /** The drawing file the part was built from. */

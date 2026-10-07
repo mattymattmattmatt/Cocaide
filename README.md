@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase F (drawing ingest) done.**
+**Status: Phase G (photo underlay) done: every phase in the plan is built.**
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -23,6 +23,10 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - Pages are rasterised at 200 dpi. A PDF's text layer goes with them, and how legible the pixels are is measured.
   - The model returns a structured reading: views, overall sizes, hole callouts, thickness, units, projection and title block, each with its evidence and confidence.
   - Every number lands in the confirmation card. A number not printed on the PDF, read from a blurry scan, or under 0.8 confidence is a blank. Nothing is built until the user confirms.
+- Phase G adds the photo underlay: drop a photo of a part, and it is pinned in the viewport under a proposed model.
+  - A photo has no scale. The model reports where the part's edges and holes are in the photo's pixels; code scales them from one dimension the user knows.
+  - Every size is marked as an estimate, and what the photo doesn't show (the thickness, from above) is a guess.
+  - STEP and STL export are refused until the user confirms the scale on the photo and sets every guess. An agent can't confirm it.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -31,9 +35,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 216 unit, kernel and agent tests, including the Phase A, C, D, E and F acceptance logic
-                       #   (+7 live-model Phase D/E/F tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 24 browser tests (Playwright, Chromium), including the Phase B, D, E and F acceptance suites
+npm test               # 226 unit, kernel and agent tests, including the Phase A, C, D, E, F and G acceptance logic
+                       #   (+9 live-model Phase D–G tests, run when ANTHROPIC_API_KEY is set)
+npm run test:e2e       # 27 browser tests (Playwright, Chromium), including the Phase B, D, E, F and G acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -61,6 +65,28 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 
 ## Acceptance
 
+### Phase G: photo underlay
+
+The fixture is a photo of the spec bracket from above, on a workbench with a steel rule beside it (`examples/photos`, made by `npx tsx scripts/make-photos.ts`). It is drawn so that every edge's pixel position is known: the plate spans 640 × 320 px, and the rule's 0 and 100 mm marks are 800 px apart. A second photo shows a freeform moulded part.
+
+| Check | Result |
+|---|---|
+| The system refuses to export STEP until the user has confirmed the scale dimension | Drop `bracket-photo.jpg` and type "the long edge is 80 mm". The app guesses the image is a photo, and the user can switch it to a drawing. The model reads the outline and the hole in pixels. Code scales them from the typed 80 mm to give 80 × 40, Ø6.6 at (70, 20), and builds the plate. The thickness is a guess (4 mm), because a photo from above doesn't show it. The proposal is previewed over the photo. Once accepted, the photo stays pinned under the part, and Parameters marks each size as the scale, "≈ photo" or a guess. **Export STEP** is refused, with the reasons: "its scale is not confirmed … and part_t is a guess". Setting the thickness to 6 still leaves export refused. The user then picks the rule's 0 and 100 marks on the photo and types 100. Every estimate rescales with the scale; the thickness, which the user set, does not. The part is 18,994.728 mm³, the spec bracket. **Confirm scale** turns the line green, and only then does STEP export. Its header says the part was estimated from a photo, scaled from one dimension the user confirmed. |
+| A freeform part is refused | `freeform-photo.jpg` is refused with "This looks freeform … Cocaide builds prismatic and turned parts; model this one by hand, with the photo for reference." Nothing is built. |
+
+These checks are covered at three levels:
+- **Browser** (`e2e/photo.spec.ts`): the photo is prepared and stored in the page, the real SDK sends it, and the API is answered by a script. The test clicks the rule's marks on the pinned photo and downloads the STEP. It also checks that the photo is found again after a reload, and that a browser without the photo shows which one to drop to pin it again.
+- **Node** (`tests/photo.test.ts`): the same logic with scripted readings, plus:
+  - a rule in the photo as the scale;
+  - a typed number that isn't in the note becoming a guess;
+  - a guessed scale that can't be confirmed as it is;
+  - a disc's holes placed from its centre;
+  - an agent refused the confirmation, even with `*` scope;
+  - the agent session refusing STEP and STL, then writing the header note.
+- **Live model** (`tests/phase-g-acceptance.test.ts`): runs both checks against Claude when `ANTHROPIC_API_KEY` is set. **No key was available where this was built, so the live-model tests for Phases D–G have not been run yet.**
+
+![The photo pinned under the proposed part: the scale bar, and each size marked as the scale, an estimate or a guess](docs/phase-g-photo.png)
+
 ### Phase F: drawing ingest
 
 The fixtures are a real dimensioned drawing of the spec bracket (`examples/drawings`, made by `npx tsx scripts/make-drawings.ts`): a vector PDF printed by Chromium, a clean 200 dpi scan, and a blurry scan. The drawing shows a top view and a front view, dimensions 80, 40, 6, 70 and 20, the callout "Ø6.6 THRU", and a title block: BRACKET, CD-0001, S275 STEEL, mm, third angle.
@@ -78,7 +104,7 @@ These checks are covered at three levels:
   - a clean scan with no text layer, read at the model's confidence;
   - the v1 limits: one part per drawing, plates and discs only;
   - an inch drawing, converted once.
-- **Live model** (`tests/phase-f-acceptance.test.ts`): runs both checks against Claude when `ANTHROPIC_API_KEY` is set. **No key was available where this was built, so the live-model tests for Phases D, E and F have not been run yet.**
+- **Live model** (`tests/phase-f-acceptance.test.ts`): runs both checks against Claude when `ANTHROPIC_API_KEY` is set (not yet run: see Phase G).
 
 ![The drawing's confirmation card: the page, the views found, and every number with the text it was read from](docs/phase-f-card.png)
 
@@ -219,7 +245,7 @@ Every ask is logged in the browser next to the revisions it produced:
 
 ## The part-level prompt
 
-Right-click empty space, or drop a drawing (PDF or image) on the window. This target is the whole part, the weakest scope, so the result is always a proposal; there is no "apply immediately" here (spec 6.2).
+Right-click empty space, or drop a drawing (PDF or image) or a photo on the window. This target is the whole part, the weakest scope, so the result is always a proposal; there is no "apply immediately" here (spec 6.2).
 - A question about the part is answered from a packet of the whole part: each feature in one line with its status, the parameters and the measurements. It gets no write tools.
 - A change to the existing part runs the ordinary ask with scope `*`.
 - A new part goes through intent (spec 5.1).
@@ -269,6 +295,27 @@ v1 limits:
 - No GD&T solver. Tolerances are not read into the part.
 - The projection is stored. v1's flat parts read the same in either projection, because only the arrangement of the views differs.
 - The material note is stored in the document's `source`, never simulated: mass still uses the document's `material` density.
+
+## Photo underlay
+
+Drop a photo of a part (JPEG, PNG, WebP, GIF). An image could be a drawing or a photo, so the ask offers both, with a guess made from the pixels: a drawing is mostly bright, colourless paper. Type one size you know, such as "the long edge is 80 mm", or leave it blank (spec 5.3).
+
+1. **Prepare** (`src/photo/prepare.ts`, in the browser). The photo is scaled to at most 1568 px on its long side. Every model in the picker reads that size without resizing it, so the pixel positions the model gives are the photo's own. The pixels are kept in this browser's IndexedDB under the file's SHA-256 (`src/photo/store.ts`). The document names the photo but never holds it.
+2. **Read** (`src/intent/photo.ts`, `PHOTO_SYSTEM` in `src/ask/part.ts`). Structured output, in pixels:
+   - prismatic, turned, freeform or not a part;
+   - face-on or oblique;
+   - the outline's box and each hole's centre and diameter;
+   - the thickness, only where an edge is seen side-on;
+   - the scale: the size the user typed, else two marks on a reference in the photo (a rule), else a guess at the long side.
+3. **Scale and plan** (code, not the model). Millimetres per pixel come from the one dimension. A typed length must be in the user's note, or it becomes a guess. Each size is rounded to 0.1 mm and becomes a parameter, hole positions included. The document's `photo.estimated` records each parameter's size in pixels, so the whole part can be rescaled. The thickness is a guess (a tenth of the short side) unless it is typed or shown. The planner, critic and correction pass are the Phase E ones.
+4. **Propose, pinned.** The proposal is previewed over the photo, which is pinned on XY at its scale. Accepted, the photo stays under the part as a reference, never as geometry. The photo bar holds the scale:
+   - type the real length, or **Pick on photo**: the part turns see-through and the view frames the whole photo from above, then two clicks set the line;
+   - changing the scale rescales every estimate, and leaves the sizes the user has set;
+   - **Confirm scale**, from the user only, marks it confirmed. A guessed length must be typed before it can be confirmed.
+5. **Correct in the tree.** Parameters marks each photo size as the scale, "≈ photo" or a guess. Setting a value, or keeping it with ✓, makes it the user's.
+6. **Export.** STEP and STL are refused until the scale is confirmed and no guesses are left, whatever asks: the app, the worker, the agent session or the CLI (`exportRefusal` in `src/doc/photo.ts`). Only the app can confirm the scale: `apply()` refuses a confirmation that isn't marked as the user's, even with `*` scope. A confirmed export still says in its STEP header that the part was estimated from a photo. The app never calls such a part ready to make.
+
+v1 limits: flat plates and discs, one part per photo, and the photo pinned on XY. A freeform part is refused. Any other shape gets a message to describe it or build it by hand. A photo taken at an angle is read, with a note that its sizes are rougher and it won't line up exactly.
 
 ## Agents (MCP)
 
@@ -333,6 +380,10 @@ File extension `.cocaide.json`. Units are millimetres, always. Unknown fields ar
   "material": { "name": "S275", "densityKgPerM3": 7850 },   // optional; default steel 7850
   "source": { "drawing": "bracket.pdf", "projection": "third-angle", "units": "mm",
               "drawingNumber": "CD-0001", "material": "S275 STEEL" },   // optional: the drawing it was read from
+  "photo": { "image": "bracket-photo.jpg", "sha256": "…", "width": 1400, "height": 1000, "origin": [620, 420],
+             "scale": { "from": [300, 420], "to": [940, 420], "length": 80, "what": "the plate's long edge",
+                        "source": "typed", "parameter": "plate_w", "confirmed": false },
+             "estimated": { "plate_w": 640, "plate_h": 320, "part_t": null } },   // optional: a pinned photo (pixels; null = a guess)
   "features": [ /* run in order */ ]
 }
 ```
@@ -410,21 +461,22 @@ When a parameter or dimension changes, the sketches it affects are re-solved. Fi
 ## Layout
 
 ```
-src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history   (no kernel)
+src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules   (no kernel)
 src/geom      plane frames, 2D profiles, constraint checks, the constraint solver     (no kernel)
 src/kernel    OCCT: operations, selectors, picking -> selector synthesis, measurements, mesh, STEP, rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
 src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt
-src/intent    intent JSON, the ask-if-missing review, the drawing reading and its review, the planner, the critic
+src/intent    intent JSON, the ask-if-missing review, the drawing and photo readings, the planner, the critic
 src/drawing   drawing ingest in the browser: pdf.js rasterising at 200 dpi, text layer, legibility
+src/photo     photos in the browser: preparing for the model, the drawing-or-photo guess, IndexedDB storage
 src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
-scripts       headless CLI, FreeCAD verification, log replay, the drawing fixtures (make-drawings.ts)
+scripts       headless CLI, FreeCAD verification, log replay, the drawing and photo fixtures (make-drawings.ts, make-photos.ts)
 examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet);
-              drawings/: the bracket as a PDF, a clean scan and a blurry scan
+              drawings/: the bracket as a PDF, a clean scan and a blurry scan; photos/: the bracket, and a freeform part
 tests         unit, kernel, agent, MCP and ask tests (Vitest, Node)
 e2e           browser tests (Playwright)
 ```

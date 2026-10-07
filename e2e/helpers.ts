@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import type { Vec3 } from "../src/doc/types";
 
@@ -50,6 +51,23 @@ export async function commit(page: Page, testId: string, value: string) {
   const input = page.getByTestId(testId);
   await input.fill(value);
   await input.press("Enter");
+}
+
+/** Drops a file on the viewport, as a user would. */
+export async function dropFile(page: Page, path: string, type: string) {
+  const b64 = readFileSync(path).toString("base64");
+  const name = path.split("/").pop()!;
+  await page.evaluate(
+    ([b64, name, type]) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer();
+      dt.items.add(new File([bytes], name, { type }));
+      const target = document.querySelector("[data-testid=viewport]")!;
+      const r = target.getBoundingClientRect();
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true, clientX: r.left + 60, clientY: r.top + 60 }));
+    },
+    [b64, name, type],
+  );
 }
 
 /** The working document the app keeps in local storage. */

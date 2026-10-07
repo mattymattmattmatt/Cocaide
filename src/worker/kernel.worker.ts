@@ -17,6 +17,7 @@ import {
   type RebuildResult,
 } from "../kernel";
 import { LocalKernel } from "../ask/kernel";
+import { exportRefusal, photoNote } from "../doc/photo";
 import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -79,13 +80,18 @@ async function handle(kernel: OC, req: KernelRequest) {
       const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
       post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);
     } else {
+      const refused = exportRefusal(req.doc);
+      if (refused) {
+        post({ id: req.id, type: "step", ok: false, errors: [refused] });
+        return;
+      }
       const result = rebuildCached(kernel, req.doc);
       if (!result.ok || !result.solid) {
         const errors = result.errors.length ? result.errors : ["document: nothing to export"];
         post({ id: req.id, type: "step", ok: false, errors });
         return;
       }
-      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportSTEP(kernel, result.solid, result.name) });
+      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportSTEP(kernel, result.solid, result.name, photoNote(req.doc)) });
     }
   } catch (e) {
     post({ id: req.id, type: "error", message: e instanceof Error ? e.message : String(e) });

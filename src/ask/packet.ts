@@ -7,6 +7,7 @@
 
 import { references, type RawDocument } from "../doc/commands";
 import { documentParameters, parameterRefs, resolveExpressions } from "../doc/parameters";
+import { photoGuesses, photoOf } from "../doc/photo";
 import { constraintEntities } from "../doc/sketch";
 import type { Constraint, SketchEntity } from "../doc/types";
 import { isObject } from "../doc/validate";
@@ -253,6 +254,14 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
 function partPacket(doc: RawDocument, check: CheckResult, label: string, writeScope: string[]): Packet {
   const status = new Map(check.features.map((s) => [s.id, s]));
   const params = documentParameters(doc);
+  // A part estimated from a photo: which sizes are the photo's, so an answer never calls them exact.
+  const photo = photoOf(doc);
+  const fromPhoto = photo && {
+    image: photo.image,
+    scale: `${photo.scale.what} = ${photo.scale.length} mm, ${photo.scale.confirmed ? "confirmed by the user" : "not confirmed: export is refused until the user confirms it"}`,
+    estimated: Object.keys(photo.estimated).filter((p) => photo.estimated[p] !== null),
+    guesses: photoGuesses(photo),
+  };
   return {
     target: { kind: "part", label },
     units: "mm",
@@ -260,6 +269,7 @@ function partPacket(doc: RawDocument, check: CheckResult, label: string, writeSc
     part: {
       name: doc.name,
       ...(Object.keys(params).length ? { parameters: params } : {}),
+      ...(fromPhoto ? { photo: fromPhoto } : {}),
       features: doc.features.map((f) => {
         const s = status.get(String(f.id));
         return { ...brief(f), ok: s?.ok ?? false, ...(s?.error ? { error: s.error } : {}), ...(s?.suppressed ? { suppressed: true } : {}) };

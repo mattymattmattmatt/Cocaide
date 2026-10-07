@@ -9,6 +9,7 @@
 //   "+"             add any new feature, or a new parameter
 //   "param:<name>"  change that parameter
 //   "name"          rename the document
+//   "photo"         move or rescale the photo's scale (never confirm it: only the user can)
 //   "*"             anything (the whole part)
 // A parameter change is also allowed when every feature that uses the
 // parameter is in scope.
@@ -80,6 +81,10 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
     case "setName":
       what = "setName";
       allowed = has("name");
+      break;
+    case "setPhotoScale":
+      what = "setPhotoScale";
+      allowed = has("photo");
       break;
     default:
       return "writeScope: unknown command";
