@@ -59,6 +59,8 @@ an edit to the other.
 
 ## Phase I — weldment profiles and the section library
 
+**Done.** See the README's Phase I acceptance.
+
 Sections are not typed in from tables: they are drawn, in the same sketcher as
 everything else, and the library grows as parts are made. In SolidWorks a
 profile is a separate file in a folder tree, set up in options, edited by

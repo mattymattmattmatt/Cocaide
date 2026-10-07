@@ -92,6 +92,7 @@ export function bodyFeatures(doc: RawDocument, name: string): string[] {
     if (f.op === "extrude" && (f.newBody ?? f.body ?? DEFAULT_BODY) === name) ids.add(id);
     else if ((f.op === "cut" || f.op === "hole") && only(f.bodies)) ids.add(id);
     else if (f.op === "combine" && f.target === name) ids.add(id);
+    else if (f.op === "member" && (f.newBody ?? f.id) === name) ids.add(id);
     else if ((f.op === "linearPattern" || f.op === "circularPattern") && ids.has(String(f.feature))) ids.add(id);
   }
   return [...ids];

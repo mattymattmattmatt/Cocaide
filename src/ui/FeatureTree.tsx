@@ -96,6 +96,12 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                       {String(f.newBody ?? f.body)}
                     </span>
                   )}
+                  {f.op === "member" && typeof f.size === "string" && <span className="feature-body">{f.size}</span>}
+                  {f.op === "sketch" && typeof (f.profile as { name?: unknown } | undefined)?.name === "string" && (
+                    <span className="feature-body weldment-tag" title="A weldment profile: it is in the section library">
+                      ⌗ {String((f.profile as { name: string }).name)}
+                    </span>
+                  )}
                 </button>
                 <span className="row-actions">
                   <button

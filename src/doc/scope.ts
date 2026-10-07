@@ -92,6 +92,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = `renameBody "${cmd.from}"`;
       allowed = has(`body:${cmd.from}`);
       break;
+    case "setProfile":
+      // A copy of a library profile adds nothing to the part until a member uses it.
+      what = `setProfile "${cmd.name}"`;
+      allowed = has("+");
+      break;
     default:
       return "writeScope: unknown command";
   }
@@ -143,6 +148,8 @@ function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteSc
     }
     case "combine":
       return inScope(f.target) && Array.isArray(f.tools) && f.tools.every(inScope);
+    case "member":
+      return inScope(f.newBody ?? f.id);
     case "linearPattern":
     case "circularPattern": {
       const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);

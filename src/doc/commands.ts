@@ -12,7 +12,7 @@ import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolv
 import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
-import { BODY_NAME, DEFAULT_BODY, type Constraint, type Feature, type PhotoUnderlay, type SketchEntity, type Vec2 } from "./types";
+import { BODY_NAME, DEFAULT_BODY, type Constraint, type Feature, type PhotoUnderlay, type ProfileDef, type SketchEntity, type Vec2 } from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
@@ -48,7 +48,9 @@ export type Command =
    */
   | { type: "setPhotoScale"; from?: Vec2; to?: Vec2; length?: number; what?: string; confirm?: boolean }
   /** Renames a body; every feature and selector that names it follows. */
-  | { type: "renameBody"; from: string; to: string };
+  | { type: "renameBody"; from: string; to: string }
+  /** Puts a weldment profile in the part's profiles (a copy from the library), or removes one nothing uses. */
+  | { type: "setProfile"; name: string; profile: ProfileDef | Record<string, unknown> | null };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
@@ -177,6 +179,20 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (problem) return { ok: false, error: `renameBody: ${problem}` };
       break;
     }
+    case "setProfile": {
+      const profiles = isObject(doc.profiles) ? { ...doc.profiles } : {};
+      if (cmd.profile === null) {
+        if (!(cmd.name in profiles)) return { ok: false, error: `setProfile: no profile "${cmd.name}" in the part` };
+        const users = features.filter((f) => isObject(f) && f.op === "member" && f.profile === cmd.name).map((f) => String(f.id));
+        if (users.length) return { ok: false, error: `setProfile: ${cmd.name} is used by ${users.join(", ")}` };
+        delete profiles[cmd.name];
+      } else {
+        profiles[cmd.name] = structuredClone(cmd.profile);
+      }
+      if (Object.keys(profiles).length) doc.profiles = profiles;
+      else delete doc.profiles;
+      break;
+    }
     case "setPhotoScale": {
       const photo = photoOf(doc);
       if (!photo) return { ok: false, error: "setPhotoScale: this part has no photo" };
@@ -274,7 +290,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
  */
 function renameBody(features: Record<string, unknown>[], from: string, to: string): string | null {
   // A pattern of the feature that starts the body makes copies named from_2, from_3: they follow.
-  const seeds = new Set(features.filter((f) => f.op === "extrude" && f.newBody === from).map((f) => f.id));
+  const seeds = new Set(features.filter((f) => (f.op === "extrude" && f.newBody === from) || (f.op === "member" && (f.newBody ?? f.id) === from)).map((f) => f.id));
   const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
   const derived = new RegExp(`^${from.replace(/[-]/g, "\\-")}_(\\d+)$`);
   const rename = (n: unknown) => (n === from ? to : patterned && typeof n === "string" && derived.test(n) ? n.replace(derived, `${to}_$1`) : n);
@@ -302,6 +318,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
         if (f.newBody !== undefined) f.newBody = rename(f.newBody);
       }
     }
+    if (f.op === "member" && (f.newBody ?? f.id) === from) f.newBody = to;
     if (Array.isArray(f.bodies)) f.bodies = f.bodies.map(rename);
     if (f.op === "combine") {
       f.target = rename(f.target);

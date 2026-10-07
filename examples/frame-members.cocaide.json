@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "members",
+  "profiles": {
+    "SHS": {
+      "name": "SHS",
+      "entities": [
+        { "id": "r1", "type": "rect", "center": [0, 0], "w": "=b", "h": "=b" },
+        { "id": "r2", "type": "rect", "center": [0, 0], "w": "=b - 2 * t", "h": "=b - 2 * t" }
+      ],
+      "constraints": [
+        { "type": "distanceX", "entity": "r1", "value": "=b" },
+        { "type": "distanceY", "entity": "r1", "value": "=b" },
+        { "type": "distanceX", "entity": "r2", "value": "=b - 2 * t" },
+        { "type": "distanceY", "entity": "r2", "value": "=b - 2 * t" },
+        { "type": "coincident", "points": ["r1.center", "origin"] },
+        { "type": "coincident", "points": ["r2.center", "origin"] }
+      ],
+      "parameters": { "b": 40, "t": 3 },
+      "sizes": [
+        { "designation": "SHS 40x40x3", "values": { "b": 40, "t": 3 } },
+        { "designation": "SHS 50x50x3", "values": { "b": 50, "t": 3 } }
+      ],
+      "anchor": "centroid",
+      "tags": ["hollow", "square"]
+    }
+  },
+  "features": [
+    { "id": "leg", "op": "member", "profile": "SHS", "size": "SHS 40x40x3", "from": [0, 0, 0], "to": [0, 0, 900] },
+    { "id": "rail", "op": "member", "profile": "SHS", "size": "SHS 50x50x3", "from": [100, 0, 0], "to": [700, 0, 0] }
+  ]
+}

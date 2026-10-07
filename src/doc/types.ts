@@ -19,8 +19,43 @@ export interface CocaideDocument {
   source?: DocumentSource;
   /** A photo pinned under the part as a reference. Never geometry. */
   photo?: PhotoUnderlay;
+  /** Weldment profiles the part uses, by name: its own copies, so it opens anywhere. */
+  profiles?: Record<string, ProfileDef>;
   features: Feature[];
 }
+
+// ------------------------------------------------------- weldment profiles
+
+/**
+ * A weldment profile (Phase I): a section drawn as a sketch, in its own plane
+ * (x right, y up, the origin at the sketch origin). Its dimensions may be
+ * expressions over its size parameters ("=b", "=b - 2 * t"), so one profile
+ * is a family of sizes.
+ */
+export interface ProfileDef {
+  /** The family: "SHS". */
+  name: string;
+  entities: SketchEntity[];
+  constraints?: Constraint[];
+  /** The size parameters, at the first size. */
+  parameters: Record<string, number>;
+  /** Every size, with its designation ("SHS 40x40x3") and parameter values. At least one. */
+  sizes: ProfileSize[];
+  /** What sits on a member's line: the section's centroid, or the sketch origin. */
+  anchor: "centroid" | "origin";
+  tags: string[];
+  /** A note, like a drawing's material note. It does not set the density. */
+  material?: string;
+  /** The library entry this copy came from. */
+  library?: { id: string; version: number };
+}
+
+export interface ProfileSize {
+  designation: string;
+  values: Record<string, number>;
+}
+
+export const PROFILE_KEYS = ["name", "entities", "constraints", "parameters", "sizes", "anchor", "tags", "material", "library"] as const;
 
 /**
  * A photo the part was estimated from (spec 5.3). The document keeps what the
@@ -98,7 +133,8 @@ export type Feature =
   | ChamferFeature
   | LinearPatternFeature
   | CircularPatternFeature
-  | CombineFeature;
+  | CombineFeature
+  | MemberFeature;
 export type FeatureOp = Feature["op"];
 export const FEATURE_OPS: readonly FeatureOp[] = [
   "sketch",
@@ -110,6 +146,7 @@ export const FEATURE_OPS: readonly FeatureOp[] = [
   "linearPattern",
   "circularPattern",
   "combine",
+  "member",
 ];
 
 // ----------------------------------------------------------------- bodies
@@ -148,6 +185,8 @@ export interface SketchFeature extends FeatureBase {
   plane: DatumPlane;
   entities: SketchEntity[];
   constraints?: Constraint[];
+  /** Drawn as a weldment profile: saved to the section library under this name. */
+  profile?: { name: string; library?: { id: string; version: number } };
 }
 
 interface EntityBase {
@@ -295,7 +334,7 @@ export interface ChamferFeature extends FeatureBase {
 // -------------------------------------------------------------- patterns
 
 /** Ops a pattern can repeat: the ones that add or remove one tool body. */
-export const PATTERNABLE_OPS = ["extrude", "cut", "hole"] as const;
+export const PATTERNABLE_OPS = ["extrude", "cut", "hole", "member"] as const;
 
 /**
  * Repeats one earlier extrude, cut or hole. `count` includes the original;
@@ -323,6 +362,25 @@ export interface CircularPatternFeature extends FeatureBase {
   axis: { origin: Vec3; direction: Vec3 };
   count: number;
   angle?: number;
+}
+
+// ----------------------------------------------------------------- member
+
+/**
+ * A straight structural member: a profile from the part's `profiles`, at one
+ * of its sizes, swept from `from` to `to`. It is a body of its own, named by
+ * `newBody` or else its id. The profile is upright: its y axis is as close to
+ * world +Z as the line allows (+Y for a vertical member), then turned by
+ * `rotation` degrees about the line.
+ */
+export interface MemberFeature extends FeatureBase {
+  op: "member";
+  profile: string;
+  size: string;
+  from: Vec3;
+  to: Vec3;
+  rotation?: number;
+  newBody?: string;
 }
 
 // ---------------------------------------------------------------- combine

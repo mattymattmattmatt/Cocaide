@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase H (multibody parts) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldments) and J (a profile library).
+**Status: Phase I (weldment profiles and the section library) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list) and K (the agent on weldments).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -32,6 +32,11 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - Every rebuild measures each body and reports every pair that overlaps, with the overlap volume.
   - STEP keeps the names: FreeCAD opens `base` and `upright`, not `Solid1` and `Solid2`.
   - Right-click a body to ask about it: the agent may change that body only, and the API enforces it.
+- Phase I adds weldment profiles and the section library. Sections are drawn, not typed in from tables, and the library grows as parts are made.
+  - Any sketch can be a weldment profile: tick **Weldment profile** in the sketcher and finish. The profile card opens in place, with no separate file or folder.
+  - The parameters the sketch's dimensions use (`=b`, `=b - 2 * t`) are its size parameters, so one sketch is a whole family of sizes. The card measures each size (area, kg/m, envelope) and suggests tags from the geometry.
+  - The **Sections** tab is the library, kept in this browser: search, favourites, export and import. **+ Member** on a size adds a straight member to the part, and each member is its own body.
+  - A part keeps its own copy of every profile it uses, with the library id and version. It opens anywhere, and updating it from the library is a choice you can undo.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -40,9 +45,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 242 unit, kernel and agent tests, including the Phase A, C, D, E, F, G and H acceptance logic
+npm test               # 258 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H and I acceptance logic
                        #   (+9 live-model Phase D–G tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 30 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G and H acceptance suites
+npm run test:e2e       # 33 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H and I acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -69,6 +74,31 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase I: weldment profiles and the section library
+
+The section is drawn in the browser, as a normal sketch: two rectangles centred on the origin, the outer one dimensioned `=b`, the inner one `=b - 2 * t`, with the part's parameters `b` = 40 and `t` = 3.
+
+| Check | Result |
+|---|---|
+| Tick "Weldment profile" and finish: the card finds `b` and `t`, shows 444 mm² and 3.49 kg/m, and suggests "hollow" and "square" | The card says "Size parameters: b = 40, t = 3 (from the sketch's dimensions)". The first size reads 444 mm² and 3.49 kg/m (steel, 7850 kg/m³). The tags `hollow`, `square` and `40x40` are suggested and ticked. Ix = Iy = 101,972 mm⁴ about the centroid. |
+| Add the size 50 × 50 × 3 and save: the profile is in the section library | The new row measures 564 mm² and 4.43 kg/m. The profile is re-solved at each size, so geometry drawn at 40 follows `=b` to 50. Saved, **Sections** shows SHS v1 with both sizes, and the sketch is marked as the profile (`"profile": { "name": "SHS", "library": { "id", "version": 1 } }`). Searching "hollow 50x50" finds it, and "channel" doesn't. |
+| In another part, a 900 mm member of SHS 40×40×3 and a 600 mm member of SHS 50×50×3: each is its own body with the right volume, and the members are listed with their lengths | **+ Member** puts a copy of the profile in the part and adds the member, as one undo step. Set the lengths to 900 and 600. `member_1` is 399,600 mm³ (444 × 900) and `member_2` is 338,400 mm³ (564 × 600), with no interference. The members list reads SHS 40×40×3, 900 mm, 1 off, 3.14 kg; and SHS 50×50×3, 600 mm, 1 off, 2.66 kg. |
+| Clear the library: the part still opens and rebuilds from its own copy | Delete SHS from **Sections** and reload the page. The part rebuilds to 738,000 mm³ from `profiles.SHS` in its own document. |
+| (Also) STEP keeps member names, and FreeCAD opens them | `examples/frame-members.cocaide.json` ("members (weldment)") exports `leg` and `rail`. FreeCAD 26.3 imports both by name, with the same volume (738,000 mm³), area and bounding box (`npm run verify:freecad`). |
+
+These checks are covered at two levels:
+- **Node** (`tests/weldment.test.ts`):
+  - section properties (an SHS, an angle's centroid, a round tube), the suggested tags, and re-solving a drawn profile at another size;
+  - profile and member validation, including a member of a broken profile, which points at that profile's errors;
+  - members as bodies: upright and centred, rotated, anchored on the sketch origin, patterned (`leg`, `leg_2`), renamed, and grouped like a cut list;
+  - the library: making a profile from a sketch, versions, search order, export and merge;
+  - a part's copies: kept while they have the size, brought up to date when a member needs a new size, and refused when an update would drop a size in use.
+- **Browser** (`e2e/weldment.spec.ts`): the whole acceptance flow above, the toolbar's **Member** (another like the last, undone with its copy in two steps), and editing a profile sketch, which keeps `=b` and saves version 2.
+
+![The profile card, opened by finishing a sketch ticked "Weldment profile"](docs/phase-i-profile-card.png)
+
+![Two legs and a rail from the section library, each its own body, listed as members](docs/phase-i-members.png)
 
 ### Phase H: multibody parts
 
@@ -225,6 +255,7 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 - In the tree, select a feature to edit it in the Properties panel. Each field commits on Enter or blur as one command. You can also suppress, move up or down, drag to reorder, and delete. Moves that break a reference are refused and the notice says why.
 - Ctrl+Z / Ctrl+Shift+Z undo and redo any change to the document. Inside a sketch they undo sketch edits. The Document tab is the same document as JSON.
 - **Parameters** (left panel) are named numbers. Type `=plate_t` or `=plate_t * 2 + 1` in any number field; the field shows what it evaluates to, and a bad expression is shown and not committed. Changing a parameter is one undo step, and sketches whose dimensions use it are re-solved. The sketcher works on numbers but keeps every expression whose value you did not change.
+- **Weldments.** A dimension in the sketcher can be typed as an expression too (`=b - 2 * t`), and it stays one. Tick **Weldment profile** and **Finish**: the profile card names the section, lists its sizes with their area and kg/m, and tags it, and **Save** puts it in the **Sections** tab. "Not now" keeps the sketch; its Properties have **Save as a weldment profile…** for later. In **Sections**, **+ Member** on a size adds a 1000 mm member along X beside the others. Set its ends, length or rotation in Properties. The toolbar's **Member** adds another like the selected one. The **Bodies** panel lists the members, with alike ones counted together, and a newer library version offers to update the part's copy.
 
 ## Right-click ask
 
@@ -433,6 +464,7 @@ Every feature has an `id` and may be `"suppressed": true` (kept, but skipped by 
 | `fillet` / `chamfer` | `edges` (one edge selector, or a list whose matches are combined), `radius` / `distance` |
 | `linearPattern` | `feature` (an earlier extrude, cut or hole), `direction`, `spacing`, `count` (including the original); optional `direction2`, `spacing2`, `count2` for a grid |
 | `circularPattern` | `feature`, `axis: { origin, direction }`, `count` (including the original), `angle?` (total sweep, default 360) |
+| `member` | `profile` (a name in the part's `profiles`), `size` (one of its designations), `from`, `to`, `rotation?` (degrees about the line), `newBody?` (default: the member's id) |
 
 A pattern repeats the seed feature's tool body. An instance that adds or removes no material is an error that names the instance (`instance 5 (offset [-80, 0, 0]) removes no material`).
 
@@ -448,6 +480,33 @@ A part is one or more named solids. SolidWorks has bodies too; Cocaide's rules a
 - **Measurements.** They list each body (volume, mass, size, holes) and `interference`: every pair that shares volume, and how much. Bodies that only touch don't count.
 - **STEP.** A part of several bodies is written as an assembly named after the part, with one solid per body, named. A part of one body is written exactly as before.
 - **Agents.** Right-click a body (in the Bodies panel) to ask about it. The write scope is the features that make it, plus `body:<name>`: new features that touch only that body. A cut that lists only it counts; a cut that reaches every body does not.
+
+### Weldment profiles and members
+
+A weldment profile is a sketch with size parameters. In a part it lives under `profiles`, a copy of a section-library entry:
+
+```jsonc
+"profiles": {
+  "SHS": {
+    "name": "SHS",
+    "entities": [ /* the sketch, as drawn: expressions use the profile's own parameters */ ],
+    "constraints": [ { "type": "distanceX", "entity": "r1", "value": "=b" }, /* … */ ],
+    "parameters": { "b": 40, "t": 3 },                       // the values it was drawn at
+    "sizes": [ { "designation": "SHS 40x40x3", "values": { "b": 40, "t": 3 } },
+               { "designation": "SHS 50x50x3", "values": { "b": 50, "t": 3 } } ],
+    "anchor": "centroid",                                     // or "origin": what sits on a member's line
+    "tags": ["hollow", "square", "40x40"],
+    "material": "S355",                                       // optional note; mass uses the part's density
+    "library": { "id": "…", "version": 1 }                    // optional: which library entry this is a copy of
+  }
+}
+```
+
+- **Sizes re-solve the sketch.** A size sets the parameters, and the profile's constraints are solved again, so geometry drawn as numbers follows its `=b` dimensions to the new size.
+- **Section properties** (`src/geom/section.ts`): the area is exact. The centroid, the envelope and Ix/Iy about the centroid are taken from the loops, sampled finely enough that arcs are within millionths of a millimetre. kg/m = area × density.
+- **A `member`** sweeps one size along a straight line, as its own body. It is upright: along a horizontal line the profile's y is +Z, and along a vertical line it is +Y. The frame is right-handed, so the profile reads as drawn from the `to` end. `rotation` turns it about the line. Measurements list each member's designation, length and mass.
+- **The sketch it came from** is marked with `"profile": { "name": "SHS", "library": { "id", "version" } }`, so editing it opens the card again and saves the next version.
+- **The section library** is IndexedDB in this browser (`src/weldment/store.ts`). It is not part of any document. Export writes `{ "cocaide": "sections", "version": 1, "profiles": [...] }`, and import keeps a profile already here unless the file has a later version of it.
 
 Sketch entities: `line {start, end}`, `circle {center, radius}`, `arc {center, start, end, clockwise?}` (counter-clockwise by default), `rect {center, w, h}`, `slot {center1, center2, width}`. Any entity can be `"construction": true`. Closed loops are found by chaining endpoints. A loop inside a loop is a hole, and a loop inside that is an island. Loops must not cross or touch.
 
@@ -497,6 +556,8 @@ Every operation is verified before it is accepted: the result must be a valid so
 Every edit goes through `apply(doc, command, { writeScope? })` (`src/doc/commands.ts`). The commands are:
 - `addFeature`, `updateFeature` (where `null` removes a field), `replaceFeature`, `deleteFeature`, `reorderFeature`, `suppressFeature`, `setName`;
 - `setParameter`, `deleteParameter`;
+- `renameBody`, which every feature and selector naming the body follows;
+- `setProfile`, which puts a copy of a profile in the part, replaces it, or removes it (refused while a member uses it);
 - `setDimension`, which changes a sketch constraint's value and re-solves the sketch;
 - `addEntity`, `updateEntity`, `deleteEntity`, `addConstraint`, `deleteConstraint`, inside one sketch, each followed by a re-solve.
 
@@ -506,7 +567,7 @@ When a parameter or dimension changes, the sketches it affects are re-solved. Fi
 
 ```
 src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules   (no kernel)
-src/geom      plane frames, 2D profiles, constraint checks, the constraint solver     (no kernel)
+src/geom      plane frames, 2D profiles, constraint checks, the constraint solver, section properties     (no kernel)
 src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis, measurements, interference, mesh, STEP (named bodies), rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
@@ -514,12 +575,15 @@ src/ask       the right-click ask: context packet and scope, prompt and tools, t
 src/intent    intent JSON, the ask-if-missing review, the drawing and photo readings, the planner, the critic
 src/drawing   drawing ingest in the browser: pdf.js rasterising at 200 dpi, text layer, legibility
 src/photo     photos in the browser: preparing for the model, the drawing-or-photo guess, IndexedDB storage
+src/weldment  the section library: profiles from sketches, versions, search, export and merge, part copies, IndexedDB storage
 src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
-src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover
+src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover,
+              the profile card and the Sections tab
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
 scripts       headless CLI, FreeCAD verification, log replay, the drawing and photo fixtures (make-drawings.ts, make-photos.ts)
-examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet), stand (two bodies);
+examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet), stand (two bodies),
+              frame-members (an SHS profile, a leg and a rail);
               drawings/: the bracket as a PDF, a clean scan and a blurry scan; photos/: the bracket, and a freeform part
 tests         unit, kernel, agent, MCP and ask tests (Vitest, Node)
 e2e           browser tests (Playwright)

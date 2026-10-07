@@ -20,13 +20,19 @@ export interface SketchSession {
   entities: SketchEntity[];
   constraints: Constraint[];
   suppressed?: boolean;
+  /** The sketch is a weldment profile (Phase I). */
+  profile?: SketchFeature["profile"];
 }
+
+/** A dimension typed as "=b": solved with its value, written back as the expression. */
+type Dimension = Constraint & { expr?: string };
 
 interface Props {
   session: SketchSession;
   /** Model edges projected onto the plane (2D segment pairs). */
   reference: Float32Array;
-  onFinish(feature: SketchFeature): void;
+  /** `weldment`: the weldment profile box is ticked; the profile card opens next. */
+  onFinish(feature: SketchFeature, weldment: boolean): void;
   onCancel(): void;
   /** Right-click on an entity or a constraint: ask about it, with the draft as it is now. */
   onAsk?(target: { kind: "entity"; entity: string } | { kind: "constraint"; index: number }, draft: SketchFeature, x: number, y: number): void;
@@ -60,6 +66,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [selection, setSelection] = useState<SketchItem[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [weldment, setWeldment] = useState(!!session.profile);
   const params = useContext(ParametersContext);
 
   const entities = live ?? draft.entities;
@@ -76,7 +83,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     op: "sketch",
     plane: session.plane,
     entities: draft.entities,
-    ...(draft.constraints.length ? { constraints: draft.constraints } : {}),
+    ...(draft.constraints.length ? { constraints: draft.constraints.map(numeric) } : {}),
     ...(session.suppressed ? { suppressed: true } : {}),
   });
   if (applyRef) {
@@ -171,9 +178,11 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
 
   const finish = () => {
     const f: SketchFeature = { id: session.id, op: "sketch", plane: session.plane, entities: draft.entities };
-    if (draft.constraints.length) f.constraints = draft.constraints;
+    // A dimension typed as an expression goes into the document as one, so a parameter keeps driving it.
+    if (draft.constraints.length) f.constraints = draft.constraints.map((c: Dimension) => (c.expr ? ({ ...numeric(c), value: c.expr } as unknown as Constraint) : numeric(c)));
     if (session.suppressed) f.suppressed = true;
-    onFinish(f);
+    if (weldment && session.profile) f.profile = session.profile;
+    onFinish(f, weldment);
   };
 
   // Keyboard: tools, delete, undo inside the sketch, Esc steps back out.
@@ -278,6 +287,10 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
           <div className={`dof ${dof === 0 ? "full" : ""}`} data-testid="sketch-dof">
             {dof === null ? "—" : dof === 0 ? "Fully defined" : `${dof} degree${dof === 1 ? "" : "s"} of freedom`}
           </div>
+          <label className="check weldment-check" title="A section for structural members: finishing opens the profile card, and it goes into the section library">
+            <input type="checkbox" checked={weldment} onChange={(e) => setWeldment(e.target.checked)} data-testid="sketch-weldment" />
+            Weldment profile
+          </label>
           <div className={`profile-status ${profile.ok ? "" : "bad"}`} data-testid="profile-status">
             {draft.entities.filter((e) => !e.construction).length === 0
               ? "No profile yet"
@@ -298,7 +311,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
           ) : (
             <div className="offers">
               {offers.map((o) => (
-                <Offer key={o.testId} offer={o} onAdd={(v) => addConstraint(o.make(v))} />
+                <Offer key={o.testId} offer={o} onAdd={(v, expr) => addConstraint(expr ? ({ ...o.make(v), expr } as unknown as Constraint) : o.make(v))} />
               ))}
             </div>
           )}
@@ -326,15 +339,15 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
                 <span className="constraint-label">{describeConstraint(k)}</span>
                 {"value" in k && (
                   <NumberInput
-                    value={k.value}
+                    value={(k as Dimension).expr ?? k.value}
                     min={0}
                     testId={`constraint-value-${i}`}
                     onCommit={(v) => {
-                      // The sketcher solves numbers; an expression is evaluated here (Finish keeps unchanged ones).
+                      // The sketcher solves numbers; an expression is kept beside its value and written back on Finish.
                       const value = typeof v === "number" ? v : evaluate(v, params);
                       if (typeof value !== "number" && !value.ok) return setMessage(value.error);
                       const n = typeof value === "number" ? value : value.value;
-                      setConstraints(draft.constraints.map((c, j) => (j === i ? ({ ...c, value: n } as Constraint) : c)));
+                      setConstraints(draft.constraints.map((c, j) => (j === i ? ({ ...numeric(c), value: n, ...(typeof v === "string" ? { expr: v } : {}) } as Constraint) : c)));
                     }}
                   />
                 )}
@@ -361,9 +374,25 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
   );
 }
 
-function Offer({ offer, onAdd }: { offer: ReturnType<typeof suggestions>[number]; onAdd(v: number): void }) {
-  const [value, setValue] = useState(offer.value ?? 0);
-  useEffect(() => setValue(offer.value ?? 0), [offer.value]);
+/** A suggested constraint. A valued one takes a number, or an expression ("=b - 2 * t") that a parameter keeps driving. */
+function Offer({ offer, onAdd }: { offer: ReturnType<typeof suggestions>[number]; onAdd(v: number, expr?: string): void }) {
+  const params = useContext(ParametersContext);
+  const [text, setText] = useState(String(offer.value ?? 0));
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => setText(String(offer.value ?? 0)), [offer.value]);
+  const add = () => {
+    const t = text.trim();
+    if (t.startsWith("=")) {
+      const r = evaluate(t, params);
+      if (!r.ok) return setProblem(r.error);
+      setProblem(null);
+      return onAdd(r.value, t);
+    }
+    const v = Number(t);
+    if (t === "" || !Number.isFinite(v)) return setProblem("a number, or =expression");
+    setProblem(null);
+    onAdd(v);
+  };
   if (offer.value === undefined) {
     return (
       <button className="offer" onClick={() => onAdd(0)} data-testid={offer.testId}>
@@ -375,18 +404,22 @@ function Offer({ offer, onAdd }: { offer: ReturnType<typeof suggestions>[number]
     <div className="offer valued">
       <span>{offer.label}</span>
       <input
-        type="number"
-        step="any"
-        value={value}
+        type="text"
+        inputMode="decimal"
+        value={text}
+        className={text.trim().startsWith("=") ? "expr" : undefined}
+        aria-invalid={problem ? true : undefined}
+        title={problem ?? "A number, or =expression over the parameters"}
         data-testid={`${offer.testId}-value`}
-        onChange={(e) => setValue(Number(e.target.value))}
+        onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") onAdd(value);
+          if (e.key === "Enter") add();
         }}
       />
-      <button onClick={() => onAdd(value)} data-testid={offer.testId}>
+      <button onClick={add} data-testid={offer.testId}>
         Add
       </button>
+      {problem && <span className="expr-error">{problem}</span>}
     </div>
   );
 }
@@ -397,8 +430,14 @@ function round(x: number): number {
 
 /** Identity of a constraint, ignoring its value; coincident and equal pairs in either order. */
 function constraintKey(k: Constraint): string {
-  const { value: _ignored, ...rest } = k as Constraint & { value?: number };
+  const { value: _ignored, expr: _expr, ...rest } = k as Dimension & { value?: number };
   if (k.type === "coincident") return `coincident:${[...k.points].sort().join("|")}`;
   if (k.type === "equal") return `equal:${[...k.entities].sort().join("|")}`;
   return JSON.stringify(rest);
+}
+
+/** A constraint as the solver and the document see it: its number, without the expression beside it. */
+function numeric(c: Dimension): Constraint {
+  const { expr: _expr, ...rest } = c;
+  return rest as Constraint;
 }

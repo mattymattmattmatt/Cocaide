@@ -123,7 +123,7 @@ button, select { font: inherit; color: inherit; }
 }
 .badge.ok { background: var(--ok); }
 .badge.failed { background: var(--bad); }
-.feature-op { font-weight: 600; }
+.feature-op { font-weight: 600; flex: none; }
 .feature-id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .feature-error {
   margin: 0 0 6px 32px; padding: 6px 8px; border-radius: 6px;
@@ -503,4 +503,58 @@ button.danger { color: var(--bad); }
 .bodies button.icon { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 13px; }
 .bodies .interference { font-size: 12px; color: var(--bad); background: var(--bad-bg); border-radius: 6px; padding: 4px 8px; margin-top: 4px; }
 .body-checks { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
-.feature-body { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-left: 6px; white-space: nowrap; }
+.feature-body { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Phase I: weldment profiles, the section library, members */
+.weldment-check { margin-top: 8px; font-weight: 600; }
+.feature-body.weldment-tag { color: var(--accent-2); }
+.modal input[type="radio"], .modal input[type="checkbox"] { width: auto; height: auto; margin: 0; }
+button.link { border: none; background: none; padding: 0; height: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
+button.link.danger { color: var(--bad); }
+.star { border: none; background: none; cursor: pointer; font-size: 18px; line-height: 1; color: var(--muted); padding: 2px 4px; }
+.star.on { color: var(--accent-2); }
+.tag-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.chip { border: 1px solid var(--border); background: var(--panel-2); border-radius: 999px; padding: 1px 8px; font-size: 12px; cursor: pointer; color: var(--muted); }
+.chip.on { border-color: var(--accent); color: var(--accent); background: var(--info-bg); }
+.profile-drawing { flex: none; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); stroke: var(--sketch); stroke-width: 1.5; }
+.profile-drawing.empty { width: 56px; height: 56px; }
+
+.modal.profile-card { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.profile-card-head { display: flex; align-items: center; justify-content: space-between; }
+.profile-card-top { display: flex; gap: 12px; align-items: flex-start; }
+.profile-card-top .profile-drawing.empty { width: 112px; height: 112px; }
+.profile-card-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.profile-card .field { grid-template-columns: 96px 1fr; }
+.profile-sizes { width: 100%; border-collapse: collapse; font-size: 13px; }
+.profile-sizes th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 2px 4px; }
+.profile-sizes td { padding: 2px 4px; }
+.profile-sizes td input { width: 100%; min-width: 48px; }
+.profile-sizes tr.shown td:first-child input { border-color: var(--accent); }
+.profile-sizes .num, .section-sizes .num, .members .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.profile-sizes button.icon { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 15px; }
+.profile-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
+.profile-row input[type="text"], .profile-row input:not([type]) { flex: 1; min-width: 160px; }
+
+.sections { display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.sections-head { display: flex; gap: 6px; }
+.sections-head input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); }
+.sections-head button, .section-sizes button { height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 12px; }
+.sections-head button:disabled, .section-sizes button:disabled { opacity: 0.45; cursor: default; }
+.section-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.section-entry { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.section-entry.highlight { border-color: var(--accent); box-shadow: 0 0 0 2px var(--info-bg); }
+.section-top { display: flex; gap: 10px; align-items: flex-start; }
+.section-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.section-sizes { width: 100%; border-collapse: collapse; font-size: 12px; }
+.section-sizes td { padding: 2px 4px; border-top: 1px solid var(--border); }
+.section-sizes button { height: 24px; padding: 0 8px; }
+.section-foot { display: flex; align-items: center; gap: 6px; }
+.section-foot .sep { flex: 1; }
+
+.bodies table.members { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bodies table.members th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 4px; }
+.bodies table.members th.num { text-align: right; }
+.bodies table.members td { padding: 2px 4px; border-top: 1px solid var(--border); cursor: pointer; }
+.bodies table.members tr:hover td { background: var(--panel-2); }
+.offer.valued input.expr { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.offer.valued .expr-error { grid-column: 1 / -1; }

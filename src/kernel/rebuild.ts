@@ -23,6 +23,7 @@ import {
   drillTool,
   extrudeTool,
   fuseInto,
+  memberTool,
   OpError,
   patternInstances,
   removeFrom,
@@ -90,7 +91,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       ok: errors.length === 0 && solid !== null,
       solid,
       bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
-      measurements: solid ? scoped((s) => measure(oc, s, solid, v.material, bodies)) : null,
+      measurements: solid ? withMembers(scoped((s) => measure(oc, s, solid, v.material, bodies))) : null,
       errors,
       features,
       sketches,
@@ -102,6 +103,19 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       },
     };
   };
+
+  /** The members that built, with their length and their body's mass. */
+  function withMembers(m: Measurements): Measurements {
+    for (const vf of v.features) {
+      const f = vf.feature;
+      if (f?.op !== "member" || f.suppressed || !features.find((x) => x.id === f.id)?.ok) continue;
+      const body = m.bodies.find((b) => b.name === (f.newBody ?? f.id));
+      if (!body) continue;
+      const length = Math.hypot(f.to[0] - f.from[0], f.to[1] - f.from[1], f.to[2] - f.from[2]);
+      m.members.push({ id: f.id, body: body.name, profile: f.profile, designation: f.size, length: Math.round(length * 1e6) / 1e6, massKg: body.massKg });
+    }
+    return m;
+  }
 
   if (v.headerErrors.length > 0) return result();
 
@@ -233,6 +247,18 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
           if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
           scoped((s) => commit(...repeat(s, raw, seed)));
+          break;
+        }
+        case "member": {
+          const def = v.profiles[raw.profile];
+          if (!def) throw new OpError(`no profile "${raw.profile}" in the part`);
+          const name = raw.newBody ?? raw.id;
+          if (bodies.has(name)) throw new OpError(`a body "${name}" already exists; a member is a body of its own`);
+          scoped((s) => {
+            const tool = memberTool(oc, s, raw, def);
+            commit(new Map([[name, tool]]));
+            tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name });
+          });
           break;
         }
         case "combine": {

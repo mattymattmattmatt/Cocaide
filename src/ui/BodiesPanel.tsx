@@ -1,8 +1,10 @@
 // The part's bodies (Phase H): each with its colour, volume and mass, and the
 // pairs that overlap. Hide a body to see past it; click it to select its
-// faces; right-click it to ask about that body alone.
+// faces; right-click it to ask about that body alone. Below them, the
+// members (Phase I): alike ones grouped, with their length and mass.
 
 import type { Measurements } from "../kernel";
+import type { MemberMeasurement } from "../kernel/measure";
 import type { BodyRange } from "../kernel/bodies";
 import { BODY_COLORS } from "./Viewport";
 
@@ -13,12 +15,13 @@ interface Props {
   onToggle(name: string): void;
   onSelect(body: BodyRange): void;
   onAsk?(name: string, x: number, y: number): void;
+  onSelectMember?(id: string): void;
 }
 
 const n = (x: number, digits = 3) => x.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: digits });
 
-export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelect, onAsk }: Props) {
-  if (!m || bodies.length < 2) return null;
+export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelect, onAsk, onSelectMember }: Props) {
+  if (!m || (bodies.length < 2 && !m.members.length)) return null;
   return (
     <section className="panel bodies" aria-label="Bodies" data-testid="bodies">
       <h2>Bodies</h2>
@@ -55,6 +58,45 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
           {c.bodies[0]} and {c.bodies[1]} overlap by {n(c.volume)} mm³
         </div>
       ))}
+      {m.members.length > 0 && (
+        <>
+          <h2>Members</h2>
+          <table className="members" data-testid="members">
+            <thead>
+              <tr>
+                <th>Size</th>
+                <th className="num">Length</th>
+                <th className="num">Qty</th>
+                <th className="num">kg</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupMembers(m.members).map((g) => (
+                <tr key={g.key} data-testid="member-row" title={g.ids.join(", ")} onClick={() => onSelectMember?.(g.ids[0])}>
+                  <td>{g.designation}</td>
+                  <td className="num">{n(g.length, 1)}</td>
+                  <td className="num">{g.ids.length}</td>
+                  <td className="num">{n(g.massKg, 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </section>
   );
+}
+
+/** Members of the same size and length (to 0.1 mm), together: what a cut list counts as one item. */
+export function groupMembers(members: MemberMeasurement[]): { key: string; designation: string; length: number; ids: string[]; massKg: number }[] {
+  const groups = new Map<string, { key: string; designation: string; length: number; ids: string[]; massKg: number }>();
+  for (const x of members) {
+    const length = Math.round(x.length * 10) / 10;
+    const key = `${x.profile}|${x.designation}|${length}`;
+    const g = groups.get(key) ?? { key, designation: x.designation, length, ids: [], massKg: 0 };
+    g.ids.push(x.id);
+    g.massKg += x.massKg;
+    groups.set(key, g);
+  }
+  return [...groups.values()];
 }

@@ -30,6 +30,9 @@ import {
   type HoleFeature,
   type LinearPatternFeature,
   type Material,
+  type MemberFeature,
+  PROFILE_KEYS,
+  type ProfileDef,
   type SketchEntity,
   type SketchFeature,
   type Vec2,
@@ -57,6 +60,8 @@ export interface ValidationResult {
   features: ValidatedFeature[];
   /** The body names the features make, in order of first use. */
   bodies: string[];
+  /** The weldment profiles that validated, by name. */
+  profiles: Record<string, ProfileDef>;
 }
 
 const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -81,14 +86,14 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [] };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], profiles: {} };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "features"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "profiles", "features"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -136,12 +141,22 @@ export function validateDocument(input: unknown): ValidationResult {
     }
   }
   if (input.photo !== undefined) checkPhoto(input.photo, result.parameters, header);
+  if (input.profiles !== undefined) {
+    if (!isObject(input.profiles)) header.fail("profiles", `must be an object of name: profile (got ${describe(input.profiles)})`);
+    else for (const [name, def] of Object.entries(input.profiles)) {
+      const p = validateProfile(def, `profiles.${name}`, header);
+      if (p && p.name !== name) header.fail(`profiles.${name}.name`, `must be "${name}", the name it is listed under (got ${describe(p.name)})`);
+      else if (p) result.profiles[name] = p;
+    }
+  }
   if (!Array.isArray(input.features)) {
     header.fail("features", `must be an array (got ${describe(input.features)})`);
     result.headerErrors = header.errors;
     return result;
   }
   result.headerErrors = header.errors;
+  /** Every profile the part lists, valid or not: a member of a broken one points at its errors. */
+  const listed = isObject(input.profiles) ? Object.keys(input.profiles) : [];
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
   const bodies = new BodyNames();
@@ -162,7 +177,7 @@ export function validateDocument(input: unknown): ValidationResult {
         c.fail("id", `duplicate id "${raw.id}"`);
       }
       // A bad expression already says what is wrong with that field.
-      if (exprErrors.length === 0) feature = validateFeature(raw, c, seen);
+      if (exprErrors.length === 0) feature = validateFeature(raw, c, seen, result.profiles, listed);
       if (feature) bodies.check(feature, c);
       if (typeof raw.id === "string" && !seen.has(raw.id)) seen.set(raw.id, String(raw.op));
     }
@@ -178,7 +193,13 @@ export function validateDocument(input: unknown): ValidationResult {
   return result;
 }
 
-function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Map<string, string>): Feature | null {
+function validateFeature(
+  input: Record<string, unknown>,
+  c: Checker,
+  earlier: Map<string, string>,
+  profiles: Record<string, ProfileDef> = {},
+  listed: string[] = Object.keys(profiles),
+): Feature | null {
   // `suppressed` is common to every op; check it here and validate the rest per op.
   const { suppressed, ...raw } = input;
   if (suppressed !== undefined && typeof suppressed !== "boolean") {
@@ -207,6 +228,9 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
     case "combine":
       feature = validateCombine(raw, c);
       break;
+    case "member":
+      feature = validateMember(raw, c, profiles, listed);
+      break;
     default:
       c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
       return null;
@@ -234,7 +258,17 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
 };
 
 function validateSketch(raw: Record<string, unknown>, c: Checker): SketchFeature | null {
-  c.keys(raw, "", ["id", "op", "plane", "entities", "constraints"]);
+  c.keys(raw, "", ["id", "op", "plane", "entities", "constraints", "profile"]);
+  let mark: SketchFeature["profile"];
+  if (raw.profile !== undefined) {
+    if (!isObject(raw.profile)) c.fail("profile", `must be { "name": ... } (got ${describe(raw.profile)})`);
+    else {
+      c.keys(raw.profile, "profile", ["name", "library"]);
+      if (typeof raw.profile.name !== "string" || !raw.profile.name.trim()) c.fail("profile.name", `must be the profile's name (got ${describe(raw.profile.name)})`);
+      const library = raw.profile.library === undefined ? undefined : libraryRef(raw.profile.library, "profile.library", c);
+      if (typeof raw.profile.name === "string") mark = { name: raw.profile.name, ...(library ? { library } : {}) };
+    }
+  }
   let plane: SketchFeature["plane"] | undefined;
   if (!isObject(raw.plane)) {
     c.fail("plane", `must be an object (got ${describe(raw.plane)})`);
@@ -283,6 +317,7 @@ function validateSketch(raw: Record<string, unknown>, c: Checker): SketchFeature
   if (!plane || c.errors.length > 0) return null;
   const sketch: SketchFeature = { id: raw.id as string, op: "sketch", plane, entities };
   if (raw.constraints !== undefined) sketch.constraints = constraints;
+  if (mark) sketch.profile = mark;
   return sketch;
 }
 
@@ -763,6 +798,108 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
   }
 }
 
+// ------------------------------------------------------- weldment profiles
+
+const XY = { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] };
+
+/** A weldment profile: its sketch, checked like any sketch with its own size parameters, and its sizes. */
+export function validateProfile(input: unknown, path: string, c: Checker): ProfileDef | null {
+  if (!isObject(input)) {
+    c.fail(path, `must be a profile object (got ${describe(input)})`);
+    return null;
+  }
+  const before = c.errors.length;
+  c.keys(input, path, [...PROFILE_KEYS]);
+  if (typeof input.name !== "string" || !input.name.trim()) c.fail(`${path}.name`, `must be the profile's name (got ${describe(input.name)})`);
+  const parameters: Record<string, number> = {};
+  if (!isObject(input.parameters)) c.fail(`${path}.parameters`, `must be an object of name: number (got ${describe(input.parameters)})`);
+  else {
+    for (const [k, v] of Object.entries(input.parameters)) {
+      if (!PARAMETER_NAME.test(k)) c.fail(`${path}.parameters.${k}`, "a parameter name is letters, digits and _ and starts with a letter");
+      else if (typeof v !== "number" || !Number.isFinite(v)) c.fail(`${path}.parameters.${k}`, `must be a number (got ${describe(v)})`);
+      else parameters[k] = v;
+    }
+  }
+  // The sketch, checked as one: its expressions use the profile's own parameters.
+  const exprErrors: string[] = [];
+  const sketchRaw = resolveExpressions({ id: "profile", op: "sketch", plane: XY, entities: input.entities, ...(input.constraints !== undefined ? { constraints: input.constraints } : {}) }, parameters, exprErrors) as Record<string, unknown>;
+  for (const e of exprErrors) c.fail(path, e);
+  const inner = new Checker(path);
+  if (!exprErrors.length) validateSketch(sketchRaw, inner);
+  for (const e of inner.errors) c.errors.push(e);
+  const sizes: ProfileDef["sizes"] = [];
+  if (!Array.isArray(input.sizes) || input.sizes.length === 0) c.fail(`${path}.sizes`, `must list at least one size (got ${describe(input.sizes)})`);
+  else {
+    input.sizes.forEach((sz, i) => {
+      const at = `${path}.sizes[${i}]`;
+      if (!isObject(sz)) return c.fail(at, `must be { "designation", "values" } (got ${describe(sz)})`);
+      c.keys(sz, at, ["designation", "values"]);
+      const designation = typeof sz.designation === "string" ? sz.designation.trim() : "";
+      if (!designation) c.fail(`${at}.designation`, `must name the size, like "SHS 40x40x3" (got ${describe(sz.designation)})`);
+      else if (sizes.some((x) => x.designation === designation)) c.fail(`${at}.designation`, `"${designation}" is listed twice`);
+      const values: Record<string, number> = {};
+      if (!isObject(sz.values)) c.fail(`${at}.values`, `must be an object of parameter: number (got ${describe(sz.values)})`);
+      else {
+        for (const [k, v] of Object.entries(sz.values)) {
+          if (!(k in parameters)) c.fail(`${at}.values.${k}`, `is not one of the profile's parameters (${Object.keys(parameters).join(", ") || "none"})`);
+          else if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) c.fail(`${at}.values.${k}`, `must be a number greater than 0 (got ${describe(v)})`);
+          else values[k] = v;
+        }
+        for (const k of Object.keys(parameters)) if (!(k in sz.values)) c.fail(`${at}.values`, `needs a value for ${k}`);
+      }
+      if (designation) sizes.push({ designation, values });
+    });
+  }
+  if (input.anchor !== "centroid" && input.anchor !== "origin") c.fail(`${path}.anchor`, `must be "centroid" or "origin" (got ${describe(input.anchor)})`);
+  if (!Array.isArray(input.tags) || !input.tags.every((t) => typeof t === "string")) c.fail(`${path}.tags`, `must be a list of words (got ${describe(input.tags)})`);
+  if (input.material !== undefined && typeof input.material !== "string") c.fail(`${path}.material`, `must be a string (got ${describe(input.material)})`);
+  const library = input.library === undefined ? undefined : libraryRef(input.library, `${path}.library`, c);
+  if (c.errors.length > before) return null;
+  const def: ProfileDef = {
+    name: input.name as string,
+    entities: input.entities as ProfileDef["entities"],
+    ...(input.constraints !== undefined ? { constraints: input.constraints as ProfileDef["constraints"] } : {}),
+    parameters,
+    sizes,
+    anchor: input.anchor as ProfileDef["anchor"],
+    tags: input.tags as string[],
+  };
+  if (typeof input.material === "string") def.material = input.material;
+  if (library) def.library = library;
+  return def;
+}
+
+function libraryRef(v: unknown, path: string, c: Checker): { id: string; version: number } | undefined {
+  if (!isObject(v) || typeof v.id !== "string" || !v.id || !Number.isInteger(v.version) || (v.version as number) < 1) {
+    c.fail(path, `must be { "id": "...", "version": 1 or more } (got ${describe(v)})`);
+    return undefined;
+  }
+  c.keys(v, path, ["id", "version"]);
+  return { id: v.id, version: v.version as number };
+}
+
+function validateMember(raw: Record<string, unknown>, c: Checker, profiles: Record<string, ProfileDef>, listed: string[]): MemberFeature | null {
+  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "newBody"]);
+  const profile = typeof raw.profile === "string" ? profiles[raw.profile] : undefined;
+  if (typeof raw.profile !== "string") c.fail("profile", `must name a profile in the part's profiles (got ${describe(raw.profile)})`);
+  else if (!profile && listed.includes(raw.profile)) c.fail("profile", `the part's profile "${raw.profile}" has errors (see profiles.${raw.profile})`);
+  else if (!profile) c.fail("profile", `no profile "${raw.profile}" in the part (${listed.length ? `profiles: ${listed.join(", ")}` : "it has none: add one from the section library"})`);
+  if (typeof raw.size !== "string") c.fail("size", `must be one of the profile's designations (got ${describe(raw.size)})`);
+  else if (profile && !profile.sizes.some((s) => s.designation === raw.size)) {
+    c.fail("size", `"${raw.size}" is not a size of ${profile.name} (sizes: ${profile.sizes.map((s) => s.designation).join(", ")})`);
+  }
+  const from = c.vec3(raw, "from", "");
+  const to = c.vec3(raw, "to", "");
+  if (from && to && Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]) < 1e-6) c.fail("to", "must not be the same point as from");
+  const rotation = raw.rotation === undefined ? undefined : c.num(raw, "rotation", "", {});
+  const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
+  if (c.errors.length > 0 || !from || !to) return null;
+  const f: MemberFeature = { id: raw.id as string, op: "member", profile: raw.profile as string, size: raw.size as string, from, to };
+  if (rotation !== undefined) f.rotation = rotation;
+  if (newBody) f.newBody = newBody;
+  return f;
+}
+
 // ---------------------------------------------------------------- combine
 
 function validateCombine(raw: Record<string, unknown>, c: Checker): CombineFeature | null {
@@ -827,6 +964,11 @@ class BodyNames {
         need(f.target, "target");
         f.tools.forEach((b, i) => need(b, `tools[${i}]`));
         break;
+      case "member": {
+        const name = f.newBody ?? f.id;
+        if (this.names.has(name)) c.fail(f.newBody ? "newBody" : "id", `a body "${name}" already exists; a member is a body of its own`);
+        break;
+      }
     }
     for (const [path, name] of selectorBodies(f)) need(name, path);
     if (c.errors.length > 0) return;
@@ -844,6 +986,10 @@ class BodyNames {
       else for (const n of copies) this.names.add(n);
     } else if (f.op === "combine") {
       for (const t of f.tools) this.names.delete(t);
+    } else if (f.op === "member") {
+      const name = f.newBody ?? f.id;
+      this.names.add(name);
+      this.made.set(f.id, name);
     }
   }
 

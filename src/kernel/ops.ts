@@ -9,6 +9,8 @@ import type {
   ChamferFeature,
   CircularPatternFeature,
   CombineFeature,
+  MemberFeature,
+  ProfileDef,
   ExtrudeFeature,
   FilletFeature,
   HoleFeature,
@@ -18,7 +20,8 @@ import type {
 } from "../doc/types";
 import { facePlaneFrame, to3D, type Frame } from "../geom/frame";
 import { arcMid, type Loop, type Region } from "../geom/profile";
-import { add3, dot3, formatDirection, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
+import { sectionOf, sizedEntities } from "../geom/section";
+import { add3, cross3, dot3, formatDirection, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
 import { type OC, type Scope } from "./oc";
 import type { DescribedPart } from "./bodies";
@@ -372,6 +375,42 @@ export function patternInstances(oc: OC, s: Scope, f: LinearPatternFeature | Cir
 
 export function transformed(oc: OC, s: Scope, shape: TopoDS_Shape, trsf: ReturnType<typeof identity>): TopoDS_Shape {
   return s.track(s.track(new oc.BRepBuilderAPI_Transform(shape, trsf, true, false)).Shape());
+}
+
+// ---------------------------------------------------------------- member
+
+/**
+ * The frame a member's profile lies in, at `from`: z along the member, the
+ * profile's y as close to world +Z as the line allows (+Y for a vertical
+ * member), turned by `rotation` degrees about the line.
+ */
+export function memberFrame(from: Vec3, to: Vec3, rotation = 0): Frame {
+  const z = normalize3(sub3(to, from));
+  const up: Vec3 = Math.abs(z[2]) < 1 - 1e-9 ? [0, 0, 1] : [0, 1, 0];
+  const y0 = normalize3(sub3(up, scale3(z, dot3(up, z))));
+  const x0 = cross3(y0, z);
+  const a = (rotation * Math.PI) / 180;
+  const x = add3(scale3(x0, Math.cos(a)), scale3(y0, Math.sin(a)));
+  const y = add3(scale3(x0, -Math.sin(a)), scale3(y0, Math.cos(a)));
+  return { origin: from, x, y, z };
+}
+
+/** A straight member: the profile at its size, its anchor on the line, swept from `from` to `to`. In scope `s`. */
+export function memberTool(oc: OC, s: Scope, f: MemberFeature, def: ProfileDef): TopoDS_Shape {
+  const size = def.sizes.find((x) => x.designation === f.size);
+  if (!size) throw new OpError(`"${f.size}" is not a size of ${def.name}`);
+  const sized = sizedEntities(def, size);
+  if (!sized.ok) throw new OpError(`profile ${def.name} at ${f.size}: ${sized.error}`);
+  const section = sectionOf(sized.entities);
+  if (!section.ok) throw new OpError(`profile ${def.name} at ${f.size}: ${section.error}`);
+  const anchor = def.anchor === "centroid" ? section.props.centroid : ([0, 0] as Vec2);
+  const frame = memberFrame(f.from, f.to, f.rotation ?? 0);
+  // Shift the frame so the anchor, not the sketch origin, sits on the line.
+  const placed: Frame = { ...frame, origin: sub3(frame.origin, add3(scale3(frame.x, anchor[0]), scale3(frame.y, anchor[1]))) };
+  const regions = section.props.regions;
+  const tool = prism(oc, s, profileFaces(oc, s, { frame: placed, regions, area: section.props.area }), [0, 0, 0], sub3(f.to, f.from));
+  if (!isValidShape(oc, s, tool)) throw new OpError("the member produced an invalid solid");
+  return tool;
 }
 
 // --------------------------------------------------------------- combine

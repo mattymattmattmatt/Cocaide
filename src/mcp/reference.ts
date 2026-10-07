@@ -77,6 +77,17 @@ joins the tool bodies into the target (they are used up).
 Measurements list each body (name, volume, size) and every pair that overlaps ("interference", in mm³).
 STEP exports each body as a solid of its name.
 
+## member (a straight weldment member)
+{ "id": "rail", "op": "member", "profile": "SHS", "size": "SHS 40x40x3", "from": [0,0,0], "to": [1000,0,0], "rotation": 0 (optional, degrees about the line) }
+sweeps one size of a profile in the part's "profiles" along the line. Each member is its own body, named by its id
+(or "newBody"). A horizontal member is upright: the profile's y is up (+Z); a vertical one has its y along +Y.
+The profile's anchor ("centroid" or the sketch "origin") sits on the line. Measurements list each member's
+designation, length and mass. A part's "profiles" are copies of section-library entries:
+"profiles": { "SHS": { "name": "SHS", "entities": [...], "constraints": [...], "parameters": { "b": 40, "t": 3 },
+  "sizes": [{ "designation": "SHS 40x40x3", "values": { "b": 40, "t": 3 } }], "anchor": "centroid", "tags": ["hollow"],
+  "library": { "id": "...", "version": 1 } } }
+Use the part's profiles and sizes as they are; never invent one.
+
 ## Face selectors
 { "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "near": [x,y,z] (optional) }
 { "type": "cylindrical", "radius": 3.3 (optional), "axis": [0,0,1] (optional), "pick": ..., "near": [x,y,z] (optional) }

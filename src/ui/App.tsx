@@ -3,14 +3,16 @@ import bracketText from "../../examples/bracket.cocaide.json?raw";
 import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
 import standText from "../../examples/stand.cocaide.json?raw";
+import framingText from "../../examples/frame-members.cocaide.json?raw";
 import { targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
 import { nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import { DEFAULT_BODY, type DatumPlane, type SketchEntity, type SketchFeature, type Vec2, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type Constraint, type DatumPlane, type ProfileDef, type SketchEntity, type SketchFeature, type Vec2, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { facePlaneFrame, planeFrame, to2D } from "../geom/frame";
+import { STEEL_DENSITY } from "../geom/section";
 import { dot3 } from "../geom/vec";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { KernelClient } from "../worker/client";
@@ -21,18 +23,28 @@ import { BodiesPanel } from "./BodiesPanel";
 import { useAsk } from "./ask/useAsk";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
+import { addLibraryMember, exportLibrary, mergeLibrary, placeMember, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
+import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree } from "./FeatureTree";
 import { ParametersContext, TextInput } from "./fields";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { ParametersPanel } from "./ParametersPanel";
 import { PhotoBar } from "./PhotoBar";
+import { ProfileCard } from "./ProfileCard";
 import { nextBodyName, PropertyPanel } from "./PropertyPanel";
+import { SectionsPanel } from "./SectionsPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
 import { EMPTY_SELECTION, Viewport, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
-const EXAMPLES: Record<string, string> = { bracket: bracketText, "mounting plate": plateText, flange: flangeText, "stand (two bodies)": standText };
+const EXAMPLES: Record<string, string> = {
+  bracket: bracketText,
+  "mounting plate": plateText,
+  flange: flangeText,
+  "stand (two bodies)": standText,
+  "members (weldment)": framingText,
+};
 const STORAGE_KEY = "cocaide.document.v1";
 const REBUILD_DELAY_MS = 250;
 const BLANK = formatDocument({ version: 1, units: "mm", name: "part", features: [] });
@@ -87,10 +99,16 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [selectedFeature, setSelectedFeature] = useState<string | null>(null);
-  const [rightTab, setRightTab] = useState<"properties" | "document">("properties");
+  const [rightTab, setRightTab] = useState<"properties" | "sections" | "document">("properties");
   const [sketch, setSketch] = useState<SketchSession | null>(null);
   const [planeMenu, setPlaneMenu] = useState(false);
   const [hiddenBodies, setHiddenBodies] = useState<ReadonlySet<string>>(new Set());
+  /** The section library in this browser (Phase I). */
+  const [library, setLibrary] = useState<LibraryEntry[]>([]);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  /** The sketch whose profile card is open. */
+  const [profileCard, setProfileCard] = useState<string | null>(null);
+  const [savedProfile, setSavedProfile] = useState<string | null>(null);
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef(0);
@@ -158,6 +176,21 @@ export function App() {
     photos.current.set(p.sha256, p);
     void savePhoto(p);
   };
+
+  const reloadLibrary = useCallback(
+    () =>
+      listProfiles().then(
+        (entries) => {
+          setLibrary(entries);
+          setLibraryError(null);
+        },
+        (e: Error) => setLibraryError(`The section library is not available in this browser: ${e.message}`),
+      ),
+    [],
+  );
+  useEffect(() => {
+    void reloadLibrary();
+  }, [reloadLibrary]);
 
   useEffect(() => {
     kernel.ready.then(
@@ -305,18 +338,23 @@ export function App() {
     // The sketcher works on numbers; finishSketch puts back the expressions it did not change.
     const f = resolved.find((g) => g.id === id) as Partial<SketchFeature> | undefined;
     if (!f || f.op !== "sketch" || !f.plane) return;
+    // A dimension written as "=b" goes in with its value, and the expression beside it, so the sketcher shows and keeps it.
+    const raw = (features.find((g) => g.id === id)?.constraints ?? []) as { value?: unknown }[];
+    const constraints = (f.constraints ?? []).map((c, i) => (typeof raw[i]?.value === "string" ? ({ ...c, expr: raw[i].value } as unknown as Constraint) : c));
     setSketch({
       id,
       isNew: false,
       plane: f.plane,
       entities: (f.entities ?? []) as SketchEntity[],
-      constraints: f.constraints ?? [],
+      constraints,
       suppressed: f.suppressed,
+      ...(f.profile ? { profile: f.profile } : {}),
     });
     setSelection(EMPTY_SELECTION);
   };
 
-  const finishSketch = (feature: SketchFeature) => {
+  /** `weldment`: the sketch's "Weldment profile" box is ticked; the profile card opens. */
+  const finishSketch = (feature: SketchFeature, weldment = false) => {
     if (!sketch) return;
     const original = features.find((g) => g.id === sketch.id);
     const problem = sketch.isNew
@@ -327,6 +365,115 @@ export function App() {
     setSelectedFeature(feature.id);
     setRightTab("properties");
     setNotice(null);
+    if (weldment) setProfileCard(feature.id);
+  };
+
+  // ------------------------------------------------------------ weldment profiles
+
+  const density = (doc?.material as { densityKgPerM3?: number } | undefined)?.densityKgPerM3 ?? STEEL_DENSITY;
+
+  /** The profile card's Save: into the library, and the sketch marked as that profile (one undo step). */
+  const saveProfileCard = async (def: ProfileDef, favourite: boolean, previous: LibraryEntry | undefined) => {
+    const sketchId = profileCard;
+    if (!sketchId) return;
+    const entry = { ...toEntry(def, previous, crypto.randomUUID()), favourite };
+    try {
+      await saveProfile(entry);
+    } catch (e) {
+      return setNotice({ kind: "error", text: `Not saved to the section library: ${(e as Error).message}` });
+    }
+    setProfileCard(null);
+    run({ type: "updateFeature", id: sketchId, patch: { profile: { name: entry.name, library: { id: entry.id, version: entry.version } } } });
+    await reloadLibrary();
+    setSavedProfile(entry.id);
+    setRightTab("sections");
+    const sizes = entry.sizes.length;
+    setNotice({
+      kind: "info",
+      text: `${entry.name} ${previous ? `is now v${entry.version}` : "is in the section library"}, with ${sizes} size${sizes === 1 ? "" : "s"}. Use + Member to put it in a part.`,
+    });
+  };
+
+  /** A member of a library size: the part's copy of the profile and the member, as one undo step. */
+  const addMember = (entry: LibraryEntry, designation: string) => {
+    if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+    const r = addLibraryMember(doc, entry, designation);
+    if (!r.ok) return setNotice({ kind: "error", text: r.error });
+    d.replaceDoc(r.doc);
+    setSelectedFeature(r.id);
+    setRightTab("properties");
+    setNotice(r.note ? { kind: "info", text: r.note } : null);
+    const used = { ...entry, uses: entry.uses + 1 };
+    setLibrary((l) => l.map((e) => (e.id === entry.id ? used : e)));
+    void saveProfile(used).catch(() => undefined);
+  };
+
+  /** The toolbar's Member: another of the selected (or last) member, else the library. */
+  const memberTool = () => {
+    if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+    const like = (selected?.op === "member" ? selected : [...resolved].reverse().find((f) => f.op === "member")) as { profile: string; size: string } | undefined;
+    if (!like || !(doc.profiles as Record<string, ProfileDef> | undefined)?.[like.profile]) {
+      setRightTab("sections");
+      return setNotice({
+        kind: "info",
+        text: library.length
+          ? "Pick a size in Sections, then + Member."
+          : "The section library is empty: draw a section as a sketch, tick Weldment profile and finish it.",
+      });
+    }
+    const r = placeMember(doc, like.profile, like.size);
+    if (!r.ok) return setNotice({ kind: "error", text: r.error });
+    d.replaceDoc(r.doc);
+    setSelectedFeature(r.id);
+    setRightTab("properties");
+    setNotice(null);
+  };
+
+  const updateCopy = (entry: LibraryEntry) => {
+    if (!doc) return;
+    const r = updatePartCopy(doc, entry);
+    if (!r.ok) return setNotice({ kind: "error", text: `${entry.name} not updated: ${r.error}` });
+    d.replaceDoc(r.doc);
+    setNotice({ kind: "info", text: `This part's copy of ${r.name} is now v${entry.version}. Ctrl+Z puts the old one back.` });
+  };
+
+  const favourite = (entry: LibraryEntry) => {
+    const next = { ...entry, favourite: !entry.favourite };
+    setLibrary((l) => l.map((e) => (e.id === entry.id ? next : e)));
+    void saveProfile(next).catch((e: Error) => setNotice({ kind: "error", text: e.message }));
+  };
+
+  const removeSection = async (entry: LibraryEntry) => {
+    try {
+      await deleteProfile(entry.id);
+    } catch (e) {
+      return setNotice({ kind: "error", text: `${entry.name} not deleted: ${(e as Error).message}` });
+    }
+    await reloadLibrary();
+    setNotice({ kind: "info", text: `${entry.name} is out of the section library. Parts that use it keep their copies.` });
+  };
+
+  const exportSections = () => {
+    download("sections.cocaide-sections.json", JSON.stringify(exportLibrary(library), null, 2), "application/json");
+  };
+
+  const importSections = async (file: File) => {
+    let data: unknown;
+    try {
+      data = JSON.parse(await file.text());
+    } catch (e) {
+      return setNotice({ kind: "error", text: `${file.name} is not JSON: ${(e as Error).message}` });
+    }
+    const merged = mergeLibrary(library, data);
+    if ("error" in merged) return setNotice({ kind: "error", text: `${file.name}: ${merged.error}` });
+    try {
+      await saveProfiles(merged.entries);
+    } catch (e) {
+      return setNotice({ kind: "error", text: `Not imported: ${(e as Error).message}` });
+    }
+    await reloadLibrary();
+    const skipped = merged.skipped.length ? ` Skipped ${merged.skipped.length}: ${merged.skipped.join("; ")}.` : "";
+    setNotice({ kind: merged.skipped.length ? "error" : "info", text: `Imported ${file.name}: ${merged.added} new, ${merged.updated} updated.${skipped}` });
   };
 
   const sketchFor = (): Record<string, unknown> | undefined =>
@@ -388,8 +535,8 @@ export function App() {
   };
 
   const patternFeature = (op: "linearPattern" | "circularPattern") => {
-    if (!doc || !selected || !["extrude", "cut", "hole"].includes(String(selected.op))) {
-      return setNotice({ kind: "error", text: "Select an extrude, cut or hole in the feature tree, then Pattern." });
+    if (!doc || !selected || !["extrude", "cut", "hole", "member"].includes(String(selected.op))) {
+      return setNotice({ kind: "error", text: "Select an extrude, cut, hole or member in the feature tree, then Pattern." });
     }
     const id = nextId(doc, op === "linearPattern" ? "pattern" : "circular");
     create(
@@ -650,6 +797,10 @@ export function App() {
                 Combine
               </button>
             )}
+            <span className="sep" />
+            <button onClick={memberTool} data-testid="tool-member" title="A straight member of a weldment profile: another like the selected one, or pick a size in Sections">
+              Member
+            </button>
           </div>
         )}
 
@@ -692,6 +843,10 @@ export function App() {
               }
               onSelect={(b) => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] })}
               onAsk={sketch ? undefined : (name, x, y) => openAsk({ kind: "body", name }, x, y)}
+              onSelectMember={(id) => {
+                setSelectedFeature(id);
+                setRightTab("properties");
+              }}
             />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>
@@ -741,14 +896,31 @@ export function App() {
               </section>
               <aside className="side right">
                 <div className="tabs" role="tablist">
-                  <button role="tab" aria-selected={rightTab === "properties"} onClick={() => setRightTab("properties")}>
+                  <button role="tab" aria-selected={rightTab === "properties"} onClick={() => setRightTab("properties")} data-testid="tab-properties">
                     Properties
+                  </button>
+                  <button role="tab" aria-selected={rightTab === "sections"} onClick={() => setRightTab("sections")} data-testid="tab-sections">
+                    Sections
                   </button>
                   <button role="tab" aria-selected={rightTab === "document"} onClick={() => setRightTab("document")} data-testid="tab-document">
                     Document
                   </button>
                 </div>
-                {rightTab === "properties" ? (
+                {rightTab === "sections" ? (
+                  <SectionsPanel
+                    entries={library}
+                    error={libraryError}
+                    doc={doc}
+                    density={density}
+                    highlight={savedProfile}
+                    onAddMember={addMember}
+                    onFavourite={favourite}
+                    onDelete={(e) => void removeSection(e)}
+                    onUpdatePart={updateCopy}
+                    onExport={exportSections}
+                    onImport={(f) => void importSections(f)}
+                  />
+                ) : rightTab === "properties" ? (
                   <section className="panel">
                     {doc && selectedFeature ? (
                       <PropertyPanel
@@ -760,6 +932,7 @@ export function App() {
                         onEditSketch={editSketch}
                         onSelectFeature={setSelectedFeature}
                         onAsk={openAsk}
+                        onProfileCard={setProfileCard}
                       />
                     ) : (
                       <Help />
@@ -773,6 +946,9 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
+        {profileCard && doc && (
+          <ProfileCard key={profileCard} doc={doc} sketchId={profileCard} library={library} onSave={(def, fav, prev) => void saveProfileCard(def, fav, prev)} onClose={() => setProfileCard(null)} />
+        )}
         {ask.settingsOpen && <AskSettingsDialog settings={ask.settings} onSave={ask.setSettings} onClose={() => ask.setSettingsOpen(false)} />}
       </div>
     </ParametersContext.Provider>
@@ -790,6 +966,11 @@ function Help() {
         (shift-click for more) for <strong>Fillet</strong> and <strong>Chamfer</strong>; select a feature in the tree to pattern it.
       </p>
       <p>Select a feature in the tree to edit it. Ctrl+Z undoes any change.</p>
+      <p>
+        <strong>Weldments:</strong> draw a section as a normal sketch (write its sizes as <code>=b</code>, <code>=t</code>), tick{" "}
+        <strong>Weldment profile</strong> and finish: the profile card names it, adds sizes and tags it, and it goes into <strong>Sections</strong>{" "}
+        for this part and the next. <strong>+ Member</strong> on a size adds a straight member; each member is its own body.
+      </p>
       <p>
         <strong>Right-click</strong> a feature, a failed rebuild, a face, an edge, a parameter, or (in the sketcher) an entity or constraint to ask
         about it. The answer or proposed change is scoped to what you clicked. Right-click empty space to ask about the whole part or describe a

@@ -39,6 +39,18 @@ export interface Measurements {
   bodies: BodyMeasurement[];
   /** Every pair of bodies that overlap, with the volume they share. Bodies that only touch don't. */
   interference: Interference[];
+  /** Structural members, in feature order: what a cut list is made of. */
+  members: MemberMeasurement[];
+}
+
+export interface MemberMeasurement {
+  id: string;
+  body: string;
+  profile: string;
+  designation: string;
+  /** mm, from end to end. */
+  length: number;
+  massKg: number;
 }
 
 export interface BodyMeasurement {
@@ -105,6 +117,7 @@ export function measure(oc: OC, s: Scope, shape: TopoDS_Shape, material: Materia
     faces: infos.length,
     bodies: [...each].map(([name, body]) => measureBody(oc, s, name, body, mat.densityKgPerM3)),
     interference: interference(oc, s, each),
+    members: [],
   };
 }
 
