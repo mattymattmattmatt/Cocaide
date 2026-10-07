@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "flange",
+  "material": { "name": "S355 steel", "densityKgPerM3": 7850 },
+  "features": [
+    {
+      "id": "flange_sketch",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+      "entities": [
+        { "id": "outer", "type": "circle", "center": [0, 0], "radius": 40 },
+        { "id": "bore", "type": "circle", "center": [0, 0], "radius": 12 }
+      ],
+      "constraints": [
+        { "type": "coincident", "points": ["outer.center", "origin"] },
+        { "type": "coincident", "points": ["bore.center", "origin"] },
+        { "type": "radius", "entity": "outer", "value": 40 },
+        { "type": "radius", "entity": "bore", "value": 12 }
+      ]
+    },
+    {
+      "id": "flange",
+      "op": "extrude",
+      "sketch": "flange_sketch",
+      "distance": 10
+    },
+    {
+      "id": "hub_sketch",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 10] },
+      "entities": [
+        { "id": "hub", "type": "circle", "center": [0, 0], "radius": 20 },
+        { "id": "bore", "type": "circle", "center": [0, 0], "radius": 12 }
+      ],
+      "constraints": [
+        { "type": "coincident", "points": ["hub.center", "origin"] },
+        { "type": "coincident", "points": ["bore.center", "origin"] },
+        { "type": "radius", "entity": "hub", "value": 20 }
+      ]
+    },
+    {
+      "id": "hub",
+      "op": "extrude",
+      "sketch": "hub_sketch",
+      "distance": 8
+    },
+    {
+      "id": "bolt_hole",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+      "center": [30, 0],
+      "diameter": 6.6,
+      "depth": "through",
+      "counterbore": { "diameter": 11, "depth": 4 }
+    },
+    {
+      "id": "bolt_circle",
+      "op": "circularPattern",
+      "feature": "bolt_hole",
+      "axis": { "origin": [0, 0, 0], "direction": [0, 0, 1] },
+      "count": 6
+    },
+    {
+      "id": "rim_chamfer",
+      "op": "chamfer",
+      "edges": {
+        "type": "edge",
+        "kind": "circle",
+        "radius": 40,
+        "onFace": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+        "pick": "all"
+      },
+      "distance": 1
+    },
+    {
+      "id": "hub_fillet",
+      "op": "fillet",
+      "edges": {
+        "type": "edge",
+        "kind": "circle",
+        "radius": 20,
+        "onFace": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+        "pick": "all"
+      },
+      "radius": 2
+    }
+  ]
+}

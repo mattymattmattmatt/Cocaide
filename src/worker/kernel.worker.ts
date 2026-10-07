@@ -3,6 +3,7 @@
 
 import wasmUrl from "replicad-opencascadejs/wasm?url";
 import {
+  describeEdges,
   describeFaces,
   exportSTEP,
   heapBytes,
@@ -15,7 +16,7 @@ import {
   type OC,
   type RebuildResult,
 } from "../kernel";
-import type { FaceSummary, KernelRequest, KernelResponse, RebuildView } from "./protocol";
+import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -47,18 +48,12 @@ function handle(kernel: OC, req: KernelRequest) {
       const t0 = performance.now();
       const result = rebuildCached(kernel, req.doc);
       const mesh = result.solid ? tessellate(kernel, result.solid) : null;
-      const faces: FaceSummary[] = result.solid
-        ? scoped((s) =>
-            describeFaces(kernel, s, result.solid!).infos.map((f) => ({
-              type: f.type,
-              area: f.area,
-              normal: f.normal,
-              offset: f.offset,
-              radius: f.cylinder?.radius,
-              concave: f.cylinder?.concave,
-            })),
-          )
-        : [];
+      const topo = result.solid
+        ? scoped((s) => {
+            const f = describeFaces(kernel, s, result.solid!);
+            return { faces: f.infos, edges: describeEdges(kernel, s, result.solid!, f.faces).infos };
+          })
+        : { faces: [], edges: [] };
       const view: RebuildView = {
         ok: result.ok,
         name: result.name,
@@ -67,7 +62,8 @@ function handle(kernel: OC, req: KernelRequest) {
         sketches: result.sketches,
         measurements: result.measurements,
         mesh,
-        faces,
+        faces: topo.faces,
+        edges: topo.edges,
       };
       const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
       post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);

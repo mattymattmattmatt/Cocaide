@@ -1,24 +1,46 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { Vec3 } from "../doc/types";
 import { formatDirection } from "../geom/vec";
-import type { FaceSummary, RebuildView } from "../worker/protocol";
+import type { EdgeInfo, FaceInfo } from "../kernel";
+import type { RebuildView } from "../worker/protocol";
 
 export type ViewName = "iso" | "top" | "front" | "right";
+
+/** A click on the part: which B-rep face or edge, and where. */
+export type PickTarget = { kind: "face" | "edge"; index: number; point: Vec3 };
+
+export interface Selection {
+  faces: number[];
+  edges: number[];
+  /** Where the last face was clicked; a new hole goes here. */
+  point?: Vec3;
+}
+
+export const EMPTY_SELECTION: Selection = { faces: [], edges: [] };
 
 interface Props {
   view: RebuildView | null;
   /** Bump to re-frame the camera on the current model. */
   fitToken: number;
+  selection: Selection;
+  /** A click on the part (target) or on empty space (null). `additive` when shift is held. */
+  onPick(target: PickTarget | null, additive: boolean): void;
 }
 
 const SKETCH_OPACITY = 0.55;
+const PICK_PIXELS = 6;
+const SELECT_COLOR = 0xf28c28;
+const HOVER_COLOR = 0x2f7bff;
 
 interface Hover {
   x: number;
   y: number;
-  face: FaceSummary;
+  target: PickTarget;
 }
 
 const VIEW_DIRS: Record<ViewName, Vec3> = {
@@ -34,16 +56,23 @@ function cssColor(el: Element, name: string, fallback: string): THREE.Color {
   return new THREE.Color(v || fallback);
 }
 
-export function Viewport({ view, fitToken }: Props) {
+interface ViewportApi {
+  setModel(view: RebuildView | null): void;
+  setSelection(sel: Selection): void;
+  setSketchesVisible(visible: boolean): void;
+  fit(dir?: Vec3): void;
+  dispose(): void;
+}
+
+export function Viewport({ view, fitToken, selection, onPick }: Props) {
   const host = useRef<HTMLDivElement>(null);
-  const api = useRef<{
-    setModel(view: RebuildView | null): void;
-    setSketchesVisible(visible: boolean): void;
-    fit(dir?: Vec3): void;
-    dispose(): void;
-  } | null>(null);
+  const api = useRef<ViewportApi | null>(null);
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
+  const infoRef = useRef<{ faces: FaceInfo[]; edges: EdgeInfo[] }>({ faces: [], edges: [] });
+  infoRef.current = { faces: view?.faces ?? [], edges: view?.edges ?? [] };
 
   useEffect(() => {
     const el = host.current!;
@@ -73,17 +102,18 @@ export function Viewport({ view, fitToken }: Props) {
     const model = new THREE.Group();
     const overlays = new THREE.Group();
     const helpers = new THREE.Group();
-    scene.add(helpers, model, overlays);
+    const marks = new THREE.Group(); // hover and selection highlights
+    scene.add(helpers, model, overlays, marks);
 
     let mesh: THREE.Mesh | null = null;
+    let edgeLines: THREE.LineSegments | null = null;
+    /** Segment index -> B-rep edge index, for the drawn (non-seam) edges. */
+    let segmentEdge: Int32Array = new Int32Array(0);
     let faceRanges: { start: number; count: number }[] = [];
-    let faces: FaceSummary[] = [];
-    const highlight = new THREE.Mesh(
-      new THREE.BufferGeometry(),
-      new THREE.MeshBasicMaterial({ color: 0x2f7bff, transparent: true, opacity: 0.35, depthTest: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
-    );
-    highlight.visible = false;
-    scene.add(highlight);
+    let edgeRanges: { start: number; count: number }[] = [];
+    let edgeSegments: Float32Array = new Float32Array(0);
+    let selection: Selection = EMPTY_SELECTION;
+    let hovered: PickTarget | null = null;
 
     let radius = 50;
     let center = new THREE.Vector3();
@@ -97,6 +127,7 @@ export function Viewport({ view, fitToken }: Props) {
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      for (const m of fatMaterials) m.resolution.set(w, h);
       render();
     };
     const ro = new ResizeObserver(resize);
@@ -110,10 +141,15 @@ export function Viewport({ view, fitToken }: Props) {
           obj.geometry?.dispose();
           const mat = obj.material as THREE.Material | THREE.Material[] | undefined;
           if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else mat?.dispose();
+          else if (mat && !fatMaterials.includes(mat as LineMaterial)) mat.dispose();
         });
       }
     };
+
+    const fatMaterials = [SELECT_COLOR, HOVER_COLOR].map(
+      (color) => new LineMaterial({ color, linewidth: 3.5, depthTest: false, transparent: true }),
+    );
+    const [selectEdgeMat, hoverEdgeMat] = fatMaterials;
 
     const rebuildHelpers = () => {
       disposeGroup(helpers);
@@ -133,7 +169,7 @@ export function Viewport({ view, fitToken }: Props) {
       const d = new THREE.Vector3(...(dir ?? (camera.position.clone().sub(controls.target).toArray() as Vec3)));
       if (d.lengthSq() === 0) d.set(...VIEW_DIRS.iso);
       d.normalize();
-      const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.15;
+      const dist = (radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
       camera.position.copy(center).addScaledVector(d, dist);
       camera.near = dist / 100;
       camera.far = dist * 100;
@@ -143,13 +179,67 @@ export function Viewport({ view, fitToken }: Props) {
       render();
     };
 
+    /** Triangles of some faces, sharing the part's vertex buffer. */
+    const faceMesh = (indices: number[], color: number, opacity: number) => {
+      if (!mesh || indices.length === 0) return null;
+      const src = mesh.geometry;
+      const all = src.getIndex()!.array as Uint32Array;
+      const parts = indices.filter((i) => faceRanges[i]).map((i) => all.subarray(faceRanges[i].start, faceRanges[i].start + faceRanges[i].count));
+      const merged = new Uint32Array(parts.reduce((t, p) => t + p.length, 0));
+      let at = 0;
+      for (const p of parts) {
+        merged.set(p, at);
+        at += p.length;
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", src.getAttribute("position"));
+      g.setIndex(new THREE.BufferAttribute(merged, 1));
+      const m = new THREE.Mesh(
+        g,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+      );
+      m.renderOrder = 4;
+      return m;
+    };
+
+    /** Fat lines along some B-rep edges. */
+    const edgeMarks = (indices: number[], material: LineMaterial) => {
+      const pts: number[] = [];
+      for (const i of indices) {
+        const r = edgeRanges[i];
+        if (!r) continue;
+        for (let k = r.start * 6; k < (r.start + r.count) * 6; k++) pts.push(edgeSegments[k]);
+      }
+      if (pts.length === 0) return null;
+      const g = new LineSegmentsGeometry();
+      g.setPositions(pts);
+      const line = new LineSegments2(g, material);
+      line.renderOrder = 5;
+      return line;
+    };
+
+    const redrawMarks = () => {
+      disposeGroup(marks);
+      const sel = [faceMesh(selection.faces, SELECT_COLOR, 0.45), edgeMarks(selection.edges, selectEdgeMat)];
+      const hov =
+        hovered?.kind === "face" && !selection.faces.includes(hovered.index)
+          ? faceMesh([hovered.index], HOVER_COLOR, 0.3)
+          : hovered?.kind === "edge" && !selection.edges.includes(hovered.index)
+            ? edgeMarks([hovered.index], hoverEdgeMat)
+            : null;
+      for (const o of [...sel, hov]) if (o) marks.add(o);
+      render();
+    };
+
     const setModel = (v: RebuildView | null) => {
       disposeGroup(model);
       disposeGroup(overlays);
-      highlight.visible = false;
       mesh = null;
+      edgeLines = null;
+      hovered = null;
       faceRanges = v?.mesh?.faceRanges ?? [];
-      faces = v?.faces ?? [];
+      edgeRanges = v?.mesh?.edgeRanges ?? [];
+      edgeSegments = v?.mesh?.edges ?? new Float32Array(0);
       if (v?.mesh) {
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(v.mesh.positions, 3));
@@ -168,9 +258,21 @@ export function Viewport({ view, fitToken }: Props) {
           }),
         );
         model.add(mesh);
+        // Draw every edge except seams; remember which edge each segment belongs to.
+        const pts: number[] = [];
+        const owners: number[] = [];
+        edgeRanges.forEach((r, i) => {
+          if (v.edges[i]?.seam) return;
+          for (let k = r.start; k < r.start + r.count; k++) {
+            for (let c = 0; c < 6; c++) pts.push(edgeSegments[k * 6 + c]);
+            owners.push(i);
+          }
+        });
+        segmentEdge = Int32Array.from(owners);
         const eg = new THREE.BufferGeometry();
-        eg.setAttribute("position", new THREE.BufferAttribute(v.mesh.edges, 3));
-        model.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: cssColor(el, "--edge", "#1f2937") })));
+        eg.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+        edgeLines = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: cssColor(el, "--edge", "#1f2937") }));
+        model.add(edgeLines);
         center = g.boundingSphere!.center.clone();
         radius = Math.max(1, g.boundingSphere!.radius);
       }
@@ -188,50 +290,84 @@ export function Viewport({ view, fitToken }: Props) {
         }
       }
       rebuildHelpers();
-      render();
+      redrawMarks();
     };
 
-    // Face hover: map the picked triangle back to its B-rep face.
+    // Picking: the nearest edge within a few pixels wins over the face under the cursor.
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    let hoveredFace = -1;
-    const onMove = (e: PointerEvent) => {
-      if (e.buttons !== 0 || !mesh) return;
+    const pickAt = (clientX: number, clientY: number): PickTarget | null => {
+      if (!mesh) return null;
       const rect = renderer.domElement.getBoundingClientRect();
-      pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObject(mesh, false)[0];
-      const tri = hit?.faceIndex ?? -1;
-      const faceIdx = tri < 0 ? -1 : faceRanges.findIndex((r) => tri * 3 >= r.start && tri * 3 < r.start + r.count);
-      if (faceIdx !== hoveredFace) {
-        hoveredFace = faceIdx;
-        if (faceIdx >= 0) {
-          const { start, count } = faceRanges[faceIdx];
-          const src = mesh.geometry;
-          const g = new THREE.BufferGeometry();
-          g.setAttribute("position", src.getAttribute("position"));
-          g.setIndex(new THREE.BufferAttribute((src.getIndex()!.array as Uint32Array).slice(start, start + count), 1));
-          highlight.geometry.dispose();
-          highlight.geometry = g;
-          highlight.visible = true;
-        } else {
-          highlight.visible = false;
-        }
-        render();
+      const faceHit = raycaster.intersectObject(mesh, false)[0];
+      const worldPerPixel = (2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / rect.height;
+      raycaster.params.Line = { threshold: PICK_PIXELS * worldPerPixel };
+      const edgeHit = edgeLines ? raycaster.intersectObject(edgeLines, false)[0] : undefined;
+      const frontEdge = edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + 2 * PICK_PIXELS * worldPerPixel);
+      if (frontEdge && edgeHit.index !== undefined) {
+        return { kind: "edge", index: segmentEdge[Math.floor(edgeHit.index / 2)], point: edgeHit.point.toArray() as Vec3 };
       }
-      setHover(faceIdx >= 0 && faces[faceIdx] ? { x: e.clientX - rect.left, y: e.clientY - rect.top, face: faces[faceIdx] } : null);
+      if (faceHit && faceHit.faceIndex !== undefined && faceHit.faceIndex !== null) {
+        const tri = faceHit.faceIndex * 3;
+        const index = faceRanges.findIndex((r) => tri >= r.start && tri < r.start + r.count);
+        if (index >= 0) return { kind: "face", index, point: faceHit.point.toArray() as Vec3 };
+      }
+      return null;
+    };
+
+    const sameTarget = (a: PickTarget | null, b: PickTarget | null) => a?.kind === b?.kind && a?.index === b?.index;
+    const onMove = (e: PointerEvent) => {
+      if (e.buttons !== 0) return;
+      const target = pickAt(e.clientX, e.clientY);
+      if (!sameTarget(target, hovered)) {
+        hovered = target;
+        redrawMarks();
+      }
+      const rect = renderer.domElement.getBoundingClientRect();
+      setHover(target ? { x: e.clientX - rect.left, y: e.clientY - rect.top, target } : null);
     };
     const onLeave = () => {
-      hoveredFace = -1;
-      highlight.visible = false;
+      hovered = null;
       setHover(null);
-      render();
+      redrawMarks();
     };
-    renderer.domElement.addEventListener("pointermove", onMove);
-    renderer.domElement.addEventListener("pointerleave", onLeave);
+    // A click is a press and release without dragging; drags orbit the view.
+    let down: { x: number; y: number } | null = null;
+    const onDown = (e: PointerEvent) => {
+      if (e.button === 0) down = { x: e.clientX, y: e.clientY };
+    };
+    const onUp = (e: PointerEvent) => {
+      if (e.button !== 0 || !down) return;
+      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      down = null;
+      if (moved > 4) return;
+      pickRef.current(pickAt(e.clientX, e.clientY), e.shiftKey || e.ctrlKey || e.metaKey);
+    };
+    const canvas = renderer.domElement;
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerleave", onLeave);
+    canvas.addEventListener("pointerdown", onDown);
+    canvas.addEventListener("pointerup", onUp);
+
+    // Automation hook for end-to-end tests (only with ?e2e in the URL): world point -> client pixels.
+    if (new URLSearchParams(location.search).has("e2e")) {
+      (window as unknown as { __cocaideViewport?: unknown }).__cocaideViewport = {
+        project(p: Vec3): [number, number] {
+          const v = new THREE.Vector3(...p).project(camera);
+          const rect = canvas.getBoundingClientRect();
+          return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
+        },
+      };
+    }
 
     api.current = {
       setModel,
+      setSelection(sel: Selection) {
+        selection = sel;
+        redrawMarks();
+      },
       setSketchesVisible(visible: boolean) {
         overlays.visible = visible;
         render();
@@ -239,12 +375,16 @@ export function Viewport({ view, fitToken }: Props) {
       fit,
       dispose() {
         ro.disconnect();
-        renderer.domElement.removeEventListener("pointermove", onMove);
-        renderer.domElement.removeEventListener("pointerleave", onLeave);
+        canvas.removeEventListener("pointermove", onMove);
+        canvas.removeEventListener("pointerleave", onLeave);
+        canvas.removeEventListener("pointerdown", onDown);
+        canvas.removeEventListener("pointerup", onUp);
         controls.dispose();
         disposeGroup(model);
         disposeGroup(overlays);
         disposeGroup(helpers);
+        disposeGroup(marks);
+        fatMaterials.forEach((m) => m.dispose());
         renderer.dispose();
         renderer.domElement.remove();
       },
@@ -258,6 +398,10 @@ export function Viewport({ view, fitToken }: Props) {
   useEffect(() => {
     api.current?.setModel(view);
   }, [view]);
+
+  useEffect(() => {
+    api.current?.setSelection(selection);
+  }, [selection, view]);
 
   useEffect(() => {
     if (fitToken > 0) api.current?.fit(VIEW_DIRS.iso);
@@ -283,25 +427,54 @@ export function Viewport({ view, fitToken }: Props) {
           Sketches
         </button>
       </div>
-      {hover && <FaceTip hover={hover} />}
+      <SelectionChip selection={selection} faces={view?.faces ?? []} edges={view?.edges ?? []} />
+      {hover && <PickTip hover={hover} faces={infoRef.current.faces} edges={infoRef.current.edges} />}
     </div>
   );
 }
 
-function FaceTip({ hover }: { hover: Hover }) {
-  const f = hover.face;
-  let detail: string;
-  if (f.type === "plane" && f.normal) {
-    detail = `planar · normal ${formatDirection(f.normal)} · offset ${fmt(f.offset ?? 0)}`;
-  } else if (f.type === "cylinder") {
-    detail = `cylindrical · Ø${fmt(2 * (f.radius ?? 0))} · ${f.concave ? "hole wall" : "boss"}`;
-  } else {
-    detail = f.type === "cone" ? "conical" : "freeform";
-  }
+function describeFace(f: FaceInfo | undefined): string {
+  if (!f) return "face";
+  if (f.type === "plane" && f.normal) return `planar face · normal ${formatDirection(f.normal)} · offset ${fmt(f.offset ?? 0)}`;
+  if (f.type === "cylinder" && f.cylinder) return `cylindrical face · Ø${fmt(2 * f.cylinder.radius)} · ${f.cylinder.concave ? "hole wall" : "boss"}`;
+  return f.type === "cone" ? "conical face" : "freeform face";
+}
+
+function describeEdge(e: EdgeInfo | undefined): string {
+  if (!e) return "edge";
+  if (e.kind === "line") return `straight edge · ${formatDirection(e.direction!)} · length ${fmt(e.length)}`;
+  if (e.kind === "circle") return `circular edge · Ø${fmt(2 * e.radius!)}`;
+  return `curved edge · length ${fmt(e.length)}`;
+}
+
+function PickTip({ hover, faces, edges }: { hover: Hover; faces: FaceInfo[]; edges: EdgeInfo[] }) {
+  const t = hover.target;
+  const face = t.kind === "face" ? faces[t.index] : undefined;
   return (
     <div className="face-tip" style={{ left: hover.x + 14, top: hover.y + 14 }}>
-      <div>{detail}</div>
-      <div className="muted">area {fmt(f.area)} mm²</div>
+      <div>{t.kind === "face" ? describeFace(face) : describeEdge(edges[t.index])}</div>
+      {face && <div className="muted">area {fmt(face.area)} mm²</div>}
+    </div>
+  );
+}
+
+function SelectionChip({ selection, faces, edges }: { selection: Selection; faces: FaceInfo[]; edges: EdgeInfo[] }) {
+  const n = selection.faces.length + selection.edges.length;
+  if (n === 0) return null;
+  const text =
+    selection.faces.length === 1 && selection.edges.length === 0
+      ? describeFace(faces[selection.faces[0]])
+      : selection.edges.length === 1 && selection.faces.length === 0
+        ? describeEdge(edges[selection.edges[0]])
+        : [
+            selection.faces.length ? `${selection.faces.length} face${selection.faces.length === 1 ? "" : "s"}` : "",
+            selection.edges.length ? `${selection.edges.length} edge${selection.edges.length === 1 ? "" : "s"}` : "",
+          ]
+            .filter(Boolean)
+            .join(" + ");
+  return (
+    <div className="selection-chip" data-testid="selection">
+      Selected: {text}
     </div>
   );
 }

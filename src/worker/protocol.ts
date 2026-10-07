@@ -1,22 +1,11 @@
 // Messages between the UI thread and the kernel worker. OCCT shapes never
 // cross this boundary: the worker sends meshes, measurements and STEP text.
 
-import type { FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
-import type { Vec3 } from "../doc/types";
+import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
 
 export type KernelRequest =
   | { id: number; type: "rebuild"; doc: unknown }
   | { id: number; type: "exportStep"; doc: unknown };
-
-/** What the viewport shows when hovering a face. */
-export interface FaceSummary {
-  type: "plane" | "cylinder" | "cone" | "other";
-  area: number;
-  normal?: Vec3;
-  offset?: number;
-  radius?: number;
-  concave?: boolean;
-}
 
 export interface RebuildView {
   ok: boolean;
@@ -26,7 +15,9 @@ export interface RebuildView {
   sketches: SketchOverlay[];
   measurements: Measurements | null;
   mesh: MeshData | null;
-  faces: FaceSummary[];
+  /** B-rep faces and edges of the result, indexed like the mesh ranges. Plain data: picking and selector synthesis use them. */
+  faces: FaceInfo[];
+  edges: EdgeInfo[];
 }
 
 export type KernelResponse =
