@@ -249,6 +249,8 @@ export interface PlanarFaceSelector {
   pick: Pick;
   /** Optional: signed distance of the face plane from the origin along `normal`. */
   offset?: number;
+  /** Optional: of the matches, the one whose centre is nearest this point (for otherwise identical faces). */
+  near?: Vec3;
 }
 
 export interface CylindricalFaceSelector {
@@ -256,6 +258,8 @@ export interface CylindricalFaceSelector {
   radius?: number;
   /** Optional axis direction; matched in either sense. */
   axis?: Vec3;
+  /** Optional: of the matches, the one whose centre is nearest this point. */
+  near?: Vec3;
   pick: Pick;
 }
 
@@ -270,7 +274,8 @@ export const EDGE_PICKS: readonly EdgePick[] = ["all", "longest", "shortest"];
  * `onFace` - the edge bounds a face the face selector matches;
  * `between` - the edge is shared by a face matching each selector;
  * `direction` - a straight edge parallel to this (either sense);
- * `radius` - a circular edge of this radius; `length` - this length.
+ * `radius` - a circular edge of this radius; `length` - this length;
+ * `near` - of the matches, the one whose centre is nearest this point.
  */
 export interface EdgeSelector {
   type: "edge";
@@ -280,5 +285,6 @@ export interface EdgeSelector {
   direction?: Vec3;
   radius?: number;
   length?: number;
+  near?: Vec3;
   pick: EdgePick;
 }

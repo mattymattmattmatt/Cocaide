@@ -2,7 +2,8 @@
 // resolve to what the operation needs is an error, never a guess.
 
 import type { EdgeSelector, FaceSelector } from "../doc/types";
-import { dot3, formatDirection, normalize3 } from "../geom/vec";
+import type { Vec3 } from "../doc/types";
+import { dist3, dot3, formatDirection, normalize3 } from "../geom/vec";
 import type { EdgeInfo, FaceInfo } from "./topology";
 
 const ANGLE_TOL = 1e-9;
@@ -11,12 +12,24 @@ const AREA_REL_TOL = 1e-9;
 
 export interface Selection {
   matches: FaceInfo[];
-  /** Set when `pick` could not choose because several faces tie. */
-  tie?: "largest" | "smallest";
+  /** Set when `pick` (or `near`) could not choose because several faces tie. */
+  tie?: "largest" | "smallest" | "nearest";
+}
+
+/** Of `items`, the ones closest to `p` (more than one means a tie). */
+function nearest<T extends { centroid: Vec3 }>(items: T[], p: Vec3): T[] {
+  if (items.length <= 1) return items;
+  const d = items.map((it) => dist3(it.centroid, p));
+  const best = Math.min(...d);
+  return items.filter((_, i) => d[i] - best <= LENGTH_TOL);
 }
 
 export function selectFaces(infos: FaceInfo[], selector: FaceSelector): Selection {
-  const matches = infos.filter((f) => matchesFace(f, selector));
+  let matches = infos.filter((f) => matchesFace(f, selector));
+  if (selector.near) {
+    matches = nearest(matches, selector.near);
+    if (matches.length > 1) return { matches, tie: "nearest" };
+  }
   if (selector.pick === "all" || matches.length <= 1) return { matches };
   const sign = selector.pick === "largest" ? 1 : -1;
   const best = Math.max(...matches.map((f) => sign * f.area));
@@ -41,21 +54,22 @@ function matchesFace(f: FaceInfo, sel: FaceSelector): boolean {
 /** "1 planar face normal +Z", "1 cylindrical face radius 3.3", ... */
 export function describeWanted(sel: FaceSelector, count: number): string {
   const noun = count === 1 ? "face" : "faces";
+  const near = sel.near ? ` nearest ${fmtPoint(sel.near)}` : "";
   if (sel.type === "planar") {
     const at = sel.offset === undefined ? "" : ` at offset ${sel.offset}`;
-    return `${count} planar ${noun} normal ${formatDirection(sel.normal)}${at}`;
+    return `${count} planar ${noun} normal ${formatDirection(sel.normal)}${at}${near}`;
   }
   const parts = [`${count} cylindrical ${noun}`];
   if (sel.radius !== undefined) parts.push(`radius ${sel.radius}`);
   if (sel.axis !== undefined) parts.push(`axis ${formatDirection(sel.axis)}`);
-  return parts.join(" ");
+  return parts.join(" ") + near;
 }
 
 /** Error text for a selection that is not exactly `wanted` faces, or null when it is. */
 export function selectionError(sel: FaceSelector, result: Selection, wanted: number): string | null {
   if (result.matches.length === wanted) return null;
   const n = result.matches.length;
-  const tied = result.tie ? ` tied for ${result.tie} area` : "";
+  const tied = result.tie === "nearest" ? " tied for nearest" : result.tie ? ` tied for ${result.tie} area` : "";
   return `selector matched ${n} ${n === 1 ? "face" : "faces"}${tied} (wanted ${describeWanted(sel, wanted)})`;
 }
 
@@ -63,7 +77,7 @@ export function selectionError(sel: FaceSelector, result: Selection, wanted: num
 
 export interface EdgeSelection {
   matches: EdgeInfo[];
-  tie?: "longest" | "shortest";
+  tie?: "longest" | "shortest" | "nearest";
   /** A nested face selector could not resolve (empty or tied); the message says which. */
   error?: string;
 }
@@ -72,7 +86,7 @@ export function selectEdges(edges: EdgeInfo[], faces: FaceInfo[], sel: EdgeSelec
   const faceSet = (fs: FaceSelector, where: string): Set<number> | string => {
     const r = selectFaces(faces, fs);
     if (r.matches.length === 0) return `${where}: selector matched 0 faces (wanted ${describeWanted(fs, 1)} or more)`;
-    if (r.tie) return `${where}: selector matched ${r.matches.length} faces tied for ${r.tie} area`;
+    if (r.tie) return `${where}: selector matched ${r.matches.length} faces tied for ${r.tie}${r.tie === "nearest" ? "" : " area"}`;
     return new Set(r.matches.map((f) => f.index));
   };
   let on: Set<number> | undefined;
@@ -89,7 +103,7 @@ export function selectEdges(edges: EdgeInfo[], faces: FaceInfo[], sel: EdgeSelec
     if (typeof b === "string") return { matches: [], error: b };
     between = [a, b];
   }
-  const matches = edges.filter((e) => {
+  let matches = edges.filter((e) => {
     if (e.seam) return false;
     if (sel.kind && e.kind !== sel.kind) return false;
     if (sel.direction && (e.kind !== "line" || Math.abs(dot3(e.direction!, normalize3(sel.direction))) < 1 - ANGLE_TOL)) return false;
@@ -103,6 +117,10 @@ export function selectEdges(edges: EdgeInfo[], faces: FaceInfo[], sel: EdgeSelec
     }
     return true;
   });
+  if (sel.near) {
+    matches = nearest(matches, sel.near);
+    if (matches.length > 1) return { matches, tie: "nearest" };
+  }
   if (sel.pick === "all" || matches.length <= 1) return { matches };
   const sign = sel.pick === "longest" ? 1 : -1;
   const best = Math.max(...matches.map((e) => sign * e.length));
@@ -122,6 +140,7 @@ export function describeEdgeSelector(sel: EdgeSelector): string {
       `between ${describeWanted(sel.between[0], 1).replace(/^1 /, "the ")} and ${describeWanted(sel.between[1], 1).replace(/^1 /, "the ")}`,
     );
   }
+  if (sel.near) parts.push(`nearest ${fmtPoint(sel.near)}`);
   if (sel.pick !== "all") parts.push(`(${sel.pick})`);
   return parts.join(" ");
 }
@@ -134,4 +153,8 @@ export function edgeSelectionError(sel: EdgeSelector, result: EdgeSelection, pat
   }
   if (result.matches.length === 0) return `${path}: selector matched 0 edges (wanted ${describeEdgeSelector(sel)})`;
   return null;
+}
+
+function fmtPoint(p: Vec3): string {
+  return `[${p.map((x) => Math.round(x * 1e4) / 1e4).join(", ")}]`;
 }

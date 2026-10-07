@@ -88,6 +88,14 @@ describe("fillet and chamfer", () => {
     expect(r.volume).toBeCloseTo(PLATE - HOLE - area * 2 * Math.PI * (3.3 + centroid), 6);
   });
 
+  it("rounds one of four identical corners, chosen by position", () => {
+    const r = build(
+      withFeatures({ id: "fil_1", op: "fillet", edges: { type: "edge", kind: "line", direction: [0, 0, 1], near: [40, 20, 3], pick: "all" }, radius: 5 }),
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.volume).toBeCloseTo(PLATE - HOLE - (1 - Math.PI / 4) * 25 * 6, 6);
+  });
+
   it("combines a list of edge selectors", () => {
     const r = build(
       withFeatures({

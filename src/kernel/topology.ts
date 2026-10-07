@@ -25,6 +25,8 @@ export interface FaceInfo {
   index: number;
   type: "plane" | "cylinder" | "cone" | "other";
   area: number;
+  /** Area centroid of the face. */
+  centroid: Vec3;
   /** Outward unit normal, planes only. */
   normal?: Vec3;
   /** A point on the plane, planes only. */
@@ -65,6 +67,8 @@ export function faceInfo(oc: OC, s: Scope, face: TopoDS_Face, index: number): Fa
   const props = s.track(new oc.GProp_GProps());
   oc.BRepGProp.SurfaceProperties(face, props, false, false);
   const area = props.Mass();
+  const cm = s.track(props.CentreOfMass());
+  const centroid: Vec3 = [cm.X(), cm.Y(), cm.Z()];
   const reversed = face.Orientation() === oc.TopAbs_Orientation.TopAbs_REVERSED;
   const adaptor = s.track(new oc.BRepAdaptor_Surface(face, true));
   const type = adaptor.GetType();
@@ -76,7 +80,7 @@ export function faceInfo(oc: OC, s: Scope, face: TopoDS_Face, index: number): Fa
     const loc = s.track(plane.Location());
     const n = normalize3(scale3([d.X(), d.Y(), d.Z()], reversed ? -1 : 1));
     const point: Vec3 = [loc.X(), loc.Y(), loc.Z()];
-    return { index, type: "plane", area, normal: n, point, offset: dot3(point, n) };
+    return { index, type: "plane", area, centroid, normal: n, point, offset: dot3(point, n) };
   }
 
   if (type === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
@@ -106,12 +110,13 @@ export function faceInfo(oc: OC, s: Scope, face: TopoDS_Face, index: number): Fa
       index,
       type: "cylinder",
       area,
+      centroid,
       cylinder: { radius: cyl.Radius(), axis, origin, concave, span: u1 - u0, axial },
     };
   }
 
-  if (type === oc.GeomAbs_SurfaceType.GeomAbs_Cone) return { index, type: "cone", area };
-  return { index, type: "other", area };
+  if (type === oc.GeomAbs_SurfaceType.GeomAbs_Cone) return { index, type: "cone", area, centroid };
+  return { index, type: "other", area, centroid };
 }
 
 export interface EdgeInfo {
@@ -122,6 +127,8 @@ export interface EdgeInfo {
   start: Vec3;
   end: Vec3;
   mid: Vec3;
+  /** Centre of the edge: a line's midpoint, a full circle's centre. */
+  centroid: Vec3;
   /** Unit start-to-end direction, lines only. */
   direction?: Vec3;
   /** Circles only. */
@@ -175,6 +182,7 @@ export function describeEdges(oc: OC, s: Scope, shape: TopoDS_Shape, faces: Topo
 function edgeInfo(oc: OC, s: Scope, edge: TopoDS_Edge, index: number): EdgeInfo {
   const props = s.track(new oc.GProp_GProps());
   oc.BRepGProp.LinearProperties(edge, props, false, false);
+  const cm = s.track(props.CentreOfMass());
   const curve = s.track(new oc.BRepAdaptor_Curve(edge));
   const t0 = curve.FirstParameter();
   const t1 = curve.LastParameter();
@@ -186,7 +194,17 @@ function edgeInfo(oc: OC, s: Scope, edge: TopoDS_Edge, index: number): EdgeInfo 
   };
   const start = at(t0);
   const end = at(t1);
-  const info: EdgeInfo = { index, kind: "other", length: props.Mass(), start, end, mid: at((t0 + t1) / 2), faces: [], seam: false };
+  const info: EdgeInfo = {
+    index,
+    kind: "other",
+    length: props.Mass(),
+    start,
+    end,
+    mid: at((t0 + t1) / 2),
+    centroid: [cm.X(), cm.Y(), cm.Z()],
+    faces: [],
+    seam: false,
+  };
   const type = curve.GetType();
   if (type === oc.GeomAbs_CurveType.GeomAbs_Line && dist3(start, end) > 0) {
     info.kind = "line";

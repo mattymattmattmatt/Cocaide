@@ -545,7 +545,7 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
     return null;
   }
   const before = c.errors.length;
-  c.keys(raw, path, ["type", "kind", "onFace", "between", "direction", "radius", "length", "pick"]);
+  c.keys(raw, path, ["type", "kind", "onFace", "between", "direction", "radius", "length", "near", "pick"]);
   if (raw.type !== "edge") c.fail(`${path}.type`, `must be "edge" (got ${describe(raw.type)})`);
   if (!EDGE_PICKS.includes(raw.pick as never)) {
     c.fail(`${path}.pick`, `must be one of ${EDGE_PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(raw.pick)})`);
@@ -567,6 +567,7 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
   const direction = raw.direction === undefined ? undefined : c.unitVec(raw, "direction", path);
   const radius = raw.radius === undefined ? undefined : c.num(raw, "radius", path, { positive: true });
   const length = raw.length === undefined ? undefined : c.num(raw, "length", path, { positive: true });
+  const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
   if (direction && raw.kind !== undefined && raw.kind !== "line") {
     c.fail(`${path}.direction`, `applies to straight edges, but kind is ${describe(raw.kind)}`);
   }
@@ -581,6 +582,7 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
   if (direction) sel.direction = direction;
   if (radius !== undefined) sel.radius = radius;
   if (length !== undefined) sel.length = length;
+  if (near) sel.near = near;
   return sel;
 }
 
@@ -670,22 +672,26 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
   }
   switch (raw.type) {
     case "planar": {
-      c.keys(raw, path, ["type", "normal", "pick", "offset"]);
+      c.keys(raw, path, ["type", "normal", "pick", "offset", "near"]);
       const normal = c.unitVec(raw, "normal", path);
       const offset = raw.offset === undefined ? undefined : c.num(raw, "offset", path, {});
+      const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
       if (!normal || c.errors.length > before) return null;
       const s: FaceSelector = { type: "planar", normal, pick: pick as FaceSelector["pick"] };
       if (offset !== undefined) s.offset = offset;
+      if (near) s.near = near;
       return s;
     }
     case "cylindrical": {
-      c.keys(raw, path, ["type", "radius", "axis", "pick"]);
+      c.keys(raw, path, ["type", "radius", "axis", "pick", "near"]);
       const radius = raw.radius === undefined ? undefined : c.num(raw, "radius", path, { positive: true });
       const axis = raw.axis === undefined ? undefined : c.unitVec(raw, "axis", path);
+      const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
       if (c.errors.length > before) return null;
       const s: FaceSelector = { type: "cylindrical", pick: pick as FaceSelector["pick"] };
       if (radius !== undefined) s.radius = radius;
       if (axis) s.axis = axis;
+      if (near) s.near = near;
       return s;
     }
     default:
