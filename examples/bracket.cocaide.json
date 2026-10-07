@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "bracket",
+  "features": [
+    {
+      "id": "sketch_1",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+      "entities": [
+        { "id": "r1", "type": "rect", "center": [0, 0], "w": 80, "h": 40 }
+      ],
+      "constraints": [
+        { "type": "distanceX", "entity": "r1", "value": 80 }
+      ]
+    },
+    {
+      "id": "ext_1",
+      "op": "extrude",
+      "sketch": "sketch_1",
+      "distance": 6,
+      "direction": [0, 0, 1]
+    },
+    {
+      "id": "hole_1",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+      "center": [30, 0],
+      "diameter": 6.6,
+      "depth": "through"
+    }
+  ]
+}

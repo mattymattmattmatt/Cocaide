@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "mounting-plate",
+  "material": { "name": "6082-T6 aluminium", "densityKgPerM3": 2700 },
+  "features": [
+    {
+      "id": "outline",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+      "entities": [
+        { "id": "l1", "type": "line", "start": [-44, -30], "end": [44, -30] },
+        { "id": "a1", "type": "arc", "center": [44, -24], "start": [44, -30], "end": [50, -24] },
+        { "id": "l2", "type": "line", "start": [50, -24], "end": [50, 24] },
+        { "id": "a2", "type": "arc", "center": [44, 24], "start": [50, 24], "end": [44, 30] },
+        { "id": "l3", "type": "line", "start": [44, 30], "end": [-44, 30] },
+        { "id": "a3", "type": "arc", "center": [-44, 24], "start": [-44, 30], "end": [-50, 24] },
+        { "id": "l4", "type": "line", "start": [-50, 24], "end": [-50, -24] },
+        { "id": "a4", "type": "arc", "center": [-44, -24], "start": [-50, -24], "end": [-44, -30] },
+        { "id": "bore", "type": "circle", "center": [0, 0], "radius": 10 },
+        { "id": "axis", "type": "line", "start": [-50, 0], "end": [50, 0], "construction": true }
+      ],
+      "constraints": [
+        { "type": "horizontal", "entity": "l1" },
+        { "type": "horizontal", "entity": "l3" },
+        { "type": "vertical", "entity": "l2" },
+        { "type": "vertical", "entity": "l4" },
+        { "type": "coincident", "points": ["l1.end", "a1.start"] },
+        { "type": "coincident", "points": ["a1.end", "l2.start"] },
+        { "type": "radius", "entity": "a1", "value": 6 },
+        { "type": "equal", "entities": ["a1", "a2"] },
+        { "type": "equal", "entities": ["a1", "a3"] },
+        { "type": "equal", "entities": ["a1", "a4"] },
+        { "type": "distanceX", "points": ["l4.start", "l2.start"], "value": 100 },
+        { "type": "distanceY", "points": ["l1.start", "l3.end"], "value": 60 },
+        { "type": "radius", "entity": "bore", "value": 10 }
+      ]
+    },
+    {
+      "id": "plate",
+      "op": "extrude",
+      "sketch": "outline",
+      "distance": 8
+    },
+    {
+      "id": "slot_sketch",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 8] },
+      "entities": [
+        { "id": "s1", "type": "slot", "center1": [-30, -12], "center2": [-30, 12], "width": 8 }
+      ],
+      "constraints": [
+        { "type": "distance", "entity": "s1", "value": 24 }
+      ]
+    },
+    {
+      "id": "slot_cut",
+      "op": "cut",
+      "sketch": "slot_sketch",
+      "extent": "throughAll",
+      "direction": [0, 0, -1]
+    },
+    {
+      "id": "pocket_sketch",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 8] },
+      "entities": [
+        { "id": "p1", "type": "rect", "center": [30, 0], "w": 16, "h": 24 }
+      ]
+    },
+    {
+      "id": "pocket",
+      "op": "cut",
+      "sketch": "pocket_sketch",
+      "distance": 3,
+      "direction": [0, 0, -1]
+    },
+    {
+      "id": "cbore_1",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+      "center": [40, 20],
+      "diameter": 6.6,
+      "depth": "through",
+      "counterbore": { "diameter": 11, "depth": 4 }
+    },
+    {
+      "id": "cbore_2",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+      "center": [40, -20],
+      "diameter": 6.6,
+      "depth": "through",
+      "counterbore": { "diameter": 11, "depth": 4 }
+    },
+    {
+      "id": "csink_1",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+      "center": [-40, 20],
+      "diameter": 6.6,
+      "depth": "through",
+      "countersink": { "diameter": 13, "angle": 90 }
+    },
+    {
+      "id": "csink_2",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [0, 0, 1], "pick": "largest" },
+      "center": [-40, -20],
+      "diameter": 6.6,
+      "depth": "through",
+      "countersink": { "diameter": 13, "angle": 90 }
+    },
+    {
+      "id": "side_tap",
+      "op": "hole",
+      "face": { "type": "planar", "normal": [1, 0, 0], "pick": "largest" },
+      "center": [0, 4],
+      "diameter": 4.2,
+      "depth": 10
+    }
+  ]
+}
