@@ -1,9 +1,9 @@
 // Face queries on a B-rep. Everything here is recomputed from geometry on
 // every rebuild; nothing stores a topology index.
 
-import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
+import type { TopoDS_Edge, TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
 import type { Vec3 } from "../doc/types";
-import { cross3, dot3, len3, normalize3, scale3, sub3 } from "../geom/vec";
+import { cross3, dist3, dot3, len3, normalize3, scale3, sub3 } from "../geom/vec";
 import { type OC, type Scope } from "./oc";
 
 export interface CylinderInfo {
@@ -112,4 +112,94 @@ export function faceInfo(oc: OC, s: Scope, face: TopoDS_Face, index: number): Fa
 
   if (type === oc.GeomAbs_SurfaceType.GeomAbs_Cone) return { index, type: "cone", area };
   return { index, type: "other", area };
+}
+
+export interface EdgeInfo {
+  /** Position among the unique edges, in TopExp_Explorer order. Matches the edge mesh groups. */
+  index: number;
+  kind: "line" | "circle" | "other";
+  length: number;
+  start: Vec3;
+  end: Vec3;
+  mid: Vec3;
+  /** Unit start-to-end direction, lines only. */
+  direction?: Vec3;
+  /** Circles only. */
+  radius?: number;
+  center?: Vec3;
+  axis?: Vec3;
+  /** Indices of the faces this edge bounds (FaceInfo.index). */
+  faces: number[];
+  /**
+   * The edge where a closed surface (a hole wall) meets itself. It bounds one
+   * face only and is not a feature edge: selectors and the viewport skip it.
+   */
+  seam: boolean;
+}
+
+const HASH_BOUND = 1 << 30;
+
+/** Unique edges in explorer order. Each edge appears once even though the explorer visits it per face. */
+export function listEdges(oc: OC, s: Scope, shape: TopoDS_Shape): { edges: TopoDS_Edge[]; find(e: TopoDS_Edge): number } {
+  const edges: TopoDS_Edge[] = [];
+  const buckets = new Map<number, number[]>();
+  const find = (e: TopoDS_Edge) => {
+    const bucket = buckets.get(oc.ReplicadShapeHasher.HashCode(e, HASH_BOUND)) ?? [];
+    return bucket.find((i) => edges[i].IsSame(e)) ?? -1;
+  };
+  const ex = s.track(new oc.TopExp_Explorer(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
+  for (; ex.More(); ex.Next()) {
+    const e = s.track(oc.TopoDS.Edge(s.track(ex.Current())));
+    if (find(e) >= 0) continue;
+    const hash = oc.ReplicadShapeHasher.HashCode(e, HASH_BOUND);
+    buckets.set(hash, [...(buckets.get(hash) ?? []), edges.length]);
+    edges.push(e);
+  }
+  return { edges, find };
+}
+
+export function describeEdges(oc: OC, s: Scope, shape: TopoDS_Shape, faces: TopoDS_Face[]): { edges: TopoDS_Edge[]; infos: EdgeInfo[] } {
+  const { edges, find } = listEdges(oc, s, shape);
+  const infos = edges.map((e, i) => edgeInfo(oc, s, e, i));
+  faces.forEach((face, fi) => {
+    const ex = s.track(new oc.TopExp_Explorer(face, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
+    for (; ex.More(); ex.Next()) {
+      const idx = find(s.track(oc.TopoDS.Edge(s.track(ex.Current()))));
+      if (idx >= 0 && !infos[idx].faces.includes(fi)) infos[idx].faces.push(fi);
+    }
+  });
+  for (const info of infos) info.seam = info.faces.length === 1;
+  return { edges, infos };
+}
+
+function edgeInfo(oc: OC, s: Scope, edge: TopoDS_Edge, index: number): EdgeInfo {
+  const props = s.track(new oc.GProp_GProps());
+  oc.BRepGProp.LinearProperties(edge, props, false, false);
+  const curve = s.track(new oc.BRepAdaptor_Curve(edge));
+  const t0 = curve.FirstParameter();
+  const t1 = curve.LastParameter();
+  const at = (t: number): Vec3 => {
+    const p = curve.EvalD0(t);
+    const v: Vec3 = [p.X(), p.Y(), p.Z()];
+    p.delete();
+    return v;
+  };
+  const start = at(t0);
+  const end = at(t1);
+  const info: EdgeInfo = { index, kind: "other", length: props.Mass(), start, end, mid: at((t0 + t1) / 2), faces: [], seam: false };
+  const type = curve.GetType();
+  if (type === oc.GeomAbs_CurveType.GeomAbs_Line && dist3(start, end) > 0) {
+    info.kind = "line";
+    info.direction = normalize3(sub3(end, start));
+  } else if (type === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+    const circ = s.track(curve.Circle());
+    const loc = s.track(circ.Location());
+    const ax = s.track(circ.Axis());
+    const d = s.track(ax.Direction());
+    info.kind = "circle";
+    info.radius = circ.Radius();
+    info.center = [loc.X(), loc.Y(), loc.Z()];
+    info.axis = [d.X(), d.Y(), d.Z()];
+  }
+  return info;
 }

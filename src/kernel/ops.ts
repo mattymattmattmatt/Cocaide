@@ -4,16 +4,34 @@
 // accepted.
 
 import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
-import type { ExtrudeFeature, HoleFeature, Vec2, Vec3 } from "../doc/types";
+import type {
+  ChamferFeature,
+  CircularPatternFeature,
+  ExtrudeFeature,
+  FilletFeature,
+  HoleFeature,
+  LinearPatternFeature,
+  Vec2,
+  Vec3,
+} from "../doc/types";
 import { facePlaneFrame, to3D, type Frame } from "../geom/frame";
 import { arcMid, type Loop, type Region } from "../geom/profile";
 import { add3, dot3, formatDirection, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
 import { type OC, type Scope } from "./oc";
-import { selectFaces, selectionError } from "./selectors";
-import { describeFaces } from "./topology";
+import { edgeSelectionError, selectEdges, selectFaces, selectionError } from "./selectors";
+import { describeEdges, describeFaces } from "./topology";
 
 export class OpError extends Error {}
+
+/** A feature that adds or removes one tool body; patterns replay the tool. */
+export interface ToolResult {
+  /** The new body. Owned by the caller. */
+  body: TopoDS_Shape;
+  /** The tool solid, before the boolean. Owned by the caller. */
+  tool: TopoDS_Shape;
+  kind: BooleanKind;
+}
 
 /** What a sketch feature leaves behind for the features that consume it. */
 export interface SketchProfile {
@@ -106,7 +124,7 @@ function compoundOf(oc: OC, s: Scope, shapes: TopoDS_Shape[]): TopoDS_Shape {
   return compound;
 }
 
-type BooleanKind = "fuse" | "cut";
+export type BooleanKind = "fuse" | "cut";
 
 /** Boolean, then merge coplanar faces and collinear edges so selectors see whole faces. */
 function boolean(oc: OC, s: Scope, kind: BooleanKind, a: TopoDS_Shape, b: TopoDS_Shape): TopoDS_Shape {
@@ -137,14 +155,14 @@ function reachAlong(oc: OC, s: Scope, shape: TopoDS_Shape, from: Vec3, d: Vec3):
 
 // ------------------------------------------------------- extrude and cut
 
-/** Returns the new body. The caller owns it; everything else is in scope `s`. */
+/** Returns the new body and the tool. The caller owns both; everything else is in scope `s`. */
 export function extrudeOrCut(
   oc: OC,
   s: Scope,
   f: ExtrudeFeature,
   profile: SketchProfile,
   body: TopoDS_Shape | null,
-): TopoDS_Shape {
+): ToolResult {
   if (profile.regions.length === 0) throw new OpError(`sketch "${f.sketch}" has no closed profile to ${f.op}`);
   const { frame } = profile;
   const d = normalize3(f.direction ?? frame.z);
@@ -168,12 +186,13 @@ export function extrudeOrCut(
   }
   const tool = prism(oc, s, profileFaces(oc, s, profile), offset, scale3(d, length));
 
+  const kind: BooleanKind = f.op === "extrude" ? "fuse" : "cut";
   if (!body) {
     if (!isValidShape(oc, s, tool)) throw new OpError("the extrusion produced an invalid solid");
-    return copyOut(tool);
+    return { body: copyOut(tool), tool: copyOut(tool), kind };
   }
   const before = volumeOf(oc, s, body);
-  const result = boolean(oc, s, f.op === "extrude" ? "fuse" : "cut", body, tool);
+  const result = boolean(oc, s, kind, body, tool);
   const after = volumeOf(oc, s, result);
   if (!isValidShape(oc, s, result)) throw new OpError(`the ${f.op} produced an invalid solid`);
   if (f.op === "extrude" && after - before <= VOLUME_EPS * Math.max(1, before)) {
@@ -185,12 +204,12 @@ export function extrudeOrCut(
         (extent === "throughAll" ? "" : "; check direction and distance, or use extent throughAll"),
     );
   }
-  return copyOut(result);
+  return { body: copyOut(result), tool: copyOut(tool), kind };
 }
 
 // ------------------------------------------------------------------ hole
 
-export function hole(oc: OC, s: Scope, f: HoleFeature, body: TopoDS_Shape | null): TopoDS_Shape {
+export function hole(oc: OC, s: Scope, f: HoleFeature, body: TopoDS_Shape | null): ToolResult {
   if (!body) throw new OpError("nothing to drill: there is no solid before this feature");
   const { faces, infos } = describeFaces(oc, s, body);
   const selection = selectFaces(infos, f.face);
@@ -220,7 +239,7 @@ export function hole(oc: OC, s: Scope, f: HoleFeature, body: TopoDS_Shape | null
   const after = volumeOf(oc, s, result);
   if (!isValidShape(oc, s, result)) throw new OpError("the hole produced an invalid solid");
   if (before - after <= VOLUME_EPS * Math.max(1, before)) throw new OpError("removed no material");
-  return copyOut(result);
+  return { body: copyOut(result), tool: copyOut(tool), kind: "cut" };
 }
 
 /**
@@ -254,6 +273,102 @@ function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Vec3, rad
   const revol = s.track(new oc.BRepPrimAPI_MakeRevol(face, axis, 2 * Math.PI, false));
   if (!revol.IsDone()) throw new OpError("could not build the hole tool");
   return s.track(revol.Shape());
+}
+
+// ---------------------------------------------------- fillet and chamfer
+
+export function edgeTreatment(oc: OC, s: Scope, f: FilletFeature | ChamferFeature, body: TopoDS_Shape | null): TopoDS_Shape {
+  if (!body) throw new OpError(`nothing to ${f.op}: there is no solid before this feature`);
+  const { faces, infos: faceInfos } = describeFaces(oc, s, body);
+  const { edges, infos } = describeEdges(oc, s, body, faces);
+  const selectors = Array.isArray(f.edges) ? f.edges : [f.edges];
+  const chosen = new Set<number>();
+  selectors.forEach((sel, i) => {
+    const path = Array.isArray(f.edges) ? `edges[${i}]` : "edges";
+    const result = selectEdges(infos, faceInfos, sel, path);
+    const problem = edgeSelectionError(sel, result, path);
+    if (problem) throw new OpError(problem);
+    for (const e of result.matches) chosen.add(e.index);
+  });
+
+  const size = f.op === "fillet" ? f.radius : f.distance;
+  const builder = s.track(f.op === "fillet" ? new oc.BRepFilletAPI_MakeFillet(body) : new oc.BRepFilletAPI_MakeChamfer(body));
+  for (const i of chosen) builder.Add(size, edges[i]);
+  builder.Build(s.track(new oc.Message_ProgressRange()));
+  const n = chosen.size;
+  if (!builder.IsDone()) {
+    throw new OpError(
+      `the ${f.op} failed in the kernel on ${n} edge${n === 1 ? "" : "s"}; ${f.op === "fillet" ? "radius" : "distance"} ${size} is probably too large for them`,
+    );
+  }
+  const result = s.track(builder.Shape());
+  if (!isValidShape(oc, s, result)) throw new OpError(`the ${f.op} produced an invalid solid`);
+  const before = volumeOf(oc, s, body);
+  if (Math.abs(volumeOf(oc, s, result) - before) <= VOLUME_EPS * Math.max(1, before)) {
+    throw new OpError(`the ${f.op} changed nothing`);
+  }
+  return copyOut(result);
+}
+
+// -------------------------------------------------------------- patterns
+
+/** Applies copies of a seed feature's tool. Every instance must add or remove material. */
+export function pattern(
+  oc: OC,
+  s: Scope,
+  f: LinearPatternFeature | CircularPatternFeature,
+  seed: { tool: TopoDS_Shape; kind: BooleanKind },
+  body: TopoDS_Shape | null,
+): TopoDS_Shape {
+  if (!body) throw new OpError("nothing to pattern onto: there is no solid before this feature");
+  const instances: { label: string; trsf: ReturnType<typeof identity> }[] = [];
+  if (f.op === "linearPattern") {
+    const d1 = normalize3(f.direction);
+    const d2 = f.direction2 ? normalize3(f.direction2) : ([0, 0, 0] as Vec3);
+    const n2 = f.count2 ?? 1;
+    for (let j = 0; j < n2; j++) {
+      for (let i = 0; i < f.count; i++) {
+        if (i === 0 && j === 0) continue;
+        const offset = add3(scale3(d1, i * f.spacing), scale3(d2, j * (f.spacing2 ?? 0)));
+        const t = identity(oc, s);
+        t.SetTranslation(vec(oc, s, offset));
+        const label = n2 > 1 ? `instance [${i + 1}, ${j + 1}]` : `instance ${i + 1}`;
+        instances.push({ label: `${label} (offset ${fmt3(offset)})`, trsf: t });
+      }
+    }
+  } else {
+    const total = f.angle ?? 360;
+    const step = total >= 360 ? total / f.count : total / (f.count - 1);
+    const axis = s.track(new oc.gp_Ax1(pnt(oc, s, f.axis.origin), dir(oc, s, normalize3(f.axis.direction))));
+    for (let k = 1; k < f.count; k++) {
+      const t = identity(oc, s);
+      t.SetRotation(axis, (k * step * Math.PI) / 180);
+      instances.push({ label: `instance ${k + 1} (${roundTo(k * step, 4)} deg)`, trsf: t });
+    }
+  }
+
+  let current = body;
+  for (const inst of instances) {
+    const moved = s.track(s.track(new oc.BRepBuilderAPI_Transform(seed.tool, inst.trsf, true, false)).Shape());
+    const before = volumeOf(oc, s, current);
+    const next = boolean(oc, s, seed.kind, current, moved);
+    const after = volumeOf(oc, s, next);
+    const changed = seed.kind === "fuse" ? after - before : before - after;
+    if (changed <= VOLUME_EPS * Math.max(1, before)) {
+      throw new OpError(`${inst.label} ${seed.kind === "fuse" ? "adds" : "removes"} no material`);
+    }
+    current = next;
+  }
+  if (!isValidShape(oc, s, current)) throw new OpError("the pattern produced an invalid solid");
+  return copyOut(current);
+}
+
+function identity(oc: OC, s: Scope) {
+  return s.track(new oc.gp_Trsf());
+}
+
+function fmt3(v: Vec3): string {
+  return `[${v.map((x) => roundTo(x, 4)).join(", ")}]`;
 }
 
 /**

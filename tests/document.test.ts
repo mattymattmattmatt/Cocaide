@@ -49,11 +49,11 @@ describe("validation", () => {
     ]);
   });
 
-  it("rejects ops that Phase A does not have", () => {
+  it("rejects ops it does not have", () => {
     const doc = base();
-    doc.features.push({ id: "fil_1", op: "fillet", radius: 2 });
+    doc.features.push({ id: "loft_1", op: "loft", sections: [] });
     expect(allErrors(validateDocument(doc))).toEqual([
-      'fil_1: op: unknown op "fillet" (supported: sketch, extrude, cut, hole)',
+      'loft_1: op: unknown op "loft" (supported: sketch, extrude, cut, hole, fillet, chamfer, linearPattern, circularPattern)',
     ]);
   });
 
@@ -98,7 +98,7 @@ describe("validation", () => {
     expect(allErrors(validateDocument(doc))).toEqual([
       'sketch_1: constraints[1] radius: entity "r1" is a rect; this constraint applies to circle or arc',
       'sketch_1: constraints[2] coincident: point ref "r1.start": a rect has points center',
-      'sketch_1: constraints[2] coincident: point ref "r2.center" must be "<entity>.<point>" for an entity in this sketch',
+      'sketch_1: constraints[2] coincident: point ref "r2.center" must be "origin" or "<entity>.<point>" for an entity in this sketch',
     ]);
   });
 

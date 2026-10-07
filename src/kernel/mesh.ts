@@ -12,8 +12,10 @@ export interface MeshData {
   indices: Uint32Array;
   /** Index ranges per B-rep face, in TopExp_Explorer order (same order as FaceInfo.index). */
   faceRanges: { start: number; count: number }[];
-  /** Feature edges as line-segment pairs (x0 y0 z0 x1 y1 z1 ...). */
+  /** B-rep edges as line-segment pairs (x0 y0 z0 x1 y1 z1 ...). */
   edges: Float32Array;
+  /** Segment ranges per B-rep edge, in unique-edge explorer order (same order as EdgeInfo.index). */
+  edgeRanges: { start: number; count: number }[];
 }
 
 export function tessellate(oc: OC, shape: TopoDS_Shape): MeshData {
@@ -50,13 +52,16 @@ export function tessellate(oc: OC, shape: TopoDS_Shape): MeshData {
   }
   // Each edge group is a polyline (start and count in points); expand to segment pairs.
   const segments: number[] = [];
+  const edgeRanges: MeshData["edgeRanges"] = [];
   for (let g = 0; g < edgeGroups.length; g += 3) {
     const start = edgeGroups[g];
     const count = edgeGroups[g + 1];
+    const first = segments.length / 6;
     for (let i = start; i < start + count - 1; i++) {
       for (let k = 0; k < 3; k++) segments.push(points[3 * i + k]);
       for (let k = 0; k < 3; k++) segments.push(points[3 * (i + 1) + k]);
     }
+    edgeRanges.push({ start: first, count: segments.length / 6 - first });
   }
-  return { positions, normals, indices, faceRanges, edges: new Float32Array(segments) };
+  return { positions, normals, indices, faceRanges, edges: new Float32Array(segments), edgeRanges };
 }

@@ -83,6 +83,7 @@ function radius(e: SketchEntity): number {
 }
 
 export function point(ref: string, byId: Map<string, SketchEntity>): Vec2 {
+  if (ref === "origin") return [0, 0];
   const [id, name] = ref.split(".");
   const e = byId.get(id) as unknown as Record<string, Vec2>;
   return e[name];

@@ -6,14 +6,21 @@
 // the part can still rebuild.
 
 import {
+  EDGE_PICKS,
   FEATURE_OPS,
+  PATTERNABLE_OPS,
   PICKS,
+  type ChamferFeature,
+  type CircularPatternFeature,
   type CocaideDocument,
   type Constraint,
+  type EdgeSelector,
   type ExtrudeFeature,
   type FaceSelector,
   type Feature,
+  type FilletFeature,
   type HoleFeature,
+  type LinearPatternFeature,
   type Material,
   type SketchEntity,
   type SketchFeature,
@@ -128,19 +135,38 @@ export function validateDocument(input: unknown): ValidationResult {
   return result;
 }
 
-function validateFeature(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): Feature | null {
+function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Map<string, string>): Feature | null {
+  // `suppressed` is common to every op; check it here and validate the rest per op.
+  const { suppressed, ...raw } = input;
+  if (suppressed !== undefined && typeof suppressed !== "boolean") {
+    c.fail("suppressed", `must be true or false (got ${describe(suppressed)})`);
+  }
+  let feature: Feature | null;
   switch (raw.op) {
     case "sketch":
-      return validateSketch(raw, c);
+      feature = validateSketch(raw, c);
+      break;
     case "extrude":
     case "cut":
-      return validateExtrude(raw, c, earlier);
+      feature = validateExtrude(raw, c, earlier);
+      break;
     case "hole":
-      return validateHole(raw, c);
+      feature = validateHole(raw, c);
+      break;
+    case "fillet":
+    case "chamfer":
+      feature = validateEdgeTreatment(raw, c);
+      break;
+    case "linearPattern":
+    case "circularPattern":
+      feature = validatePattern(raw, c, earlier);
+      break;
     default:
       c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
       return null;
   }
+  if (feature && typeof suppressed === "boolean") feature.suppressed = suppressed;
+  return feature;
 }
 
 // ---------------------------------------------------------------- sketch
@@ -315,10 +341,11 @@ function validateConstraint(
       c.fail(label, `point refs must be strings like "l1.end" (got ${describe(value)})`);
       return undefined;
     }
+    if (value === "origin") return value;
     const [id, point, ...rest] = value.split(".");
     const type = entities.get(id);
     if (!type || point === undefined || rest.length > 0) {
-      c.fail(label, `point ref "${value}" must be "<entity>.<point>" for an entity in this sketch`);
+      c.fail(label, `point ref "${value}" must be "origin" or "<entity>.<point>" for an entity in this sketch`);
       return undefined;
     }
     if (!POINT_NAMES[type].includes(point)) {
@@ -490,6 +517,145 @@ function validateHole(raw: Record<string, unknown>, c: Checker): HoleFeature | n
   if (counterbore) hole.counterbore = counterbore;
   if (countersink) hole.countersink = countersink;
   return hole;
+}
+
+// ---------------------------------------------------- fillet and chamfer
+
+function validateEdgeTreatment(raw: Record<string, unknown>, c: Checker): FilletFeature | ChamferFeature | null {
+  const size = raw.op === "fillet" ? "radius" : "distance";
+  c.keys(raw, "", ["id", "op", "edges", size]);
+  const value = c.num(raw, size, "", { positive: true });
+  let edges: EdgeSelector | EdgeSelector[] | null = null;
+  if (Array.isArray(raw.edges)) {
+    if (raw.edges.length === 0) c.fail("edges", "must list at least one edge selector");
+    const list = raw.edges.map((e, i) => validateEdgeSelector(e, `edges[${i}]`, c));
+    if (list.every((e) => e !== null)) edges = list as EdgeSelector[];
+  } else {
+    edges = validateEdgeSelector(raw.edges, "edges", c);
+  }
+  if (c.errors.length > 0 || !edges || value === undefined) return null;
+  return raw.op === "fillet"
+    ? { id: raw.id as string, op: "fillet", edges, radius: value }
+    : { id: raw.id as string, op: "chamfer", edges, distance: value };
+}
+
+export function validateEdgeSelector(raw: unknown, path: string, c: Checker): EdgeSelector | null {
+  if (!isObject(raw)) {
+    c.fail(path, `must be an edge selector object (got ${describe(raw)})`);
+    return null;
+  }
+  const before = c.errors.length;
+  c.keys(raw, path, ["type", "kind", "onFace", "between", "direction", "radius", "length", "pick"]);
+  if (raw.type !== "edge") c.fail(`${path}.type`, `must be "edge" (got ${describe(raw.type)})`);
+  if (!EDGE_PICKS.includes(raw.pick as never)) {
+    c.fail(`${path}.pick`, `must be one of ${EDGE_PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(raw.pick)})`);
+  }
+  if (raw.kind !== undefined && !["line", "circle", "other"].includes(raw.kind as string)) {
+    c.fail(`${path}.kind`, `must be "line", "circle" or "other" (got ${describe(raw.kind)})`);
+  }
+  const onFace = raw.onFace === undefined ? undefined : validateFaceSelector(raw.onFace, `${path}.onFace`, c);
+  let between: [FaceSelector, FaceSelector] | undefined;
+  if (raw.between !== undefined) {
+    if (!Array.isArray(raw.between) || raw.between.length !== 2) {
+      c.fail(`${path}.between`, `must be an array of two face selectors (got ${describe(raw.between)})`);
+    } else {
+      const a = validateFaceSelector(raw.between[0], `${path}.between[0]`, c);
+      const b = validateFaceSelector(raw.between[1], `${path}.between[1]`, c);
+      if (a && b) between = [a, b];
+    }
+  }
+  const direction = raw.direction === undefined ? undefined : c.unitVec(raw, "direction", path);
+  const radius = raw.radius === undefined ? undefined : c.num(raw, "radius", path, { positive: true });
+  const length = raw.length === undefined ? undefined : c.num(raw, "length", path, { positive: true });
+  if (direction && raw.kind !== undefined && raw.kind !== "line") {
+    c.fail(`${path}.direction`, `applies to straight edges, but kind is ${describe(raw.kind)}`);
+  }
+  if (radius !== undefined && raw.kind !== undefined && raw.kind !== "circle") {
+    c.fail(`${path}.radius`, `applies to circular edges, but kind is ${describe(raw.kind)}`);
+  }
+  if (c.errors.length > before) return null;
+  const sel: EdgeSelector = { type: "edge", pick: raw.pick as EdgeSelector["pick"] };
+  if (raw.kind !== undefined) sel.kind = raw.kind as EdgeSelector["kind"];
+  if (onFace) sel.onFace = onFace;
+  if (between) sel.between = between;
+  if (direction) sel.direction = direction;
+  if (radius !== undefined) sel.radius = radius;
+  if (length !== undefined) sel.length = length;
+  return sel;
+}
+
+// -------------------------------------------------------------- patterns
+
+function validatePattern(
+  raw: Record<string, unknown>,
+  c: Checker,
+  earlier: Map<string, string>,
+): LinearPatternFeature | CircularPatternFeature | null {
+  const linear = raw.op === "linearPattern";
+  c.keys(
+    raw,
+    "",
+    linear
+      ? ["id", "op", "feature", "direction", "spacing", "count", "direction2", "spacing2", "count2"]
+      : ["id", "op", "feature", "axis", "count", "angle"],
+  );
+  if (typeof raw.feature !== "string") {
+    c.fail("feature", `must be the id of an earlier extrude, cut or hole (got ${describe(raw.feature)})`);
+  } else if (!earlier.has(raw.feature)) {
+    c.fail("feature", `"${raw.feature}" is not a feature before this one`);
+  } else if (!PATTERNABLE_OPS.includes(earlier.get(raw.feature) as never)) {
+    c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a pattern repeats an extrude, cut or hole`);
+  }
+  const count = instanceCount(raw, "count", c);
+  if (linear) {
+    const direction = c.unitVec(raw, "direction", "");
+    const spacing = c.num(raw, "spacing", "", { positive: true });
+    const second = ["direction2", "spacing2", "count2"].filter((k) => raw[k] !== undefined);
+    let direction2: [number, number, number] | undefined;
+    let spacing2: number | undefined;
+    let count2: number | undefined;
+    if (second.length > 0 && second.length < 3) {
+      c.fail("", "a second direction needs direction2, spacing2 and count2 together");
+    } else if (second.length === 3) {
+      direction2 = c.unitVec(raw, "direction2", "");
+      spacing2 = c.num(raw, "spacing2", "", { positive: true });
+      count2 = instanceCount(raw, "count2", c);
+      if (direction && direction2) {
+        const n1 = Math.hypot(...direction);
+        const n2 = Math.hypot(...direction2);
+        const cos = Math.abs(direction[0] * direction2[0] + direction[1] * direction2[1] + direction[2] * direction2[2]) / (n1 * n2);
+        if (cos > 1 - 1e-9) c.fail("direction2", "must not be parallel to direction");
+      }
+    }
+    if (c.errors.length > 0 || !direction || spacing === undefined || count === undefined) return null;
+    const f: LinearPatternFeature = { id: raw.id as string, op: "linearPattern", feature: raw.feature as string, direction, spacing, count };
+    if (direction2 && spacing2 !== undefined && count2 !== undefined) Object.assign(f, { direction2, spacing2, count2 });
+    return f;
+  }
+  let axis: CircularPatternFeature["axis"] | undefined;
+  if (!isObject(raw.axis)) {
+    c.fail("axis", `must be { "origin": [x, y, z], "direction": [x, y, z] } (got ${describe(raw.axis)})`);
+  } else {
+    c.keys(raw.axis, "axis", ["origin", "direction"]);
+    const origin = c.vec3(raw.axis, "origin", "axis");
+    const direction = c.unitVec(raw.axis, "direction", "axis");
+    if (origin && direction) axis = { origin, direction };
+  }
+  const angle = raw.angle === undefined ? undefined : c.num(raw, "angle", "", { positive: true });
+  if (angle !== undefined && angle > 360) c.fail("angle", `must be at most 360 degrees (got ${angle})`);
+  if (c.errors.length > 0 || !axis || count === undefined) return null;
+  const f: CircularPatternFeature = { id: raw.id as string, op: "circularPattern", feature: raw.feature as string, axis, count };
+  if (angle !== undefined) f.angle = angle;
+  return f;
+}
+
+function instanceCount(raw: Record<string, unknown>, key: string, c: Checker): number | undefined {
+  const v = raw[key];
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 2 || v > 1000) {
+    c.fail(key, `must be a whole number from 2 to 1000, counting the original (got ${describe(v)})`);
+    return undefined;
+  }
+  return v;
 }
 
 export function validateFaceSelector(raw: unknown, path: string, c: Checker): FaceSelector | null {

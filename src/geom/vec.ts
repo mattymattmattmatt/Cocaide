@@ -20,6 +20,7 @@ export const cross3 = (a: Vec3, b: Vec3): Vec3 => [
   a[0] * b[1] - a[1] * b[0],
 ];
 export const len3 = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
+export const dist3 = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 export const normalize3 = (a: Vec3): Vec3 => scale3(a, 1 / len3(a));
 
 /** Angle normalised to [0, 2π). */

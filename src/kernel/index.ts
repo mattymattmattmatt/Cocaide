@@ -3,5 +3,5 @@ export { rebuild, type RebuildResult, type FeatureStatus, type SketchOverlay } f
 export { measure, volumeOf, findHoles, DEFAULT_MATERIAL, type Measurements, type HoleMeasurement } from "./measure";
 export { tessellate, type MeshData } from "./mesh";
 export { exportSTEP, importSTEP } from "./step";
-export { describeFaces, type FaceInfo } from "./topology";
-export { selectFaces, selectionError } from "./selectors";
+export { describeFaces, describeEdges, type FaceInfo, type EdgeInfo } from "./topology";
+export { selectFaces, selectionError, selectEdges, edgeSelectionError } from "./selectors";

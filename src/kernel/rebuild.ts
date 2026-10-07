@@ -12,12 +12,14 @@ import { planeFrame, to3D } from "../geom/frame";
 import { buildProfile, entityPolylines } from "../geom/profile";
 import { measure, type Measurements } from "./measure";
 import { getOC, type OC, scoped } from "./oc";
-import { extrudeOrCut, hole, OpError, type SketchProfile } from "./ops";
+import { edgeTreatment, extrudeOrCut, hole, OpError, pattern, type BooleanKind, type SketchProfile, type ToolResult } from "./ops";
 
 export interface FeatureStatus {
   id: string;
   op: string;
   ok: boolean;
+  /** Skipped on purpose; `ok` stays true. */
+  suppressed?: boolean;
   /** Same text as the matching entry in `errors`. */
   error?: string;
 }
@@ -65,6 +67,21 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
   if (v.headerErrors.length > 0) return result();
 
   const profiles = new Map<string, SketchProfile | null>();
+  /** Tool bodies of extrude, cut and hole features, for patterns. Disposed before returning. */
+  const tools = new Map<string, { tool: TopoDS_Shape; kind: BooleanKind }>();
+  const suppressed = new Set<string>();
+  const missing = (id: string, what: string) =>
+    suppressed.has(id) ? `${what} "${id}" is suppressed` : `${what} "${id}" failed`;
+  const advance = (step: (before: TopoDS_Shape | null) => TopoDS_Shape) => {
+    const before: TopoDS_Shape | null = body;
+    body = step(before);
+    before?.delete();
+  };
+  const keepTool = (id: string, r: ToolResult): TopoDS_Shape => {
+    tools.set(id, { tool: r.tool, kind: r.kind });
+    return r.body;
+  };
+
   for (const vf of v.features) {
     const raw = vf.feature;
     const op = vf.op;
@@ -72,6 +89,12 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
       errors.push(...vf.errors);
       features.push({ id: vf.id, op, ok: false, error: vf.errors.join("\n") });
       profiles.set(vf.id, null);
+      continue;
+    }
+    if (raw.suppressed) {
+      suppressed.add(raw.id);
+      profiles.set(raw.id, null);
+      features.push({ id: raw.id, op, ok: true, suppressed: true });
       continue;
     }
     try {
@@ -85,16 +108,22 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
         case "extrude":
         case "cut": {
           const profile = profiles.get(raw.sketch);
-          if (!profile) throw new OpError(`sketch "${raw.sketch}" failed, so there is no profile to ${raw.op}`);
-          const before: TopoDS_Shape | null = body;
-          body = scoped((s) => extrudeOrCut(oc, s, raw, profile, before));
-          before?.delete();
+          if (!profile) throw new OpError(`${missing(raw.sketch, "sketch")}, so there is no profile to ${raw.op}`);
+          advance((before) => keepTool(raw.id, scoped((s) => extrudeOrCut(oc, s, raw, profile, before))));
           break;
         }
-        case "hole": {
-          const before: TopoDS_Shape | null = body;
-          body = scoped((s) => hole(oc, s, raw, before));
-          before?.delete();
+        case "hole":
+          advance((before) => keepTool(raw.id, scoped((s) => hole(oc, s, raw, before))));
+          break;
+        case "fillet":
+        case "chamfer":
+          advance((before) => scoped((s) => edgeTreatment(oc, s, raw, before)));
+          break;
+        case "linearPattern":
+        case "circularPattern": {
+          const seed = tools.get(raw.feature);
+          if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
+          advance((before) => scoped((s) => pattern(oc, s, raw, seed, before)));
           break;
         }
       }
@@ -106,6 +135,7 @@ export function rebuild(input: unknown, oc: OC = getOC()): RebuildResult {
       features.push({ id: raw.id, op, ok: false, error: prefixed.join("\n") });
     }
   }
+  for (const t of tools.values()) t.tool.delete();
   if (!body && errors.length === 0) errors.push("document: no solid; add an extrude");
   return result();
 }
