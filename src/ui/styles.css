@@ -644,3 +644,13 @@ button.link.danger { color: var(--bad); }
 .drawing-side h2 { margin-top: 14px; }
 .drawing-side p.bad { color: var(--bad); font-size: 12px; }
 .drawing-buttons { display: flex; gap: 6px; margin: 8px 0; }
+
+/* ---------------------------------------------------------------- multibody tools (Phase M) */
+.bodies li:has(.body-details), .bodies li:has([aria-label^="More for"]) { grid-template-columns: 12px minmax(0, 1fr) auto 24px 24px; }
+.body-details { grid-column: 1 / -1; padding: 6px 0 4px 18px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.body-details .field { margin: 0; grid-template-columns: 64px minmax(0, 1fr); }
+.body-details select { width: 100%; min-width: 0; font-size: 12px; }
+.body-custom { display: flex; gap: 6px; align-items: center; }
+.body-custom input { width: 90px; font-size: 12px; }
+.body-actions { display: flex; gap: 6px; }
+.body-actions button { font-size: 12px; }

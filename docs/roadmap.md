@@ -1,6 +1,6 @@
 # Cocaide: after v1
 
-Phases A–G (the original build spec) are done: see the README. So are H–L below; M is next. This file
+Phases A–G (the original build spec) are done: see the README. So are H–M below. This file
 continues the spec in the same form. Each phase ends with an acceptance
 check, and the next phase does not start until it passes.
 
@@ -258,6 +258,8 @@ PDF opens in a PDF reader (poppler), and its text has the title, the
 dimensions and the cut list rows. The SVG is the sheet the app shows.
 
 ## Phase M — multibody tools
+
+**Done.** See the README's Phase M acceptance.
 
 Phase H made bodies. This phase gives them the tools a multibody modeller is
 expected to have, on Phase H's rules: every body is named in the document,

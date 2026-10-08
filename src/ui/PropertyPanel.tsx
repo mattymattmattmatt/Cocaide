@@ -11,6 +11,7 @@ import { describeEdgeSelector, describeWanted } from "../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import type { RebuildView } from "../worker/protocol";
 import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
+import { DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import type { Selection } from "./Viewport";
 
@@ -28,6 +29,10 @@ export const OP_LABEL: Record<string, string> = {
   joint: "Joint",
   endCap: "End cap",
   gusset: "Gusset",
+  mirror: "Mirror",
+  split: "Split body",
+  move: "Move/Copy body",
+  deleteBody: "Delete/Keep bodies",
 };
 
 /** The first free body name of the form body_1, body_2, ... */
@@ -123,6 +128,20 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
           <EdgeTreatmentProps f={f} update={update} selection={selection} view={view} setError={setError} />
         )}
         {(op === "linearPattern" || op === "circularPattern") && <PatternProps f={f} before={before} update={update} />}
+        {op === "mirror" && (
+          <MirrorProps
+            f={f}
+            bodies={bodiesBefore}
+            update={update}
+            rename={rename}
+            seeds={before
+              .filter((g) => ["extrude", "cut", "hole", "member"].includes(String(g.op)))
+              .map((g) => ({ id: String(g.id), body: g.op === "member" ? String(g.newBody ?? g.id) : typeof g.newBody === "string" ? g.newBody : undefined }))}
+          />
+        )}
+        {op === "split" && <SplitProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
+        {op === "move" && <MoveProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
+        {op === "deleteBody" && <DeleteBodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
       </div>
       <div className="prop-actions">
         <label className="check">

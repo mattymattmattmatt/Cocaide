@@ -13,11 +13,12 @@ import { composeSheet } from "../drafting/compose";
 import { sheetPDF } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing, visibleLength } from "../drafting/plan";
 import { sheetSVG } from "../drafting/svg";
+import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import { DEFAULT_BODY, type Constraint, type DatumPlane, type ProfileDef, type SketchEntity, type SketchFeature, type Vec2, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type Constraint, type DatumPlane, type Material, type ProfileDef, type SketchEntity, type SketchFeature, type Vec2, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { facePlaneFrame, planeFrame, to2D } from "../geom/frame";
 import { STEEL_DENSITY } from "../geom/section";
@@ -648,6 +649,55 @@ export function App() {
     create(op === "fillet" ? { id: nextId(doc, op), op, edges: s.selector, radius: 1 } : { id: nextId(doc, op), op, edges: s.selector, distance: 1 });
   };
 
+  // ------------------------------------------------------------ multibody tools (Phase M)
+
+  /** The body a body tool works on: the clicked face's, else the newest. */
+  const pickedBody = (): string | undefined => (selection.faces.length ? view?.faces[selection.faces[0]]?.body : undefined) ?? view?.bodies.at(-1)?.name;
+  const bodyBox = (name: string) => view?.measurements?.bodies.find((b) => b.name === name)?.boundingBox ?? view?.measurements?.boundingBox ?? null;
+  const yz = (x: number) => ({ type: "datum", normal: [1, 0, 0], origin: [round3(x), 0, 0] });
+
+  /** Mirror: the selected feature about the part's middle, or the clicked body beside itself. */
+  const mirrorTool = () => {
+    const bb = view?.measurements?.boundingBox;
+    if (!doc || !bb) return setNotice({ kind: "error", text: "Mirror needs a part to mirror." });
+    if (selected && ["extrude", "cut", "hole", "member"].includes(String(selected.op))) {
+      return create({ id: nextId(doc, "mirror"), op: "mirror", plane: yz((bb.min[0] + bb.max[0]) / 2), feature: selected.id });
+    }
+    const body = pickedBody();
+    const box = body ? bodyBox(body) : null;
+    if (!body || !box) return setNotice({ kind: "error", text: "Select a feature in the tree, or click a body, then Mirror." });
+    create({ id: nextId(doc, "mirror"), op: "mirror", plane: yz(box.max[0]), bodies: [body] });
+  };
+
+  const splitTool = () => {
+    const body = pickedBody();
+    const box = body ? bodyBox(body) : null;
+    if (!doc || !body || !box) return setNotice({ kind: "error", text: "Split needs a body: click one, then Split." });
+    create({ id: nextId(doc, "split"), op: "split", body, plane: yz((box.min[0] + box.max[0]) / 2) });
+  };
+
+  const moveTool = () => {
+    const body = pickedBody();
+    const box = body ? bodyBox(body) : null;
+    if (!doc || !body || !box) return setNotice({ kind: "error", text: "Move/Copy needs a body: click one, then Move/Copy." });
+    create({ id: nextId(doc, "move"), op: "move", bodies: [body], translate: [round3(box.size[0] + 20), 0, 0], copy: true });
+  };
+
+  const deleteBodyTool = (name = pickedBody()) => {
+    if (!doc || !name) return;
+    if ((view?.bodies.length ?? 0) < 2) return setNotice({ kind: "error", text: "A part's only body can't be deleted." });
+    create({ id: nextId(doc, "delete"), op: "deleteBody", bodies: [name] });
+  };
+
+  const saveBody = (name: string) => {
+    if (!doc) return;
+    const r = bodyPart(doc, name);
+    if (!r.ok) return setNotice({ kind: "error", text: `${name} not saved: ${r.error}` });
+    const file = bodyPartFile(doc, name);
+    download(file, formatDocument(r.doc), "application/json");
+    setNotice({ kind: "info", text: `Saved ${file}: this part keeping only ${name}, as a part of its own. Open it to work on it alone.` });
+  };
+
   const patternFeature = (op: "linearPattern" | "circularPattern") => {
     if (!doc || !selected || !["extrude", "cut", "hole", "member"].includes(String(selected.op))) {
       return setNotice({ kind: "error", text: "Select an extrude, cut, hole or member in the feature tree, then Pattern." });
@@ -1012,9 +1062,23 @@ export function App() {
             <button onClick={() => patternFeature("circularPattern")} data-testid="tool-circular-pattern">
               Circular pattern
             </button>
+            <button onClick={mirrorTool} data-testid="tool-mirror" title="Mirror the selected feature, or the clicked body, about a plane">
+              Mirror
+            </button>
             {(view?.bodies.length ?? 0) > 1 && (
               <button onClick={combine} data-testid="tool-combine" title="Join, subtract or intersect bodies">
                 Combine
+              </button>
+            )}
+            <button onClick={splitTool} data-testid="tool-split" title="Cut the clicked body in two with a plane">
+              Split
+            </button>
+            <button onClick={moveTool} data-testid="tool-move" title="Move, turn or copy the clicked body">
+              Move/Copy
+            </button>
+            {(view?.bodies.length ?? 0) > 1 && (
+              <button onClick={() => deleteBodyTool()} data-testid="tool-delete-body" title="Delete the clicked body, or keep only some">
+                Delete body
               </button>
             )}
             <span className="sep" />
@@ -1134,6 +1198,10 @@ export function App() {
                 setSelectedFeature(id);
                 setRightTab("properties");
               }}
+              materials={(doc?.bodyMaterials ?? {}) as Record<string, Material>}
+              onMaterial={(body, material) => run({ type: "setBodyMaterial", body, material })}
+              onDelete={(name) => deleteBodyTool(name)}
+              onSave={saveBody}
             />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>

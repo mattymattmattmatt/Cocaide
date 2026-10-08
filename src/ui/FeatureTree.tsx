@@ -90,7 +90,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   <span className="feature-op">{OP_LABEL[String(f.op)] ?? String(f.op)}</span>
                   <span className="feature-id">{id}</span>
                   {/* Which body it makes or adds to, in a part that names bodies. */}
-                  {typeof (f.newBody ?? f.body) === "string" && (
+                  {typeof (f.newBody ?? f.body) === "string" && f.op !== "split" && f.op !== "mirror" && f.op !== "move" && (
                     <span className="feature-body" title={f.newBody ? "starts this body" : "adds to this body"}>
                       {f.newBody ? "new " : "→ "}
                       {String(f.newBody ?? f.body)}
@@ -104,6 +104,10 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   )}
                   {f.op === "endCap" && <span className="feature-body">on {String(f.member)}</span>}
                   {f.op === "gusset" && <span className="feature-body">at {String(f.node)}</span>}
+                  {f.op === "mirror" && <span className="feature-body">{Array.isArray(f.bodies) ? (f.bodies as string[]).join(", ") : String(f.feature)}{f.merge ? ", merged" : ""}</span>}
+                  {f.op === "split" && <span className="feature-body">{String(f.body)}{f.newBody ? ` → ${String(f.newBody)}` : ""}</span>}
+                  {f.op === "move" && <span className="feature-body">{f.copy ? "copy " : ""}{Array.isArray(f.bodies) ? (f.bodies as string[]).join(", ") : ""}</span>}
+                  {f.op === "deleteBody" && <span className="feature-body">{Array.isArray(f.keep) ? `keep ${(f.keep as string[]).join(", ")}` : Array.isArray(f.bodies) ? (f.bodies as string[]).join(", ") : ""}</span>}
                   {f.op === "sketch" && typeof (f.profile as { name?: unknown } | undefined)?.name === "string" && (
                     <span className="feature-body weldment-tag" title="A weldment profile: it is in the section library">
                       ⌗ {String((f.profile as { name: string }).name)}

@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase L (fabrication drawings) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list), K (the agent on weldments) and L (fabrication drawings).
+**Status: Phase M (multibody tools) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list), K (the agent on weldments), L (fabrication drawings) and M (multibody tools).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -51,6 +51,12 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - Drawing checks say what a checker would: every view shows the part, every annotation is attached, every item ballooned, the size dimensioned three ways, nothing overlapping.
   - Right-click a view or an annotation on the sheet to ask about it. The ask may change that view's annotations, never the part, and its proposal is judged by the same checks.
   - Export writes a vector PDF (real text, no fonts or libraries needed) or the SVG the app shows.
+- Phase M adds the multibody tools, each a feature on Phase H's rules.
+  - **Mirror** a feature, or whole bodies: each mirror image becomes a new body, or is merged into its own body.
+  - **Split** a body with a plane, **move or copy** bodies, and **delete** bodies or keep only some.
+  - Every new body is named in the document, and renames follow through.
+  - A member that is mirrored, patterned, copied or split stays in the cut list.
+  - A body can have its own material, and any body can be saved as a part of its own.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -59,9 +65,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 319 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J, K and L acceptance logic
+npm test               # 335 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J, K, L and M acceptance logic
                        #   (+14 live-model Phase D–G, K and L tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 42 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J, K and L acceptance suites
+npm run test:e2e       # 44 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J, K, L and M acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -88,6 +94,41 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase M: multibody tools
+
+On the stand (`examples/stand.cocaide.json`: a 120 × 80 × 8 base with two Ø10 holes, and a 120 × 8 × 60 upright), and on the table frame.
+
+| Check | Result |
+|---|---|
+| Mirror `hole_1` about the XZ plane | Select it in the tree, then **Mirror**, with the plane's normal +Y. The base has three holes, and the part loses 628.319 mm³, one hole's volume (π × 5² × 8): 132,515.044 mm³. |
+| Move the upright 30 mm along Y, then mirror it | **Move/Copy** with copy off and Y = 30, then **Mirror** with the upright clicked. There are three bodies, `base`, `upright` and `upright_mirror`. The volume is up by 57,600 mm³, and there is no interference. |
+| Split the base at x = 0 | Two halves of 37,771.681 mm³ each, one hole in each: `base` and `base_split`. |
+| Keep the base alone | `{ "op": "deleteBody", "keep": ["base"] }` leaves one body. In the Bodies panel, **⋯ → Delete body** adds `{ "bodies": [name] }`. |
+| The upright in aluminium | **⋯ → Material: aluminium 6061** sets `bodyMaterials.upright`. The upright weighs 0.15552 kg, the base 0.59302 kg, and the part their sum, 0.74854 kg. |
+| The upright saved as a part | **⋯ → Save as part** downloads `stand-upright.cocaide.json`: the stand, ending in `{ "op": "deleteBody", "keep": ["upright"] }`, named `upright`, in aluminium. Opened, it rebuilds to 57,600 mm³, and its STEP is one solid named `upright`. |
+| Half the table frame mirrored is the whole frame again | Delete `leg_b` and `leg_c`, then mirror `leg_a` and `leg_d` about x = `=frame_w / 2`. It rebuilds to 3,054,720 mm³ with no interference. The cut list is again 2 × 1200, 4 × 860 and 2 × 600, with the legs as `leg_a, leg_d, leg_a_mirror, leg_d_mirror`. |
+| A pattern of a member is in the cut list | So are a copy turned to lie flat (still 900 long, measured along its own line), and the two pieces of a split member (2 × 300). A member combined into another body drops out of the cut list. |
+
+Errors say what is wrong:
+- "the plane misses body "base": it lies wholly behind it"
+- "the mirror of "upright" adds nothing: it is already symmetric about the plane"
+- "the mirror of "upright" doesn't touch it: merged, they would be one body of separate solids"
+- "would delete every body"
+- two copies that would take one name
+
+Renames follow through every tool: renaming `upright` renames `upright_mirror` too, wherever it is named. Renaming the mirror's body names it on the mirror (`newBody`). A body's material goes with it, renamed or deleted.
+
+These checks are covered at two levels:
+- **Node** (`tests/multibody.test.ts`): everything above, plus:
+  - validation;
+  - merging a mirrored half into a whole;
+  - write scopes;
+  - a drawing of the mirrored frame;
+  - `setBodyMaterial` and `saveBody` over the agent session.
+- **Browser** (`e2e/multibody.spec.ts`): the stand from the toolbar and the Bodies panel, ending with the saved part opened on its own; and the half frame mirrored back into the whole.
+
+![The stand: a hole mirrored, the upright moved and mirrored, the base split and half deleted, the upright in aluminium](docs/phase-m-bodies.png)
 
 ### Phase L: fabrication drawings
 
@@ -551,6 +592,7 @@ For Claude Code, for example, in `.mcp.json`:
 | `measure(selector?)` | The part (volume, area, bounding box, mass, holes), or what a face or edge selector picks right now |
 | `exportSTEP(file?)`, `exportSTL(file?)` | Written to the output folder; refused while the part has errors |
 | `screenshot(view \| direction, highlight?)` | One PNG per call. Views `iso`, `front`, `back`, `left`, `right`, `top`, `bottom`, `isoBack`, plus host-named cameras. `highlight` outlines a selector's matches, hidden ones included |
+| `setBodyMaterial(body, material)`, `saveBody(body, file?)` | A body's own material (null: the part's), and one body written out as a part of its own |
 | `newDrawing(date?)`, `setSheet(patch)`, `setView(id, view)`, `setAnnotation(id, annotation)` | The part's drawing: planned by code, then edited. A drawing edit doesn't rebuild the part, and its result says what the annotation reads and which drawing checks fail |
 | `drawing` | The composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks |
 | `exportDrawing(format, file?)` | The sheet as PDF or SVG, written to the output folder |
@@ -633,6 +675,16 @@ A part is one or more named solids. SolidWorks has bodies too; Cocaide's rules a
 - **Measurements.** They list each body (volume, mass, size, holes) and `interference`: every pair that shares volume, and how much. Bodies that only touch don't count.
 - **STEP.** A part of several bodies is written as an assembly named after the part, with one solid per body, named. A part of one body is written exactly as before.
 - **Agents.** Right-click a body (in the Bodies panel) to ask about it. The write scope is the features that make it, plus `body:<name>`: new features that touch only that body. A cut that lists only it counts; a cut that reaches every body does not.
+
+The multibody tools (Phase M) are features too:
+- **`mirror`.** `{ "op": "mirror", "plane": { "type": "datum", "normal": [1, 0, 0], "origin": ["=frame_w / 2", 0, 0] }, "feature": "hole_1" }` mirrors one feature, the way a pattern repeats it. `"bodies": [...]` instead mirrors whole bodies as they are, each into `<name>_mirror`, or into itself with `"merge": true`.
+- **`split`.** `{ "op": "split", "body": "base", "plane": { ... } }` cuts a body in two. The piece the normal points to is `newBody`, default `<body>_split`.
+- **`move`.** `{ "op": "move", "bodies": [...], "rotate": { "axis": { "origin", "direction" }, "angle" }, "translate": [x, y, z], "copy": true }` turns the bodies first, then moves them. A copy is `<name>_copy`, or `newBody`.
+- **`deleteBody`.** `{ "bodies": [...] }` deletes these bodies; `{ "keep": [...] }` deletes all but these.
+- **Naming.** A body a tool makes without a name is named after the one it came from, and follows it when that one is renamed. Renaming the made body names it on the tool.
+- **Members stay members.** Mirrored, patterned, moved, copied and split members are measured into the cut list along their own lines, under their body names.
+- **Materials.** `"bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } }` gives a body its own material (`setBodyMaterial`). Each body's mass uses it, and the part's mass is their sum.
+- **Save as part.** `bodyPart(doc, body)` is the part as a copy, ending in a `deleteBody` that keeps that body. It is named after the body, in its material, and it never links back to the original. It is in the Bodies panel's **⋯** menu, and over MCP as `saveBody`.
 
 ### Weldment profiles and members
 
@@ -728,6 +780,7 @@ Every edit goes through `apply(doc, command, { writeScope? })` (`src/doc/command
 - `renameBody`, which every feature and selector naming the body follows;
 - `setProfile`, which puts a copy of a profile in the part, replaces it, or removes it (refused while a member uses it);
 - `setNode` (add, move, or remove a node nothing names), `renameNode` (members, joints and gussets follow), and `setWeld` (add, replace or remove a weld by id);
+- `setBodyMaterial`, which gives a body its own material, or puts it back on the part's;
 - `setDrawing` (the whole drawing, or none), `setSheet`, `setView` (a view's removal takes its annotations) and `setAnnotation`, which refuses one that points at nothing in the part;
 - `setDimension`, which changes a sketch constraint's value and re-solves the sketch;
 - `addEntity`, `updateEntity`, `deleteEntity`, `addConstraint`, `deleteConstraint`, inside one sketch, each followed by a re-solve.
@@ -737,7 +790,8 @@ When a parameter or dimension changes, the sketches it affects are re-solved. Fi
 ## Layout
 
 ```
-src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules   (no kernel)
+src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules,
+              the drawing's schema, a body saved as a part   (no kernel)
 src/geom      plane frames, 2D profiles, constraint checks, the constraint solver, section properties, member placement     (no kernel)
 src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis, measurements, interference, the cut list, mesh,
               STEP (named bodies), hidden-line projection for drawings, rebuild()
