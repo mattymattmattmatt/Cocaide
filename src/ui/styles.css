@@ -919,3 +919,92 @@ svg.icon { flex: none; display: block; }
 .modal .key-chip.recording { border-color: var(--accent); color: var(--accent); background: var(--info-bg); }
 .modal .key-chip:hover { border-color: var(--accent); }
 .settings-note { margin: 0; padding: 6px 9px; border-radius: 6px; background: var(--info-bg); }
+
+/* ======================================================= sketch relations, dimensions, right-click menus */
+:root {
+  /* SOLIDWORKS: blue can still move, black is fully defined, red is over defined. */
+  --sketch-defined: #1b1f27;
+  --sketch-dim: #3d4a5c;
+  --glyph-bg: #e9f6ea;
+  --glyph-border: #5fa866;
+  --glyph: #23692b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sketch-defined: #eef1f6;
+    --sketch-dim: #b9c3d2;
+    --glyph-bg: #1c3320;
+    --glyph-border: #4d9a55;
+    --glyph: #9be3a2;
+  }
+}
+.sketch-canvas .entity.defined { stroke: var(--sketch-defined); }
+.sketch-canvas .entity.construction.defined { stroke: var(--sketch-construction); }
+.sketch-canvas .entity.conflict { stroke: var(--bad); }
+.sketch-canvas .entity.related { stroke: var(--sketch-selected); stroke-dasharray: 7 3; }
+.sketch-canvas .entity.hover { stroke: var(--sketch-hover); }
+.sketch-canvas .entity.selected { stroke: var(--sketch-selected); }
+.sketch-canvas .handle.defined { stroke: var(--sketch-defined); }
+.sketch-canvas .handle.hover { fill: var(--sketch-hover); }
+.sketch-canvas .handle.selected { fill: var(--sketch-selected); stroke: var(--sketch-selected); }
+.sketch-canvas .dimensions text { font-family: var(--mono); }
+.sketch-canvas .dim { cursor: pointer; }
+.sketch-canvas .dim .dim-line { stroke: var(--sketch-dim); stroke-width: 1; fill: none; }
+.sketch-canvas .dim .dim-arrow { fill: var(--sketch-dim); stroke: none; }
+.sketch-canvas .dim text { fill: var(--sketch-dim); }
+.sketch-canvas .dim:hover .dim-line, .sketch-canvas .dim.selected .dim-line { stroke: var(--sketch-selected); }
+.sketch-canvas .dim:hover .dim-arrow, .sketch-canvas .dim.selected .dim-arrow,
+.sketch-canvas .dim:hover text, .sketch-canvas .dim.selected text { fill: var(--sketch-selected); }
+.sketch-canvas .glyph { cursor: pointer; color: var(--glyph); }
+.sketch-canvas .glyph rect { fill: var(--glyph-bg); stroke: var(--glyph-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.sketch-canvas .glyph:hover rect, .sketch-canvas .glyph.selected rect { stroke: var(--sketch-selected); stroke-width: 2; }
+.sketch-canvas .glyph.selected { color: var(--sketch-selected); }
+.sketch-canvas .glyph svg.icon, .sketch-canvas .infer svg.icon { overflow: visible; }
+.sketch-canvas .infer { color: var(--sketch-hover); }
+.sketch-canvas .infer rect { fill: var(--panel); stroke: var(--sketch-hover); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: 0.95; }
+.sketch-center { position: relative; }
+.sketch-status {
+  position: absolute; left: 12px; bottom: 12px; padding: 4px 9px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--border); pointer-events: none;
+}
+.sketch-status.under { color: var(--sketch); }
+.sketch-status.full { color: var(--sketch-defined); }
+.sketch-status.over { color: var(--bad); border-color: var(--bad); }
+.dof.over { color: var(--bad); }
+.relation-buttons { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.sketch-panel .relation-button {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; height: auto; min-height: 50px; padding: 7px 4px 6px; font-size: 12px; line-height: 1.2;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); cursor: pointer; color: var(--text);
+}
+.sketch-panel .relation-button svg.icon { color: var(--glyph); flex: none; }
+.sketch-panel .relation-button:hover { border-color: var(--accent); }
+.offer.valued > span:first-child { display: flex; align-items: center; gap: 6px; }
+.offer.valued > span:first-child svg.icon { color: var(--muted); flex: none; }
+.constraint-list li { cursor: default; border-radius: 6px; padding: 1px 3px; }
+.constraint-list li.selected { background: var(--selected-row); outline: 1px solid var(--sketch-selected); }
+.constraint-list li .constraint-label { display: flex; align-items: center; gap: 6px; }
+.constraint-list li .constraint-label svg.icon { flex: none; color: var(--glyph); }
+.modify-box { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px; min-width: 200px; }
+.modify-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 4px; }
+.modify-options { display: flex; gap: 2px; padding: 0 2px; }
+.modify-options button { flex: 1; font-size: 12px; height: 24px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
+.modify-options button[aria-checked="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
+.modify-row { display: flex; align-items: center; gap: 4px; padding: 0 2px; }
+.modify-row input { width: 110px; font-family: var(--mono); }
+.modify-row input.expr { color: var(--accent); }
+.modify-row button.icon { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); cursor: pointer; }
+.modify-row .unit { color: var(--muted); font-size: 12px; }
+.modify-box .expr-error { color: var(--bad); font-size: 12px; padding: 0 4px; }
+.context-menu { display: flex; flex-direction: column; gap: 1px; min-width: 200px; }
+.context-title { font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 9px 5px; border-bottom: 1px solid var(--border); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+.context-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 5px 9px 2px; }
+.menu-sep { height: 1px; background: var(--border); margin: 3px 4px; }
+.context-menu button[data-testid="ctx-ask"] svg.icon { color: var(--accent); }
+/* Only a dimension's value takes clicks: its lines run onto the geometry and must not hide it. */
+.sketch-canvas .dim .dim-line, .sketch-canvas .dim .dim-arrow { pointer-events: none; }
+.sketch-canvas .dim text { pointer-events: all; }
+.ask-reach { display: flex; align-items: center; gap: 4px; font-size: 12px; margin-top: 6px; }
+.ask-reach button { height: 24px; padding: 0 8px; font-size: 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
+.ask-reach button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* A long list of relations scrolls the panel; it never squashes the sections above it. */
+.sketch-panel > .panel { flex-shrink: 0; }

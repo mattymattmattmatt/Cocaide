@@ -53,6 +53,7 @@ const bracketIntent = intent({
 async function rightClickEmpty(page: Page) {
   const box = (await page.getByTestId("viewport").boundingBox())!;
   await page.mouse.click(box.x + 30, box.y + box.height - 120, { button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
 }
 
 test.beforeEach(async ({ page }) => {

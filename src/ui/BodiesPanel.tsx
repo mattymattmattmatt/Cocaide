@@ -1,6 +1,6 @@
 // The part's bodies (Phase H): each with its colour, volume and mass, and the
 // pairs that overlap. Hide a body to see past it; click it to select its
-// faces; right-click it to ask about that body alone. Below them, the
+// faces; right-click it for its menu, or to ask the AI about it. Below them, the
 // members (Phase I): alike ones grouped as the cut list groups them.
 
 import { useState } from "react";
@@ -62,7 +62,7 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
               }}
             >
               <span className="swatch" style={{ background: BODY_COLORS[i % BODY_COLORS.length] }} />
-              <button className="body-name" onClick={() => onSelect(b)} title="Select its faces; right-click to ask about it">
+              <button className="body-name" onClick={() => onSelect(b)} title="Select its faces; right-click for its menu">
                 {b.name}
               </button>
               <span className="body-volume" title={mb ? `${n(mb.massKg * 1000, 1)} g` : undefined}>

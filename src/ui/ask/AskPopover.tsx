@@ -3,7 +3,7 @@
 // what it changes and waits for Accept or Discard.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Change } from "../../ask/agent";
+import type { AskReach, Change } from "../../ask/agent";
 import { MODELS } from "../../ask/models";
 import { describeScope, scopeFor } from "../../ask/packet";
 import { scopedActions } from "../../ask/prompt";
@@ -20,6 +20,8 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState("");
   const [applyNow, setApplyNow] = useState(false);
+  /** What this ask may change: the whole part (the default in Settings), or just what was right-clicked. */
+  const [reach, setReach] = useState<AskReach>(ask.settings.reach);
   /** A dropped image: read as a drawing or as a photo. */
   const [readAs, setReadAs] = useState<"drawing" | "photo">("drawing");
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -29,6 +31,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
     if (s?.phase === "menu") {
       setDraft(s.draft);
       setApplyNow(false);
+      setReach(ask.settings.reach);
       setReadAs(s.ctx.readAs ?? "drawing");
     }
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -78,8 +81,9 @@ export function AskPopover({ ask }: { ask: Ask }) {
     // Only what the user chose goes with the ask: the drawing, or the photo.
     const sent: typeof ctx = !dropped ? ctx : asPhoto ? { ...ctx, drawing: undefined, readAs } : { ...ctx, photo: undefined, readAs };
     const fallback = asPhoto ? "Read the part from this photo." : ctx.drawing ? "Read the part from this drawing." : "";
-    ask.submit(sent, text || fallback, applyNow && !part);
+    ask.submit(sent, text || fallback, applyNow && !part, reach);
   };
+  const wide = reach === "part" && !part;
 
   return (
     <div
@@ -191,10 +195,29 @@ export function AskPopover({ ask }: { ask: Ask }) {
                 Apply immediately
               </label>
             )}
-            <span className="ask-scope" title={`What this ask may change (${scope.join(", ")}). The program enforces it.`} data-testid="ask-scope">
-              may change: {describeScope(scope)}
+            <span
+              className="ask-scope"
+              title={wide ? "This ask may change anything in the part; what you right-clicked shows it where. You still accept or discard the result." : `What this ask may change (${scope.join(", ")}). The program enforces it.`}
+              data-testid="ask-scope"
+            >
+              may change: {wide ? "anything in the part" : describeScope(scope)}
             </span>
           </footer>
+          {!part && (
+            <div className="ask-reach" role="radiogroup" aria-label="What the AI may change" data-testid="ask-reach">
+              <span className="muted">May change</span>
+              {(
+                [
+                  ["part", "The whole part"],
+                  ["target", "Just this"],
+                ] as const
+              ).map(([k, label]) => (
+                <button key={k} type="button" role="radio" aria-checked={reach === k} className={reach === k ? "on" : ""} onClick={() => setReach(k)} data-testid={`ask-reach-${k}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="ask-model">
             {ready ? (
               <button className="link" onClick={() => ask.setSettingsOpen(true)}>

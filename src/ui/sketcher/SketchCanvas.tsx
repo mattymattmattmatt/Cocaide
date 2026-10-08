@@ -4,10 +4,27 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { entityPolylines } from "../../geom/profile";
 import { dist2 } from "../../geom/vec";
+import { Icon, type IconName } from "../icons";
 import { inputPrefs, useCommands, wheelZoom } from "../input";
-import { CLICKS, entityFromClicks, handlesOf, hitEntity, hitHandle, ID_PREFIX, nextEntityId, type SketchItem } from "./draft";
+import { dimensionShapes, RELATION, relationGlyphs } from "./annotate";
+import { CLICKS, constraintEntities, entityFromClicks, handlesOf, hitEntity, hitHandle, ID_PREFIX, inferOrientation, inferPoint, nextEntityId, type Inference, type SketchItem } from "./draft";
 
-export type Tool = "select" | SketchEntity["type"];
+export type Tool = "select" | "dimension" | SketchEntity["type"];
+
+/** What a right-click lands on: an entity, one of its points, a relation's glyph or a dimension, or empty space (null). */
+export type CanvasTarget = { kind: "entity"; id: string } | { kind: "point"; ref: string } | { kind: "constraint"; index: number };
+
+/** How defined the sketch is, as SOLIDWORKS colours it. */
+export interface DefinedState {
+  /** Entities that can still move: drawn blue. The rest are fully defined: black. */
+  free: Set<string>;
+  freePoints: Set<string>;
+  /** Entities in a relation that doesn't hold: drawn red. */
+  conflicts: Set<string>;
+}
+
+/** A point being placed, and what it inferred: what it lands on, and for a line's end, level or plumb. */
+type Snap = Inference & { orient?: "horizontal" | "vertical" };
 
 interface Props {
   entities: SketchEntity[];
@@ -19,11 +36,22 @@ interface Props {
   snapToGrid: boolean;
   selection: SketchItem[];
   onSelect(items: SketchItem[]): void;
-  /** A new entity, plus coincidences between its points and the points it snapped to. */
-  onCreate(entity: SketchEntity, coincident: [string, string][]): void;
+  /** A new entity, plus the relations it inferred while being drawn: coincident with what it snapped to, horizontal, on a line. */
+  onCreate(entity: SketchEntity, relations: Constraint[]): void;
   onDrag(phase: "move" | "end", handle: string, from: Vec2, to: Vec2): void;
-  /** A right-click in place (not a right-drag pan): the entity under the cursor, if any. */
-  onContext?(entityId: string | null, clientX: number, clientY: number): void;
+  /** A right-click in place (not a right-drag pan): what is under the cursor, if anything. */
+  onContext?(target: CanvasTarget | null, clientX: number, clientY: number): void;
+  /** Blue, black and red, by how defined each entity is. */
+  defined?: DefinedState;
+  /** Relation glyphs shown beside the geometry. */
+  showRelations?: boolean;
+  /** The relation or dimension selected (its glyph, its dimension or its row). */
+  selectedConstraint?: number | null;
+  onSelectConstraint?(index: number | null): void;
+  /** A dimension double-clicked: edit its value where it is. */
+  onEditDimension?(index: number, clientX: number, clientY: number): void;
+  /** Smart Dimension: the picks are made (two, or one and a click in space); `at` is where it was placed. */
+  onDimension?(picks: SketchItem[], at: Vec2, clientX: number, clientY: number): void;
 }
 
 interface ViewState {
@@ -43,7 +71,9 @@ export function SketchCanvas(props: Props) {
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [view, setView] = useState<ViewState | null>(null);
   const [cursor, setCursor] = useState<Vec2 | null>(null);
-  const [clicks, setClicks] = useState<{ p: Vec2; ref: string | null }[]>([]);
+  const [clicks, setClicks] = useState<Snap[]>([]);
+  /** Smart Dimension's picks so far. */
+  const [picks, setPicks] = useState<SketchItem[]>([]);
   /** A selection box being dragged: left to right selects what is inside it, right to left what it touches. */
   const [box, setBox] = useState<{ a: Vec2; b: Vec2 } | null>(null);
   const lastMiddle = useRef(0);
@@ -70,8 +100,11 @@ export function SketchCanvas(props: Props) {
     // fit once, on first layout
   }, [size]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Leaving a tool or switching tools drops a half-placed entity.
-  useEffect(() => setClicks([]), [tool]);
+  // Leaving a tool or switching tools drops a half-placed entity, or half-picked dimension.
+  useEffect(() => {
+    setClicks([]);
+    setPicks([]);
+  }, [tool]);
 
   const v = view ?? fitView(entities, reference, size);
   const unit = 1 / v.scale; // world size of one pixel
@@ -87,13 +120,21 @@ export function SketchCanvas(props: Props) {
     return [w.x, w.y];
   };
 
-  /** Snap to a point (with its ref) or else to the grid. */
-  const snap = (p: Vec2, exclude?: string): { p: Vec2; ref: string | null } => {
-    const h = hitHandle(entities, p, SNAP_PX * unit, { constraintOnly: true, exclude });
-    if (h) return { p: h.point, ref: h.ref };
-    if (snapToGrid) return { p: [roundTo(p[0], step), roundTo(p[1], step)], ref: null };
-    return { p, ref: null };
+  /**
+   * Where a placed point lands, as SOLIDWORKS infers it: on an end, centre,
+   * midpoint or the origin, on a line, circle or arc; a line's end level with
+   * or plumb above its start; else the grid.
+   */
+  const snap = (p: Vec2, from?: Vec2): Snap => {
+    const inferred = inferPoint(entities, p, SNAP_PX * unit);
+    if (inferred) return inferred;
+    const grid = (x: number) => (snapToGrid ? roundTo(x, step) : x);
+    const o = from ? inferOrientation(from, p, SNAP_PX * unit * 0.7) : null;
+    if (o) return { p: o.type === "horizontal" ? [grid(p[0]), from![1]] : [from![0], grid(p[1])], ref: null, orient: o.type };
+    return { p: [grid(p[0]), grid(p[1])], ref: null };
   };
+  /** A line's end is inferred from its start. */
+  const lineFrom = () => (tool === "line" && clicks.length === 1 ? clicks[0].p : undefined);
 
   const itemAt = (p: Vec2): SketchItem | null => {
     const h = hitHandle(entities, p, PICK_PX * unit);
@@ -102,8 +143,8 @@ export function SketchCanvas(props: Props) {
     return e ? { kind: "entity", id: e.id } : null;
   };
 
-  const finishPlacement = (pts: { p: Vec2; ref: string | null }[]) => {
-    if (tool === "select") return;
+  const finishPlacement = (pts: Snap[]) => {
+    if (tool === "select" || tool === "dimension") return;
     const id = nextEntityId(entities, ID_PREFIX[tool]);
     const entity = entityFromClicks(tool, id, pts.map((c) => c.p), construction);
     if (!entity) return null;
@@ -115,14 +156,27 @@ export function SketchCanvas(props: Props) {
       arc: ["center", "start", "end"],
       slot: ["center1", "center2", null],
     };
-    const coincident: [string, string][] = [];
+    const relations: Constraint[] = [];
     pts.forEach((c, i) => {
       const name = names[tool][i];
-      if (!c.ref || !name) return;
-      const own = (entity as unknown as Record<string, Vec2>)[name];
-      if (own && dist2(own, c.p) < 1e-9) coincident.push([`${id}.${name}`, c.ref]);
+      const own = name ? (entity as unknown as Record<string, Vec2>)[name] : undefined;
+      if (name && own && dist2(own, c.p) < 1e-9) {
+        if (c.ref) relations.push({ type: "coincident", points: [`${id}.${name}`, c.ref] });
+        else if (c.on) relations.push({ type: c.on.type, point: `${id}.${name}`, entity: c.on.entity });
+      } else if (tool === "circle" && i === 1 && c.ref) {
+        // A circle dragged out to a point passes through it.
+        relations.push({ type: "pointOn", point: c.ref, entity: id });
+      }
     });
-    props.onCreate(entity, coincident);
+    const end = pts[1];
+    if (tool === "line" && entity.type === "line") {
+      // Inferred while drawing, or exactly level or plumb when both ends landed on points.
+      const level = Math.abs(entity.end[1] - entity.start[1]) < 1e-9;
+      const plumb = Math.abs(entity.end[0] - entity.start[0]) < 1e-9;
+      const orient = end?.orient ?? (level ? "horizontal" : plumb ? "vertical" : null);
+      if (orient) relations.push({ type: orient, entity: id });
+    }
+    props.onCreate(entity, relations);
     return entity;
   };
 
@@ -218,14 +272,28 @@ export function SketchCanvas(props: Props) {
     }
     if (g?.kind === "zoom") return;
     if (g?.kind === "pan" && e.button === 2 && Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) < 4) {
-      const handle = hitHandle(entities, p, PICK_PX * unit);
-      const ent = handle && handle.ref !== "origin" ? handle.ref.split(".")[0] : (hitEntity(entities, p, PICK_PX * unit)?.id ?? null);
-      props.onContext?.(ent, e.clientX, e.clientY);
+      const item = itemAt(p);
+      props.onContext?.(item ? (item.kind === "entity" ? item : { kind: "point", ref: item.ref }) : null, e.clientX, e.clientY);
       return;
     }
     if (g?.kind === "pan" || e.button !== 0 || tool === "select") return;
+    if (tool === "dimension") {
+      // Smart Dimension: pick one or two things; a second pick, or a click in space after one, places it.
+      const item = itemAt(p);
+      if (item && !picks.some((x) => sameItem(x, item))) {
+        const next = [...picks, item];
+        if (next.length < 2) return setPicks(next);
+        setPicks([]);
+        return props.onDimension?.(next, p, e.clientX, e.clientY);
+      }
+      if (!item && picks.length === 1) {
+        setPicks([]);
+        props.onDimension?.(picks, p, e.clientX, e.clientY);
+      }
+      return;
+    }
     // Drawing: one click per point.
-    const s = snap(p);
+    const s = snap(p, lineFrom());
     const next = [...clicks, s];
     if (next.length < CLICKS[tool]) {
       if (tool === "line" && next.length === 1) chainStart.current = s.ref;
@@ -275,18 +343,19 @@ export function SketchCanvas(props: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && clicks.length) {
+      if (e.key === "Escape" && (clicks.length || picks.length)) {
         setClicks([]);
+        setPicks([]);
         e.stopPropagation();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [clicks.length]);
+  }, [clicks.length, picks.length]);
 
   const preview = useMemo(() => {
-    if (tool === "select" || !cursor || clicks.length === 0) return null;
-    const pts = [...clicks.map((c) => c.p), snap(cursor).p];
+    if (tool === "select" || tool === "dimension" || !cursor || clicks.length === 0) return null;
+    const pts = [...clicks.map((c) => c.p), snap(cursor, lineFrom()).p];
     if (pts.length < CLICKS[tool]) {
       if (tool === "arc" || tool === "slot") {
         // Show the first span while the third point is pending.
@@ -298,15 +367,23 @@ export function SketchCanvas(props: Props) {
     return e ? { kind: "entity" as const, e } : null;
   }, [tool, cursor, clicks, construction]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selectedIds = new Set(selection.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
-  const selectedPoints = new Set(selection.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
-  const hoverItem = cursor && tool === "select" && !gesture.current ? itemAt(cursor) : null;
-  const snapMark = cursor && tool !== "select" ? snap(cursor) : null;
+  const chosen = tool === "dimension" ? picks : selection;
+  const selectedIds = new Set(chosen.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
+  const selectedPoints = new Set(chosen.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
+  const hoverItem = cursor && (tool === "select" || tool === "dimension") && !gesture.current ? itemAt(cursor) : null;
+  const snapMark = cursor && tool !== "select" && tool !== "dimension" ? snap(cursor, lineFrom()) : null;
+  const inferIcon: IconName | null = !snapMark ? null : snapMark.ref ? "coincident" : snapMark.on ? RELATION[snapMark.on.type].icon : snapMark.orient ?? null;
+  // A selected relation outlines what it holds.
+  const selectedK = props.selectedConstraint !== null && props.selectedConstraint !== undefined ? constraints[props.selectedConstraint] : undefined;
+  const related = new Set(selectedK ? constraintEntities(selectedK) : []);
+  const state = (id: string) => (props.defined?.conflicts.has(id) ? "conflict" : !props.defined ? "" : props.defined.free.has(id) ? "free" : "defined");
+  const pointState = (ref: string) => (!props.defined ? "" : props.defined.freePoints.has(ref) ? "free" : "defined");
 
   return (
     <svg
       ref={svg}
       className={`sketch-canvas tool-${tool}`}
+      data-defined={props.defined ? (props.defined.conflicts.size ? "over" : props.defined.free.size ? "under" : "full") : undefined}
       data-testid="sketch-canvas"
       viewBox={viewBox}
       onPointerDown={onPointerDown}
@@ -341,7 +418,9 @@ export function SketchCanvas(props: Props) {
             e={e}
             className={[
               "entity",
+              state(e.id),
               e.construction ? "construction" : "",
+              related.has(e.id) ? "related" : "",
               selectedIds.has(e.id) ? "selected" : "",
               hoverItem?.kind === "entity" && hoverItem.id === e.id ? "hover" : "",
             ].join(" ")}
@@ -360,7 +439,7 @@ export function SketchCanvas(props: Props) {
               r={(h.constraint ? 3.5 : 2.5) * unit}
               className={[
                 "handle",
-                h.constraint ? "" : "corner",
+                h.constraint ? pointState(h.ref) : "corner",
                 selectedPoints.has(h.ref) ? "selected" : "",
                 hoverItem?.kind === "point" && hoverItem.ref === h.ref ? "hover" : "",
               ].join(" ")}
@@ -371,9 +450,24 @@ export function SketchCanvas(props: Props) {
         {clicks.map((c, i) => (
           <circle key={i} cx={c.p[0]} cy={c.p[1]} r={3 * unit} className="placed" />
         ))}
-        {snapMark?.ref && <circle cx={snapMark.p[0]} cy={snapMark.p[1]} r={7 * unit} className="snap" />}
+        {(snapMark?.ref || snapMark?.on) && <circle cx={snapMark.p[0]} cy={snapMark.p[1]} r={7 * unit} className="snap" />}
       </g>
-      <DimensionLabels entities={entities} constraints={constraints} unit={unit} />
+      <Annotations
+        entities={entities}
+        constraints={constraints}
+        unit={unit}
+        showRelations={props.showRelations ?? true}
+        selected={props.selectedConstraint ?? null}
+        onSelect={(i) => props.onSelectConstraint?.(i)}
+        onEdit={(i, x, y) => props.onEditDimension?.(i, x, y)}
+        onContext={(i, x, y) => props.onContext?.({ kind: "constraint", index: i }, x, y)}
+      />
+      {cursor && inferIcon && (
+        <g className="infer" data-testid={`infer-${inferIcon}`} pointerEvents="none">
+          <rect x={cursor[0] + 10 * unit} y={-cursor[1] + 8 * unit} width={18 * unit} height={18 * unit} rx={3 * unit} />
+          <Icon name={inferIcon} size={14 * unit} x={cursor[0] + 12 * unit} y={-cursor[1] + 10 * unit} />
+        </g>
+      )}
     </svg>
   );
 }
@@ -415,45 +509,95 @@ function Grid({ view, size, step }: { view: ViewState; size: { w: number; h: num
   );
 }
 
-/** Values of dimensional constraints, drawn next to what they measure. Labels are not flipped. */
-function DimensionLabels({ entities, constraints, unit }: { entities: SketchEntity[]; constraints: Constraint[]; unit: number }) {
-  const byId = new Map(entities.map((e) => [e.id, e]));
-  const at = (ref: string): Vec2 | null => {
-    if (ref === "origin") return [0, 0];
-    const [id, name] = ref.split(".");
-    const e = byId.get(id) as unknown as Record<string, Vec2> | undefined;
-    return e?.[name] ?? null;
+/**
+ * Dimensions and relation glyphs over the sketch. Drawn outside the flipped
+ * world group (y negated by hand) so text reads the right way up. A click
+ * selects one, a double-click edits a dimension's value, a right-click opens
+ * its menu.
+ */
+function Annotations({
+  entities,
+  constraints,
+  unit,
+  showRelations,
+  selected,
+  onSelect,
+  onEdit,
+  onContext,
+}: {
+  entities: SketchEntity[];
+  constraints: Constraint[];
+  unit: number;
+  showRelations: boolean;
+  selected: number | null;
+  onSelect(i: number): void;
+  onEdit(i: number, clientX: number, clientY: number): void;
+  onContext(i: number, clientX: number, clientY: number): void;
+}) {
+  const dims = useMemo(() => dimensionShapes(entities, constraints, unit), [entities, constraints, unit]);
+  const glyphs = useMemo(() => (showRelations ? relationGlyphs(entities, constraints, unit) : []), [entities, constraints, unit, showRelations]);
+  const f = (p: Vec2) => `${p[0]} ${-p[1]}`;
+  const arrow = (tip: Vec2, dir: Vec2) => {
+    const l = 9 * unit;
+    const w = 3 * unit;
+    const n: Vec2 = [-dir[1], dir[0]];
+    const b: Vec2 = [tip[0] - dir[0] * l, tip[1] - dir[1] * l];
+    return `M${f(tip)}L${f([b[0] + n[0] * w, b[1] + n[1] * w])}L${f([b[0] - n[0] * w, b[1] - n[1] * w])}Z`;
   };
-  const labels: { p: Vec2; text: string }[] = [];
-  for (const k of constraints) {
-    if (!("value" in k)) continue;
-    let p: Vec2 | null = null;
-    const e = "entity" in k && k.entity ? byId.get(k.entity) : undefined;
-    if (e?.type === "rect") {
-      p = k.type === "distanceX" ? [e.center[0], e.center[1] + e.h / 2 + 12 * unit] : [e.center[0] + e.w / 2 + 14 * unit, e.center[1]];
-    } else if (e?.type === "line") {
-      p = [(e.start[0] + e.end[0]) / 2, (e.start[1] + e.end[1]) / 2 + 10 * unit];
-    } else if (e?.type === "slot") {
-      p = [(e.center1[0] + e.center2[0]) / 2, (e.center1[1] + e.center2[1]) / 2 + e.width / 2 + 10 * unit];
-    } else if (e?.type === "circle") {
-      p = [e.center[0] + e.radius * 0.71 + 8 * unit, e.center[1] + e.radius * 0.71 + 8 * unit];
-    } else if (e?.type === "arc") {
-      p = [e.center[0], e.center[1]];
-    } else if ("points" in k && k.points) {
-      const a = at(k.points[0]);
-      const b = at(k.points[1]);
-      if (a && b) p = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 8 * unit];
-    }
-    if (p) labels.push({ p, text: `${k.type === "radius" ? "R" : ""}${Math.round(k.value * 1000) / 1000}` });
-  }
+  // Clicks here are the annotation's, not the canvas's: no drag, pan or box starts under them.
+  const handlers = (i: number, dimension: boolean) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if (e.button === 1) return;
+      e.stopPropagation();
+      if (e.button === 0) onSelect(i);
+    },
+    onDoubleClick: (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (dimension) onEdit(i, e.clientX, e.clientY);
+    },
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onSelect(i);
+      onContext(i, e.clientX, e.clientY);
+    },
+  });
   return (
-    <g className="dimensions">
-      {labels.map((l, i) => (
-        <text key={i} x={l.p[0]} y={-l.p[1]} fontSize={12 * unit} textAnchor="middle" dominantBaseline="middle">
-          {l.text}
-        </text>
-      ))}
-    </g>
+    <>
+      <g className="dimensions">
+        {dims.map((d, n) => {
+          const sweep = d.arc?.sweep ?? 0;
+          const a1 = (d.arc?.from ?? 0) + sweep;
+          const arcPath = d.arc
+            ? `M${f([d.arc.center[0] + d.arc.r * Math.cos(d.arc.from), d.arc.center[1] + d.arc.r * Math.sin(d.arc.from)])}A${d.arc.r} ${d.arc.r} 0 ${Math.abs(sweep) > Math.PI ? 1 : 0} ${sweep > 0 ? 0 : 1} ${f([d.arc.center[0] + d.arc.r * Math.cos(a1), d.arc.center[1] + d.arc.r * Math.sin(a1)])}`
+            : "";
+          return (
+            <g key={n} className={`dim${selected === d.index ? " selected" : ""}`} data-testid={`dim-${d.index}`} {...handlers(d.index, true)}>
+              <path d={d.lines.map(([a, b]) => `M${f(a)}L${f(b)}`).join("") + arcPath} className="dim-line" vectorEffect="non-scaling-stroke" />
+              <path d={d.arrows.map((a) => arrow(a.at, a.dir)).join("")} className="dim-arrow" />
+              <text x={d.at[0]} y={-d.at[1]} fontSize={12 * unit} textAnchor="middle" dominantBaseline="middle">
+                {d.text}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+      <g className="relations">
+        {glyphs.map((g, n) => (
+          <g
+            key={n}
+            className={`glyph${selected === g.index ? " selected" : ""}`}
+            data-testid={`glyph-${g.index}`}
+            data-relation={constraints[g.index]?.type}
+            {...handlers(g.index, false)}
+          >
+            <title>{RELATION[constraints[g.index].type].label}</title>
+            <rect x={g.at[0] - 8 * unit} y={-g.at[1] - 8 * unit} width={16 * unit} height={16 * unit} rx={3 * unit} />
+            <Icon name={g.icon} size={12 * unit} x={g.at[0] - 6 * unit} y={-g.at[1] - 6 * unit} />
+          </g>
+        ))}
+      </g>
+    </>
   );
 }
 

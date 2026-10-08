@@ -67,6 +67,8 @@ test("right-click a body: the ask is about that body only, and an edit to the ot
   const before = await savedDocument(page);
 
   await page.getByTestId("body-upright").click({ button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-target")).toHaveText("body upright");
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: ext_2, new features on body upright alone");
   await page.getByTestId("ask-input").fill("drill a 4 mm hole in the base");

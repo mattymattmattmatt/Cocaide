@@ -1,6 +1,6 @@
 # Cocaide: after v1
 
-Phases A–G (the original build spec) are done: see the README. So are H–M below. This file
+Phases A–G (the original build spec) are done: see the README. So are H–N below. This file
 continues the spec in the same form. Each phase ends with an acceptance
 check, and the next phase does not start until it passes.
 
@@ -297,3 +297,39 @@ Acceptance:
 7. **Mirror half a frame.** Take the table frame without `leg_b` and `leg_c`, and mirror `leg_a` and `leg_d` about x = 600. It rebuilds to the same 3,054,720 mm³, and its cut list is again 2 × 1200, 4 × 860, 2 × 600.
 8. **Patterns.** A pattern of a member is in the cut list too.
 9. **In the app.** Each tool is in the toolbar, with its properties in the panel. The Bodies panel sets a body's material, deletes it, and saves it as a part.
+
+## Phase N — sketch relations, right-click menus, a freer assistant
+
+**Done.** From using the app: the sketcher needs SOLIDWORKS's relations, every
+right-click needs a menu, and the assistant needs room to work.
+
+- **Relations.** Besides coincident, horizontal, vertical and equal:
+  `parallel`, `perpendicular`, `collinear` (two lines); `tangent` (a line and a
+  circle or arc, or two circles or arcs, outside or inside, as they are);
+  `concentric`; `midpoint` and `pointOn` (a point on a line extended, a circle
+  or an arc); `symmetric` (two points about a line); `fix` (an entity or a
+  point held where it is); `horizontal`/`vertical` of two points.
+- **Dimensions.** Besides distances and radius: `diameter`, `angle` (between
+  two lines' directions, in degrees, over 0 and under 180), and a point's
+  distance from a line (`{ "point", "line", "value" }`).
+- Each is one or two equations in the solver, a check on rebuild with the
+  measured value in its error, a shape that validation explains, and a line in
+  the agent's reference.
+- **The sketcher** infers relations while drawing (an end, centre, midpoint or
+  curve under the pointer; a line near level or plumb), offers the relations
+  and dimensions that fit the selection, shows each relation as a glyph and
+  each dimension as a dimension, and has Smart Dimension (D) with its Modify
+  box. Geometry is blue while it can move and black when fully defined; which
+  numbers can still move is read from the null space of the solver's Jacobian.
+- **Right-click menus** on every target: the actions SOLIDWORKS puts there,
+  and **Ask AI…** last, which opens the ask panel.
+- **Reach.** An ask may change the whole part by default: the right-clicked
+  thing is the focus, the packet carries the part's outline, every feature is
+  readable, every tool is offered and the one-feature rule is off. **Just
+  this** restores Phase D's scopes. Either way the result is a proposal.
+
+Acceptance:
+1. Every relation and dimension solves and passes the rebuild check (`tests/relations.test.ts`).
+2. A plate sketched in the browser with inferred relations, Smart Dimensions, equal holes and its corner on the origin reads Fully defined, all black (`e2e/sketch-relations.spec.ts`).
+3. Every right-click opens a menu whose actions work and whose last entry opens the ask (`e2e/context-menu.spec.ts`).
+4. From a sketch entity, "pattern the part" is refused with Just this and proposed with the whole part (`tests/ask.test.ts`, `e2e/ask.spec.ts`, `e2e/context-menu.spec.ts`).

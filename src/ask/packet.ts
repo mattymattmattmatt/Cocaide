@@ -353,11 +353,28 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
   }
 }
 
+/**
+ * The part in brief: its name, parameters and each feature as one line (a
+ * sketch as its entity list), with whether it rebuilt. What an ask about the
+ * whole part reads, and what a wide ask from one thing gets beside its packet.
+ */
+export function partOutline(doc: RawDocument, check: CheckResult): Record<string, unknown> {
+  const status = new Map(check.features.map((s) => [s.id, s]));
+  const params = documentParameters(doc);
+  return {
+    name: doc.name,
+    ...(Object.keys(params).length ? { parameters: params } : {}),
+    features: doc.features.map((f) => {
+      const s = status.get(String(f.id));
+      return { ...brief(f), ok: s?.ok ?? false, ...(s?.error ? { error: s.error } : {}), ...(s?.suppressed ? { suppressed: true } : {}) };
+    }),
+    ...(isObject(doc.drawing) ? { drawing: { views: Array.isArray(doc.drawing.views) ? doc.drawing.views.length : 0, annotations: Array.isArray(doc.drawing.annotations) ? doc.drawing.annotations.length : 0 } } : {}),
+  };
+}
+
 /** The whole part as a target: its features as one line each, its parameters and measurements. */
 function partPacket(doc: RawDocument, check: CheckResult, label: string, writeScope: string[]): Packet {
-  const status = new Map(check.features.map((s) => [s.id, s]));
   const fabrication = fabricationChecks(doc, check.measurements);
-  const params = documentParameters(doc);
   // A part estimated from a photo: which sizes are the photo's, so an answer never calls them exact.
   const photo = photoOf(doc);
   const fromPhoto = photo && {
@@ -370,15 +387,7 @@ function partPacket(doc: RawDocument, check: CheckResult, label: string, writeSc
     target: { kind: "part", label },
     units: "mm",
     writeScope,
-    part: {
-      name: doc.name,
-      ...(Object.keys(params).length ? { parameters: params } : {}),
-      ...(fromPhoto ? { photo: fromPhoto } : {}),
-      features: doc.features.map((f) => {
-        const s = status.get(String(f.id));
-        return { ...brief(f), ok: s?.ok ?? false, ...(s?.error ? { error: s.error } : {}), ...(s?.suppressed ? { suppressed: true } : {}) };
-      }),
-    },
+    part: { ...partOutline(doc, check), ...(fromPhoto ? { photo: fromPhoto } : {}) },
     parent: null,
     children: [],
     measurements: check.measurements ? measurementSummary(check.measurements) : { solid: false },

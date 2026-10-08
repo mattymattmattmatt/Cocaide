@@ -57,9 +57,17 @@ export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "a
           {tab === "assistant" && (
             <>
               <p className="muted small">
-                Right-click a feature, face, edge, sketch entity or failed rebuild to ask about it. The ask sends that thing's context packet to the model,
-                never the whole part. Modelling and STEP export work without any of this.
+                Right-click anything (a feature, face, edge, sketch entity, failed rebuild) and choose Ask AI… to ask about it or change it. The ask sends what
+                you right-clicked to the model, with an outline of the part when it may change the whole part. Every change is a proposal you accept or
+                discard. Modelling and STEP export work without any of this.
               </p>
+              <label className="field">
+                <span className="field-label">May change</span>
+                <select value={s.reach} onChange={(e) => setS({ ...s, reach: e.target.value as AskSettings["reach"] })} data-testid="ask-reach-default">
+                  <option value="part">The whole part (what you right-click is the focus)</option>
+                  <option value="target">Only what you right-click</option>
+                </select>
+              </label>
               <label className="field">
                 <span className="field-label">Model</span>
                 <select value={s.model} onChange={(e) => setS({ ...s, model: e.target.value })} data-testid="ask-model">
@@ -160,7 +168,7 @@ const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
     ["Wheel", "Zoom at the pointer: toward you zooms in"],
     ["Left-click", "Select; Ctrl- or Shift-click adds"],
     ["Left-drag in a sketch", "Box select: left to right takes what is inside, right to left what it touches"],
-    ["Right-click", "Ask about what is under the pointer"],
+    ["Right-click", "The menu for what is under the pointer, with Ask AI…"],
     ["Right-drag", "Pan"],
   ],
   trackpad: [
@@ -168,7 +176,7 @@ const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
     ["Shift + drag", "Pan"],
     ["Two-finger scroll or pinch", "Zoom at the pointer"],
     ["Click", "Select; Ctrl- or Shift-click adds"],
-    ["Right-click (two-finger click)", "Ask about what is under the pointer"],
+    ["Right-click (two-finger click)", "The menu for what is under the pointer, with Ask AI…"],
     ["Right-drag", "Pan"],
     ["Middle button", "As in SOLIDWORKS, if there is one"],
   ],

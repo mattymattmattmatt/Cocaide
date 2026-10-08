@@ -100,6 +100,8 @@ test("right-click the front view, ask for the leg height: accepted, it reads 860
   ]);
   const [x, y] = await centreOf(page, "front");
   await page.mouse.click(x, y, { button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-target")).toHaveText("view front");
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: view front and its annotations");
   await page.getByTestId("ask-input").fill("Dimension the leg height");

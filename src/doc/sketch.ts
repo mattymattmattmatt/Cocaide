@@ -11,14 +11,29 @@ export function constraintEntities(k: Constraint): string[] {
       return k.points.flatMap(fromRef);
     case "horizontal":
     case "vertical":
+      return k.entity ? [k.entity] : k.points!.flatMap(fromRef);
     case "radius":
+    case "diameter":
       return [k.entity];
     case "distance":
     case "distanceX":
     case "distanceY":
-      return k.entity ? [k.entity] : k.points!.flatMap(fromRef);
+      return k.entity ? [k.entity] : k.points ? k.points.flatMap(fromRef) : [...fromRef(k.point!), k.line!];
     case "equal":
+    case "parallel":
+    case "perpendicular":
+    case "collinear":
+    case "tangent":
+    case "concentric":
+    case "angle":
       return [...k.entities];
+    case "midpoint":
+    case "pointOn":
+      return [...fromRef(k.point), k.entity];
+    case "symmetric":
+      return [...k.points.flatMap(fromRef), k.line];
+    case "fix":
+      return k.entity ? [k.entity] : fromRef(k.point!);
   }
 }
 

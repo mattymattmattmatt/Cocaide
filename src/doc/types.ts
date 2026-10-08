@@ -428,21 +428,29 @@ export interface CoincidentConstraint {
   points: [PointRef, PointRef];
 }
 
+/** A line along the sketch's X or Y; or two points level with each other (horizontal) or above each other (vertical). */
 export interface OrientationConstraint {
   type: "horizontal" | "vertical";
-  entity: string;
+  entity?: string;
+  points?: [PointRef, PointRef];
 }
 
-/** Either `entity` (a line, rect or slot) or `points` (two point refs). */
+/**
+ * Exactly one of `entity` (a line, rect or slot), `points` (two point refs),
+ * or `point` with `line` (a distance only: the point's perpendicular distance from
+ * the line, extended).
+ */
 export interface DistanceConstraint {
   type: "distance" | "distanceX" | "distanceY";
   entity?: string;
   points?: [PointRef, PointRef];
+  point?: PointRef;
+  line?: string;
   value: number;
 }
 
 export interface RadiusConstraint {
-  type: "radius";
+  type: "radius" | "diameter";
   entity: string;
   value: number;
 }
@@ -452,12 +460,55 @@ export interface EqualConstraint {
   entities: [string, string];
 }
 
+/**
+ * Relations between two entities, as SOLIDWORKS has them: parallel,
+ * perpendicular and collinear lines; tangent (a line and a circle or arc, or
+ * two circles or arcs, on whichever side they are); concentric circles or arcs.
+ */
+export interface PairConstraint {
+  type: "parallel" | "perpendicular" | "collinear" | "tangent" | "concentric";
+  entities: [string, string];
+}
+
+/** The angle between two lines' directions (start to end), in degrees, over 0 and under 180. */
+export interface AngleConstraint {
+  type: "angle";
+  entities: [string, string];
+  value: number;
+}
+
+/** A point at the middle of a line, or on a line (extended), circle or arc. */
+export interface PointOnConstraint {
+  type: "midpoint" | "pointOn";
+  point: PointRef;
+  entity: string;
+}
+
+/** Two points mirrored about a line. */
+export interface SymmetricConstraint {
+  type: "symmetric";
+  points: [PointRef, PointRef];
+  line: string;
+}
+
+/** An entity, or one point, held where it is: only the document's numbers move it. */
+export interface FixConstraint {
+  type: "fix";
+  entity?: string;
+  point?: PointRef;
+}
+
 export type Constraint =
   | CoincidentConstraint
   | OrientationConstraint
   | DistanceConstraint
   | RadiusConstraint
-  | EqualConstraint;
+  | EqualConstraint
+  | PairConstraint
+  | AngleConstraint
+  | PointOnConstraint
+  | SymmetricConstraint
+  | FixConstraint;
 export type ConstraintType = Constraint["type"];
 
 // ------------------------------------------------------- extrude and cut

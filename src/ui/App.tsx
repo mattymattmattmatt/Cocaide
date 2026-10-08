@@ -41,7 +41,8 @@ import { addFramePath } from "../weldment/frame";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, placeMember, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
-import { FeatureTree } from "./FeatureTree";
+import { FeatureTree, OP_ICON } from "./FeatureTree";
+import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "./ContextMenu";
 import { ParametersContext, TextInput } from "./fields";
 import { MeasurementsPanel } from "./MeasurementsPanel";
 import { ParametersPanel } from "./ParametersPanel";
@@ -54,7 +55,7 @@ import { useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
 import { Icon, type IconName } from "./icons";
-import { keyHint, pointer, useCommands, useInputPrefs } from "./input";
+import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "./input";
 import { MenuItem, Popup, ToolButton, ToolMenu } from "./tools";
 import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
@@ -780,7 +781,7 @@ export function App() {
 
   const sheetContext = (t: SheetTarget | null, x: number, y: number) => {
     if (t) setDrawingSel(t.id);
-    openAskRef.current(t ? (t.kind === "view" ? { kind: "view", id: t.id } : { kind: "annotation", id: t.id }) : { kind: "drawing" }, x, y);
+    contextMenuRef.current(t ? (t.kind === "view" ? { kind: "view", id: t.id } : { kind: "annotation", id: t.id }) : { kind: "drawing" }, x, y);
   };
 
   // ------------------------------------------------------------ right-click ask
@@ -843,11 +844,11 @@ export function App() {
   const openAskRef = useRef(openAsk);
   openAskRef.current = openAsk;
   const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
-    // Empty space: the whole part, the weakest scope.
-    if (!target) return openAskRef.current({ kind: "part" }, x, y);
-    // Select what was right-clicked, so it stays outlined while the ask is open.
+    // Empty space: the menu for the whole part.
+    if (!target) return contextMenuRef.current({ kind: "part" }, x, y);
+    // Select what was right-clicked, as SOLIDWORKS does: its menu acts on it, and it stays outlined while an ask is open.
     setSelection(target.kind === "face" ? { faces: [target.index], edges: [], point: target.point } : { faces: [], edges: [target.index] });
-    openAskRef.current({ kind: target.kind, index: target.index }, x, y);
+    contextMenuRef.current({ kind: target.kind, index: target.index }, x, y);
   }, []);
 
   const onPick = useCallback((target: PickTarget | null, additive: boolean) => {
@@ -909,6 +910,142 @@ export function App() {
     lastTool.current = id;
     t.run();
   };
+  // ------------------------------------------------------------ right-click menus
+
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  // Read at the click, not when the menu opened: the right-click's own selection has landed by then.
+  const runToolRef = useRef(runTool);
+  runToolRef.current = runTool;
+  const viewCommands = useRef<((id: string) => void) | null>(null);
+  const toggleBody = (name: string) =>
+    setHiddenBodies((h) => {
+      const next = new Set(h);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  const renameFeature = (id: string) => {
+    setSelectedFeature(id);
+    setRightTab("properties");
+    setTimeout(() => (document.querySelector('[data-testid="prop-id"]') as HTMLInputElement | null)?.select(), 0);
+  };
+
+  /**
+   * The right-click menu, as SOLIDWORKS has one on everything: what can be
+   * done to the thing under the pointer, then "Ask AI…", which opens the ask
+   * panel about it.
+   */
+  const contextMenu = (target: AskTarget, x: number, y: number) => {
+    if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+    const ask = askEntry(() => openAskRef.current(target, x, y));
+    const tool = (id: string, label?: string): MenuEntry => {
+      const t = TOOLS[id];
+      return { label: label ?? t.label, icon: t.icon, hint: t.disabled, disabled: !!t.disabled, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => runToolRef.current(id), testId: `ctx-${id}` };
+    };
+    const viewCmd = (id: string, label: string, icon: IconName): MenuEntry => ({ label, icon, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => viewCommands.current?.(id), testId: `ctx-${id}` });
+    const featureItems = (id: string): MenuEntry[] => {
+      const f = features.find((g) => g.id === id);
+      if (!f) return [];
+      const op = String(f.op);
+      const suppressed = f.suppressed === true;
+      const sketchId = op === "sketch" ? id : (op === "extrude" || op === "cut") && typeof f.sketch === "string" ? f.sketch : null;
+      return [
+        {
+          label: "Edit feature",
+          icon: OP_ICON[op] ?? "sketch",
+          onClick: () => {
+            setSelectedFeature(id);
+            setRightTab("properties");
+          },
+          testId: "ctx-edit-feature",
+        },
+        ...(sketchId ? [{ label: "Edit sketch", icon: "sketch", onClick: () => editSketch(sketchId), testId: "ctx-edit-sketch" } as MenuEntry] : []),
+        { label: suppressed ? "Unsuppress" : "Suppress", icon: suppressed ? "eye" : "suppress", onClick: () => run({ type: "suppressFeature", id, suppressed: !suppressed }), testId: "ctx-suppress" },
+        { label: "Rename…", icon: "note", onClick: () => renameFeature(id), testId: "ctx-rename" },
+        {
+          label: "Delete",
+          icon: "trash",
+          shortcut: keyFor("delete", prefs) ?? undefined,
+          onClick: () => {
+            if (!run({ type: "deleteFeature", id }) && selectedFeature === id) setSelectedFeature(null);
+          },
+          testId: "ctx-delete",
+        },
+      ];
+    };
+    const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
+    let title = targetLabel(doc, target, topo);
+    let items: MenuEntry[] = [];
+    switch (target.kind) {
+      case "feature":
+      case "failed":
+        items = featureItems(target.id);
+        if (target.kind === "failed") title = `${target.id} failed`;
+        break;
+      case "face": {
+        const f = view?.faces[target.index];
+        const flat = f?.type === "plane";
+        items = [
+          ...(flat ? [{ label: "Sketch on this face", icon: "sketch", onClick: () => runToolRef.current("tool.sketch"), testId: "ctx-sketch-face" } as MenuEntry, tool("tool.hole", "Hole here")] : []),
+          "sep",
+          ...(flat ? [viewCmd("view.normal", "Normal to", "front")] : []),
+          viewCmd("view.fit", "Zoom to fit", "fit"),
+          ...(f?.body && bodyCount > 1 ? [{ label: `Hide ${f.body}`, icon: "eyeOff", onClick: () => toggleBody(f.body!), testId: "ctx-hide-body" } as MenuEntry] : []),
+        ];
+        break;
+      }
+      case "edge":
+        items = [tool("tool.fillet"), tool("tool.chamfer"), "sep", viewCmd("view.fit", "Zoom to fit", "fit")];
+        break;
+      case "part":
+        title = "Part";
+        items = [
+          { heading: "Sketch on" },
+          ...PLANES.map(([name, plane]): MenuEntry => ({ label: name, icon: "sketch", onClick: () => startSketch(plane), testId: `ctx-sketch-${name.split(" ")[0].toLowerCase()}` })),
+          "sep",
+          viewCmd("view.fit", "Zoom to fit", "fit"),
+          viewCmd("view.iso", "Isometric", "iso"),
+          viewCmd("view.top", "Top", "top"),
+          viewCmd("view.front", "Front", "front"),
+          viewCmd("view.right", "Right", "right"),
+          ...(hiddenBodies.size ? [{ label: "Show all bodies", icon: "eye", onClick: () => setHiddenBodies(new Set()), testId: "ctx-show-bodies" } as MenuEntry] : []),
+          "sep",
+          { label: "Undo", icon: "undo", shortcut: keyFor("undo", prefs) ?? undefined, disabled: !d.canUndo, onClick: d.undo },
+        ];
+        break;
+      case "parameter":
+        items = [{ label: "Delete parameter", icon: "trash", onClick: () => run({ type: "deleteParameter", name: target.name }), testId: "ctx-delete-parameter" }];
+        break;
+      case "body": {
+        const b = view?.bodies.find((x) => x.name === target.name);
+        const hidden = hiddenBodies.has(target.name);
+        items = [
+          { label: hidden ? "Show" : "Hide", icon: hidden ? "eye" : "eyeOff", onClick: () => toggleBody(target.name), testId: "ctx-toggle-body" },
+          ...(b ? [{ label: "Select its faces", icon: "select", onClick: () => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] }) } as MenuEntry] : []),
+          { label: "Save as a part…", icon: "save", onClick: () => saveBody(target.name), testId: "ctx-save-body" },
+          { label: "Delete body", icon: "deleteBody", disabled: bodyCount < 2, onClick: () => deleteBodyTool(target.name), testId: "ctx-delete-body" },
+        ];
+        break;
+      }
+      case "view":
+        items = [{ label: "Delete view", icon: "trash", onClick: () => run({ type: "setView", id: target.id, view: null }), testId: "ctx-delete-view" }];
+        break;
+      case "annotation":
+        items = [{ label: "Delete", icon: "trash", onClick: () => run({ type: "setAnnotation", id: target.id, annotation: null }), testId: "ctx-delete-annotation" }];
+        break;
+      case "drawing":
+        title = "Drawing";
+        items = [
+          { label: "Balloon every item", icon: "balloon", disabled: !sheet, onClick: balloonAll },
+          { label: "Export PDF", icon: "export", disabled: !sheet, onClick: () => exportDrawing("pdf") },
+        ];
+        break;
+    }
+    setMenu({ x, y, title, items: [...items, "sep", ask] });
+  };
+  const contextMenuRef = useRef(contextMenu);
+  contextMenuRef.current = contextMenu;
+
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
   /** The tab Settings opens on: the assistant's when an ask needs it set up, else Units. */
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
@@ -1274,9 +1411,9 @@ export function App() {
               onEditSketch={editSketch}
               dispatch={d.dispatch}
               onError={(text) => setNotice({ kind: "error", text })}
-              onAsk={sketch ? undefined : openAsk}
+              onAsk={sketch ? undefined : contextMenu}
             />
-            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : openAsk} />
+            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} />
             <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
             <BodiesPanel
               measurements={view?.measurements ?? null}
@@ -1291,7 +1428,7 @@ export function App() {
                 })
               }
               onSelect={(b) => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] })}
-              onAsk={sketch ? undefined : (name, x, y) => openAsk({ kind: "body", name }, x, y)}
+              onAsk={sketch ? undefined : (name, x, y) => contextMenu({ kind: "body", name }, x, y)}
               onSelectMember={(id) => {
                 setSelectedFeature(id);
                 setRightTab("properties");
@@ -1312,7 +1449,16 @@ export function App() {
               onCancel={() => setSketch(null)}
               applyRef={sketchApply}
               onAsk={(t, draft, x, y) =>
-                openAsk(t.kind === "entity" ? { kind: "entity", sketch: draft.id, entity: t.entity } : { kind: "constraint", sketch: draft.id, index: t.index }, x, y, draft)
+                openAsk(
+                  t.kind === "entity"
+                    ? { kind: "entity", sketch: draft.id, entity: t.entity }
+                    : t.kind === "constraint"
+                      ? { kind: "constraint", sketch: draft.id, index: t.index }
+                      : { kind: "feature", id: draft.id },
+                  x,
+                  y,
+                  draft,
+                )
               }
             />
           ) : (
@@ -1329,6 +1475,7 @@ export function App() {
                   hiddenBodies={hiddenBodies}
                   nodes={shownNodes}
                   onMessage={(text) => setNotice({ kind: "info", text })}
+                  commandsRef={viewCommands}
                 />
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
@@ -1402,7 +1549,7 @@ export function App() {
                         dispatch={d.dispatch}
                         onEditSketch={editSketch}
                         onSelectFeature={setSelectedFeature}
-                        onAsk={openAsk}
+                        onAsk={contextMenu}
                         onProfileCard={setProfileCard}
                         frame={frameActions}
                       />
@@ -1420,6 +1567,7 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
+        {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {shortcutBar && !sketch && (
           <Popup x={shortcutBar.x} y={shortcutBar.y} bar onClose={() => setShortcutBar(null)} label="Shortcut bar" testId="shortcut-bar">
             {(close) =>
@@ -1490,12 +1638,12 @@ function Help() {
     <div className="help" data-testid="help">
       <h2>Getting started</h2>
       <ol className="help-steps">
-        {step("sketch", "Sketch", <>on a plane or a flat face. Draw, click geometry to dimension it, then Finish sketch.</>)}
+        {step("sketch", "Sketch", <>on a plane or a flat face. Draw, add relations to what you select, dimension with Smart Dimension (D), then Finish sketch.</>)}
         {step("extrude", "Extrude or Cut", "the selected (or latest) sketch into a solid, or out of one.")}
         {step("hole", "Hole, Fillet, Chamfer", "on what you click: a flat face for a hole, edges (shift-click for more) for a fillet or chamfer.")}
         {step("pattern", "Pattern or Mirror", "the feature selected in the tree; Mirror, Split and Move work on the clicked body too.")}
         {step("member", "Member", "for weldments: tick Weldment profile on a sketch to add a section, then add members from Sections.")}
-        {step("ask", "Right-click", "anything (a feature, face, edge, parameter, or empty space) to ask about it or describe a change.")}
+        {step("ask", "Right-click", "anything (a feature, face, edge, body, or empty space) for its menu; Ask AI… at the bottom asks about it or describes a change.")}
         {step(
           "move",
           "Mouse and keys",
@@ -1528,7 +1676,7 @@ function DrawingHelp() {
       <ol className="help-steps">
         {step("drawing", "New drawing", "plans a sheet from the part: views, overall sizes, hole callouts, balloons and the cut list.")}
         {step("view", "Drag a view", "to place it; click a view or an annotation to edit it on the right.")}
-        {step("ask", "Right-click", "a view or an annotation to ask for a change, like a missing dimension.")}
+        {step("ask", "Right-click", "a view or an annotation for its menu; Ask AI… asks for a change, like a missing dimension.")}
         {step("export", "Export PDF or SVG", "when the checks are all green.")}
       </ol>
       <p className="muted small">The sheet follows the model: change a size and the drawing updates.</p>

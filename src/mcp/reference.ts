@@ -40,12 +40,24 @@ Entities (2D, in the sketch frame; "construction": true keeps one out of the pro
   { "id": "a1", "type": "arc", "center": [0,0], "start": [5,0], "end": [0,5], "clockwise": false }
   { "id": "s1", "type": "slot", "center1": [0,0], "center2": [20,0], "width": 6 }
 Closed loops become the profile; a loop inside another is a hole in it.
-Constraints are checked on rebuild (the stored geometry must satisfy them). setDimension changes one and re-solves the sketch.
+Constraints are SOLIDWORKS's sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2) or "origin".
+Dimensions (mm; angles in degrees):
   { "type": "distanceX" | "distanceY" | "distance", "entity": "r1", "value": 80 }   (or "points": ["l1.start","l1.end"])
-  { "type": "radius", "entity": "c1", "value": 5 }
-  { "type": "horizontal" | "vertical", "entity": "l1" }
+  { "type": "distance", "point": "c1.center", "line": "l1", "value": 12 }   (square to the line, extended)
+  { "type": "radius" | "diameter", "entity": "c1", "value": 5 }
+  { "type": "angle", "entities": ["l1", "l2"], "value": 30 }     (between their directions, start to end; over 0, under 180)
+Relations:
+  { "type": "horizontal" | "vertical", "entity": "l1" }          (or "points": ["l1.end", "c1.center"]: level / above each other)
   { "type": "coincident", "points": ["l1.end", "l2.start"] }     ("origin" is the sketch origin)
-  { "type": "equal", "entities": ["c1", "c2"] }
+  { "type": "pointOn", "point": "l2.end", "entity": "c1" }       (on a line extended, a circle or an arc)
+  { "type": "midpoint", "point": "c1.center", "entity": "l1" }
+  { "type": "parallel" | "perpendicular" | "collinear", "entities": ["l1", "l2"] }
+  { "type": "tangent", "entities": ["l1", "a1"] }               (a line and a circle or arc, or two circles or arcs)
+  { "type": "concentric", "entities": ["c1", "a1"] }
+  { "type": "equal", "entities": ["c1", "c2"] }                  (two lines' lengths, or two radii)
+  { "type": "symmetric", "points": ["l1.start", "l2.start"], "line": "l3" }
+  { "type": "fix", "entity": "l1" }                              (or "point": "l1.end": held where it is)
+A relation that repeats or contradicts what the sketch already fixes is refused.
 
 ## extrude / cut
 { "id": "ext_1", "op": "extrude", "sketch": "sketch_1", "distance": 6, "direction": [0,0,1] }

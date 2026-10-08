@@ -36,6 +36,7 @@ const frameIntent = JSON.stringify({
 async function rightClickEmpty(page: Page) {
   const box = (await page.getByTestId("viewport").boundingBox())!;
   await page.mouse.click(box.x + 30, box.y + box.height - 120, { button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
 }
 
 async function cutRows(page: Page): Promise<string[][]> {
@@ -118,6 +119,8 @@ test("right-click a butt joint and mitre it: a proposal that, accepted, cuts 45Â
     [text("Corner A is a mitre between rail_left and rail_front now; leg_a stops under them.")],
   ]);
   await page.getByTestId("feature-corner_a").locator(".feature-row").click({ button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-target")).toHaveText("corner_a");
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: corner_a");
   await page.getByTestId("ask-action-mitre-it").click();

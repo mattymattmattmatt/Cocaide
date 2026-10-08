@@ -102,7 +102,7 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         <div
           className="feature-error standalone"
           data-testid="prop-feature-error"
-          title="Right-click to ask about this error"
+          title="Right-click to fix it or ask the AI about it"
           onContextMenu={(e) => {
             if (!onAsk) return;
             e.preventDefault();

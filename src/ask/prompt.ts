@@ -41,11 +41,15 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Fully define this sketch", prompt: "Fully define this sketch: add the dimensions and constraints it is missing, keeping the geometry where it is.", submit: true },
         { label: "Close the profile", prompt: "Close the profile so it can be extruded.", submit: true },
         { label: "Make it symmetric about the origin", prompt: "Make this sketch symmetric about the sketch origin.", submit: true },
+        { label: "Change its shape", prompt: "Change this sketch so that ", submit: false },
+        { label: "Explain it", prompt: "What does this sketch draw, and what holds it?", submit: true },
       ];
     case "entity":
       return [
         { label: "Make it construction geometry", prompt: "Turn this into construction geometry.", submit: true },
         { label: "Constrain this distance", prompt: "Constrain this distance to ", submit: false },
+        { label: "Fully define it", prompt: "Add the relations and dimensions this needs to be fully defined, keeping it where it is.", submit: true },
+        { label: "Change it", prompt: "Change this so that ", submit: false },
       ];
     case "constraint":
       return [
@@ -61,12 +65,16 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
       return [
         { label: "Hole here", prompt: "Put a through hole here, diameter ", submit: false },
         { label: "Fillet the boundary", prompt: "Fillet the edges around this face, radius ", submit: false },
+        { label: "Boss on it", prompt: "Extrude a boss out of this face: ", submit: false },
+        { label: "Pocket in it", prompt: "Cut a pocket into this face: ", submit: false },
         { label: "What is this face?", prompt: "What is this face?", submit: true },
       ];
     case "edge":
       return [
         { label: "Fillet this edge", prompt: "Fillet this edge, radius ", submit: false },
         { label: "Chamfer this edge", prompt: "Chamfer this edge, distance ", submit: false },
+        { label: "Fillet every edge like it", prompt: "Fillet this edge and every edge like it, radius ", submit: false },
+        { label: "What is this edge?", prompt: "What is this edge, and which feature made it?", submit: true },
       ];
     case "parameter":
       return [
@@ -116,27 +124,30 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "New part from a description", prompt: "", submit: false },
         { label: "Explain this part", prompt: "What is this part, and how is it built?", submit: true },
         { label: "Check it", prompt: "Does this part rebuild cleanly, and is anything fragile?", submit: true },
+        { label: "Change it", prompt: "Change this part: ", submit: false },
       ];
     default:
       return [
         { label: "Explain this", prompt: "Explain what this feature does.", submit: true },
         { label: "Change a dimension", prompt: "Make it ", submit: false },
         { label: "Pattern it", prompt: "Pattern this ", submit: false },
+        { label: "Mirror it", prompt: "Mirror this about ", submit: false },
         { label: "Suppress it: what breaks?", prompt: "If this were suppressed, what would break? Do not change anything.", submit: true },
       ];
   }
 }
 
-export const SYSTEM = `You are the agent inside Cocaide, a parametric CAD program. The user right-clicked one thing in their part and typed a request about it. You get a context packet that describes that thing: the target, its parent, its direct children, its measurements, the selector for a picked face or edge, and the error if it failed. The packet is all the context there is; do not ask for the rest of the part.
+export const SYSTEM = `You are the agent inside Cocaide, a parametric CAD program. The user right-clicked one thing in their part and typed a request about it. You get a context packet that describes that thing: the target, its parent, its direct children, its measurements, the selector for a picked face or edge, and the error if it failed. When the user lets the ask change the whole part (writeScope ["*"]), the packet also carries "part": every feature in brief, and getFeature reads any of them. Otherwise the packet is all the context there is; do not ask for the rest of the part.
 
 Pick the smallest response that does what was asked:
 1. Answer: explain, name or measure. No edit. If the packet already answers the question, just answer.
 2. Parameter: change one field on the target ("make this hole M6" sets diameter 6.6 and nothing else).
-3. Scoped edit: add or change features inside writeScope.
+3. Edit: add or change features inside writeScope, as many as the request needs.
 4. Escalate: if the request cannot be done inside writeScope, call escalate with the reason. Never try to widen the scope.
 
 Rules:
-- writeScope is enforced by the program: an edit outside it is rejected and changes nothing. Its tokens: a feature id (change that feature, or add a feature that uses it), "<sketch>/*" (that sketch's entities and constraints only), "<sketch>/<entity>" (that entity and the constraints on it), "param:<name>", "body:<name>" (add features that touch only that body: an extrude with "body": name, a cut or hole with "bodies": [name], selectors naming it; and rename it), and "+" (add one new feature; from a face or edge it must use that face or edge, normally through the packet's selection).
+- writeScope is enforced by the program: an edit outside it is rejected and changes nothing. Its tokens: "*" (anything in the part: the target is only where the user pointed), a feature id (change that feature, or add a feature that uses it), "<sketch>/*" (that sketch's entities and constraints only), "<sketch>/<entity>" (that entity and the constraints on it), "param:<name>", "body:<name>" (add features that touch only that body: an extrude with "body": name, a cut or hole with "bodies": [name], selectors naming it; and rename it), and "+" (add one new feature; from a face or edge it must use that face or edge, normally through the packet's selection).
+- Sketches: dimension and relate them the way SOLIDWORKS does (see the reference: horizontal, vertical, parallel, perpendicular, tangent, coincident, midpoint, equal, symmetric, fix, and distance, radius, diameter and angle dimensions). A sketch that is fully defined (packet measurements dof 0) won't move unexpectedly.
 - Every edit is checked: the part is rebuilt and the edit is kept only if nothing newly fails. A failed edit returns the error; read it and fix the call, or stop and say why.
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
@@ -274,21 +285,29 @@ export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...D
 
 const DRAWING_KINDS = new Set<string>(["view", "annotation", "drawing"]);
 
-/** Explain-only asks get no write tools. An ask from the sheet gets the drawing's, and only those. */
-export function toolsFor(mode: AskMode, kind?: string): Anthropic.Tool[] {
-  if (mode === "explain") return READ_TOOLS.filter((t) => !kind || !DRAWING_KINDS.has(kind) || t.name === "escalate");
+/**
+ * Explain-only asks get no write tools. An ask from the sheet gets the
+ * drawing's, and only those. An ask that may change the whole part gets every
+ * tool: the part's, the sketches', and the drawing's when there is one.
+ */
+export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; drawing: boolean }): Anthropic.Tool[] {
+  if (mode === "explain") return wide?.part ? READ_TOOLS : READ_TOOLS.filter((t) => !kind || !DRAWING_KINDS.has(kind) || t.name === "escalate");
+  if (wide?.part) return [...READ_TOOLS, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
   if (kind && DRAWING_KINDS.has(kind)) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS];
   return [...READ_TOOLS, ...FEATURE_TOOLS, ...SKETCH_TOOLS];
 }
 
 /** The user turn: the packet, the screenshot when the prompt is visual, then the user's text, unchanged and last. */
-export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Uint8Array): Anthropic.ContentBlockParam[] {
+export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Uint8Array, wide = false): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
   if (image) blocks.push({ type: "image", source: { type: "base64", media_type: "image/png", data: base64(image) } });
+  const reach = wide
+    ? " The user pointed at the target to show you where; you may change anything in the part to do what they ask (the packet's part has the rest of it)."
+    : "";
   const note =
     mode === "explain"
-      ? "This is a question: answer it. You have no tools that change the part."
-      : "Edits you make are a proposal the user accepts or discards.";
+      ? `This is a question: answer it. You have no tools that change the part.${wide ? " The packet's part has the rest of it." : ""}`
+      : `Edits you make are a proposal the user accepts or discards.${reach}`;
   blocks.push({
     type: "text",
     text: `Context packet:\n${JSON.stringify(packet, null, 1)}\n\n${image ? "The image shows the part framed on the target, which is outlined in orange.\n" : ""}${note}\n\nThe user's request:\n${text}`,

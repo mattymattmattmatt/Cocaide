@@ -4,7 +4,7 @@
 // touches drops the proposal and keeps the prompt (spec 6.4).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent } from "../../ask/agent";
+import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent, type AskReach } from "../../ask/agent";
 import type { KernelPort } from "../../ask/kernel";
 import type { AskTarget, PacketKind } from "../../ask/packet";
 import type { Drawing, PartAskResult, Photo } from "../../ask/part";
@@ -112,7 +112,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
   );
 
   const submit = useCallback(
-    async (ctx: AskContext, prompt: string, applyNow: boolean) => {
+    async (ctx: AskContext, prompt: string, applyNow: boolean, reach: AskReach = settings.reach) => {
       const text = prompt.trim();
       if (!text) return;
       if (!canAsk(settings)) {
@@ -136,7 +136,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       const result: PartAskResult =
         ctx.target.kind === "part"
           ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, library, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
-          : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, signal: controller.signal, onEvent });
+          : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, reach, signal: controller.signal, onEvent });
       if (controller.signal.aborted) return;
       const recordId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
       logAsk({

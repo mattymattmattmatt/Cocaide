@@ -50,17 +50,18 @@ describe("picking", () => {
 describe("constraint suggestions", () => {
   const rect: SketchEntity = { id: "r1", type: "rect", center: [3, 1], w: 60, h: 30 };
 
-  it("offers width, height and centring for a rect, valued at what it measures now", () => {
+  it("offers centring and fix, then width and height for a rect, valued at what it measures now", () => {
     const s = suggestions([rect], [{ kind: "entity", id: "r1" }]);
     expect(s.map((o) => [o.label, o.value])).toEqual([
+      ["Centre on origin", undefined],
+      ["Fix", undefined],
       ["Width", 60],
       ["Height", 30],
-      ["Centre on origin", undefined],
     ]);
   });
 
   it("builds the bracket's constraints and they solve to the bracket", () => {
-    const [width, height, centre] = suggestions([rect], [{ kind: "entity", id: "r1" }]);
+    const [centre, , width, height] = suggestions([rect], [{ kind: "entity", id: "r1" }]);
     const ks: Constraint[] = [width.make(80), height.make(40), centre.make(0)];
     expect(ks).toEqual([
       { type: "distanceX", entity: "r1", value: 80 },
@@ -83,6 +84,8 @@ describe("constraint suggestions", () => {
     ]);
     expect(s.map((o) => [o.label, o.value])).toEqual([
       ["Coincident", undefined],
+      ["Horizontal", undefined],
+      ["Vertical", undefined],
       ["Horizontal distance", 10],
       ["Vertical distance", 0],
       ["Distance", 10],

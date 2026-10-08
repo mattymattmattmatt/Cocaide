@@ -157,15 +157,77 @@ const ICONS = {
     </>
   ),
   ruler: <path d="M3 15 15 3l6 6L9 21z M7 11l2 2 M10 8l2 2 M13 5l2 2" />,
+  // sketch relations and dimensions, as SOLIDWORKS draws them
+  smartDimension: <path d="M4 7v10 M20 7v10 M4 12h16 M7.5 9 4.5 12l3 3 M16.5 9l3 3-3 3" />,
+  horizontal: <path d="M4 12h16 M4 9v6 M20 9v6" />,
+  vertical: <path d="M12 4v16 M9 4h6 M9 20h6" />,
+  coincident: (
+    <>
+      <circle cx="12" cy="12" r="7" />
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" />
+    </>
+  ),
+  pointOn: (
+    <>
+      <path d="M3 18 21 6" />
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+    </>
+  ),
+  midpoint: (
+    <>
+      <path d="M3 12h18 M3 9v6 M21 9v6" />
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+    </>
+  ),
+  parallel: <path d="M4 17 14 5 M10 19 20 7" />,
+  perpendicular: <path d="M4 20h16 M9 20V4 M9 15h5v5" />,
+  collinear: <path d="M2 18 9.5 13.5 M14.5 10.5 22 6" />,
+  tangent: (
+    <>
+      <circle cx="12" cy="14" r="6" />
+      <path d="M3 8h18" />
+    </>
+  ),
+  concentric: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3.5" />
+    </>
+  ),
+  equal: <path d="M5 9h14 M5 15h14" />,
+  symmetric: (
+    <>
+      <path d="M12 3v18" style={dash} />
+      <circle cx="6" cy="12" r="2.4" fill="currentColor" />
+      <circle cx="18" cy="12" r="2.4" fill="currentColor" />
+    </>
+  ),
+  fix: <path d="M12 3v10 M5 13h14 M7 16.5l2-3.5 M11 16.5l2-3.5 M15 16.5l2-3.5 M7 16.5h10" />,
+  angle: <path d="M4 19h16 M4 19 15 6 M10.5 19a6.5 6.5 0 0 0-2.3-5" />,
+  diameter: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M6.3 17.7 17.7 6.3" />
+    </>
+  ),
+  radius: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 12l5.7-5.7" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;
 
-/** An icon in the text colour. Decorative: the button or row it sits in says what it is. */
-export function Icon({ name, size = 16, className }: { name: IconName; size?: number; className?: string }) {
+/** An icon in the text colour. Decorative: the button or row it sits in says what it is. Inside an SVG, x and y place it. */
+export function Icon({ name, size = 16, className, x, y }: { name: IconName; size?: number; className?: string; x?: number; y?: number }) {
   return (
     <svg
       className={`icon${className ? ` ${className}` : ""}`}
+      x={x}
+      y={y}
       width={size}
       height={size}
       viewBox="0 0 24 24"

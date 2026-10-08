@@ -9,7 +9,7 @@ import { Icon, type IconName } from "./icons";
 import { OP_LABEL } from "./PropertyPanel";
 
 /** The picture of each kind of feature: the same one its tool has. */
-const OP_ICON: Record<string, IconName> = {
+export const OP_ICON: Record<string, IconName> = {
   sketch: "sketch",
   extrude: "extrude",
   cut: "cut",
@@ -37,7 +37,7 @@ interface Props {
   onEditSketch(id: string): void;
   dispatch(cmd: Command): string | null;
   onError(message: string): void;
-  /** Right-click: ask about a feature, or about its failed rebuild. */
+  /** Right-click: the menu for a feature, or for its failed rebuild (its last entry asks the AI about it). */
   onAsk?(target: AskTarget, x: number, y: number): void;
 }
 
@@ -178,7 +178,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                 <div
                   className="feature-error"
                   data-testid={`feature-error-${id}`}
-                  title="Right-click to ask about this error"
+                  title="Right-click to fix it or ask the AI about it"
                   onContextMenu={(e) => {
                     if (!onAsk) return;
                     e.preventDefault();

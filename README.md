@@ -57,6 +57,10 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - Every new body is named in the document, and renames follow through.
   - A member that is mirrored, patterned, copied or split stays in the cut list.
   - A body can have its own material, and any body can be saved as a part of its own.
+- Since then: SOLIDWORKS's sketch relations and dimensions, and right-click menus everywhere.
+  - Parallel, perpendicular, collinear, tangent, concentric, midpoint, coincident (on a curve too), equal, symmetric and fix, and angle, diameter and point-to-line dimensions, in the solver, the rebuild check and the agent's reference.
+  - Relations are inferred while drawing, offered for what you select, and shown as glyphs; Smart Dimension (D) places a dimension with its Modify box; geometry is blue until fully defined, then black.
+  - Every right-click opens a menu of what you can do to that thing, ending in **Ask AI…**. The AI may change the whole part by default, with what you right-clicked as its focus; **Just this** keeps Phase D's scopes.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -342,7 +346,7 @@ These checks are covered at three levels:
 | Check | Result |
 |---|---|
 | Right-click `hole_1`, "make it 8 mm", changes that diameter only | The packet is `hole_1` with parent `ext_1`, no children, measured Ø6.6 × 6 deep, and write scope `[hole_1]`. The proposal lists exactly `hole_1 diameter: 6.6 → 8`, and the viewport previews it at 18,898.407 mm³. Accept writes it as one undo step; every other feature is byte-identical. |
-| Right-click a sketch entity, "pattern the part", is refused as out of scope | The scope is `sketch_1/r1`, meaning r1 and the constraints on it. The model's `addFeature` comes back as `writeScope: addFeature "linearPattern_1" is outside the scope [sketch_1/r1]`. The ask ends as **Out of scope** with nothing to accept, and the document is unchanged. |
+| Right-click a sketch entity, "pattern the part", is refused as out of scope | With **Just this** chosen, the scope is `sketch_1/r1`, meaning r1 and the constraints on it. (With the default, the whole part, the same ask is a proposal: `e2e/context-menu.spec.ts`.) The model's `addFeature` comes back as `writeScope: addFeature "linearPattern_1" is outside the scope [sketch_1/r1]`. The ask ends as **Out of scope** with nothing to accept, and the document is unchanged. |
 | "What is this face" returns text and does not write | A question is explain-only. The model is offered no write tools at all: only `measure`, `getFeature` and `escalate`. It gets one picture, framed on the face with the face outlined. The ask ends as **Answer**, with no proposal, and the document is unchanged. |
 
 These checks are covered at three levels:
@@ -384,6 +388,10 @@ These are `e2e/phase-b-acceptance.spec.ts`. `e2e/modelling.spec.ts` covers the r
 
 ![The sketcher: dimensions, degrees of freedom, suggested constraints](docs/phase-b-sketcher.png)
 
+![A plate sketched as in SOLIDWORKS: relation glyphs, Smart Dimensions, fully defined in black, and a line's right-click menu](docs/sketch-relations.png)
+
+![Right-click a face: Sketch on this face, Hole here, Normal to, and Ask AI…](docs/context-menu.png)
+
 ### Phase A: document and kernel
 
 | Check | Result |
@@ -400,10 +408,12 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 
 - **Units.** Millimetres (metric) throughout, and only millimetres: every length field says mm, every angle °, masses are in g or kg, and the `mm` badge in the top bar and **Settings → Units** say so. Parts are stored in millimetres.
 - **The toolbar** has a picture over each tool's name, in groups: Sketch; Extrude, Cut, Hole, Fillet, Chamfer; Pattern (linear or circular) and Mirror; the body tools (Combine, Split, Move, Delete body); and Member for weldments. A tool that needs something it doesn't have yet (Combine with one body) is greyed out and says why. The feature tree shows the same picture for each feature. The left column's sections fold under their headings; **Nodes** starts folded on a part without nodes.
-- **Mouse, as in SOLIDWORKS.** Middle-drag rotates (freely, no fixed up), Ctrl+middle-drag pans, Shift+middle-drag zooms, Alt+middle-drag rolls. Middle-click the part and the next rotation turns about that point; a middle double-click fits. The wheel zooms at the pointer, rolled toward you to zoom in. Left-click selects (Ctrl- or Shift-click adds); right-click asks; right-drag pans. In a sketch, middle-drag pans and a left-drag on empty space draws a selection box: left to right takes what is wholly inside it, right to left everything it touches. **Settings → Mouse** has a trackpad scheme (left-drag rotates, Shift+drag pans, pinch zooms) and reverses the wheel.
-- **Keyboard, as in SOLIDWORKS.** Ctrl+1 to Ctrl+7 are Front, Back, Left, Right, Top, Bottom and Isometric; Ctrl+8 is Normal to the selected face (again, from behind). F fits, Z and Shift+Z zoom, the arrows turn the view 15° (Shift: 90°, Ctrl: pan, Alt: roll), Space opens the view menu, S brings the tools to the pointer, Enter repeats the last tool, Delete deletes the selected feature, F9 hides the left column, Ctrl+S saves, Ctrl+O opens, Ctrl+Z and Ctrl+Y undo and redo. In a sketch: V select, L line, R rectangle, C circle, A arc, O slot, Q construction, Ctrl+B finishes. **Settings → Keyboard** lists every command: click one and press a key to change it (a command that had that key loses it), Backspace to clear it; the model tools have no key until you give them one. The settings are kept in this browser, and **Reset to SOLIDWORKS defaults** puts them back. Ctrl+N, Ctrl+T and Ctrl+W belong to the browser.
-- **Sketch** starts a sketch on the Top, Front or Right plane, or on a flat face you clicked. Draw with Line (clicks chain; clicking the first point closes the loop), Rectangle, Circle, Arc (centre, start, end) and Slot (two centres, then the width). Points snap to existing points, which adds a coincident constraint, or else to the grid.
-- Select geometry to see the constraints that fit it, valued at what the geometry measures now; type a new value and the solver moves the sketch. Drag points, corners, circle edges or whole entities, and the solver keeps every constraint. The panel shows the degrees of freedom left and whether the profile is closed. **Finish** turns the session into one undo step.
+- **Mouse, as in SOLIDWORKS.** Middle-drag rotates (freely, no fixed up), Ctrl+middle-drag pans, Shift+middle-drag zooms, Alt+middle-drag rolls. Middle-click the part and the next rotation turns about that point; a middle double-click fits. The wheel zooms at the pointer, rolled toward you to zoom in. Left-click selects (Ctrl- or Shift-click adds); right-click opens the menu for what is under the pointer; right-drag pans. In a sketch, middle-drag pans and a left-drag on empty space draws a selection box: left to right takes what is wholly inside it, right to left everything it touches. **Settings → Mouse** has a trackpad scheme (left-drag rotates, Shift+drag pans, pinch zooms) and reverses the wheel.
+- **Keyboard, as in SOLIDWORKS.** Ctrl+1 to Ctrl+7 are Front, Back, Left, Right, Top, Bottom and Isometric; Ctrl+8 is Normal to the selected face (again, from behind). F fits, Z and Shift+Z zoom, the arrows turn the view 15° (Shift: 90°, Ctrl: pan, Alt: roll), Space opens the view menu, S brings the tools to the pointer, Enter repeats the last tool, Delete deletes the selected feature, F9 hides the left column, Ctrl+S saves, Ctrl+O opens, Ctrl+Z and Ctrl+Y undo and redo. In a sketch: V select, D Smart Dimension, L line, R rectangle, C circle, A arc, O slot, Q construction, Ctrl+B finishes. **Settings → Keyboard** lists every command: click one and press a key to change it (a command that had that key loses it), Backspace to clear it; the model tools have no key until you give them one. The settings are kept in this browser, and **Reset to SOLIDWORKS defaults** puts them back. Ctrl+N, Ctrl+T and Ctrl+W belong to the browser.
+- **Sketch** starts a sketch on the Top, Front or Right plane, or on a flat face you clicked. Draw with Line (clicks chain; clicking the first point closes the loop), Rectangle, Circle, Arc (centre, start, end) and Slot (two centres, then the width).
+- **Relations, as in SOLIDWORKS.** While you draw, the sketch infers them, and a small icon by the pointer shows which: a point dropped on an end, centre or the origin is **Coincident** with it; on a line's middle, **Midpoint**; anywhere on a line, circle or arc, **Coincident** (on it); a line drawn nearly level or plumb comes out **Horizontal** or **Vertical**. Select geometry (Ctrl-click adds) and **Add relations** offers the ones that fit: Horizontal, Vertical and Fix for a line; Parallel, Perpendicular, Collinear and Equal for two lines; Tangent for a line and a circle or arc; Concentric, Tangent and Equal for two circles or arcs; Coincident and Midpoint for a point and a line; Symmetric for two points and a line; Coincident, Horizontal and Vertical for two points. Right-clicking geometry offers the same. Each relation shows as a green glyph beside what it holds (on both, for a pair); click one to select it, Delete removes it, and **Relations** in the sketch toolbar hides them.
+- **Smart Dimension** (D): click a line for its length, a circle for its diameter, an arc for its radius, a rectangle's side for its width or height, or two things (points, lines, circles) for the distance or angle between them, then click where it goes. The Modify box opens with what it measures now: type a number or `=expression` and Enter. Two points can be dimensioned aligned, level or plumb. Dimensions are drawn on the sketch with extension lines and arrows; double-click one to change it. The panel lists the same dimensions with their values.
+- **Defined state.** Geometry that can still move is blue; fully defined geometry is black, and the sketch says **Under defined** (with the degrees of freedom left), **Fully defined**, or **Over defined** in red when a relation doesn't hold. A relation that repeats or contradicts what the sketch already fixes is refused. Drag points, corners, circle edges or whole entities, and the solver keeps every relation. **Finish** turns the session into one undo step.
 - **Extrude** and **Cut** use the selected or latest sketch. A new cut points into the material. Click a flat face, then **Hole**: the hole is placed where you clicked. Click edges (shift-click for more), then **Fillet** or **Chamfer**. Select an extrude, cut or hole in the tree, then **Pattern → Linear pattern** or **Circular pattern**.
 - Picks become selectors that are checked to find exactly what was clicked. The most robust form is preferred, such as "the largest face facing +Z" or "the edge between this face and that one". Four picked corners become "straight edges parallel to +Z". Position (`near`) is used only when nothing else tells two faces or edges apart.
 - In the tree, select a feature to edit it in the Properties panel. Each field commits on Enter or blur as one command. You can also suppress, move up or down, drag to reorder, and delete. Moves that break a reference are refused and the notice says why.
@@ -412,16 +422,19 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 - **Frames.** **Nodes** (left panel) are named points; type `=frame_w` in a coordinate to tie it to a parameter. With two nodes or more, **Members along a path** takes a size (the part's or the library's) and a path such as `A B C D A, A E`. It adds the members along it with their corners mitred, with the nodes on the outside of the frame or on the centrelines. A member's Properties set its ends (a node or a point), the point of the section its line runs through (a 3 × 3 grid, seen from its To end), and **All like it**, which switches every member of that size at once. They also cap either end. A joint's Properties change mitre or butt, which members, and the gap, and add a gusset or a weld there. The **Cut list** tab is the cut list and the weld table, each with **Export CSV**.
 - **Weldments.** A dimension in the sketcher can be typed as an expression too (`=b - 2 * t`), and it stays one. Tick **Weldment profile** and **Finish**: the profile card names the section, lists its sizes with their area and kg/m, and tags it, and **Save** puts it in the **Sections** tab. "Not now" keeps the sketch; its Properties have **Save as a weldment profile…** for later. In **Sections**, **+ Member** on a size adds a 1000 mm member along X beside the others. Set its ends, length or rotation in Properties. The toolbar's **Member** adds another like the selected one. The **Bodies** panel lists the members, with alike ones counted together, and a newer library version offers to update the part's copy.
 
-## Right-click ask
+## Right-click menus and Ask AI
 
-Right-click any of these to ask about it:
-- a feature in the tree (a sketch counts as a sketch);
-- a failed rebuild row;
-- a face or an edge in the viewport;
-- a parameter;
-- in the sketcher, an entity or a constraint row.
+Right-click anything for its menu, as in SOLIDWORKS:
+- a feature in the tree: Edit feature, Edit sketch, Suppress, Rename, Delete; a failed rebuild row the same;
+- a face in the viewport: Sketch on this face, Hole here, Normal to, Zoom to fit, Hide its body; an edge: Fillet, Chamfer;
+- empty space: Sketch on Top, Front or Right, the standard views, Undo;
+- a body: Hide, Select its faces, Save as a part, Delete body; a parameter: Delete;
+- in the sketcher, geometry: the relations it can take, Smart Dimension, Construction geometry, Delete; a relation or dimension: Edit value, Delete; empty space: the sketch tools, Show relations, Exit sketch;
+- on the drawing sheet, a view or annotation: Delete; empty paper: Balloon every item, Export PDF.
 
-The menu is labelled with the target ("Ask about hole_1"). Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch*, *Fix this error*, and for a weldment *Mitre it* (a joint) or *Swap its size* (a member). Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Right-click empty space to ask about the whole part (see below).
+The last entry of every menu is **Ask AI…**, which opens the ask panel about that thing. The panel is labelled with the target ("Ask about hole_1").
+
+**What the AI may change.** By default, anything in the part: what you right-clicked is where you pointed, not a fence. The packet then carries an outline of the whole part beside the target, the agent can read any feature, it gets every tool (the part's, the sketches' relations and dimensions, the drawing's), and it can add as many features as the request needs. **Just this** in the panel (or **Settings → Assistant → May change**) limits it to what you right-clicked, with the scopes below. Either way the result is a proposal you accept or discard. Under the prompt box are scoped actions such as *Hole here*, *Fillet this edge*, *Fully define this sketch*, *Fix this error*, and for a weldment *Mitre it* (a joint) or *Swap its size* (a member). Each is a prompt with the intent already filled in; the ones that need a number put the text in the box for you to finish. Right-click empty space to ask about the whole part (see below).
 
 **The packet is the prompt** (`src/ask/packet.ts`). It holds:
 - the target node, its parent and its direct children;
@@ -434,7 +447,7 @@ The menu is labelled with the target ("Ask about hole_1"). Under the prompt box 
 
 The user's text comes last, unchanged. A visual prompt ("what is this face", "make it look like…") adds one image, framed on the target and outlined.
 
-**Scope** (`src/ask/packet.ts` → `scopeFor`, enforced by `apply`):
+**Scope with Just this** (`src/ask/packet.ts` → `scopeFor`, enforced by `apply`):
 
 | Right-click | May change |
 |---|---|

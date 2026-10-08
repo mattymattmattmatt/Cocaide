@@ -16,7 +16,7 @@ import { edgeSummary, faceSummary, measurementSummary, newFailures, round6 } fro
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 import type { AskModel } from "./model";
 import { composeFor } from "./drawingPacket";
-import { buildPacket, isDrawingTarget, type AskTarget, type Packet } from "./packet";
+import { buildPacket, isDrawingTarget, partOutline, type AskTarget, type Packet } from "./packet";
 import { classify, isVisual, SYSTEM, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
 
 const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "setView", "setAnnotation"]);
@@ -32,11 +32,19 @@ export interface AskRequest {
   text: string;
   /** Overrides the question/request reading of the text. */
   mode?: AskMode;
+  /**
+   * What the ask may change. "target" (the default): the right-clicked thing's
+   * write scope (spec 6.2). "part": anything in the part; the target is where
+   * the user pointed, and the packet carries the part's outline beside it.
+   */
+  reach?: AskReach;
   model: AskModel;
   kernel: KernelPort;
   signal?: AbortSignal;
   onEvent?(e: AskEvent): void;
 }
+
+export type AskReach = "target" | "part";
 
 export type AskEvent =
   | { type: "packet"; packet: Packet; mode: AskMode; visual: boolean }
@@ -111,9 +119,15 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   req.onEvent?.({ type: "packet", packet, mode, visual });
 
   const image = visual ? await framedShot(req.doc, req.target, packet, req.kernel) : undefined;
-  const sandbox = await Sandbox.open(req.doc, req.target, packet, mode, req.kernel);
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image) }];
-  const tools = toolsFor(mode, packet.target.kind);
+  const wide = req.reach === "part" && req.target.kind !== "part";
+  const sandbox = await Sandbox.open(req.doc, req.target, packet, mode, req.kernel, wide);
+  if (wide) {
+    // The whole part may change: the scope says so, and the packet carries the rest of the part.
+    packet.writeScope = ["*"];
+    packet.part = partOutline(req.doc, sandbox.baseCheck);
+  }
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image, wide) }];
+  const tools = toolsFor(mode, packet.target.kind, wide ? { part: true, drawing: isObject(req.doc.drawing) } : undefined);
   const texts: string[] = [];
   let corrections = 0;
   let judged = false;
@@ -236,18 +250,20 @@ class Sandbox {
 
   private constructor(
     readonly base: RawDocument,
-    private readonly baseCheck: CheckResult,
+    readonly baseCheck: CheckResult,
     private readonly target: AskTarget,
     private readonly packet: Packet,
     private readonly mode: AskMode,
     private readonly kernel: KernelPort,
+    /** The whole part may change: every feature is in context, and the one-feature rule is off. */
+    private readonly wide = false,
   ) {
     this.doc = base;
     this.check = baseCheck;
   }
 
-  static async open(doc: RawDocument, target: AskTarget, packet: Packet, mode: AskMode, kernel: KernelPort): Promise<Sandbox> {
-    const s = new Sandbox(doc, await kernel.check(doc), target, packet, mode, kernel);
+  static async open(doc: RawDocument, target: AskTarget, packet: Packet, mode: AskMode, kernel: KernelPort, wide = false): Promise<Sandbox> {
+    const s = new Sandbox(doc, await kernel.check(doc), target, packet, mode, kernel, wide);
     s.hash = await hashDoc(doc);
     return s;
   }
@@ -259,8 +275,8 @@ class Sandbox {
   /** Ids the packet names: the agent may read these and nothing else. */
   private context(): Set<string> {
     const ids = new Set<string>();
-    // The whole part is the target from empty space: all of it is in context.
-    if (this.target.kind === "part") for (const f of this.doc.features) ids.add(String(f.id));
+    // The whole part is the target from empty space, or may change from here: all of it is in context.
+    if (this.target.kind === "part" || this.wide) for (const f of this.doc.features) ids.add(String(f.id));
     const add = (v: unknown) => {
       if (Array.isArray(v)) v.forEach(add);
       else if (isObject(v) && typeof v.id === "string") ids.add(v.id);
@@ -360,7 +376,7 @@ class Sandbox {
    */
   private async addRule(f: Record<string, unknown>): Promise<string | null> {
     const t = this.target;
-    if (t.kind !== "face" && t.kind !== "edge") return null;
+    if ((t.kind !== "face" && t.kind !== "edge") || this.wide) return null;
     if (!isObject(f)) return "feature must be an object";
     const rf = resolveExpressions(f, documentParameters(this.doc), []) as Record<string, unknown>;
     const where = t.kind === "face" ? "the face you right-clicked" : "the edge you right-clicked";

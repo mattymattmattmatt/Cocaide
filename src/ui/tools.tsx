@@ -2,7 +2,7 @@
 // glance and still says its name. A menu opens under its button and closes on
 // a choice, a click elsewhere or Escape.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
 
 interface ToolProps {
@@ -82,7 +82,8 @@ export function MenuItem({ icon, label, hint, shortcut, onClick, disabled, testI
 export function Popup({ x, y, above, onClose, label, testId, bar, children }: { x: number; y: number; above?: boolean; onClose(): void; label: string; testId?: string; bar?: boolean; children: (close: () => void) => ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
-  useEffect(() => {
+  // Placed before the first paint, so it never flashes at the wrong place and what it holds can take focus at once.
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const w = el.offsetWidth;
@@ -115,7 +116,7 @@ export function Popup({ x, y, above, onClose, label, testId, bar, children }: { 
       role={bar ? "toolbar" : "menu"}
       aria-label={label}
       data-testid={testId}
-      style={{ left: at?.left ?? x, top: at?.top ?? y, visibility: at ? "visible" : "hidden" }}
+      style={{ left: at?.left ?? x, top: at?.top ?? y, opacity: at ? 1 : 0 }}
     >
       {children(onClose)}
     </div>

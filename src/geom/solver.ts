@@ -141,13 +141,22 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
       }
       case "horizontal":
       case "vertical": {
-        const [[ax, ay], [bx, by]] = span(l, k.entity);
+        const [[ax, ay], [bx, by]] = k.entity ? span(l, k.entity) : [pointOf(l, k.points![0]), pointOf(l, k.points![1])];
         push(i, k.type === "horizontal" ? (x) => by(x) - ay(x) : (x) => bx(x) - ax(x));
         break;
       }
       case "distance":
       case "distanceX":
       case "distanceY": {
+        if (k.line !== undefined) {
+          const d = offsetFrom(l, k.line, pointOf(l, k.point!));
+          if (k.value === 0) push(i, d);
+          else {
+            const s = sign(d);
+            push(i, (x) => s * d(x) - k.value);
+          }
+          break;
+        }
         const target = k.entity ? entityById(l, k.entity) : null;
         if (target?.type === "rect") {
           const idx = l.at.get(`${k.entity}.${k.type === "distanceX" ? "w" : "h"}`)!;
@@ -168,9 +177,11 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         }
         break;
       }
-      case "radius": {
+      case "radius":
+      case "diameter": {
         const r = radiusOf(l, k.entity);
-        push(i, (x) => r(x) - k.value);
+        const f = k.type === "diameter" ? 2 : 1;
+        push(i, (x) => f * r(x) - k.value);
         break;
       }
       case "equal": {
@@ -187,9 +198,123 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         push(i, (x) => a(x) - b(x));
         break;
       }
+      case "parallel":
+      case "perpendicular": {
+        // The sine (parallel) or cosine (perpendicular) of the angle between them: scaled, so long and short lines weigh alike.
+        const [ux, uy] = direction(l, k.entities[0]);
+        const [vx, vy] = direction(l, k.entities[1]);
+        push(
+          i,
+          k.type === "parallel"
+            ? (x) => (ux(x) * vy(x) - uy(x) * vx(x)) / (Math.hypot(ux(x), uy(x)) * Math.hypot(vx(x), vy(x)))
+            : (x) => (ux(x) * vx(x) + uy(x) * vy(x)) / (Math.hypot(ux(x), uy(x)) * Math.hypot(vx(x), vy(x))),
+        );
+        break;
+      }
+      case "collinear": {
+        const [[ax, ay], [bx, by]] = span(l, k.entities[1]);
+        push(i, offsetFrom(l, k.entities[0], [ax, ay]), offsetFrom(l, k.entities[0], [bx, by]));
+        break;
+      }
+      case "angle": {
+        // Signed, keeping the side the lines are on now; the check reads it unsigned.
+        const [ux, uy] = direction(l, k.entities[0]);
+        const [vx, vy] = direction(l, k.entities[1]);
+        const theta: Fn = (x) => Math.atan2(ux(x) * vy(x) - uy(x) * vx(x), ux(x) * vx(x) + uy(x) * vy(x));
+        const s = sign(theta);
+        const want = (k.value * Math.PI) / 180;
+        push(i, (x) => s * theta(x) - want);
+        break;
+      }
+      case "tangent": {
+        const [a, b] = k.entities.map((id) => entityById(l, id));
+        if (a.type === "line" || b.type === "line") {
+          const [line, round] = a.type === "line" ? [a, b] : [b, a];
+          const d = offsetFrom(l, line.id, pointOf(l, `${round.id}.center`));
+          const r = radiusOf(l, round.id);
+          const s = sign(d);
+          push(i, (x) => s * d(x) - r(x));
+          break;
+        }
+        // Two circles or arcs: touching outside or inside, whichever they are nearer now.
+        const [cx, cy] = pointOf(l, `${a.id}.center`);
+        const [dx, dy] = pointOf(l, `${b.id}.center`);
+        const D = len(cx, cy, dx, dy);
+        const ra = radiusOf(l, a.id);
+        const rb = radiusOf(l, b.id);
+        const inside = Math.abs(D(x0) - Math.abs(ra(x0) - rb(x0))) < Math.abs(D(x0) - (ra(x0) + rb(x0)));
+        if (inside) {
+          const s = ra(x0) >= rb(x0) ? 1 : -1;
+          push(i, (x) => D(x) - s * (ra(x) - rb(x)));
+        } else push(i, (x) => D(x) - ra(x) - rb(x));
+        break;
+      }
+      case "concentric": {
+        const [px, py] = pointOf(l, `${k.entities[0]}.center`);
+        const [qx, qy] = pointOf(l, `${k.entities[1]}.center`);
+        push(i, (x) => px(x) - qx(x), (x) => py(x) - qy(x));
+        break;
+      }
+      case "midpoint": {
+        const [px, py] = pointOf(l, k.point);
+        const [[ax, ay], [bx, by]] = span(l, k.entity);
+        push(i, (x) => px(x) - (ax(x) + bx(x)) / 2, (x) => py(x) - (ay(x) + by(x)) / 2);
+        break;
+      }
+      case "pointOn": {
+        const p = pointOf(l, k.point);
+        const e = entityById(l, k.entity);
+        if (e.type === "line") push(i, offsetFrom(l, k.entity, p));
+        else {
+          const [cx, cy] = pointOf(l, `${k.entity}.center`);
+          const d = len(cx, cy, p[0], p[1]);
+          const r = radiusOf(l, k.entity);
+          push(i, (x) => d(x) - r(x));
+        }
+        break;
+      }
+      case "symmetric": {
+        // The midpoint of the two points is on the line, and the line between them crosses it square.
+        const [px, py] = pointOf(l, k.points[0]);
+        const [qx, qy] = pointOf(l, k.points[1]);
+        const [ux, uy] = direction(l, k.line);
+        const mid = offsetFrom(l, k.line, [(x) => (px(x) + qx(x)) / 2, (x) => (py(x) + qy(x)) / 2]);
+        push(i, mid, (x) => ((qx(x) - px(x)) * ux(x) + (qy(x) - py(x)) * uy(x)) / Math.hypot(ux(x), uy(x)));
+        break;
+      }
+      case "fix": {
+        // Held at the numbers the solve starts from: the document's.
+        const refs = k.entity ? FIELDS[entityById(l, k.entity).type].map(([field]) => `${k.entity}.${field}`) : [k.point!];
+        for (const ref of refs) {
+          const at = l.at.get(ref);
+          if (at === undefined) continue;
+          const width = ref === k.point ? 2 : FIELDS[entityById(l, ref.split(".")[0]).type].find(([f]) => f === ref.split(".")[1])![1];
+          for (let c = 0; c < width; c++) {
+            const v = x0[at + c];
+            push(i, (x) => x[at + c] - v);
+          }
+        }
+        break;
+      }
     }
   });
   return { fns, owners };
+}
+
+/** A line's direction, end minus start. */
+function direction(l: Layout, id: string): [Fn, Fn] {
+  const [[ax, ay], [bx, by]] = span(l, id);
+  return [(x) => bx(x) - ax(x), (x) => by(x) - ay(x)];
+}
+
+/** A point's signed distance from a line (extended): positive on the line's left. */
+function offsetFrom(l: Layout, line: string, [px, py]: [Fn, Fn]): Fn {
+  const [[ax, ay], [bx, by]] = span(l, line);
+  return (x) => {
+    const ux = bx(x) - ax(x);
+    const uy = by(x) - ay(x);
+    return (ux * (py(x) - ay(x)) - uy * (px(x) - ax(x))) / Math.hypot(ux, uy);
+  };
 }
 
 /** Equations that pin the dragged handles. */
@@ -328,6 +453,38 @@ export function wouldOverDefine(entities: SketchEntity[], constraints: Constrain
   return after === before;
 }
 
+/**
+ * How defined a sketch is, as SOLIDWORKS colours it: which entities and
+ * points can still move (blue), which cannot (black), and the degrees of
+ * freedom left. An unknown can move when some motion the constraints allow
+ * changes it: when it has a part in the Jacobian's null space.
+ */
+export interface SketchStatus {
+  dof: number;
+  /** Entity ids with any number still free. */
+  free: Set<string>;
+  /** Point refs ("l1.start") still free to move. */
+  freePoints: Set<string>;
+}
+
+export function sketchStatus(entities: SketchEntity[], constraints: Constraint[]): SketchStatus {
+  const l = layout(entities);
+  const fns = equations(l, constraints).fns;
+  const moves = freeUnknowns(l.x, fns);
+  const free = new Set<string>();
+  const freePoints = new Set<string>();
+  for (const e of entities) {
+    for (const [field, n] of FIELDS[e.type]) {
+      const i = l.at.get(`${e.id}.${field}`)!;
+      const loose = n === 1 ? moves[i] : moves[i] || moves[i + 1];
+      if (!loose) continue;
+      free.add(e.id);
+      if (n === 2) freePoints.add(`${e.id}.${field}`);
+    }
+  }
+  return { dof: freedom(l.x, fns), free, freePoints };
+}
+
 function invalidGeometry(entities: SketchEntity[]): string | null {
   for (const e of entities) {
     if (e.type === "circle" && e.radius <= 0) return `circle "${e.id}" would get a radius of ${round(e.radius)}`;
@@ -442,6 +599,41 @@ function gaussSolve(A: Float64Array[], b: Float64Array): Float64Array | null {
     out[r] = s / M[r][r];
   }
   return out;
+}
+
+/** Per unknown: can it move while the equations hold (to first order)? Reduced row echelon form of the Jacobian. */
+function freeUnknowns(x: Float64Array, fns: Fn[]): boolean[] {
+  const n = x.length;
+  if (fns.length === 0) return new Array(n).fill(true);
+  const J = jacobian(fns, x).map((row) => Float64Array.from(row));
+  const scale = Math.max(1, ...J.map((row) => Math.max(...row.map(Math.abs))));
+  const eps = 1e-7 * scale;
+  const pivotRow = new Array<number>(n).fill(-1);
+  const used = new Array(J.length).fill(false);
+  for (let c = 0; c < n; c++) {
+    let p = -1;
+    let best = eps;
+    for (let r = 0; r < J.length; r++) {
+      if (!used[r] && Math.abs(J[r][c]) > best) {
+        best = Math.abs(J[r][c]);
+        p = r;
+      }
+    }
+    if (p < 0) continue;
+    used[p] = true;
+    pivotRow[c] = p;
+    const pv = J[p][c];
+    for (let k = 0; k < n; k++) J[p][k] /= pv;
+    for (let r = 0; r < J.length; r++) {
+      if (r === p) continue;
+      const f = J[r][c];
+      if (f === 0) continue;
+      for (let k = 0; k < n; k++) J[r][k] -= f * J[p][k];
+    }
+  }
+  const freeCols = [...Array(n).keys()].filter((c) => pivotRow[c] < 0);
+  // A pivot unknown moves when its row ties it to a free one.
+  return Array.from({ length: n }, (_, c) => pivotRow[c] < 0 || freeCols.some((f) => Math.abs(J[pivotRow[c]][f]) > 1e-7));
 }
 
 /** Unknowns minus the rank of the Jacobian. */

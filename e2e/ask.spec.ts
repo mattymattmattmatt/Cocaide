@@ -37,6 +37,8 @@ test('right-click hole_1, "make it 8 mm": changes that diameter only', async ({ 
   const before = await savedDocument(page);
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click({ button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-target")).toHaveText("hole_1");
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: hole_1");
   await page.getByTestId("ask-input").fill("make it 8 mm");
@@ -93,6 +95,8 @@ test('right-click a sketch entity, "pattern the part": refused as out of scope',
     return [m.a * 40 + m.e, m.d * 0 + m.f];
   });
   await page.mouse.click(x, y, { button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-target")).toHaveText("r1 in sketch_1");
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: r1 in sketch_1 and its constraints");
   await page.getByTestId("ask-input").fill("pattern the part");
@@ -117,6 +121,8 @@ test('"what is this face" returns text and does not write', async ({ page }) => 
 
   const [x, y] = await page.evaluate(() => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project([-10, -10, 6]));
   await page.mouse.click(x, y, { button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-target")).toHaveText("this flat face");
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: add one feature that uses it");
   await page.getByTestId("ask-action-what-is-this-face").click();
@@ -138,6 +144,8 @@ test("a user edit to the feature drops the open proposal and keeps the prompt", 
   await useKey(page);
   await scriptModel(page, [[tool("updateFeature", { id: "hole_1", patch: { diameter: 8 } })], [text("Set Ø8.")], [tool("updateFeature", { id: "hole_1", patch: { diameter: 8 } })], [text("Set Ø8 again.")]]);
   await page.getByTestId("feature-hole_1").locator(".feature-row").click({ button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await page.getByTestId("ask-input").fill("make it 8 mm");
   await page.getByTestId("ask-input").press("Enter");
   await expect(page.getByTestId("ask-outcome")).toHaveText("Proposed change");
@@ -163,6 +171,8 @@ test("fix this error, with apply immediately", async ({ page }) => {
   const sent = await scriptModel(page, [[tool("updateFeature", { id: "hole_1", patch: { center: [30, 0] } })], [text("Moved hole_1 back onto the plate at [30, 0].")]]);
 
   await page.getByTestId("feature-error-hole_1").click({ button: "right" });
+  await page.getByTestId("ctx-ask").click(); // the right-click menu's last entry
+  await page.getByTestId("ask-reach-target").click(); // just what was right-clicked: its own scope
   await expect(page.getByTestId("ask-scope")).toHaveText("may change: hole_1");
   await page.getByTestId("ask-apply-now").check();
   await page.getByTestId("ask-action-fix-this-error").click();

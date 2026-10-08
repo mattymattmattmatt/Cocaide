@@ -58,6 +58,8 @@ interface Props {
   nodes?: FrameNode[];
   /** A short note for the user (a view command that needs a selection, say). */
   onMessage?(text: string): void;
+  /** Set by the view: runs one of its commands ("view.fit", "view.normal", "view.top"…), for the right-click menu. */
+  commandsRef?: { current: ((id: string) => void) | null };
 }
 
 export interface FrameNode {
@@ -130,7 +132,7 @@ interface ViewportApi {
 
 const NO_BODIES: ReadonlySet<string> = new Set();
 
-export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES, nodes = NO_NODES, onMessage }: Props) {
+export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES, nodes = NO_NODES, onMessage, commandsRef }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
   const pickRef = useRef(onPick);
@@ -704,7 +706,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     else onMessage?.("Normal to needs one flat face: click a face first.");
   };
   // SOLIDWORKS's view keys: Ctrl+1 to Ctrl+8, F, Z and Shift+Z, the arrows, and Space for the view menu.
-  useCommands({
+  const viewCommands: Record<string, () => void> = {
     "view.front": () => orient("front"),
     "view.back": () => orient("back"),
     "view.left": () => orient("left"),
@@ -731,7 +733,9 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     "view.panDown": () => api.current?.pan(0, 60),
     "view.rollLeft": () => api.current?.roll(15),
     "view.rollRight": () => api.current?.roll(-15),
-  });
+  };
+  useCommands(viewCommands);
+  if (commandsRef) commandsRef.current = (id) => viewCommands[id]?.();
 
   const picking = !!onPhotoPoint;
   useEffect(() => {

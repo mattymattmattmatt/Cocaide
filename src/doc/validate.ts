@@ -543,6 +543,19 @@ function validateConstraint(
     const b = pointRef(value[1]);
     return a && b ? [a, b] : undefined;
   };
+  const entityPair = (allowed: SketchEntity["type"][]): [string, string] | undefined => {
+    if (!Array.isArray(k.entities) || k.entities.length !== 2) {
+      c.fail(label, `entities must be an array of two entity ids (got ${describe(k.entities)})`);
+      return undefined;
+    }
+    const a = entityRef("entities[0]", k.entities[0], allowed);
+    const b = entityRef("entities[1]", k.entities[1], allowed);
+    if (a && b && a === b) {
+      c.fail(label, `needs two different entities (got "${a}" twice)`);
+      return undefined;
+    }
+    return a && b ? [a, b] : undefined;
+  };
 
   switch (k.type) {
     case "coincident": {
@@ -552,42 +565,57 @@ function validateConstraint(
     }
     case "horizontal":
     case "vertical": {
-      c.keys(k, label, ["type", "entity"]);
+      c.keys(k, label, ["type", "entity", "points"]);
+      if ((k.entity !== undefined) === (k.points !== undefined)) {
+        c.fail(label, "needs exactly one of entity (a line) or points (two point refs)");
+        return null;
+      }
+      if (k.points !== undefined) {
+        const points = pointPair(k.points);
+        return points && c.errors.length === before ? { type: k.type, points } : null;
+      }
       const entity = entityRef("entity", k.entity, ["line"]);
       return entity && c.errors.length === before ? { type: k.type, entity } : null;
     }
     case "distance":
     case "distanceX":
     case "distanceY": {
-      c.keys(k, label, ["type", "entity", "points", "value"]);
+      c.keys(k, label, ["type", "entity", "points", "point", "line", "value"]);
       const value = c.num(k, "value", label, { nonNegative: true });
-      const hasEntity = k.entity !== undefined;
-      const hasPoints = k.points !== undefined;
-      if (hasEntity === hasPoints) {
-        c.fail(label, "needs exactly one of entity or points");
+      const forms = [k.entity !== undefined, k.points !== undefined, k.point !== undefined || k.line !== undefined].filter(Boolean).length;
+      if (forms !== 1) {
+        c.fail(label, k.type === "distance" ? "needs exactly one of entity, points, or point with line" : "needs exactly one of entity or points");
         return null;
       }
+      if (k.point !== undefined || k.line !== undefined) {
+        if (k.type !== "distance") {
+          c.fail(label, "a point's distance from a line is a distance, not a distanceX or distanceY");
+          return null;
+        }
+        const point = pointRef(k.point);
+        const line = entityRef("line", k.line, ["line"]);
+        if (point && line && point.split(".")[0] === line) c.fail(label, `"${point}" is a point of "${line}" itself`);
+        if (value === undefined || !point || !line || c.errors.length > before) return null;
+        return { type: "distance", point, line, value };
+      }
       const allowed: SketchEntity["type"][] = k.type === "distance" ? ["line", "slot"] : ["line", "rect", "slot"];
-      const entity = hasEntity ? entityRef("entity", k.entity, allowed) : undefined;
-      const points = hasPoints ? pointPair(k.points) : undefined;
+      const entity = k.entity !== undefined ? entityRef("entity", k.entity, allowed) : undefined;
+      const points = k.points !== undefined ? pointPair(k.points) : undefined;
       if (value === undefined || c.errors.length > before) return null;
       return entity ? { type: k.type, entity, value } : { type: k.type, points: points!, value };
     }
-    case "radius": {
+    case "radius":
+    case "diameter": {
       c.keys(k, label, ["type", "entity", "value"]);
       const entity = entityRef("entity", k.entity, ["circle", "arc"]);
       const value = c.num(k, "value", label, { positive: true });
-      return entity && value !== undefined && c.errors.length === before ? { type: "radius", entity, value } : null;
+      return entity && value !== undefined && c.errors.length === before ? { type: k.type, entity, value } : null;
     }
     case "equal": {
       c.keys(k, label, ["type", "entities"]);
-      if (!Array.isArray(k.entities) || k.entities.length !== 2) {
-        c.fail(label, `entities must be an array of two entity ids (got ${describe(k.entities)})`);
-        return null;
-      }
-      const a = entityRef("entities[0]", k.entities[0], ["line", "circle", "arc"]);
-      const b = entityRef("entities[1]", k.entities[1], ["line", "circle", "arc"]);
-      if (!a || !b) return null;
+      const pair = entityPair(["line", "circle", "arc"]);
+      if (!pair) return null;
+      const [a, b] = pair;
       const kind = (id: string) => (entities.get(id) === "line" ? "line" : "round");
       if (kind(a) !== kind(b)) {
         c.fail(label, `cannot make a line equal to a circle or arc ("${a}", "${b}")`);
@@ -595,14 +623,85 @@ function validateConstraint(
       }
       return c.errors.length === before ? { type: "equal", entities: [a, b] } : null;
     }
+    case "parallel":
+    case "perpendicular":
+    case "collinear":
+    case "concentric":
+    case "angle": {
+      c.keys(k, label, k.type === "angle" ? ["type", "entities", "value"] : ["type", "entities"]);
+      const pair = entityPair(k.type === "concentric" ? ["circle", "arc"] : ["line"]);
+      if (k.type === "angle") {
+        const value = c.num(k, "value", label, {});
+        if (value !== undefined && !(value > 0 && value < 180)) c.fail(label, `value must be over 0 and under 180 degrees (got ${value}); for 0 use parallel`);
+        return pair && value !== undefined && c.errors.length === before ? { type: "angle", entities: pair, value } : null;
+      }
+      return pair && c.errors.length === before ? { type: k.type, entities: pair } : null;
+    }
+    case "tangent": {
+      c.keys(k, label, ["type", "entities"]);
+      const pair = entityPair(["line", "circle", "arc"]);
+      if (!pair) return null;
+      if (pair.every((id) => entities.get(id) === "line")) {
+        c.fail(label, `two lines cannot be tangent ("${pair[0]}", "${pair[1]}"); use collinear or parallel`);
+        return null;
+      }
+      return c.errors.length === before ? { type: "tangent", entities: pair } : null;
+    }
+    case "midpoint":
+    case "pointOn": {
+      c.keys(k, label, ["type", "point", "entity"]);
+      const point = pointRef(k.point);
+      const entity = entityRef("entity", k.entity, k.type === "midpoint" ? ["line", "slot"] : ["line", "circle", "arc"]);
+      if (point && entity && point.split(".")[0] === entity) c.fail(label, `"${point}" is a point of "${entity}" itself`);
+      return point && entity && c.errors.length === before ? { type: k.type, point, entity } : null;
+    }
+    case "symmetric": {
+      c.keys(k, label, ["type", "points", "line"]);
+      const points = pointPair(k.points);
+      const line = entityRef("line", k.line, ["line"]);
+      return points && line && c.errors.length === before ? { type: "symmetric", points, line } : null;
+    }
+    case "fix": {
+      c.keys(k, label, ["type", "entity", "point"]);
+      if ((k.entity !== undefined) === (k.point !== undefined)) {
+        c.fail(label, "needs exactly one of entity or point");
+        return null;
+      }
+      if (k.point !== undefined) {
+        const point = pointRef(k.point);
+        if (point === "origin") c.fail(label, "the origin is fixed already");
+        return point && c.errors.length === before ? { type: "fix", point } : null;
+      }
+      const entity = entityRef("entity", k.entity, ["line", "circle", "arc", "rect", "slot"]);
+      return entity && c.errors.length === before ? { type: "fix", entity } : null;
+    }
     default:
-      c.fail(
-        path,
-        `unknown constraint type ${describe(k.type)} (supported: coincident, horizontal, vertical, distance, distanceX, distanceY, radius, equal)`,
-      );
+      c.fail(path, `unknown constraint type ${describe(k.type)} (supported: ${CONSTRAINT_TYPES.join(", ")})`);
       return null;
   }
 }
+
+export const CONSTRAINT_TYPES = [
+  "coincident",
+  "horizontal",
+  "vertical",
+  "distance",
+  "distanceX",
+  "distanceY",
+  "radius",
+  "diameter",
+  "angle",
+  "equal",
+  "parallel",
+  "perpendicular",
+  "collinear",
+  "tangent",
+  "concentric",
+  "midpoint",
+  "pointOn",
+  "symmetric",
+  "fix",
+] as const;
 
 // ------------------------------------------------------- extrude and cut
 

@@ -220,3 +220,40 @@ describe("right-click ask", () => {
     expect(r.outcome).toBe("proposal");
   });
 });
+
+describe("an ask that may change the whole part", () => {
+  it('from a sketch entity, "pattern the part" is a proposal: the entity is only where the user pointed', async () => {
+    const pattern = { op: "linearPattern", feature: "ext_1", direction: [1, 0, 0], spacing: 100, count: 2 };
+    const model = new ScriptedModel([() => [use("addFeature", { feature: pattern })], () => [say("Patterned the plate twice, 100 mm apart.")]]);
+    const r = await runAsk({ doc: bracket, target: { kind: "entity", sketch: "sketch_1", entity: "r1" }, text: "pattern the part", model, kernel, reach: "part" });
+    expect(r.outcome).toBe("proposal");
+    expect(r.proposal!.changes).toEqual([{ id: "linearPattern_1", kind: "added" }]);
+    expect(r.proposal!.scope).toContain("*");
+    // The packet keeps its focus and carries the rest of the part beside it; the model is told it may change anything.
+    expect(r.packet!.writeScope).toEqual(["*"]);
+    const part = r.packet!.part as { features: { id: string }[] };
+    expect(part.features.map((f) => f.id)).toEqual(["sketch_1", "ext_1", "hole_1"]);
+    expect(firstUserText(model)).toContain("you may change anything in the part");
+    expect(toolNames(model)).toEqual(expect.arrayContaining(["addFeature", "addConstraint", "setParameter"]));
+  });
+
+  it("from a face, several features, any feature readable", async () => {
+    const sel = { type: "planar", normal: [0, 0, 1], pick: "largest" };
+    const hole = (center: number[]) => ({ op: "hole", face: sel, center, diameter: 5, depth: "through" });
+    const model = new ScriptedModel([
+      () => [use("getFeature", { id: "sketch_1" })],
+      () => [use("addFeature", { feature: hole([-30, 0]) }), use("addFeature", { feature: hole([-20, 0]) })],
+      () => [say("Added two holes.")],
+    ]);
+    const r = await runAsk({ doc: bracket, target: { kind: "face", index: topFace }, text: "two 5 mm holes", model, kernel, reach: "part" });
+    expect(r.calls.map((c) => c.ok)).toEqual([true, true, true]);
+    expect(r.proposal!.changes.map((c) => c.id)).toEqual(["hole_2", "hole_3"]);
+  });
+
+  it("a question still gets no write tools", async () => {
+    const model = new ScriptedModel([() => [say("It is the 80 × 40 plate.")]]);
+    const r = await runAsk({ doc: bracket, target: { kind: "feature", id: "ext_1" }, text: "what is this?", model, kernel, reach: "part" });
+    expect(r.outcome).toBe("answer");
+    expect(toolNames(model)).not.toContain("addFeature");
+  });
+});

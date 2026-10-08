@@ -78,6 +78,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.member", label: "Member", group: "Model tools", key: null },
 
   { id: "sketch.select", label: "Select", group: "Sketch", key: "V" },
+  { id: "sketch.dimension", label: "Smart Dimension", group: "Sketch", key: "D" },
   { id: "sketch.line", label: "Line", group: "Sketch", key: "L" },
   { id: "sketch.rect", label: "Rectangle", group: "Sketch", key: "R" },
   { id: "sketch.circle", label: "Circle", group: "Sketch", key: "C" },

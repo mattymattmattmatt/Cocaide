@@ -3,6 +3,7 @@
 // `npm run dev` and ANTHROPIC_API_KEY set, the dev server proxies the API and
 // adds the key itself, so the page needs none.
 
+import type { AskReach } from "../../ask/agent";
 import type { AskModel } from "../../ask/model";
 import { DEFAULT_MODEL, type Effort } from "../../ask/models";
 
@@ -10,6 +11,8 @@ export interface AskSettings {
   apiKey: string;
   model: string;
   effort: Effort;
+  /** What a right-click ask may change by default: anything in the part, or only what was right-clicked. */
+  reach: AskReach;
 }
 
 const KEY = "cocaide.ask.settings.v1";
@@ -18,7 +21,7 @@ const KEY = "cocaide.ask.settings.v1";
 export const HAS_PROXY = import.meta.env.VITE_COCAIDE_ANTHROPIC_PROXY === "1";
 
 export function loadSettings(): AskSettings {
-  const defaults: AskSettings = { apiKey: "", model: DEFAULT_MODEL, effort: "low" };
+  const defaults: AskSettings = { apiKey: "", model: DEFAULT_MODEL, effort: "low", reach: "part" };
   try {
     const raw = localStorage.getItem(KEY);
     return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
