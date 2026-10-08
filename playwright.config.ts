@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const PORT = Number(process.env.PW_PORT ?? 4173);
+
 // End-to-end tests drive the production build in Chromium. WebGL runs on
 // SwiftShader so they also run on machines without a GPU.
 export default defineConfig({
@@ -11,7 +13,7 @@ export default defineConfig({
   reporter: [["list"]],
   outputDir: "out/e2e",
   use: {
-    baseURL: "http://localhost:4173",
+    baseURL: `http://localhost:${PORT}`,
     viewport: { width: 1500, height: 900 },
     acceptDownloads: true,
     trace: "retain-on-failure",
@@ -27,8 +29,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npx vite build && npx vite preview --port 4173 --strictPort",
-    url: "http://localhost:4173",
+    // PW_PORT lets several checkouts (worktrees) run their suites side by side, each against its own build.
+    command: `npx vite build && npx vite preview --port ${PORT} --strictPort`,
+    url: `http://localhost:${PORT}`,
     reuseExistingServer: true,
     timeout: 180_000,
   },

@@ -1,0 +1,8 @@
+# Registries and append-only lists: when two branches both add entries, keep both.
+src/features/docIndex.ts merge=union
+src/features/kernelIndex.ts merge=union
+src/features/uiIndex.ts merge=union
+src/ui/model/tools/index.ts merge=union
+src/ui/sketcher/tools/index.ts merge=union
+src/ui/icons.tsx merge=union
+src/ui/styles.css merge=union
