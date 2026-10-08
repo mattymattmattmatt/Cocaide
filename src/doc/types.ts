@@ -26,7 +26,150 @@ export interface CocaideDocument {
   /** The weld table: notes, stored and listed, never modelled. */
   welds?: Weld[];
   features: Feature[];
+  /** The part's fabrication drawing (Phase L): views of the rebuilt part, annotated. */
+  drawing?: Drawing;
 }
+
+// ---------------------------------------------------------------- drawing
+
+/**
+ * A drawing of the part (Phase L): one sheet of views projected from the
+ * rebuilt solid. Every number on it is measured on the rebuild; only notes and
+ * the title block are typed. Coordinates on the sheet are mm from its lower
+ * left corner, y up.
+ */
+export interface Drawing {
+  sheet: Sheet;
+  views: DrawingView[];
+  annotations: Annotation[];
+}
+
+/** Landscape sheet sizes, mm (ISO 216). */
+export const SHEET_SIZES = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] } as const;
+export type SheetSize = keyof typeof SHEET_SIZES;
+export const PROJECTIONS = ["third", "first"] as const;
+export type Projection = (typeof PROJECTIONS)[number];
+
+export interface Sheet {
+  size: SheetSize;
+  /** "1:10", "2:1". Without it, the largest standard scale that fits. */
+  scale?: string;
+  /** Third-angle (the top view above the front) or first-angle (below). */
+  projection: Projection;
+  /** The title block. The part's name, material, mass and the scale fill the rest. */
+  title?: string;
+  number?: string;
+  revision?: string;
+  drawnBy?: string;
+  date?: string;
+}
+export const SHEET_KEYS = ["size", "scale", "projection", "title", "number", "revision", "drawnBy", "date"] as const;
+
+/** Where a view looks from. "iso" is from the front, right and above. */
+export const VIEW_LOOKS = ["front", "back", "top", "bottom", "left", "right", "iso"] as const;
+export type ViewLook = (typeof VIEW_LOOKS)[number];
+
+export interface DrawingView {
+  id: string;
+  look: ViewLook;
+  /** The view's centre on the sheet. Without it, the view is placed with the others. */
+  at?: Vec2;
+  /** Its own scale; else the sheet's. */
+  scale?: string;
+  /** Hidden edges, dashed. */
+  hidden?: boolean;
+}
+export const VIEW_KEYS = ["id", "look", "at", "scale", "hidden"] as const;
+
+/**
+ * A point a dimension runs from or to: a node ("A"), a member's end
+ * ("leg_a.start", "leg_a.end"), a hole's centre ("hole_1"), or a side of the
+ * view's outline ("@left", "@right", "@top", "@bottom").
+ */
+export type DrawingPoint = string;
+export const OUTLINE_SIDES = ["@left", "@right", "@top", "@bottom"] as const;
+export const DIMENSION_DIRECTIONS = ["horizontal", "vertical", "aligned"] as const;
+export type DimensionDirection = (typeof DIMENSION_DIRECTIONS)[number];
+
+/**
+ * A dimension, measured on the rebuild: between two points, or a member's cut
+ * length along it (`member`), long point to long point.
+ */
+export interface DimensionAnnotation {
+  id: string;
+  type: "dimension";
+  view: string;
+  from?: DrawingPoint;
+  to?: DrawingPoint;
+  member?: string;
+  /** Default: horizontal when the points are further apart across the view than up it, else vertical. A member's is along it. */
+  direction?: DimensionDirection;
+  /** Sheet mm from the part to the dimension line; the sign picks the side (+ above or right). Default: stacked outside the view. */
+  offset?: number;
+}
+
+/** "Ø8 THRU" on a hole the view sees as a circle; "4× Ø8 THRU" when it is patterned. */
+export interface HoleAnnotation {
+  id: string;
+  type: "hole";
+  view: string;
+  hole: string;
+  /** The text, from the view's centre, sheet mm. Default: beside the hole. */
+  at?: Vec2;
+}
+
+/** A member's cut list item number in a circle, with a leader to the member. */
+export interface BalloonAnnotation {
+  id: string;
+  type: "balloon";
+  view: string;
+  member: string;
+  /** The balloon, from the view's centre, sheet mm. Default: outside the view, near the member. */
+  at?: Vec2;
+}
+
+/** A weld from the weld table, as a symbol with an arrow to where its bodies meet. */
+export interface WeldAnnotation {
+  id: string;
+  type: "weld";
+  view: string;
+  weld: string;
+  /** The symbol's reference line, from the view's centre, sheet mm. */
+  at?: Vec2;
+}
+
+export const DRAWING_TABLES = ["cutList", "welds"] as const;
+export type DrawingTable = (typeof DRAWING_TABLES)[number];
+
+/** The cut list or the weld table. */
+export interface TableAnnotation {
+  id: string;
+  type: "table";
+  table: DrawingTable;
+  /** The table's top left corner on the sheet. Default: stacked above the title block. */
+  at?: Vec2;
+}
+
+/** Free text on the sheet. */
+export interface NoteAnnotation {
+  id: string;
+  type: "note";
+  text: string;
+  /** Where the text starts on the sheet (its first line's baseline). */
+  at: Vec2;
+}
+
+export type Annotation = DimensionAnnotation | HoleAnnotation | BalloonAnnotation | WeldAnnotation | TableAnnotation | NoteAnnotation;
+export type AnnotationType = Annotation["type"];
+export const ANNOTATION_TYPES = ["dimension", "hole", "balloon", "weld", "table", "note"] as const;
+export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
+  dimension: ["id", "type", "view", "from", "to", "member", "direction", "offset"],
+  hole: ["id", "type", "view", "hole", "at"],
+  balloon: ["id", "type", "view", "member", "at"],
+  weld: ["id", "type", "view", "weld", "at"],
+  table: ["id", "type", "table", "at"],
+  note: ["id", "type", "text", "at"],
+};
 
 // ------------------------------------------------------------ frames
 

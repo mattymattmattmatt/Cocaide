@@ -8,7 +8,6 @@ import {
   exportSTEP,
   heapBytes,
   loadOC,
-  rebuild,
   RECYCLE_HEAP_BYTES,
   recycleOC,
   scoped,
@@ -27,10 +26,12 @@ const recycleAt = Number(import.meta.env.VITE_COCAIDE_RECYCLE_MB) * 2 ** 20 || R
 
 /** Null while the kernel is loading or being recycled; requests queue meanwhile. */
 let oc: OC | null = null;
-/** The last rebuild, kept so an export of the same document does not rebuild again. */
-let last: { key: string; result: RebuildResult } | null = null;
 const queue: KernelRequest[] = [];
-/** Serves the right-click ask's kernel queries; keeps its own last rebuild. */
+/**
+ * Serves the right-click ask's kernel queries and the drawing's projection.
+ * It keeps the last rebuild, which the rebuild and export requests share: an
+ * export, a drawing or an ask about the document on screen doesn't rebuild it again.
+ */
 const local = new LocalKernel(() => {
   if (!oc) throw new Error("the kernel is not loaded");
   return oc;
@@ -40,14 +41,8 @@ function post(msg: KernelResponse, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer);
 }
 
-function rebuildCached(kernel: OC, doc: unknown): RebuildResult {
-  const key = JSON.stringify(doc);
-  if (last?.key === key) return last.result;
-  last?.result.dispose();
-  last = null;
-  const result = rebuild(doc, kernel);
-  last = { key, result };
-  return result;
+function rebuildCached(doc: unknown): RebuildResult {
+  return local.built(doc);
 }
 
 async function handle(kernel: OC, req: KernelRequest) {
@@ -59,7 +54,7 @@ async function handle(kernel: OC, req: KernelRequest) {
       post({ id: req.id, type: "port", result }, png ? [png.buffer as ArrayBuffer] : []);
     } else if (req.type === "rebuild") {
       const t0 = performance.now();
-      const result = rebuildCached(kernel, req.doc);
+      const result = rebuildCached(req.doc);
       const mesh = result.solid ? tessellate(kernel, result.solid) : null;
       const topo = result.solid
         ? scoped((s) => {
@@ -89,7 +84,7 @@ async function handle(kernel: OC, req: KernelRequest) {
         post({ id: req.id, type: "step", ok: false, errors: [refused] });
         return;
       }
-      const result = rebuildCached(kernel, req.doc);
+      const result = rebuildCached(req.doc);
       if (!result.ok || !result.solid) {
         const errors = result.errors.length ? result.errors : ["document: nothing to export"];
         post({ id: req.id, type: "step", ok: false, errors });
@@ -119,8 +114,6 @@ async function drainQueue() {
     await handle(oc, queue.shift()!);
     if (heapBytes(oc) > recycleAt) {
       const before = heapBytes(oc);
-      last?.result.dispose();
-      last = null;
       local.reset();
       oc = null;
       const t0 = performance.now();

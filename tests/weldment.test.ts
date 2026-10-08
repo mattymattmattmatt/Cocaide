@@ -187,8 +187,8 @@ describe("profiles in a part, and members", () => {
     ]);
     expect(b.interference).toEqual([]);
     expect(b.members.map((m) => ({ ...m, massKg: Math.round(m.massKg * 1e4) / 1e4 }))).toEqual([
-      { id: "leg", body: "leg", profile: "SHS", designation: "SHS 40x40x3", length: 900, angles: [0, 0], perimeters: [160, 160], massKg: 3.1369 },
-      { id: "rail", body: "rail", profile: "SHS", designation: "SHS 50x50x3", length: 600, angles: [0, 0], perimeters: [200, 200], massKg: 2.6564 },
+      { id: "leg", body: "leg", profile: "SHS", designation: "SHS 40x40x3", length: 900, angles: [0, 0], perimeters: [160, 160], ends: [[0, 0, 0], [0, 0, 900]], massKg: 3.1369 },
+      { id: "rail", body: "rail", profile: "SHS", designation: "SHS 50x50x3", length: 600, angles: [0, 0], perimeters: [200, 200], ends: [[100, 0, 0], [700, 0, 0]], massKg: 2.6564 },
     ]);
   });
 

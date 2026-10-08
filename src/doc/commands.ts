@@ -12,7 +12,22 @@ import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolv
 import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
-import { BODY_NAME, DEFAULT_BODY, NODE_NAME, type Constraint, type Feature, type PhotoUnderlay, type ProfileDef, type SketchEntity, type Vec2, type Weld } from "./types";
+import { annotationTargetProblem, drawingTargets, rawDrawing, renameInDrawing } from "./drawing";
+import {
+  BODY_NAME,
+  DEFAULT_BODY,
+  NODE_NAME,
+  type Annotation,
+  type Constraint,
+  type Drawing,
+  type DrawingView,
+  type Feature,
+  type PhotoUnderlay,
+  type ProfileDef,
+  type SketchEntity,
+  type Vec2,
+  type Weld,
+} from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
@@ -56,7 +71,15 @@ export type Command =
   /** Renames a node; the members, joints and gussets that name it follow. */
   | { type: "renameNode"; from: string; to: string }
   /** Adds or replaces a weld in the weld table by id, or removes it. */
-  | { type: "setWeld"; id: string; weld: Weld | Record<string, unknown> | null };
+  | { type: "setWeld"; id: string; weld: Weld | Record<string, unknown> | null }
+  /** Puts a whole drawing in the part (New drawing), or removes it. */
+  | { type: "setDrawing"; drawing: Drawing | Record<string, unknown> | null }
+  /** Changes the drawing's sheet: size, scale, projection, the title block. Shallow merge; null removes a field. */
+  | { type: "setSheet"; patch: Record<string, unknown> }
+  /** Adds or replaces a view by id, or removes it with every annotation in it. */
+  | { type: "setView"; id: string; view: DrawingView | Record<string, unknown> | null }
+  /** Adds or replaces an annotation by id, or removes it. What it points at must be in the part. */
+  | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
@@ -112,6 +135,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         }
       }
       features[i] = next;
+      // The drawing names features by id (balloons, member dimensions, hole callouts): it follows.
+      if (next.id !== cmd.id && doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", cmd.id, String(next.id));
       break;
     }
     case "deleteFeature": {
@@ -226,6 +251,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         if ((f.op === "joint" || f.op === "gusset") && f.node === cmd.from) f.node = cmd.to;
         features[i] = f;
       }
+      if (doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "node", cmd.from, cmd.to);
       break;
     }
     case "setWeld": {
@@ -241,6 +267,68 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       }
       if (welds.length) doc.welds = welds;
       else delete doc.welds;
+      break;
+    }
+    case "setDrawing": {
+      if (cmd.drawing === null) {
+        if (doc.drawing === undefined) return { ok: false, error: "setDrawing: the part has no drawing" };
+        delete doc.drawing;
+      } else {
+        doc.drawing = structuredClone(cmd.drawing);
+        const d = rawDrawing(doc);
+        const problem = d && targetProblem(doc, d.annotations);
+        if (problem) return { ok: false, error: `setDrawing: ${problem}` };
+      }
+      break;
+    }
+    case "setSheet": {
+      const d = rawDrawing(doc);
+      if (!d) return { ok: false, error: "setSheet: the part has no drawing; make one first (setDrawing)" };
+      if (!isObject(cmd.patch)) return { ok: false, error: `setSheet: patch must be an object of sheet fields (got ${JSON.stringify(cmd.patch)})` };
+      const sheet: Record<string, unknown> = { ...(isObject(d.sheet) ? d.sheet : {}), ...structuredClone(cmd.patch) };
+      for (const [k, v] of Object.entries(sheet)) if (v === null) delete sheet[k];
+      doc.drawing = { ...(doc.drawing as object), sheet };
+      break;
+    }
+    case "setView": {
+      const d = rawDrawing(doc);
+      if (!d) return { ok: false, error: "setView: the part has no drawing; make one first (setDrawing)" };
+      const views = [...d.views];
+      const i = views.findIndex((v) => v.id === cmd.id);
+      let annotations = d.annotations;
+      if (cmd.view === null) {
+        if (i < 0) return { ok: false, error: `setView: no view "${cmd.id}"` };
+        views.splice(i, 1);
+        // Its annotations have nowhere to be.
+        annotations = annotations.filter((a) => a.view !== cmd.id);
+      } else {
+        if (!isObject(cmd.view)) return { ok: false, error: `setView: view must be an object (got ${JSON.stringify(cmd.view)})` };
+        if (i < 0 && annotations.some((a) => a.id === cmd.id)) return { ok: false, error: `setView: "${cmd.id}" is an annotation's id` };
+        const v = { ...structuredClone(cmd.view), id: cmd.id };
+        if (i < 0) views.push(v);
+        else views[i] = v;
+      }
+      doc.drawing = { ...(doc.drawing as object), views, annotations };
+      break;
+    }
+    case "setAnnotation": {
+      const d = rawDrawing(doc);
+      if (!d) return { ok: false, error: "setAnnotation: the part has no drawing; make one first (setDrawing)" };
+      const annotations = [...d.annotations];
+      const i = annotations.findIndex((a) => a.id === cmd.id);
+      if (cmd.annotation === null) {
+        if (i < 0) return { ok: false, error: `setAnnotation: no annotation "${cmd.id}"` };
+        annotations.splice(i, 1);
+      } else {
+        if (!isObject(cmd.annotation)) return { ok: false, error: `setAnnotation: annotation must be an object (got ${JSON.stringify(cmd.annotation)})` };
+        if (i < 0 && d.views.some((v) => v.id === cmd.id)) return { ok: false, error: `setAnnotation: "${cmd.id}" is a view's id` };
+        const a = { ...structuredClone(cmd.annotation), id: cmd.id };
+        const problem = targetProblem(doc, [a]);
+        if (problem) return { ok: false, error: `setAnnotation: ${problem}` };
+        if (i < 0) annotations.push(a);
+        else annotations[i] = a;
+      }
+      doc.drawing = { ...(doc.drawing as object), annotations };
       break;
     }
     case "setProfile": {
@@ -344,6 +432,16 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
     return { ok: false, error: `${cmd.type} rejected: ${introduced.join("; ")}` };
   }
   return { ok: true, doc };
+}
+
+/** What the first of these annotations points at that the part doesn't have, if anything. */
+function targetProblem(doc: RawDocument, annotations: Record<string, unknown>[]): string | null {
+  const targets = drawingTargets(doc);
+  for (const a of annotations) {
+    const problem = annotationTargetProblem(a as unknown as Annotation, targets);
+    if (problem) return `${String(a.id)}: ${problem}`;
+  }
+  return null;
 }
 
 /**

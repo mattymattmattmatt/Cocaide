@@ -2,9 +2,12 @@
 // the browser it is served by the kernel worker; in Node (tests) by
 // LocalKernel directly. Both run the same code (LocalKernel).
 
+import { geometryKey } from "../doc/drawing";
+import type { ViewLook } from "../doc/types";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel";
+import { projectViews, type ProjectedView } from "../kernel/project";
 import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
-import { rebuild, type RebuildResult } from "../kernel/rebuild";
+import { rebuild, type HoleRecord, type RebuildResult } from "../kernel/rebuild";
 import type { OC } from "../kernel/oc";
 import { encodePNG } from "../render/png";
 
@@ -34,11 +37,19 @@ export interface Shot {
   height: number;
 }
 
+/** What a drawing needs from the rebuild: the views, and where the holes were drilled. */
+export interface DrawingGeometry {
+  views: ProjectedView[];
+  holes: HoleRecord[];
+}
+
 export interface KernelPort {
   check(doc: unknown): Promise<CheckResult>;
   topology(doc: unknown): Promise<PartTopology | null>;
   select(doc: unknown, selector: unknown): Promise<SelectResult>;
   screenshot(doc: unknown, opts: ShotOptions): Promise<Shot>;
+  /** The part projected for a drawing's views. Null when nothing built. */
+  project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null>;
 }
 
 export type KernelMethod = keyof KernelPort;
@@ -57,8 +68,10 @@ export class LocalKernel implements KernelPort {
     this.last = null;
   }
 
-  private built(doc: unknown, provenance = false): RebuildResult {
-    const key = JSON.stringify(doc);
+  /** The rebuild of the document, kept until the next one (the worker shares it). */
+  built(doc: unknown, provenance = false): RebuildResult {
+    // The drawing doesn't change the part: a sheet edit reuses the rebuild.
+    const key = geometryKey(doc);
     if (this.last && this.last.key === key && (this.last.provenance || !provenance)) return this.last.result;
     this.reset();
     const result = rebuild(doc, this.oc(), { provenance });
@@ -85,6 +98,12 @@ export class LocalKernel implements KernelPort {
     return picked.faces
       ? { ok: true, kind: "faces", indices: picked.faces.map((f) => f.index), faces: picked.faces }
       : { ok: true, kind: "edges", indices: picked.edges.map((e) => e.index), edges: picked.edges };
+  }
+
+  async project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null> {
+    const r = this.built(doc);
+    if (!r.solid) return null;
+    return { views: projectViews(this.oc(), r.bodies, views), holes: r.holes };
   }
 
   async screenshot(doc: unknown, opts: ShotOptions): Promise<Shot> {

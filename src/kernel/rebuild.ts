@@ -24,6 +24,7 @@ import {
   copyOut,
   cutMissed,
   drillTool,
+  type Drilled,
   endCapTool,
   extrudeTool,
   fuseInto,
@@ -66,9 +67,28 @@ export interface RebuildResult {
   features: FeatureStatus[];
   sketches: SketchOverlay[];
   name: string;
+  /** Each hole feature that built: where it was drilled, and how many copies its patterns made. */
+  holes: HoleRecord[];
   /** With `provenance`: for each face of `solid` (FaceInfo.index order), the feature that first made it. */
   faceOrigins?: (string | null)[];
   dispose(): void;
+}
+
+/** A hole feature, where it was drilled: what a drawing's callout says and points at. */
+export interface HoleRecord {
+  feature: string;
+  /** The centre where it enters the face. */
+  entry: Vec3;
+  /** Into the part, unit. */
+  axis: Vec3;
+  diameter: number;
+  /** How deep it was drilled, mm (through: as far as the part goes). */
+  depth: number;
+  through: boolean;
+  counterbore?: { diameter: number; depth: number };
+  countersink?: { diameter: number; angle: number };
+  /** Copies made by patterns of it. */
+  copies: number;
 }
 
 export interface RebuildOptions {
@@ -97,6 +117,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       solid,
       bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
       measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies))) : null,
+      holes: drilled.filter((h) => features.find((f) => f.id === h.feature)?.ok),
       errors,
       features,
       sketches,
@@ -127,6 +148,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         length: r6(cut.length),
         angles: [r6(cut.angles[0]), r6(cut.angles[1])],
         perimeters: [r6(cut.perimeters[0]), r6(cut.perimeters[1])],
+        ends: [cut.ends[0].map(r6) as Vec3, cut.ends[1].map(r6) as Vec3],
         massKg: body.massKg,
       });
     }
@@ -135,6 +157,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
 
   /** Every member that can be placed, for the joints and what comes after them. */
   const frame = new Map<string, FrameMember>();
+  /** Where each hole feature drilled. */
+  const drilled: HoleRecord[] = [];
   if (v.headerErrors.length > 0) return result();
 
   // The joints shape members wherever they are in the list: a member is built with the ends its joints give it.
@@ -251,7 +275,19 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (bodies.size === 0) throw new OpError("nothing to drill: there is no solid before this feature");
           const on = targets(raw.bodies);
           scoped((s) => {
-            const tool = drillTool(oc, s, raw, describePart(oc, s, bodies, false), partShape(oc, s, on.map(([, b]) => b))!);
+            const at = (d: Drilled) =>
+              drilled.push({
+                feature: raw.id,
+                entry: d.entry.map(r6) as Vec3,
+                axis: d.into.map(r6) as Vec3,
+                diameter: raw.diameter,
+                depth: r6(d.length),
+                through: raw.depth === "through",
+                ...(raw.counterbore ? { counterbore: raw.counterbore } : {}),
+                ...(raw.countersink ? { countersink: raw.countersink } : {}),
+                copies: 0,
+              });
+            const tool = drillTool(oc, s, raw, describePart(oc, s, bodies, false), partShape(oc, s, on.map(([, b]) => b))!, at);
             commit(removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "hole", missed: "" }));
             tools.set(raw.id, { tool: copyOut(tool), kind: "cut", bodies: raw.bodies ?? null });
           });
@@ -278,6 +314,9 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
           if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
           scoped((s) => commit(...repeat(s, raw, seed)));
+          // A patterned hole is one callout with a count.
+          const hole = drilled.find((h) => h.feature === raw.feature);
+          if (hole) hole.copies += raw.op === "linearPattern" ? raw.count * (raw.count2 ?? 1) - 1 : raw.count - 1;
           break;
         }
         case "member": {

@@ -13,6 +13,9 @@
 //   "body:<name>"   add features that touch only that body (sketches touch none); rename it
 //   "node:<name>"   move or rename that node
 //   "weld:<id>"     change or remove that weld in the weld table ("+" adds one)
+//   "drawing"       anything in the drawing (never the part's features)
+//   "view:<id>"     that view, the annotations in it, and new annotations in it
+//   "annotation:<id>" that annotation, in the view it is in
 //   "*"             anything (the whole part)
 // A parameter change is also allowed when every feature that uses the
 // parameter is in scope, and so is a node move when every feature that names
@@ -120,6 +123,27 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = `setWeld "${cmd.id}"`;
       const exists = Array.isArray(doc.welds) && doc.welds.some((w) => isObject(w) && w.id === cmd.id);
       allowed = has(`weld:${cmd.id}`) || (!exists && has("+"));
+      break;
+    }
+    case "setDrawing":
+    case "setSheet":
+      what = cmd.type;
+      allowed = has("drawing");
+      break;
+    case "setView":
+      what = `setView "${cmd.id}"`;
+      allowed = has("drawing") || has(`view:${cmd.id}`);
+      break;
+    case "setAnnotation": {
+      what = `setAnnotation "${cmd.id}"`;
+      const drawing = isObject(doc.drawing) && Array.isArray(doc.drawing.annotations) ? doc.drawing.annotations : [];
+      const before = drawing.find((a) => isObject(a) && a.id === cmd.id) as Record<string, unknown> | undefined;
+      const after = cmd.annotation as Record<string, unknown> | null;
+      // The views it is in before and after: both must be in scope for a view-wide token.
+      const views = [before?.view, after?.view].filter((v) => v !== undefined);
+      const inViews = views.length > 0 && views.every((v) => has(`view:${String(v)}`));
+      const sameView = !!before && (after === null || after.view === before.view);
+      allowed = has("drawing") || inViews || (has(`annotation:${cmd.id}`) && sameView);
       break;
     }
     default:

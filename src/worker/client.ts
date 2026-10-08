@@ -59,6 +59,7 @@ export class KernelClient {
     topology: (doc) => this.call("topology", [doc]),
     select: (doc, selector) => this.call("select", [doc, selector]),
     screenshot: (doc, opts) => this.call("screenshot", [doc, opts]),
+    project: (doc, views) => this.call("project", [doc, views]),
   };
 
   private async call<T>(method: KernelMethod, args: unknown[]): Promise<T> {

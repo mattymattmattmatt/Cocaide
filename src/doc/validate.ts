@@ -45,7 +45,9 @@ import {
   type Vec2,
   type Vec3,
   type Weld,
+  type Drawing,
 } from "./types";
+import { validateDrawing } from "./drawing";
 import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 
 export interface ValidatedFeature {
@@ -74,6 +76,10 @@ export interface ValidationResult {
   nodes: Record<string, Vec3>;
   /** The weld table. */
   welds: Weld[];
+  /** The drawing, when the document has one and it is valid. */
+  drawing: Drawing | null;
+  /** What is wrong with the drawing. Never stops the part rebuilding. */
+  drawingErrors: string[];
 }
 
 /** What a feature may refer to: the part's profiles and nodes, and the members before it. */
@@ -92,7 +98,7 @@ const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /** Every error in the document, flattened, in feature order. */
 export function allErrors(v: ValidationResult): string[] {
-  return [...v.headerErrors, ...v.features.flatMap((f) => f.errors)];
+  return [...v.headerErrors, ...v.features.flatMap((f) => f.errors), ...v.drawingErrors];
 }
 
 /** The typed document, or null when anything failed validation. */
@@ -110,14 +116,14 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], profiles: {}, nodes: {}, welds: [] };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], profiles: {}, nodes: {}, welds: [], drawing: null, drawingErrors: [] };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "profiles", "nodes", "welds", "features"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "profiles", "nodes", "welds", "features", "drawing"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -237,6 +243,11 @@ export function validateDocument(input: unknown): ValidationResult {
     const welds = new Checker("document");
     result.welds = checkWelds(input.welds, result.bodies, welds);
     result.headerErrors.push(...welds.errors);
+  }
+  if (input.drawing !== undefined) {
+    const drawing = new Checker("document");
+    result.drawing = validateDrawing(input.drawing, drawing);
+    result.drawingErrors = drawing.errors;
   }
   return result;
 }

@@ -54,6 +54,8 @@ export interface MemberMeasurement {
   angles: [number, number];
   /** Round the outside of each end face, mm. */
   perimeters: [number, number];
+  /** Where it starts and ends on its line, long point to long point: [at from, at to]. */
+  ends: [Vec3, Vec3];
   massKg: number;
 }
 

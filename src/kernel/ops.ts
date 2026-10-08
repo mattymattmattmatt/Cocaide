@@ -248,8 +248,15 @@ function boxesMeet(a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 } | nu
 
 // ------------------------------------------------------------------ hole
 
+/** Where a hole was drilled: its centre on the face, the direction into the part, and how deep. */
+export interface Drilled {
+  entry: Vec3;
+  into: Vec3;
+  length: number;
+}
+
 /** The hole's tool, drilled into the selected face of the part. `reach` is what a through hole goes through. */
-export function drillTool(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart, reach: TopoDS_Shape): TopoDS_Shape {
+export function drillTool(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart, reach: TopoDS_Shape, drilled?: (d: Drilled) => void): TopoDS_Shape {
   const selection = selectFaces(part.faceInfos, f.face);
   const problem = selectionError(f.face, selection, 1);
   if (problem) throw new OpError(problem);
@@ -270,6 +277,7 @@ export function drillTool(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart,
   const into = scale3(frame.z, -1);
   const through = f.depth === "through";
   const length = through ? reachAlong(oc, s, reach, entry, into) : (f.depth as number);
+  drilled?.({ entry, into, length });
   return holeTool(oc, s, f, entry, into, frame.x, length);
 }
 

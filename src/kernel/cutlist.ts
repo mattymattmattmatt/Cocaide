@@ -15,6 +15,8 @@ export interface MemberCut {
   angles: [number, number];
   /** The length round the outside of each end face, mm: what an all-round weld there is. */
   perimeters: [number, number];
+  /** The ends on the member's line, long point to long point: [at from, at to]. */
+  ends: [Vec3, Vec3];
 }
 
 /** Samples along a curved edge: enough that an ellipse's long point is within a micron. */
@@ -58,5 +60,6 @@ export function memberCut(oc: OC, s: Scope, body: TopoDS_Shape, from: Vec3, dir:
     oc.BRepGProp.LinearProperties(s.track(oc.BRepTools.OuterWire(face)), props, false, false);
     perimeters[end] = props.Mass();
   }
-  return { length: hi - lo, angles, perimeters };
+  const on = (t: number): Vec3 => [from[0] + dir[0] * t, from[1] + dir[1] * t, from[2] + dir[2] * t];
+  return { length: hi - lo, angles, perimeters, ends: [on(lo), on(hi)] };
 }

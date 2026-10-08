@@ -4,7 +4,7 @@ Phases A–G (the original build spec) are done: see the README. This file
 continues the spec in the same form. Each phase ends with an acceptance
 check, and the next phase does not start until it passes.
 
-The goal of the next three phases is fabrication: weldments, the way a
+The goal of Phases H–L is fabrication: weldments, the way a
 structural detailer works, with the agent working alongside the human. A
 weldment is many bodies in one part, so multibody parts come first.
 
@@ -172,3 +172,85 @@ name, designations and tags.
 Open: whether the library stays in one browser (with export and import) or is
 shared across a team. A shared library needs storage and accounts, which v1
 avoids.
+
+## Phase L — fabrication drawings
+
+The spec's "later" list says it: drawing generation projects the solid, not
+the other way around. A drawing is views of the rebuilt part, and every
+number on it is measured from that part. Nothing on a sheet is typed except
+notes and the title block, so a drawing can't disagree with the model it was
+made from. In SolidWorks a drawing is a second file that goes stale and whose
+dimensions dangle when a feature changes. In Cocaide it is part of the
+document, it rebuilds with the part, and a change it can no longer show is
+listed as a problem, not drawn wrong.
+
+DWG/DXF round-trip stays a non-goal: a drawing goes out as PDF or SVG, one way.
+
+- **The drawing is in the document**, under `"drawing"`: a sheet, views and
+  annotations. A part has at most one drawing, of one sheet.
+  - **Sheet:** size (A4, A3, A2, A1, A0, landscape), scale (`"1:10"`, or none
+    for the largest standard scale that fits), projection (third-angle or
+    first-angle, with its symbol), and the title block's fields: title, drawing
+    number, revision, drawn by, date. The part's name, material, mass and
+    scale fill the rest of the title block.
+  - **Views:** `{ "id": "front", "look": "front" }`. A view looks from the
+    front, back, top, bottom, left, right or iso. A view without `at` is
+    placed automatically: top and right line up with the front, as the
+    projection puts them, and the iso goes where there is room. Dragging a view
+    fixes its `at`. A view can have its own scale (an iso is often smaller). Hidden
+    edges are dashed when the view's `hidden` is on.
+  - **Annotations** sit in a view, and what they say is measured on the rebuild:
+    - A **dimension** between two points: a node (`"A"`), a member's end
+      (`"leg_a.start"`), a hole's centre (`"hole_1"`), or a side of the
+      view's outline (`"@left"`, `"@right"`, `"@top"`, `"@bottom"`). It is
+      horizontal, vertical or aligned, with an offset from the part.
+      `{ "member": "leg_a" }` dimensions a member's cut length along it, long
+      point to long point: the cut list's number.
+    - A **hole callout** (`"Ø8 THRU"`, `"4× Ø8 THRU"` when patterned) on a
+      view that sees the hole as a circle.
+    - A **balloon** on a member. Its number is the member's cut list item,
+      worked out on every rebuild, never typed.
+    - A **weld symbol** from the weld table: an arrow to where its bodies meet,
+      with the fillet or butt symbol, size and length, and the all-round circle.
+    - A **table**: the cut list or the weld table.
+    - A **note**: free text on the sheet.
+- **A drawing follows the model; it never blocks it.** Renaming a node or a
+  member renames it on the sheet. Deleting a member that a balloon points at
+  is allowed, and the balloon is listed as a problem until it is moved or
+  deleted.
+- **New drawing** is one command, and code plans it, not the model:
+  - the sheet size and scale that fit;
+  - front, top and right views, plus an iso;
+  - the overall length, width and height dimensioned;
+  - every hole called out;
+  - a balloon for every cut list item, the cut list and weld tables, and the title block.
+- **The drawing checks** run on every change, in the app and in the critic:
+  - every view shows the part;
+  - every annotation is attached to something that exists;
+  - every cut list item has a balloon;
+  - the overall size is dimensioned in all three directions;
+  - every weld has a symbol;
+  - nothing overlaps (views, tables and the title block) or runs off the sheet.
+- **The agent on drawings.** Right-click a view or an annotation on the sheet
+  to ask about it. The write scope is that view and its annotations, or that
+  one annotation; the API rejects any edit to the part's features from a
+  drawing ask. The packet has the view's direction and scale, the nodes,
+  members and holes it shows with their positions on the sheet, the
+  annotations already there with their values, and the drawing checks. A
+  proposal is judged by the same checks, and it gets one correction pass when a check fails.
+- **Export** writes a vector PDF (with real text) or an SVG of the sheet
+  as shown. The PDF needs no fonts or libraries: Helvetica is built into
+  every PDF reader.
+
+Acceptance: New drawing on the table frame gives one A3 sheet, third-angle,
+with front, top and right views and an iso. It is dimensioned 1200, 600 and
+900, its balloons 1–3 sit on members of cut list items 1–3, and the cut list
+and title block (name, material, mass, scale) are on it. The drawing checks
+pass. Deleting a balloon fails "every cut list item has a balloon", and moving
+a view onto the title block fails the overlap check. Switching every member to
+SHS 50×50×3 updates the sheet: a leg's length dimension reads 850 instead of
+860, and the balloons still match the cut list. Right-clicking the front
+view and asking for the leg height gives a proposal that, accepted, adds a
+dimension reading 860. An edit to a feature from that ask is rejected. The
+PDF opens in a PDF reader (poppler), and its text has the title, the
+dimensions and the cut list rows. The SVG is the sheet the app shows.
