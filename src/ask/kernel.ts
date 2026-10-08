@@ -59,6 +59,8 @@ export { measurementSummary, newFailures };
 /** The port, served in-process from an OCCT instance. Keeps the last rebuild. */
 export class LocalKernel implements KernelPort {
   private last: { key: string; provenance: boolean; result: RebuildResult } | null = null;
+  /** The last rebuild's views, by look: a sheet edit doesn't project the part again. */
+  private looks = new Map<ViewLook, ProjectedView>();
 
   constructor(private readonly oc: () => OC) {}
 
@@ -66,6 +68,7 @@ export class LocalKernel implements KernelPort {
   reset() {
     this.last?.result.dispose();
     this.last = null;
+    this.looks.clear();
   }
 
   /** The rebuild of the document, kept until the next one (the worker shares it). */
@@ -103,7 +106,9 @@ export class LocalKernel implements KernelPort {
   async project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null> {
     const r = this.built(doc);
     if (!r.solid) return null;
-    return { views: projectViews(this.oc(), r.bodies, views), holes: r.holes };
+    const fresh = views.filter((v) => !this.looks.has(v.look));
+    for (const p of projectViews(this.oc(), r.bodies, [...new Map(fresh.map((v) => [v.look, v])).values()])) this.looks.set(p.look, p);
+    return { views: views.map((v) => ({ ...this.looks.get(v.look)!, id: v.id })), holes: r.holes };
   }
 
   async screenshot(doc: unknown, opts: ShotOptions): Promise<Shot> {

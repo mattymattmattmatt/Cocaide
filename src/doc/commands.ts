@@ -138,9 +138,13 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
           return { ok: false, error: `${cmd.type}: cannot rename ${cmd.id}; ${users.join(", ")} ${users.length === 1 ? "uses" : "use"} it` };
         }
       }
+      const prev = features[i];
       features[i] = next;
       // The drawing names features by id (balloons, member dimensions, hole callouts): it follows.
       if (next.id !== cmd.id && doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", cmd.id, String(next.id));
+      // A member, end cap or gusset that names its body by its id renames the body: its welds and material follow.
+      const byId = (f: Record<string, unknown>) => (f.op === "member" || f.op === "endCap" || f.op === "gusset") && f.newBody === undefined;
+      if (next.id !== cmd.id && byId(prev) && byId(next)) renameBodyRefs(doc, new Map([[cmd.id, String(next.id)]]));
       break;
     }
     case "deleteFeature": {
@@ -216,10 +220,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const problem = renameBody(features, cmd.from, cmd.to);
       if (problem) return { ok: false, error: `renameBody: ${problem}` };
       // The weld table, the bodies' materials and the drawing's balloons name bodies too.
-      if (Array.isArray(doc.welds)) {
-        doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => renamed.get(String(b)) ?? b) } : w));
-      }
-      if (isObject(doc.bodyMaterials)) doc.bodyMaterials = Object.fromEntries(Object.entries(doc.bodyMaterials).map(([k, v]) => [renamed.get(k) ?? k, v]));
+      renameBodyRefs(doc, renamed);
       for (const [a, b] of renamed) if (doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", a, b);
       break;
     }
@@ -446,20 +447,34 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       return { ok: false, error: `unknown command ${JSON.stringify((cmd as { type?: unknown }).type)}` };
   }
 
+  const was = validateDocument(input);
+  let now = validateDocument(doc);
   // A body's material goes with the body: a command that removes a body (deleting the feature that makes it) drops it.
   if (cmd.type !== "setBodyMaterial" && isObject(doc.bodyMaterials)) {
-    const had = new Set(validateDocument(input).madeBodies);
-    const has = new Set(validateDocument(doc).madeBodies);
-    const kept = Object.fromEntries(Object.entries(doc.bodyMaterials).filter(([k]) => has.has(k) || !had.has(k)));
-    if (Object.keys(kept).length) doc.bodyMaterials = kept;
-    else delete doc.bodyMaterials;
+    const had = new Set(was.madeBodies);
+    const has = new Set(now.madeBodies);
+    const entries = Object.entries(doc.bodyMaterials);
+    const kept = entries.filter(([k]) => has.has(k) || !had.has(k));
+    if (kept.length < entries.length) {
+      if (kept.length) doc.bodyMaterials = Object.fromEntries(kept);
+      else delete doc.bodyMaterials;
+      now = validateDocument(doc);
+    }
   }
-  const before = new Set(allErrors(validateDocument(input)));
-  const introduced = allErrors(validateDocument(doc)).filter((e) => !before.has(e));
+  const before = new Set(allErrors(was));
+  const introduced = allErrors(now).filter((e) => !before.has(e));
   if (introduced.length > 0) {
     return { ok: false, error: `${cmd.type} rejected: ${introduced.join("; ")}` };
   }
   return { ok: true, doc };
+}
+
+/** Renamed bodies, in the weld table and the bodies' materials. */
+function renameBodyRefs(doc: RawDocument, renamed: Map<string, string>): void {
+  if (Array.isArray(doc.welds)) {
+    doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => renamed.get(String(b)) ?? b) } : w));
+  }
+  if (isObject(doc.bodyMaterials)) doc.bodyMaterials = Object.fromEntries(Object.entries(doc.bodyMaterials).map(([k, v]) => [renamed.get(k) ?? k, v]));
 }
 
 /** What the first of these annotations points at that the part doesn't have, if anything. */
@@ -537,7 +552,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
 /**
  * Every body name a rename changes: the body, the copies a pattern names after
  * it (from_2), and the bodies a mirror, split or copy derives from it without
- * naming them (from_mirror, from_split, from_copy).
+ * naming them (from_mirror, from_split, from_copy), and theirs in turn.
  */
 export function renamedBodies(features: Record<string, unknown>[], from: string, to: string): Map<string, string> {
   const out = new Map([[from, to]]);
@@ -556,6 +571,10 @@ export function renamedBodies(features: Record<string, unknown>[], from: string,
     if (f.op === "mirror" && f.merge !== true && (lists(f.bodies) || seeds.has(f.feature))) out.set(`${from}${DERIVED_SUFFIX.mirror}`, `${to}${DERIVED_SUFFIX.mirror}`);
     if (f.op === "split" && f.body === from) out.set(`${from}${DERIVED_SUFFIX.split}`, `${to}${DERIVED_SUFFIX.split}`);
     if (f.op === "move" && f.copy === true && lists(f.bodies)) out.set(`${from}${DERIVED_SUFFIX.move}`, `${to}${DERIVED_SUFFIX.move}`);
+  }
+  // A body named after one of these (from_mirror_split) follows it in turn. Each step makes a longer name, so this ends.
+  for (const [a, b] of [...out].slice(1)) {
+    for (const [c, d] of renamedBodies(features, a, b)) if (!out.has(c)) out.set(c, d);
   }
   return out;
 }

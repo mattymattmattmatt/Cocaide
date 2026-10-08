@@ -32,6 +32,7 @@ export interface Measurements {
   /** One per hole (its drill diameter), ascending. */
   holeDiameters: number[];
   holes: HoleMeasurement[];
+  /** kg: every body in its own material, added up. densityKgPerM3: the part's material's; a body with its own weighs what its material does. */
   mass: { kg: number; densityKgPerM3: number; material: string };
   solids: number;
   faces: number;

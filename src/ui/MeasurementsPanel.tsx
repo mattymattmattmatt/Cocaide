@@ -18,7 +18,7 @@ export function MeasurementsPanel({ measurements: m }: { measurements: Measureme
           <dt>Surface area</dt>
           <dd>{n(m.surfaceArea)} mm²</dd>
           <dt>Mass</dt>
-          <dd title={`${m.mass.material}, ${m.mass.densityKgPerM3} kg/m³`}>
+          <dd title={new Set(m.bodies.map((b) => b.material)).size > 1 ? `${m.mass.material}: each body in its own (see Bodies)` : `${m.mass.material}, ${m.mass.densityKgPerM3} kg/m³`} data-testid="mass">
             {n(m.mass.kg * 1000, 1)} g <span className="muted">({m.mass.material})</span>
           </dd>
           <dt>Holes</dt>

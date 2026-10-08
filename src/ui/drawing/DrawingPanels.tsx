@@ -407,7 +407,8 @@ function AnnotationProps({
         <label className="field">
           <span className="field-label">Member</span>
           <select value={a.member} onChange={(e) => set({ member: e.target.value })} data-testid="prop-annotation-member">
-            {members.map((m) => (
+            {/* A copy of a member (leg_a_mirror) or a renamed body is named by its body: it is a choice too. */}
+            {(a.member === undefined || members.includes(a.member) ? members : [...members, a.member]).map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>

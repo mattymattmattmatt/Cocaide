@@ -126,7 +126,9 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
 /** A body's material, and what can be done with it: delete it, or save it as a part. */
 function BodyDetails({ name, mass, own, onMaterial, onDelete, onSave }: { name: string; mass: string; own?: Material; onMaterial?(body: string, m: Material | null): void; onDelete?(): void; onSave?(): void }) {
   const preset = own ? MATERIALS.findIndex((x) => x.name === own.name && x.densityKgPerM3 === own.densityKgPerM3) : -1;
-  const value = !own ? "part" : preset >= 0 ? String(preset) : "custom";
+  // "other…" on a preset opens its name and density to edit, starting from the preset's.
+  const [editing, setEditing] = useState(false);
+  const value = !own ? "part" : preset >= 0 && !editing ? String(preset) : "custom";
   return (
     <div className="body-details" data-testid={`body-details-${name}`}>
       <div className="body-mass muted">{mass}</div>
@@ -137,9 +139,11 @@ function BodyDetails({ name, mass, own, onMaterial, onDelete, onSave }: { name: 
             value={value}
             onChange={(e) => {
               const v = e.target.value;
+              setEditing(v === "custom");
               if (v === "part") onMaterial(name, null);
-              else if (v === "custom") onMaterial(name, { name: own?.name ?? "custom", densityKgPerM3: own?.densityKgPerM3 ?? 7850 });
-              else onMaterial(name, MATERIALS[Number(v)]);
+              else if (v === "custom") {
+                if (!own) onMaterial(name, { name: "custom", densityKgPerM3: 7850 });
+              } else onMaterial(name, MATERIALS[Number(v)]);
             }}
             data-testid={`body-material-${name}`}
           >

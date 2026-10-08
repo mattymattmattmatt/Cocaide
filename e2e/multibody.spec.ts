@@ -63,6 +63,15 @@ test("on the stand: mirror a hole and a body, move, split and delete bodies, a b
   await page.getByTestId("body-material-upright").selectOption({ label: "aluminium 6061 (2700 kg/m³)" });
   await expect(page.getByTestId("body-details-upright")).toContainText("0.156 kg, aluminium 6061");
   await page.screenshot({ path: "docs/phase-m-bodies.png" });
+  // "other…" opens the preset to edit: a density of its own. The part's mass is each body's, added up.
+  await page.getByTestId("body-material-upright").selectOption({ label: "other…" });
+  await expect(page.getByTestId("body-density-upright")).toHaveValue("2700");
+  await page.getByTestId("body-density-upright").fill("5400");
+  await page.getByTestId("body-density-upright").blur();
+  await expect(page.getByTestId("body-details-upright")).toContainText("0.311 kg, aluminium 6061");
+  await expect(page.getByTestId("mass")).toHaveAttribute("title", /each body in its own/);
+  await page.getByTestId("body-material-upright").selectOption({ label: "aluminium 6061 (2700 kg/m³)" });
+  await expect(page.getByTestId("body-details-upright")).toContainText("0.156 kg, aluminium 6061");
 
   // 6. Saved as a part, the upright opens alone, in aluminium.
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("body-save-upright").click()]);

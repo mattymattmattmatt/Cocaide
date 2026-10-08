@@ -476,8 +476,10 @@ class Composer {
     return this.v.nodes;
   }
 
+  /** A member by its feature's id, or by its body's name (a renamed body is named on the sheet by its new name). */
   private member(id: string) {
-    return this.ctx.measurements?.members.find((m) => m.id === id);
+    const members = this.ctx.measurements?.members ?? [];
+    return members.find((m) => m.id === id) ?? members.find((m) => m.body === id);
   }
 
   /** A dimension point in the view, model mm. A side of the view's outline has only the coordinate it names. */
@@ -655,10 +657,6 @@ class Composer {
     return [from[0] + d[0] * t, from[1] + d[1] * t];
   }
 
-  private bodyOf(memberId: string): string | undefined {
-    return this.member(memberId)?.body;
-  }
-
   /** The middle of the longest visible line of a body in a view, view mm, and how much of it shows. */
   visibleAnchor(viewId: string, body: string): { at: Vec2; length: number } | null {
     const pv = this.projected.get(viewId);
@@ -726,9 +724,10 @@ class Composer {
   }
 
   private drawBalloon(a: BalloonAnnotation, cv: ComposedView): { text: string; item: number; at: Vec2 } | { problem: string } {
-    const body = this.bodyOf(a.member);
-    if (!body) return { problem: `no member "${a.member}" built` };
-    const item = this.cut.find((i) => i.members.includes(a.member));
+    const m = this.member(a.member);
+    if (!m) return { problem: `no member "${a.member}" built` };
+    const body = m.body;
+    const item = this.cut.find((i) => i.members.includes(m.id));
     if (!item) return { problem: `${a.member} is not in the cut list` };
     const anchor = this.visibleAnchor(cv.id, body);
     if (!anchor) return { problem: `${a.member} can't be seen in ${cv.id}: balloon it in a view that shows it` };

@@ -122,7 +122,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       solid,
       bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
       measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies, v.bodyMaterials))) : null,
-      holes: drilled.filter((h) => features.find((f) => f.id === h.feature)?.ok),
+      holes: drilled.filter((h) => features.find((f) => f.id === h.feature)?.ok && holeBodies.get(h)?.size !== 0),
       errors,
       features,
       sketches,
@@ -168,7 +168,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
    * along: a member's own, or the line carried with a mirror, pattern, move or
    * copy of it. In the order they were made: the cut list's order.
    */
-  const memberBodies = new Map<string, { id: string; profile: string; designation: string; from: Vec3; dir: Vec3 }>();
+  const memberBodies = new Map<string, MemberLine>();
   /** A copy of a member body, its line carried by the same transforms. */
   const copyMember = (s: Scope, from: string, to: string, steps: ReturnType<typeof mirrorTrsf>[], id = to) => {
     const mb = memberBodies.get(from);
@@ -176,6 +176,17 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   };
   /** Where each hole feature drilled. */
   const drilled: HoleRecord[] = [];
+  /** The bodies each hole is in: it goes where they go, and is gone with them. */
+  const holeBodies = new Map<HoleRecord, Set<string>>();
+  const holesIn = (names: string[]) => drilled.filter((h) => names.some((n) => holeBodies.get(h)?.has(n)));
+  /** The bodies were copied (as `to`): each hole in them is there twice as many times. */
+  const copyHoles = (to: Map<string, string>) => {
+    for (const h of holesIn([...to.keys()])) {
+      h.copies = 2 * h.copies + 1;
+      const set = holeBodies.get(h)!;
+      for (const [from, copy] of to) if (set.has(from)) set.add(copy);
+    }
+  };
   if (v.headerErrors.length > 0) return result();
 
   // The joints shape members wherever they are in the list: a member is built with the ends its joints give it.
@@ -304,8 +315,11 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
                 ...(raw.countersink ? { countersink: raw.countersink } : {}),
                 copies: 0,
               });
+            const start = drilled.length;
             const tool = drillTool(oc, s, raw, describePart(oc, s, bodies, false), partShape(oc, s, on.map(([, b]) => b))!, at);
-            commit(removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "hole", missed: "" }));
+            const cut = removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "hole", missed: "" });
+            commit(cut);
+            for (const h of drilled.slice(start)) holeBodies.set(h, new Set(cut.keys()));
             tools.set(raw.id, { tool: copyOut(tool), kind: "cut", bodies: raw.bodies ?? null });
           });
           break;
@@ -332,8 +346,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
           scoped((s) => commit(...repeat(s, patternInstances(oc, s, raw), seed, (k) => `${seed.newBody}_${k + 2}`)));
           // A patterned hole is one callout with a count.
-          const hole = drilled.find((h) => h.feature === raw.feature);
-          if (hole) hole.copies += raw.op === "linearPattern" ? raw.count * (raw.count2 ?? 1) - 1 : raw.count - 1;
+          for (const h of drilled.filter((x) => x.feature === raw.feature)) h.copies += raw.op === "linearPattern" ? raw.count * (raw.count2 ?? 1) - 1 : raw.count - 1;
           break;
         }
         case "member": {
@@ -341,12 +354,13 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (!def) throw new OpError(`no profile "${raw.profile}" in the part`);
           const name = raw.newBody ?? raw.id;
           if (bodies.has(name)) throw new OpError(`a body "${name}" already exists; a member is a body of its own`);
+          const line: MemberLine = { id: raw.id, profile: raw.profile, designation: raw.size, from: raw.from, dir: frame.get(raw.id)!.placed.dir };
           scoped((s) => {
             const tool = memberTool(oc, s, raw, def, shapes.ends.get(raw.id));
             commit(new Map([[name, tool]]));
-            tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name });
+            tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name, member: line });
           });
-          memberBodies.set(name, { id: raw.id, profile: raw.profile, designation: raw.size, from: raw.from, dir: frame.get(raw.id)!.placed.dir });
+          memberBodies.set(name, line);
           break;
         }
         case "joint": {
@@ -384,6 +398,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           scoped((s) => commit(new Map([[raw.target, combineBodies(oc, s, raw, target, others)]]), raw.tools));
           // A member combined with other material is a fabrication, not a length of stock.
           for (const n of [raw.target, ...raw.tools]) memberBodies.delete(n);
+          // The tools' holes are in the target now.
+          for (const h of holesIn(raw.tools)) holeBodies.get(h)!.add(raw.target);
           break;
         }
         case "mirror": {
@@ -392,23 +408,28 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
             scoped((s) => {
               const t = mirrorTrsf(oc, s, raw.plane);
               const changed = new Map<string, TopoDS_Shape>();
+              const copies = new Map<string, string>();
               for (const [name, body] of listed) {
                 const image = transformed(oc, s, body, t);
                 if (raw.merge) changed.set(name, mergeMirror(oc, s, name, body, image));
                 else {
                   const copy = raw.newBody ?? `${name}${DERIVED_SUFFIX.mirror}`;
                   changed.set(copy, image);
+                  copies.set(name, copy);
                   copyMember(s, name, copy, [t]);
                 }
               }
               commit(changed);
               if (raw.merge) for (const [name] of listed) memberBodies.delete(name);
+              copyHoles(raw.merge ? new Map(listed.map(([n]) => [n, n])) : copies);
             });
           } else {
             const seed = tools.get(raw.feature!);
             if (!seed) throw new OpError(`${missing(raw.feature!, "feature")}, so there is nothing to mirror`);
             if (bodies.size === 0) throw new OpError("nothing to mirror onto: there is no solid before this feature");
             scoped((s) => commit(...repeat(s, [{ label: "the mirror", trsf: mirrorTrsf(oc, s, raw.plane) }], seed, () => raw.newBody ?? `${seed.newBody}${DERIVED_SUFFIX.mirror}`, "mirror")));
+            // A mirrored hole is one more of it.
+            for (const h of drilled.filter((x) => x.feature === raw.feature)) h.copies += 1;
           }
           break;
         }
@@ -423,6 +444,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           // Both pieces of a member are lengths of it, along its line.
           const mb = memberBodies.get(raw.body);
           if (mb) memberBodies.set(other, { ...mb, id: other });
+          // A hole in the body may be in either piece.
+          for (const h of holesIn([raw.body])) holeBodies.get(h)!.add(other);
           break;
         }
         case "move": {
@@ -430,15 +453,28 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           scoped((s) => {
             const steps = moveTrsfs(oc, s, raw);
             const changed = new Map<string, TopoDS_Shape>();
+            const copies = new Map<string, string>();
             for (const [name, body] of listed) {
               let moved = body;
               for (const t of steps) moved = transformed(oc, s, moved, t);
               const to = raw.copy ? (raw.newBody ?? `${name}${DERIVED_SUFFIX.move}`) : name;
               if (raw.copy && bodies.has(to)) throw new OpError(`a body "${to}" already exists; name the copy with newBody`);
               changed.set(to, moved);
+              copies.set(name, to);
               copyMember(s, name, to, steps, raw.copy ? to : memberBodies.get(name)?.id);
             }
             commit(changed);
+            if (raw.copy) copyHoles(copies);
+            else {
+              // A hole whose bodies all moved goes with them.
+              const names = new Set(raw.bodies);
+              for (const h of holesIn(raw.bodies)) {
+                if (![...holeBodies.get(h)!].every((n) => names.has(n))) continue;
+                const to = transformLine(oc, s, h.entry, h.axis, steps);
+                h.entry = to.from.map(r6) as Vec3;
+                h.axis = to.dir.map(r6) as Vec3;
+              }
+            }
           });
           break;
         }
@@ -448,6 +484,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (gone.length >= bodies.size) throw new OpError("would delete every body: nothing of the part would be left");
           commit(new Map(), gone);
           for (const n of gone) memberBodies.delete(n);
+          // A hole is gone with the last body it was in.
+          for (const h of holesIn(gone)) for (const n of gone) holeBodies.get(h)!.delete(n);
           break;
         }
       }
@@ -499,8 +537,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         const name = nameOf(k);
         if (bodies.has(name) || changed.has(name)) throw new OpError(`${inst.label}: a body "${name}" already exists`);
         changed.set(name, fuseInto(oc, s, null, copy, what));
-        // A copy of a member is a member, along the copied line.
-        copyMember(s, seed.newBody, name, [inst.trsf]);
+        // A copy of a member is a member, along its line as it was made (the body may have moved or been combined since).
+        if (seed.member) memberBodies.set(name, { ...seed.member, id: name, ...transformLine(oc, s, seed.member.from, seed.member.dir, [inst.trsf]) });
       } else if (seed.kind === "fuse") {
         const name = seed.into!;
         try {
@@ -533,6 +571,17 @@ interface Seed {
   newBody?: string;
   /** cut: the bodies it was limited to (null: every body). */
   bodies?: string[] | null;
+  /** A member's tool: its line, where it was made. */
+  member?: MemberLine;
+}
+
+/** A body that is a length of stock: the member it is, and the line it is measured along. */
+interface MemberLine {
+  id: string;
+  profile: string;
+  designation: string;
+  from: Vec3;
+  dir: Vec3;
 }
 
 function buildSketch(f: SketchFeature): SketchProfile {
