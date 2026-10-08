@@ -8,7 +8,7 @@
 // under a drawing, and a dangling annotation is a drawing problem, listed by
 // the drawing checks, never a reason to refuse an edit to the part.
 
-import { describe, isObject, type Checker } from "./validate";
+import { describe, isObject, validateDocument, type Checker } from "./validate";
 import {
   ANNOTATION_KEYS,
   ANNOTATION_TYPES,
@@ -181,9 +181,11 @@ export interface DrawingTargets {
 export function drawingTargets(doc: Record<string, unknown>): DrawingTargets {
   const features = Array.isArray(doc.features) ? doc.features.filter(isObject) : [];
   const ids = (op: string) => new Set(features.filter((f) => f.op === op && !f.suppressed && typeof f.id === "string").map((f) => f.id as string));
+  // A member's mirror, pattern copy or split piece is a member by its body's name.
+  const members = new Set([...ids("member"), ...validateDocument(doc).madeBodies]);
   return {
     nodes: new Set(isObject(doc.nodes) ? Object.keys(doc.nodes) : []),
-    members: ids("member"),
+    members,
     holes: ids("hole"),
     welds: new Set(Array.isArray(doc.welds) ? doc.welds.filter(isObject).map((w) => String(w.id)) : []),
   };

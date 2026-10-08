@@ -237,8 +237,8 @@ describe("the agent and bodies", () => {
     try {
       const m = measurementSummary(r.measurements!);
       expect(m.bodies).toEqual([
-        { name: "base", volume: Math.round(BASE * 1e6) / 1e6, size: [120, 80, 8], holeCount: 2 },
-        { name: "upright", volume: UPRIGHT, size: [120, 8, 60], holeCount: 0 },
+        { name: "base", volume: Math.round(BASE * 1e6) / 1e6, massKg: 0.593015, material: "steel (default)", size: [120, 80, 8], holeCount: 2 },
+        { name: "upright", volume: UPRIGHT, massKg: 0.45216, material: "steel (default)", size: [120, 8, 60], holeCount: 0 },
       ]);
       expect(m).not.toHaveProperty("interference");
     } finally {

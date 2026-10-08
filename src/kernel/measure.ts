@@ -63,6 +63,8 @@ export interface BodyMeasurement {
   name: string;
   volume: number;
   massKg: number;
+  /** The body's material: its own, or the part's. */
+  material: string;
   boundingBox: { min: Vec3; max: Vec3; size: Vec3 } | null;
   holeCount: number;
   solids: number;
@@ -99,13 +101,23 @@ export function isValidShape(oc: OC, s: Scope, shape: TopoDS_Shape): boolean {
   return s.track(new oc.BRepCheck_Analyzer(shape, true, false, false)).IsValid();
 }
 
-export function measure(oc: OC, s: Scope, shape: TopoDS_Shape, material: Material | undefined, bodies?: Map<string, TopoDS_Shape>): Measurements {
+export function measure(
+  oc: OC,
+  s: Scope,
+  shape: TopoDS_Shape,
+  material: Material | undefined,
+  bodies?: Map<string, TopoDS_Shape>,
+  bodyMaterials: Record<string, Material> = {},
+): Measurements {
   const bb = boundingBoxOf(oc, s, shape);
   const volume = volumeOf(oc, s, shape);
   const { infos } = describeFaces(oc, s, shape);
   const holes = findHoles(infos.flatMap((f) => (f.cylinder ? [f.cylinder] : [])));
   const mat = material ?? DEFAULT_MATERIAL;
   const each = bodies && bodies.size > 1 ? bodies : new Map([[bodies?.keys().next().value ?? "main", shape]]);
+  // Each body in its own material, where it has one; the part's mass is theirs added up.
+  const measured = [...each].map(([name, body]) => measureBody(oc, s, name, body, bodyMaterials[name] ?? mat));
+  const names = [...new Set(measured.map((b) => b.material))];
   return {
     units: "mm",
     boundingBox: bb && { min: bb.min, max: bb.max, size: sub3(bb.max, bb.min) },
@@ -115,26 +127,27 @@ export function measure(oc: OC, s: Scope, shape: TopoDS_Shape, material: Materia
     holeDiameters: holes.map((h) => h.diameter).sort((a, b) => a - b),
     holes,
     mass: {
-      kg: volume * 1e-9 * mat.densityKgPerM3,
+      kg: measured.reduce((sum, b) => sum + b.massKg, 0),
       densityKgPerM3: mat.densityKgPerM3,
-      material: mat.name ?? "unnamed",
+      material: names.join(", "),
     },
     solids: countSubShapes(oc, s, shape, "solid"),
     faces: infos.length,
-    bodies: [...each].map(([name, body]) => measureBody(oc, s, name, body, mat.densityKgPerM3)),
+    bodies: measured,
     interference: interference(oc, s, each),
     members: [],
   };
 }
 
-function measureBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, density: number): BodyMeasurement {
+function measureBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, material: Material): BodyMeasurement {
   const bb = boundingBoxOf(oc, s, body);
   const volume = volumeOf(oc, s, body);
   const { infos } = describeFaces(oc, s, body);
   return {
     name,
     volume,
-    massKg: volume * 1e-9 * density,
+    massKg: volume * 1e-9 * material.densityKgPerM3,
+    material: material.name ?? "unnamed",
     boundingBox: bb && { min: bb.min, max: bb.max, size: sub3(bb.max, bb.min) },
     holeCount: findHoles(infos.flatMap((f) => (f.cylinder ? [f.cylinder] : []))).length,
     solids: countSubShapes(oc, s, body, "solid"),

@@ -7,7 +7,7 @@
 // every failure is reported as "<feature id>: <reason>".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import { DEFAULT_BODY, type CircularPatternFeature, type JointFeature, type LinearPatternFeature, type SketchFeature, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type SketchFeature, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { checkConstraints } from "../geom/constraints";
 import { planeFrame, to3D } from "../geom/frame";
@@ -30,10 +30,15 @@ import {
   fuseInto,
   gussetTool,
   memberTool,
+  mergeMirror,
+  mirrorTrsf,
+  moveTrsfs,
   OpError,
   patternInstances,
   removeFrom,
   selectTreatedEdges,
+  splitBody,
+  transformLine,
   transformed,
   treatEdges,
   type SketchProfile,
@@ -116,7 +121,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       ok: errors.length === 0 && solid !== null,
       solid,
       bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
-      measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies))) : null,
+      measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies, v.bodyMaterials))) : null,
       holes: drilled.filter((h) => features.find((f) => f.id === h.feature)?.ok),
       errors,
       features,
@@ -130,21 +135,22 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     };
   };
 
-  /** The members that built: their length and end angles read from their bodies, and their mass. */
+  /**
+   * The members: each body that is a member, or a copy or piece of one, with
+   * its length and end angles read from the body along its own line, and its
+   * mass.
+   */
   function withMembers(s: Scope, m: Measurements): Measurements {
-    for (const vf of v.features) {
-      const f = vf.feature;
-      if (f?.op !== "member" || f.suppressed || !features.find((x) => x.id === f.id)?.ok) continue;
-      const body = m.bodies.find((b) => b.name === (f.newBody ?? f.id));
-      const shape = bodies.get(f.newBody ?? f.id);
-      const placed = frame.get(f.id);
-      if (!body || !shape || !placed) continue;
-      const cut = memberCut(oc, s, shape, f.from, placed.placed.dir);
+    for (const [name, mb] of memberBodies) {
+      const body = m.bodies.find((b) => b.name === name);
+      const shape = bodies.get(name);
+      if (!body || !shape) continue;
+      const cut = memberCut(oc, s, shape, mb.from, mb.dir);
       m.members.push({
-        id: f.id,
+        id: mb.id,
         body: body.name,
-        profile: f.profile,
-        designation: f.size,
+        profile: mb.profile,
+        designation: mb.designation,
         length: r6(cut.length),
         angles: [r6(cut.angles[0]), r6(cut.angles[1])],
         perimeters: [r6(cut.perimeters[0]), r6(cut.perimeters[1])],
@@ -157,6 +163,17 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
 
   /** Every member that can be placed, for the joints and what comes after them. */
   const frame = new Map<string, FrameMember>();
+  /**
+   * The bodies that are members, by body name, with the line each is measured
+   * along: a member's own, or the line carried with a mirror, pattern, move or
+   * copy of it. In the order they were made: the cut list's order.
+   */
+  const memberBodies = new Map<string, { id: string; profile: string; designation: string; from: Vec3; dir: Vec3 }>();
+  /** A copy of a member body, its line carried by the same transforms. */
+  const copyMember = (s: Scope, from: string, to: string, steps: ReturnType<typeof mirrorTrsf>[], id = to) => {
+    const mb = memberBodies.get(from);
+    if (mb) memberBodies.set(to, { ...mb, id, ...transformLine(oc, s, mb.from, mb.dir, steps) });
+  };
   /** Where each hole feature drilled. */
   const drilled: HoleRecord[] = [];
   if (v.headerErrors.length > 0) return result();
@@ -313,7 +330,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const seed = tools.get(raw.feature);
           if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
           if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
-          scoped((s) => commit(...repeat(s, raw, seed)));
+          scoped((s) => commit(...repeat(s, patternInstances(oc, s, raw), seed, (k) => `${seed.newBody}_${k + 2}`)));
           // A patterned hole is one callout with a count.
           const hole = drilled.find((h) => h.feature === raw.feature);
           if (hole) hole.copies += raw.op === "linearPattern" ? raw.count * (raw.count2 ?? 1) - 1 : raw.count - 1;
@@ -329,6 +346,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
             commit(new Map([[name, tool]]));
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name });
           });
+          memberBodies.set(name, { id: raw.id, profile: raw.profile, designation: raw.size, from: raw.from, dir: frame.get(raw.id)!.placed.dir });
           break;
         }
         case "joint": {
@@ -364,6 +382,72 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const target = need(raw.target);
           const others = raw.tools.map(need);
           scoped((s) => commit(new Map([[raw.target, combineBodies(oc, s, raw, target, others)]]), raw.tools));
+          // A member combined with other material is a fabrication, not a length of stock.
+          for (const n of [raw.target, ...raw.tools]) memberBodies.delete(n);
+          break;
+        }
+        case "mirror": {
+          if (raw.bodies) {
+            const listed = raw.bodies.map((n) => [n, need(n)] as const);
+            scoped((s) => {
+              const t = mirrorTrsf(oc, s, raw.plane);
+              const changed = new Map<string, TopoDS_Shape>();
+              for (const [name, body] of listed) {
+                const image = transformed(oc, s, body, t);
+                if (raw.merge) changed.set(name, mergeMirror(oc, s, name, body, image));
+                else {
+                  const copy = raw.newBody ?? `${name}${DERIVED_SUFFIX.mirror}`;
+                  changed.set(copy, image);
+                  copyMember(s, name, copy, [t]);
+                }
+              }
+              commit(changed);
+              if (raw.merge) for (const [name] of listed) memberBodies.delete(name);
+            });
+          } else {
+            const seed = tools.get(raw.feature!);
+            if (!seed) throw new OpError(`${missing(raw.feature!, "feature")}, so there is nothing to mirror`);
+            if (bodies.size === 0) throw new OpError("nothing to mirror onto: there is no solid before this feature");
+            scoped((s) => commit(...repeat(s, [{ label: "the mirror", trsf: mirrorTrsf(oc, s, raw.plane) }], seed, () => raw.newBody ?? `${seed.newBody}${DERIVED_SUFFIX.mirror}`, "mirror")));
+          }
+          break;
+        }
+        case "split": {
+          const body = need(raw.body);
+          const other = raw.newBody ?? `${raw.body}${DERIVED_SUFFIX.split}`;
+          if (bodies.has(other)) throw new OpError(`a body "${other}" already exists; name the new piece with newBody`);
+          scoped((s) => {
+            const [behind, front] = splitBody(oc, s, raw.body, body, raw.plane);
+            commit(new Map([[raw.body, behind], [other, front]]));
+          });
+          // Both pieces of a member are lengths of it, along its line.
+          const mb = memberBodies.get(raw.body);
+          if (mb) memberBodies.set(other, { ...mb, id: other });
+          break;
+        }
+        case "move": {
+          const listed = raw.bodies.map((n) => [n, need(n)] as const);
+          scoped((s) => {
+            const steps = moveTrsfs(oc, s, raw);
+            const changed = new Map<string, TopoDS_Shape>();
+            for (const [name, body] of listed) {
+              let moved = body;
+              for (const t of steps) moved = transformed(oc, s, moved, t);
+              const to = raw.copy ? (raw.newBody ?? `${name}${DERIVED_SUFFIX.move}`) : name;
+              if (raw.copy && bodies.has(to)) throw new OpError(`a body "${to}" already exists; name the copy with newBody`);
+              changed.set(to, moved);
+              copyMember(s, name, to, steps, raw.copy ? to : memberBodies.get(name)?.id);
+            }
+            commit(changed);
+          });
+          break;
+        }
+        case "deleteBody": {
+          for (const n of raw.bodies ?? raw.keep!) need(n);
+          const gone = raw.bodies ?? [...bodies.keys()].filter((n) => !raw.keep!.includes(n));
+          if (gone.length >= bodies.size) throw new OpError("would delete every body: nothing of the part would be left");
+          commit(new Map(), gone);
+          for (const n of gone) memberBodies.delete(n);
           break;
         }
       }
@@ -406,19 +490,21 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
    * body, as new bodies (seed_2, seed_3, ...), or cut from the same bodies.
    * Every copy must add or remove material.
    */
-  function repeat(s: Scope, f: LinearPatternFeature | CircularPatternFeature, seed: Seed): [Map<string, TopoDS_Shape>] {
+  function repeat(s: Scope, instances: { label: string; trsf: ReturnType<typeof mirrorTrsf> }[], seed: Seed, nameOf: (k: number) => string, what = "pattern"): [Map<string, TopoDS_Shape>] {
     const changed = new Map<string, TopoDS_Shape>();
     const now = (name: string) => changed.get(name) ?? need(name);
-    patternInstances(oc, s, f).forEach((inst, k) => {
+    instances.forEach((inst, k) => {
       const copy = transformed(oc, s, seed.tool, inst.trsf);
       if (seed.kind === "fuse" && seed.newBody) {
-        const name = `${seed.newBody}_${k + 2}`;
+        const name = nameOf(k);
         if (bodies.has(name) || changed.has(name)) throw new OpError(`${inst.label}: a body "${name}" already exists`);
-        changed.set(name, fuseInto(oc, s, null, copy, "pattern"));
+        changed.set(name, fuseInto(oc, s, null, copy, what));
+        // A copy of a member is a member, along the copied line.
+        copyMember(s, seed.newBody, name, [inst.trsf]);
       } else if (seed.kind === "fuse") {
         const name = seed.into!;
         try {
-          changed.set(name, fuseInto(oc, s, now(name), copy, "pattern"));
+          changed.set(name, fuseInto(oc, s, now(name), copy, what));
         } catch (e) {
           throw e instanceof OpError && e.message.startsWith("added no material") ? new OpError(`${inst.label} adds no material`) : e;
         }
@@ -426,7 +512,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         const on = (seed.bodies ?? [...bodies.keys()]).map((n) => [n, now(n)] as [string, TopoDS_Shape]);
         let cut: Map<string, TopoDS_Shape>;
         try {
-          cut = removeFrom(oc, s, on, copy, { listed: false, what: "pattern", missed: "" });
+          cut = removeFrom(oc, s, on, copy, { listed: false, what, missed: "" });
         } catch (e) {
           throw e instanceof OpError && e.message.startsWith("removed no material") ? new OpError(`${inst.label} removes no material`) : e;
         }

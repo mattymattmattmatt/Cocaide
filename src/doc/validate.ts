@@ -46,6 +46,12 @@ import {
   type Vec3,
   type Weld,
   type Drawing,
+  type DatumPlane,
+  type MirrorFeature,
+  type SplitFeature,
+  type MoveFeature,
+  type DeleteBodyFeature,
+  DERIVED_SUFFIX,
 } from "./types";
 import { validateDrawing } from "./drawing";
 import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
@@ -68,8 +74,12 @@ export interface ValidationResult {
   parameters: Parameters;
   material: Material | undefined;
   features: ValidatedFeature[];
-  /** The body names the features make, in order of first use. */
+  /** The bodies the part ends with, in order of first use. */
   bodies: string[];
+  /** Every body any feature makes, deleted and consumed ones too, in order. */
+  madeBodies: string[];
+  /** Each body's own material, where it has one. */
+  bodyMaterials: Record<string, Material>;
   /** The weldment profiles that validated, by name. */
   profiles: Record<string, ProfileDef>;
   /** The frame's nodes, with expressions evaluated. */
@@ -116,14 +126,14 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], profiles: {}, nodes: {}, welds: [], drawing: null, drawingErrors: [] };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], madeBodies: [], bodyMaterials: {}, profiles: {}, nodes: {}, welds: [], drawing: null, drawingErrors: [] };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "source", "photo", "profiles", "nodes", "welds", "features", "drawing"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -239,6 +249,21 @@ export function validateDocument(input: unknown): ValidationResult {
     });
   });
   result.bodies = bodies.all();
+  result.madeBodies = bodies.everMade();
+  if (input.bodyMaterials !== undefined) {
+    const m = new Checker("document");
+    if (!isObject(input.bodyMaterials)) m.fail("bodyMaterials", `must be an object of body name: material (got ${describe(input.bodyMaterials)})`);
+    else
+      for (const [name, raw] of Object.entries(input.bodyMaterials)) {
+        if (!result.madeBodies.includes(name)) {
+          m.fail(`bodyMaterials.${name}`, `no body "${name}" (bodies: ${result.madeBodies.join(", ") || "none"})`);
+          continue;
+        }
+        const mat = checkMaterial(raw, `bodyMaterials.${name}`, m);
+        if (mat) result.bodyMaterials[name] = mat;
+      }
+    result.headerErrors.push(...m.errors);
+  }
   if (input.welds !== undefined) {
     const welds = new Checker("document");
     result.welds = checkWelds(input.welds, result.bodies, welds);
@@ -292,6 +317,18 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       break;
     case "gusset":
       feature = validateGusset(raw, c, earlier, ctx);
+      break;
+    case "mirror":
+      feature = validateMirror(raw, c, earlier);
+      break;
+    case "split":
+      feature = validateSplit(raw, c);
+      break;
+    case "move":
+      feature = validateMove(raw, c);
+      break;
+    case "deleteBody":
+      feature = validateDeleteBody(raw, c);
       break;
     default:
       c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
@@ -1125,6 +1162,125 @@ function checkWelds(input: unknown, bodies: string[], c: Checker): Weld[] {
   return out;
 }
 
+// ------------------------------------------------------- multibody tools
+
+/** A datum plane: { "type": "datum", "normal", "origin" } (and "xDir" where allowed). */
+function validatePlane(v: unknown, path: string, c: Checker, xDirAllowed = false): DatumPlane | undefined {
+  if (!isObject(v)) {
+    c.fail(path, `must be a plane { "type": "datum", "normal": [x, y, z], "origin": [x, y, z] } (got ${describe(v)})`);
+    return undefined;
+  }
+  c.keys(v, path, xDirAllowed ? ["type", "normal", "origin", "xDir"] : ["type", "normal", "origin"]);
+  if (v.type !== "datum") c.fail(`${path}.type`, `must be "datum" (got ${describe(v.type)})`);
+  const normal = c.unitVec(v, "normal", path);
+  const origin = c.vec3(v, "origin", path);
+  return normal && origin && v.type === "datum" ? { type: "datum", normal, origin } : undefined;
+}
+
+function optionalNewBody(raw: Record<string, unknown>, c: Checker): string | undefined {
+  return raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
+}
+
+function validateMirror(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): MirrorFeature | null {
+  c.keys(raw, "", ["id", "op", "plane", "feature", "bodies", "merge", "newBody"]);
+  const plane = validatePlane(raw.plane, "plane", c);
+  const byFeature = raw.feature !== undefined;
+  if (byFeature === (raw.bodies !== undefined)) c.fail("", 'mirrors either one "feature" or a list of "bodies"');
+  let bodies: string[] | undefined;
+  if (byFeature) {
+    if (typeof raw.feature !== "string" || !earlier.has(raw.feature)) c.fail("feature", `${describe(raw.feature)} is not a feature before this one`);
+    else if (!PATTERNABLE_OPS.includes(earlier.get(raw.feature) as never)) c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a mirror repeats an extrude, cut, hole or member`);
+    if (raw.merge !== undefined) c.fail("merge", "merges a mirrored body into itself: it goes with \"bodies\"");
+  } else if (raw.bodies !== undefined) {
+    bodies = bodyList(raw.bodies, "bodies", c);
+  }
+  if (raw.merge !== undefined && typeof raw.merge !== "boolean") c.fail("merge", `must be true or false (got ${describe(raw.merge)})`);
+  const newBody = optionalNewBody(raw, c);
+  if (newBody !== undefined && raw.merge === true) c.fail("newBody", "a merged mirror makes no new body");
+  if (newBody !== undefined && bodies && bodies.length > 1) c.fail("newBody", "names one new body; with several, each is <name>_mirror");
+  if (c.errors.length > 0 || !plane) return null;
+  return {
+    id: raw.id as string,
+    op: "mirror",
+    plane,
+    ...(byFeature ? { feature: raw.feature as string } : { bodies }),
+    ...(raw.merge === true ? { merge: true } : {}),
+    ...(newBody ? { newBody } : {}),
+  };
+}
+
+function validateSplit(raw: Record<string, unknown>, c: Checker): SplitFeature | null {
+  c.keys(raw, "", ["id", "op", "body", "plane", "newBody"]);
+  const body = bodyName(raw.body, "body", c);
+  const plane = validatePlane(raw.plane, "plane", c);
+  const newBody = optionalNewBody(raw, c);
+  if (newBody && newBody === body) c.fail("newBody", "must differ from the body it is split from");
+  if (c.errors.length > 0 || !body || !plane) return null;
+  return { id: raw.id as string, op: "split", body, plane, ...(newBody ? { newBody } : {}) };
+}
+
+function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | null {
+  c.keys(raw, "", ["id", "op", "bodies", "translate", "rotate", "copy", "newBody"]);
+  const bodies = bodyList(raw.bodies, "bodies", c);
+  const translate = raw.translate === undefined ? undefined : c.vec3(raw, "translate", "");
+  let rotate: MoveFeature["rotate"];
+  if (raw.rotate !== undefined) {
+    if (!isObject(raw.rotate)) c.fail("rotate", `must be { "axis": { "origin", "direction" }, "angle" } (got ${describe(raw.rotate)})`);
+    else {
+      c.keys(raw.rotate, "rotate", ["axis", "angle"]);
+      const angle = c.num(raw.rotate, "angle", "rotate", {});
+      let axis: { origin: Vec3; direction: Vec3 } | undefined;
+      if (!isObject(raw.rotate.axis)) c.fail("rotate.axis", `must be { "origin": [x, y, z], "direction": [x, y, z] } (got ${describe(raw.rotate.axis)})`);
+      else {
+        c.keys(raw.rotate.axis, "rotate.axis", ["origin", "direction"]);
+        const origin = c.vec3(raw.rotate.axis, "origin", "rotate.axis");
+        const direction = c.unitVec(raw.rotate.axis, "direction", "rotate.axis");
+        if (origin && direction) axis = { origin, direction };
+      }
+      if (axis && angle !== undefined) rotate = { axis, angle };
+    }
+  }
+  if (raw.translate === undefined && raw.rotate === undefined) c.fail("", 'needs "translate", "rotate" or both');
+  if (raw.copy !== undefined && typeof raw.copy !== "boolean") c.fail("copy", `must be true or false (got ${describe(raw.copy)})`);
+  const newBody = optionalNewBody(raw, c);
+  if (newBody !== undefined && raw.copy !== true) c.fail("newBody", "names a copy: it goes with \"copy\": true");
+  if (newBody !== undefined && bodies && bodies.length > 1) c.fail("newBody", "names one copy; with several, each is <name>_copy");
+  if (c.errors.length > 0 || !bodies) return null;
+  return {
+    id: raw.id as string,
+    op: "move",
+    bodies,
+    ...(translate ? { translate } : {}),
+    ...(rotate ? { rotate } : {}),
+    ...(raw.copy === true ? { copy: true } : {}),
+    ...(newBody ? { newBody } : {}),
+  };
+}
+
+function validateDeleteBody(raw: Record<string, unknown>, c: Checker): DeleteBodyFeature | null {
+  c.keys(raw, "", ["id", "op", "bodies", "keep"]);
+  if ((raw.bodies === undefined) === (raw.keep === undefined)) {
+    c.fail("", 'names the bodies to delete ("bodies") or the ones to keep ("keep")');
+    return null;
+  }
+  const list = raw.bodies !== undefined ? bodyList(raw.bodies, "bodies", c) : bodyList(raw.keep, "keep", c);
+  if (c.errors.length > 0 || !list) return null;
+  return { id: raw.id as string, op: "deleteBody", ...(raw.bodies !== undefined ? { bodies: list } : { keep: list }) };
+}
+
+function checkMaterial(v: unknown, path: string, c: Checker): Material | null {
+  if (!isObject(v)) {
+    c.fail(path, `must be { "name": ..., "densityKgPerM3": ... } (got ${describe(v)})`);
+    return null;
+  }
+  const before = c.errors.length;
+  c.keys(v, path, ["name", "densityKgPerM3"]);
+  if (v.name !== undefined && typeof v.name !== "string") c.fail(`${path}.name`, `must be text (got ${describe(v.name)})`);
+  const density = c.num(v, "densityKgPerM3", path, { positive: true });
+  if (c.errors.length > before || density === undefined) return null;
+  return { ...(typeof v.name === "string" ? { name: v.name } : {}), densityKgPerM3: density };
+}
+
 // ---------------------------------------------------------------- combine
 
 function validateCombine(raw: Record<string, unknown>, c: Checker): CombineFeature | null {
@@ -1169,8 +1325,26 @@ function bodyList(v: unknown, path: string, c: Checker): string[] | undefined {
  */
 class BodyNames {
   private readonly names = new Set<string>();
+  /** Every name made, in order, deleted ones too. */
+  private readonly ever: string[] = [];
   /** newBody names by the feature that starts them, for patterns of it. */
   private readonly made = new Map<string, string>();
+
+  private add(name: string) {
+    this.names.add(name);
+    if (!this.ever.includes(name)) this.ever.push(name);
+  }
+
+  /** New names a feature makes, refused if any is taken. */
+  private fresh(names: string[], path: string, c: Checker): boolean {
+    const taken = names.filter((n) => this.names.has(n));
+    const twice = names.find((n, i) => names.indexOf(n) !== i);
+    if (taken.length) c.fail(path, `would make body ${taken.map((n) => `"${n}"`).join(", ")}, which ${taken.length === 1 ? "is" : "are"} already a body${path === "newBody" ? "" : "; name the new body with newBody"}`);
+    else if (twice) c.fail(path, `would make body "${twice}" twice`);
+    return !taken.length && !twice;
+  }
+
+
 
   check(f: Feature, c: Checker): void {
     const need = (name: string, path: string) => {
@@ -1197,12 +1371,46 @@ class BodyNames {
         break;
       }
     }
+    // The multibody tools: what they need, and the names they make.
+    let makes: string[] = [];
+    switch (f.op) {
+      case "mirror":
+        if (f.bodies) {
+          f.bodies.forEach((b, i) => need(b, `bodies[${i}]`));
+          if (!f.merge) makes = f.newBody ? [f.newBody] : f.bodies.map((b) => `${b}${DERIVED_SUFFIX.mirror}`);
+        } else if (f.feature && this.made.has(f.feature)) makes = [f.newBody ?? `${this.made.get(f.feature)}${DERIVED_SUFFIX.mirror}`];
+        else if (f.newBody) c.fail("newBody", `${f.feature} makes no body of its own, so its mirror makes none`);
+        break;
+      case "split":
+        need(f.body, "body");
+        makes = [f.newBody ?? `${f.body}${DERIVED_SUFFIX.split}`];
+        break;
+      case "move":
+        f.bodies.forEach((b, i) => need(b, `bodies[${i}]`));
+        if (f.copy) makes = f.newBody ? [f.newBody] : f.bodies.map((b) => `${b}${DERIVED_SUFFIX.move}`);
+        break;
+      case "deleteBody": {
+        const list = f.bodies ?? f.keep!;
+        list.forEach((b, i) => need(b, `${f.bodies ? "bodies" : "keep"}[${i}]`));
+        const gone = f.bodies ?? [...this.names].filter((n) => !f.keep!.includes(n));
+        if (c.errors.length === 0 && gone.length >= this.names.size) c.fail(f.bodies ? "bodies" : "keep", "would delete every body: nothing of the part would be left");
+        if (c.errors.length === 0 && f.keep && gone.length === 0) c.fail("keep", "keeps every body: there is nothing to delete");
+        break;
+      }
+    }
+    if (makes.length && c.errors.length === 0) {
+      const named = (f.op === "mirror" || f.op === "split" || f.op === "move") && f.newBody !== undefined;
+      this.fresh(makes, named ? "newBody" : f.op === "split" ? "body" : f.op === "mirror" && !f.bodies ? "feature" : "bodies", c);
+    }
     for (const [path, name] of selectorBodies(f)) need(name, path);
     if (c.errors.length > 0) return;
+    for (const n of makes) this.add(n);
+    if (f.op === "mirror" && f.feature && makes.length) this.made.set(f.id, makes[0]);
+    if (f.op === "deleteBody") for (const n of f.bodies ?? [...this.names].filter((x) => !f.keep!.includes(x))) this.names.delete(n);
     // What this feature makes, for the features after it.
     if (f.op === "extrude") {
       const name = f.newBody ?? f.body ?? DEFAULT_BODY;
-      this.names.add(name);
+      this.add(name);
       if (f.newBody) this.made.set(f.id, f.newBody);
     } else if ((f.op === "linearPattern" || f.op === "circularPattern") && this.made.has(f.feature)) {
       const seed = this.made.get(f.feature)!;
@@ -1210,18 +1418,22 @@ class BodyNames {
       const copies = Array.from({ length: total - 1 }, (_, i) => `${seed}_${i + 2}`);
       const taken = copies.filter((n) => this.names.has(n));
       if (taken.length) c.fail("feature", `its copies of body "${seed}" would be named ${taken.join(", ")}, which ${taken.length === 1 ? "is" : "are"} already a body`);
-      else for (const n of copies) this.names.add(n);
+      else for (const n of copies) this.add(n);
     } else if (f.op === "combine") {
       for (const t of f.tools) this.names.delete(t);
     } else if (f.op === "member" || f.op === "endCap" || f.op === "gusset") {
       const name = f.newBody ?? f.id;
-      this.names.add(name);
+      this.add(name);
       if (f.op === "member") this.made.set(f.id, name);
     }
   }
 
   all(): string[] {
     return [...this.names];
+  }
+
+  everMade(): string[] {
+    return [...this.ever];
   }
 
   private list(): string {

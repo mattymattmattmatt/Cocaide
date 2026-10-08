@@ -17,6 +17,7 @@ import type {
   FilletFeature,
   HoleFeature,
   LinearPatternFeature,
+  MoveFeature,
   Vec2,
   Vec3,
 } from "../doc/types";
@@ -527,6 +528,77 @@ export function combineBodies(oc: OC, s: Scope, f: CombineFeature, target: TopoD
   });
   if (!isValidShape(oc, s, current)) throw new OpError("the combine produced an invalid solid");
   return current;
+}
+
+// ------------------------------------------------------- multibody tools
+
+type Trsf = ReturnType<typeof identity>;
+
+/** The mirror about a plane. */
+export function mirrorTrsf(oc: OC, s: Scope, plane: { normal: Vec3; origin: Vec3 }): Trsf {
+  const t = identity(oc, s);
+  t.SetMirror(s.track(new oc.gp_Ax2(pnt(oc, s, plane.origin), dir(oc, s, normalize3(plane.normal)))));
+  return t;
+}
+
+/** A move's steps, in order: the turn, then the shift. */
+export function moveTrsfs(oc: OC, s: Scope, f: MoveFeature): Trsf[] {
+  const out: Trsf[] = [];
+  if (f.rotate) {
+    const t = identity(oc, s);
+    t.SetRotation(s.track(new oc.gp_Ax1(pnt(oc, s, f.rotate.axis.origin), dir(oc, s, normalize3(f.rotate.axis.direction)))), (f.rotate.angle * Math.PI) / 180);
+    out.push(t);
+  }
+  if (f.translate) {
+    const t = identity(oc, s);
+    t.SetTranslation(vec(oc, s, f.translate));
+    out.push(t);
+  }
+  return out;
+}
+
+/** A point, and a direction, under transforms applied in order. */
+export function transformLine(oc: OC, s: Scope, from: Vec3, d: Vec3, steps: Trsf[]): { from: Vec3; dir: Vec3 } {
+  const p = pnt(oc, s, from);
+  const q = dir(oc, s, d);
+  for (const t of steps) {
+    p.Transform(t);
+    q.Transform(t);
+  }
+  return { from: [p.X(), p.Y(), p.Z()], dir: [q.X(), q.Y(), q.Z()] };
+}
+
+/**
+ * A body's mirror image fused into it: a symmetric body from one half. The
+ * image must touch the body, or the result would be one body of two solids.
+ */
+export function mergeMirror(oc: OC, s: Scope, name: string, body: TopoDS_Shape, image: TopoDS_Shape): TopoDS_Shape {
+  const before = volumeOf(oc, s, body);
+  const result = unify(oc, s, boolean(oc, s, "fuse", body, image));
+  if (!isValidShape(oc, s, result)) throw new OpError(`merging the mirror of "${name}" produced an invalid solid`);
+  if (countSubShapes(oc, s, result, "solid") > 1) throw new OpError(`the mirror of "${name}" doesn't touch it: merged, they would be one body of separate solids. Leave merge off to make "${name}_mirror"`);
+  if (volumeOf(oc, s, result) - before <= VOLUME_EPS * Math.max(1, before)) throw new OpError(`the mirror of "${name}" adds nothing: it is already symmetric about the plane`);
+  return result;
+}
+
+/** A body cut in two by a plane: [the piece behind it, the piece the normal points to]. Each must be one solid. */
+export function splitBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, plane: { normal: Vec3; origin: Vec3 }): [TopoDS_Shape, TopoDS_Shape] {
+  const n = normalize3(plane.normal);
+  const behind = cutHalfSpace(oc, s, body, { point: plane.origin, normal: n });
+  const front = cutHalfSpace(oc, s, body, { point: plane.origin, normal: scale3(n, -1) });
+  const total = volumeOf(oc, s, body);
+  const [vb, vf] = [volumeOf(oc, s, behind), volumeOf(oc, s, front)];
+  if (vb <= VOLUME_EPS * Math.max(1, total) || vf <= VOLUME_EPS * Math.max(1, total)) {
+    throw new OpError(`the plane misses body "${name}": it lies wholly ${vf <= VOLUME_EPS * Math.max(1, total) ? "behind" : "in front of"} it`);
+  }
+  for (const [piece, side] of [
+    [behind, "behind"],
+    [front, "in front of"],
+  ] as const) {
+    const solids = countSubShapes(oc, s, piece, "solid");
+    if (solids !== 1) throw new OpError(`the plane leaves ${solids} pieces of "${name}" ${side} it; a split makes two bodies, so cut it where it leaves one on each side`);
+  }
+  return [unify(oc, s, behind), unify(oc, s, front)];
 }
 
 function identity(oc: OC, s: Scope) {

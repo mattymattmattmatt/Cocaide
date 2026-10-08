@@ -1,6 +1,6 @@
 # Cocaide: after v1
 
-Phases A–G (the original build spec) are done: see the README. So are H–L below. This file
+Phases A–G (the original build spec) are done: see the README. So are H–L below; M is next. This file
 continues the spec in the same form. Each phase ends with an acceptance
 check, and the next phase does not start until it passes.
 
@@ -256,3 +256,42 @@ view and asking for the leg height gives a proposal that, accepted, adds a
 dimension reading 860. An edit to a feature from that ask is rejected. The
 PDF opens in a PDF reader (poppler), and its text has the title, the
 dimensions and the cut list rows. The SVG is the sheet the app shows.
+
+## Phase M — multibody tools
+
+Phase H made bodies. This phase gives them the tools a multibody modeller is
+expected to have, on Phase H's rules: every body is named in the document,
+nothing merges or disappears silently, and every result is measured. Each tool
+is a feature, so it rebuilds, undoes, and is open to agents like any other.
+
+- **Mirror.** `{ "op": "mirror", "plane": { "type": "datum", "normal": [1, 0, 0], "origin": ["=frame_w / 2", 0, 0] }, "feature": "hole_1" }`
+  mirrors one earlier feature the way a pattern repeats it.
+  - A mirrored cut or hole cuts the same bodies, and a mirrored extrude adds to the same body.
+  - A mirrored member, or an extrude that starts a body, makes a new body, `<body>_mirror` (or `newBody`).
+  - `"bodies": ["leg_a", "leg_d"]` instead mirrors whole bodies as they are at that point, each into a new body `<name>_mirror`.
+  - With `"merge": true`, each mirror image is fused into its own body, so a symmetric part can be modelled as one half. A mirror image that doesn't touch its body can't be merged, and the error says so.
+- **Split.** `{ "op": "split", "body": "base", "plane": { ... }, "newBody": "base_left" }`
+  cuts a body in two with a plane. The piece on the side the normal points to becomes `newBody` (default `<body>_split`); the other keeps the name. It is an error, saying which, when the plane misses the body or leaves more than one piece on a side.
+- **Move/Copy.** `{ "op": "move", "bodies": ["upright"], "rotate": { "axis": { "origin": [0, 0, 0], "direction": [0, 0, 1] }, "angle": 90 }, "translate": [0, 50, 0], "copy": true }`
+  turns bodies (first) and moves them. With `copy` the originals stay, and the copies are new bodies, `<name>_copy` (or `newBody` for one).
+- **Delete/Keep.** `{ "op": "deleteBody", "bodies": ["scrap"] }` or `{ "op": "deleteBody", "keep": ["base"] }`.
+  A later feature that names a deleted body is an error at validation, as after a combine. Deleting every body is refused.
+- **Members stay members.** A member that is mirrored, patterned, moved or copied, and each piece of a split one, goes into the cut list as a member, measured along its own line, under its body's name. A member combined into another body is no longer a member.
+- **Material per body.** `"bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } }` overrides the part's material for that body.
+  - Each body's mass uses its own material, and the part's mass is their sum.
+  - The cut list's kg and the drawing's title block follow.
+  - A body that is renamed keeps its material, and one that is deleted takes its material with it.
+- **Save a body as a part.** One body becomes a document of its own. It is a copy of the part, ending in a `deleteBody` that keeps that body, named after it, with that body's material.
+  - It is a copy, not a link. Linking files would need a shared store, which v1 avoids.
+  - In the Bodies panel there is one per body, and over MCP it is `saveBody`.
+
+Acceptance:
+1. **Mirror a feature.** On the stand, mirror `hole_1` about the XZ plane: the base has three holes, and loses one hole's volume (π × 5² × 8 mm³).
+2. **Move and mirror a body.** Move the upright 30 mm along Y, then mirror it about the XZ plane: three bodies, the volume up by 57,600 mm³, and no interference.
+3. **Split.** Split the base at x = 0. The two halves are equal, and add up to the base.
+4. **Keep.** Keeping `base` alone leaves one body.
+5. **Material per body.** In aluminium (2700 kg/m³), the upright's mass is 0.15552 kg, and the part's mass is the sum of its bodies.
+6. **Save a body as a part.** The upright saved as a part rebuilds alone to 57,600 mm³, in aluminium, and exports a STEP of one solid named `upright`.
+7. **Mirror half a frame.** Take the table frame without `leg_b` and `leg_c`, and mirror `leg_a` and `leg_d` about x = 600. It rebuilds to the same 3,054,720 mm³, and its cut list is again 2 × 1200, 4 × 860, 2 × 600.
+8. **Patterns.** A pattern of a member is in the cut list too.
+9. **In the app.** Each tool is in the toolbar, with its properties in the panel. The Bodies panel sets a body's material, deletes it, and saves it as a part.

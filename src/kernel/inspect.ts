@@ -54,7 +54,7 @@ export function measurementSummary(m: Measurements): Record<string, unknown> {
     faces: m.faces,
     // A part of several bodies: each one, and every pair that overlaps.
     ...(m.bodies.length > 1
-      ? { bodies: m.bodies.map((b) => ({ name: b.name, volume: round6(b.volume), size: b.boundingBox?.size.map(round6), holeCount: b.holeCount })) }
+      ? { bodies: m.bodies.map((b) => ({ name: b.name, volume: round6(b.volume), massKg: round6(b.massKg), material: b.material, size: b.boundingBox?.size.map(round6), holeCount: b.holeCount })) }
       : {}),
     ...(m.interference.length ? { interference: m.interference } : {}),
     // A weldment: the cut list, read from the trimmed members.

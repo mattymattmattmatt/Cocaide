@@ -142,6 +142,14 @@ export const TOOLS: Record<string, ToolSpec> = {
     },
     readOnly: true,
   },
+  setBodyMaterial: {
+    description: 'Give a body its own material ({ "name": "aluminium 6061", "densityKgPerM3": 2700 }), or put it back on the part\'s (material: null). Its mass, the part\'s and the cut list\'s follow.',
+    input: { body: z.string(), material: obj.nullable() },
+  },
+  saveBody: {
+    description: "Write one body as a part of its own (.cocaide.json) to the output folder: a copy of this part that keeps only that body, in its material. Fully parametric; not a link.",
+    input: { body: z.string(), file: z.string().optional().describe("File name; default <part>-<body>.cocaide.json") },
+  },
   newDrawing: {
     description: "Make the part's drawing, planned by code: an A3 sheet with front, top, right and iso views, the overall size dimensioned, every hole called out, a balloon per cut list item, the cut list and weld tables and the title block. Replaces a drawing the part has.",
     input: { date: z.string().optional().describe("The title block's date, e.g. 2026-10-08") },

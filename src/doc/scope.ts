@@ -10,7 +10,7 @@
 //   "param:<name>"  change that parameter
 //   "name"          rename the document
 //   "photo"         move or rescale the photo's scale (never confirm it: only the user can)
-//   "body:<name>"   add features that touch only that body (sketches touch none); rename it
+//   "body:<name>"   add features that touch only that body (sketches touch none); rename it; set its material
 //   "node:<name>"   move or rename that node
 //   "weld:<id>"     change or remove that weld in the weld table ("+" adds one)
 //   "drawing"       anything in the drawing (never the part's features)
@@ -125,6 +125,10 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       allowed = has(`weld:${cmd.id}`) || (!exists && has("+"));
       break;
     }
+    case "setBodyMaterial":
+      what = `setBodyMaterial "${cmd.body}"`;
+      allowed = has(`body:${cmd.body}`);
+      break;
     case "setDrawing":
     case "setSheet":
       what = cmd.type;
@@ -213,6 +217,17 @@ function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteSc
       const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);
       return !!seed && onlyBodies(doc, seed, scope, depth + 1);
     }
+    case "mirror": {
+      if (Array.isArray(f.bodies)) return f.bodies.length > 0 && f.bodies.every(inScope);
+      const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);
+      return !!seed && onlyBodies(doc, seed, scope, depth + 1);
+    }
+    case "split":
+      return inScope(f.body);
+    case "move":
+    case "deleteBody":
+      // Keeping some bodies deletes all the others: that is never one body's to do.
+      return Array.isArray(f.bodies) && f.bodies.length > 0 && f.bodies.every(inScope);
     default:
       return false;
   }

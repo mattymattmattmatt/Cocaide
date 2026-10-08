@@ -207,6 +207,11 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     input_schema: obj({ name: { type: "string" }, at: { type: ["array", "null"], items: { type: ["number", "string"] } } }, ["name", "at"]),
   },
   {
+    name: "setBodyMaterial",
+    description: 'Give a body its own material ({ "name": "aluminium 6061", "densityKgPerM3": 2700 }), or put it back on the part\'s (material: null).',
+    input_schema: obj({ body: { type: "string" }, material: { type: ["object", "null"] } }, ["body", "material"]),
+  },
+  {
     name: "setWeld",
     description: "Add or replace a weld note in the weld table by id, or remove it (weld: null). Welds are notes, never modelled.",
     input_schema: obj({ id: { type: "string" }, weld: { type: ["object", "null"] } }, ["id", "weld"]),

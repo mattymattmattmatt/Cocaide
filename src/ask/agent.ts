@@ -460,6 +460,8 @@ function toCommand(name: string, a: Record<string, unknown>): Command | string {
       return { type: "setNode", name: str("name"), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null };
     case "setWeld":
       return { type: "setWeld", id: str("id"), weld: obj("weld") };
+    case "setBodyMaterial":
+      return { type: "setBodyMaterial", body: str("body"), material: obj("material") };
     case "setAnnotation":
       return { type: "setAnnotation", id: str("id"), annotation: obj("annotation") };
     case "setView":

@@ -15,6 +15,8 @@ export interface CocaideDocument {
   parameters?: Record<string, number>;
   /** Used for the mass measurement. Defaults to steel (7850 kg/m³) when absent. */
   material?: Material;
+  /** A body's own material, by body name, instead of the part's (Phase M). */
+  bodyMaterials?: Record<string, Material>;
   /** Where the part came from, kept as notes (a drawing's title block). Stored, never simulated. */
   source?: DocumentSource;
   /** A photo pinned under the part as a reference. Never geometry. */
@@ -307,7 +309,11 @@ export type Feature =
   | MemberFeature
   | JointFeature
   | EndCapFeature
-  | GussetFeature;
+  | GussetFeature
+  | MirrorFeature
+  | SplitFeature
+  | MoveFeature
+  | DeleteBodyFeature;
 export type FeatureOp = Feature["op"];
 export const FEATURE_OPS: readonly FeatureOp[] = [
   "sketch",
@@ -323,6 +329,10 @@ export const FEATURE_OPS: readonly FeatureOp[] = [
   "joint",
   "endCap",
   "gusset",
+  "mirror",
+  "split",
+  "move",
+  "deleteBody",
 ];
 
 // ----------------------------------------------------------------- bodies
@@ -615,6 +625,54 @@ export interface GussetFeature extends FeatureBase {
   chamfer?: number;
   newBody?: string;
 }
+
+// ------------------------------------------------------- multibody tools
+
+/**
+ * Mirrors about a plane (Phase M). Either one earlier feature, the way a
+ * pattern repeats it (a cut cuts the same bodies; an extrude adds to the same
+ * body; one that starts a body, or a member, makes a new body `<body>_mirror`),
+ * or whole bodies as they are here, each into a new body `<name>_mirror`, or
+ * fused into itself with `merge`.
+ */
+export interface MirrorFeature extends FeatureBase {
+  op: "mirror";
+  plane: DatumPlane;
+  feature?: string;
+  bodies?: string[];
+  merge?: boolean;
+  /** The new body's name, when the mirror makes exactly one. */
+  newBody?: string;
+}
+
+/** Cuts a body in two with a plane: the piece the normal points to becomes `newBody` (default `<body>_split`). */
+export interface SplitFeature extends FeatureBase {
+  op: "split";
+  body: string;
+  plane: DatumPlane;
+  newBody?: string;
+}
+
+/** Turns (first) and moves bodies; with `copy`, the originals stay and the copies are new bodies `<name>_copy`. */
+export interface MoveFeature extends FeatureBase {
+  op: "move";
+  bodies: string[];
+  translate?: Vec3;
+  rotate?: { axis: { origin: Vec3; direction: Vec3 }; angle: number };
+  copy?: boolean;
+  /** The copy's name, when one body is copied. */
+  newBody?: string;
+}
+
+/** Deletes bodies, or keeps only these. */
+export interface DeleteBodyFeature extends FeatureBase {
+  op: "deleteBody";
+  bodies?: string[];
+  keep?: string[];
+}
+
+/** The suffix a tool gives the new body it derives from another when it isn't named: upright → upright_mirror. */
+export const DERIVED_SUFFIX = { mirror: "_mirror", split: "_split", move: "_copy" } as const;
 
 // ---------------------------------------------------------------- combine
 

@@ -16,12 +16,14 @@ import { annotationTargetProblem, drawingTargets, rawDrawing, renameInDrawing } 
 import {
   BODY_NAME,
   DEFAULT_BODY,
+  DERIVED_SUFFIX,
   NODE_NAME,
   type Annotation,
   type Constraint,
   type Drawing,
   type DrawingView,
   type Feature,
+  type Material,
   type PhotoUnderlay,
   type ProfileDef,
   type SketchEntity,
@@ -79,7 +81,9 @@ export type Command =
   /** Adds or replaces a view by id, or removes it with every annotation in it. */
   | { type: "setView"; id: string; view: DrawingView | Record<string, unknown> | null }
   /** Adds or replaces an annotation by id, or removes it. What it points at must be in the part. */
-  | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null };
+  | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null }
+  /** Gives a body its own material, or puts it back on the part's (null). */
+  | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
@@ -207,12 +211,16 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (!names.includes(cmd.from)) return { ok: false, error: `renameBody: no body "${cmd.from}" (bodies: ${names.join(", ") || "none"})` };
       if (typeof cmd.to !== "string" || !BODY_NAME.test(cmd.to)) return { ok: false, error: `renameBody: "${String(cmd.to)}" is not a body name (letters, digits, _ and -)` };
       if (names.includes(cmd.to)) return { ok: false, error: `renameBody: a body "${cmd.to}" already exists` };
+      // What follows the rename, worked out on the features as they were.
+      const renamed = renamedBodies(features, cmd.from, cmd.to);
       const problem = renameBody(features, cmd.from, cmd.to);
       if (problem) return { ok: false, error: `renameBody: ${problem}` };
-      // The weld table names bodies too.
+      // The weld table, the bodies' materials and the drawing's balloons name bodies too.
       if (Array.isArray(doc.welds)) {
-        doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => (b === cmd.from ? cmd.to : b)) } : w));
+        doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => renamed.get(String(b)) ?? b) } : w));
       }
+      if (isObject(doc.bodyMaterials)) doc.bodyMaterials = Object.fromEntries(Object.entries(doc.bodyMaterials).map(([k, v]) => [renamed.get(k) ?? k, v]));
+      for (const [a, b] of renamed) if (doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", a, b);
       break;
     }
     case "setNode": {
@@ -267,6 +275,16 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       }
       if (welds.length) doc.welds = welds;
       else delete doc.welds;
+      break;
+    }
+    case "setBodyMaterial": {
+      const made = validateDocument(doc).madeBodies;
+      if (!made.includes(cmd.body)) return { ok: false, error: `setBodyMaterial: no body "${cmd.body}" (bodies: ${made.join(", ") || "none"})` };
+      const materials = isObject(doc.bodyMaterials) ? { ...doc.bodyMaterials } : {};
+      if (cmd.material === null) delete materials[cmd.body];
+      else materials[cmd.body] = structuredClone(cmd.material);
+      if (Object.keys(materials).length) doc.bodyMaterials = materials;
+      else delete doc.bodyMaterials;
       break;
     }
     case "setDrawing": {
@@ -428,6 +446,14 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       return { ok: false, error: `unknown command ${JSON.stringify((cmd as { type?: unknown }).type)}` };
   }
 
+  // A body's material goes with the body: a command that removes a body (deleting the feature that makes it) drops it.
+  if (cmd.type !== "setBodyMaterial" && isObject(doc.bodyMaterials)) {
+    const had = new Set(validateDocument(input).madeBodies);
+    const has = new Set(validateDocument(doc).madeBodies);
+    const kept = Object.fromEntries(Object.entries(doc.bodyMaterials).filter(([k]) => has.has(k) || !had.has(k)));
+    if (Object.keys(kept).length) doc.bodyMaterials = kept;
+    else delete doc.bodyMaterials;
+  }
   const before = new Set(allErrors(validateDocument(input)));
   const introduced = allErrors(validateDocument(doc)).filter((e) => !before.has(e));
   if (introduced.length > 0) {
@@ -453,11 +479,21 @@ function targetProblem(doc: RawDocument, annotations: Record<string, unknown>[])
  * names it there.
  */
 function renameBody(features: Record<string, unknown>[], from: string, to: string): string | null {
+  // A body another tool made from this one without naming it (a mirror, a split, a copy) is named
+  // after it: renaming that body means naming it on the tool that makes it.
+  const maker = implicitMaker(features, from);
+  if (maker) {
+    if (maker.list && maker.list.length > 1) return `"${from}" is ${maker.id}'s ${maker.suffix.slice(1)} of "${maker.of}", one of several it makes; list that body alone in ${maker.id} to name it`;
+    const i = features.findIndex((f) => f.id === maker.id);
+    features[i] = { ...features[i], newBody: to };
+    // Then everything that names it follows, as below.
+  }
   // A pattern of the feature that starts the body makes copies named from_2, from_3: they follow.
   const seeds = new Set(features.filter((f) => (f.op === "extrude" && f.newBody === from) || (f.op === "member" && (f.newBody ?? f.id) === from)).map((f) => f.id));
   const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
   const derived = new RegExp(`^${from.replace(/[-]/g, "\\-")}_(\\d+)$`);
-  const rename = (n: unknown) => (n === from ? to : patterned && typeof n === "string" && derived.test(n) ? n.replace(derived, `${to}_$1`) : n);
+  const renamed = renamedBodies(features, from, to);
+  const rename = (n: unknown) => (typeof n === "string" && renamed.has(n) ? renamed.get(n)! : n);
   if (patterned && derived.test(to)) return `"${to}" would read as a pattern copy of "${from}"`;
   let first = true;
   const selector = (s: unknown): unknown => {
@@ -484,6 +520,9 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
     }
     if ((f.op === "member" || f.op === "endCap" || f.op === "gusset") && (f.newBody ?? f.id) === from) f.newBody = to;
     if (Array.isArray(f.bodies)) f.bodies = f.bodies.map(rename);
+    if (f.op === "deleteBody" && Array.isArray(f.keep)) f.keep = f.keep.map(rename);
+    if (f.op === "split") f.body = rename(f.body);
+    if ((f.op === "mirror" || f.op === "split" || f.op === "move") && f.newBody !== undefined) f.newBody = rename(f.newBody);
     if (f.op === "combine") {
       f.target = rename(f.target);
       if (Array.isArray(f.tools)) f.tools = f.tools.map(rename);
@@ -491,6 +530,49 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
     if (f.face) f.face = selector(f.face);
     if (f.edges) f.edges = Array.isArray(f.edges) ? f.edges.map(selector) : selector(f.edges);
     features[i] = f;
+  }
+  return null;
+}
+
+/**
+ * Every body name a rename changes: the body, the copies a pattern names after
+ * it (from_2), and the bodies a mirror, split or copy derives from it without
+ * naming them (from_mirror, from_split, from_copy).
+ */
+export function renamedBodies(features: Record<string, unknown>[], from: string, to: string): Map<string, string> {
+  const out = new Map([[from, to]]);
+  const seeds = new Set(features.filter((f) => (f.op === "extrude" && f.newBody === from) || (f.op === "member" && (f.newBody ?? f.id) === from)).map((f) => f.id));
+  const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
+  if (patterned) {
+    for (const f of features) {
+      if ((f.op !== "linearPattern" && f.op !== "circularPattern") || !seeds.has(f.feature)) continue;
+      const total = Number(f.count) * (f.op === "linearPattern" ? Number(f.count2 ?? 1) : 1);
+      for (let k = 2; k <= total; k++) out.set(`${from}_${k}`, `${to}_${k}`);
+    }
+  }
+  for (const f of features) {
+    if (f.newBody !== undefined) continue;
+    const lists = (x: unknown) => Array.isArray(x) && x.includes(from);
+    if (f.op === "mirror" && f.merge !== true && (lists(f.bodies) || seeds.has(f.feature))) out.set(`${from}${DERIVED_SUFFIX.mirror}`, `${to}${DERIVED_SUFFIX.mirror}`);
+    if (f.op === "split" && f.body === from) out.set(`${from}${DERIVED_SUFFIX.split}`, `${to}${DERIVED_SUFFIX.split}`);
+    if (f.op === "move" && f.copy === true && lists(f.bodies)) out.set(`${from}${DERIVED_SUFFIX.move}`, `${to}${DERIVED_SUFFIX.move}`);
+  }
+  return out;
+}
+
+/** The tool that makes this body by deriving its name from another's, if any. */
+function implicitMaker(features: Record<string, unknown>[], name: string): { id: string; suffix: string; of: string; list?: unknown[] } | null {
+  for (const f of features) {
+    if (f.newBody !== undefined) continue;
+    const suffix = f.op === "mirror" && f.merge !== true ? DERIVED_SUFFIX.mirror : f.op === "split" ? DERIVED_SUFFIX.split : f.op === "move" && f.copy === true ? DERIVED_SUFFIX.move : null;
+    if (!suffix || !name.endsWith(suffix)) continue;
+    const of = name.slice(0, -suffix.length);
+    if (f.op === "split" && f.body === of) return { id: String(f.id), suffix, of };
+    if (Array.isArray(f.bodies) && f.bodies.includes(of)) return { id: String(f.id), suffix, of, list: f.bodies };
+    if (f.op === "mirror" && typeof f.feature === "string") {
+      const seed = features.find((g) => g.id === f.feature);
+      if (seed && (seed.op === "member" ? (seed.newBody ?? seed.id) : seed.newBody) === of) return { id: String(f.id), suffix, of };
+    }
   }
   return null;
 }
@@ -645,7 +727,7 @@ export function dependants(features: unknown[], id: string): string[] {
 export function references(f: Record<string, unknown>): string[] {
   const refs: string[] = [];
   if ((f.op === "extrude" || f.op === "cut") && typeof f.sketch === "string") refs.push(f.sketch);
-  if ((f.op === "linearPattern" || f.op === "circularPattern") && typeof f.feature === "string") refs.push(f.feature);
+  if ((f.op === "linearPattern" || f.op === "circularPattern" || f.op === "mirror") && typeof f.feature === "string") refs.push(f.feature);
   // Joints, gussets and end caps work on members.
   if ((f.op === "joint" || f.op === "gusset") && Array.isArray(f.members)) refs.push(...f.members.filter((m): m is string => typeof m === "string"));
   if (f.op === "joint" && typeof f.through === "string") refs.push(f.through);

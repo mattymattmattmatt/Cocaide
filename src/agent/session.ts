@@ -14,6 +14,7 @@ import { createHistory, record, redo, undo, canRedo, canUndo, type History } fro
 import { documentParameters, resolveExpressions } from "../doc/parameters";
 import { exportRefusal, photoNote } from "../doc/photo";
 import type { DrawingGeometry } from "../ask/kernel";
+import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { geometryKey } from "../doc/drawing";
 import type { Constraint, SketchEntity, Vec3, ViewLook } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
@@ -68,6 +69,7 @@ export const EDIT_TOOLS = [
   "setNode",
   "renameNode",
   "setWeld",
+  "setBodyMaterial",
   "newDrawing",
   "setSheet",
   "setView",
@@ -81,7 +83,7 @@ export const EDIT_TOOLS = [
   "undo",
   "redo",
 ] as const;
-export const READ_TOOLS = ["listFeatures", "getFeature", "validate", "rebuild", "measure", "exportSTEP", "exportSTL", "screenshot", "drawing", "exportDrawing"] as const;
+export const READ_TOOLS = ["listFeatures", "getFeature", "validate", "rebuild", "measure", "exportSTEP", "exportSTL", "screenshot", "drawing", "exportDrawing", "saveBody"] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
 export interface LogSession {
@@ -247,6 +249,10 @@ export class AgentSession {
         return this.edit({ type: "renameNode", from: String(a.from), to: String(a.to) });
       case "setWeld":
         return this.edit({ type: "setWeld", id: String(a.id), weld: isObject(a.weld) ? a.weld : null });
+      case "setBodyMaterial":
+        return this.edit({ type: "setBodyMaterial", body: String(a.body), material: isObject(a.material) ? a.material : null });
+      case "saveBody":
+        return this.saveBody(String(a.body), a.file);
       case "newDrawing": {
         if (!this.built.solid || !this.built.measurements) return this.fail("newDrawing: there is no solid to draw yet");
         const drawing = planDrawing(this.doc, this.built.measurements, this.geometry(DEFAULT_VIEWS), typeof a.date === "string" ? { date: a.date } : {});
@@ -593,6 +599,18 @@ export class AgentSession {
     writeFileSync(path, bytes);
     const failing = drawingChecks(c.sheet, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok).map((x) => `${x.label}: ${x.actual}`);
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision, ...(failing.length ? { failingChecks: failing } : {}) } };
+  }
+
+  /** One body as a part of its own, written to the output folder. */
+  private saveBody(body: string, file: unknown): CallResult {
+    const r = bodyPart(this.doc, body);
+    if (!r.ok) return this.fail(`saveBody: ${r.error}`);
+    const name = typeof file === "string" && file.trim() ? basename(file.trim()) : bodyPartFile(this.doc, body);
+    const path = join(this.outDir, name.endsWith(".json") ? name : `${name}.cocaide.json`);
+    const text = formatDocument(r.doc);
+    mkdirSync(this.outDir, { recursive: true });
+    writeFileSync(path, text);
+    return { result: { ok: true, file: path, body, features: r.doc.features.length, revision: this.revision } };
   }
 
   // ------------------------------------------------------------ plumbing

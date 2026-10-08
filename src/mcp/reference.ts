@@ -106,6 +106,24 @@ x across, y up): a frame whose nodes are its outside corners has its members ali
 (long point to long point) and end angles (0 square, 45 mitre), read from its trimmed body, and the cut list
 groups alike members.
 
+## multibody tools
+{ "id": "mirror_1", "op": "mirror", "plane": { "type": "datum", "normal": [1,0,0], "origin": ["=frame_w / 2",0,0] }, "feature": "hole_1" }
+  mirrors one earlier extrude, cut, hole or member like a pattern does: a cut cuts the same bodies, an extrude adds
+  to the same body, one that starts a body (or a member) makes a new body "<body>_mirror" (or "newBody").
+{ "id": "mirror_2", "op": "mirror", "plane": {...}, "bodies": ["leg_a", "leg_d"], "merge": false }
+  mirrors whole bodies as they are here, each into a new body "<name>_mirror"; "merge": true fuses each mirror
+  image into its own body (it must touch it).
+{ "id": "split_1", "op": "split", "body": "base", "plane": {...}, "newBody": "base_left" }
+  cuts a body in two: the piece the normal points to is newBody (default "<body>_split"); one piece each side.
+{ "id": "move_1", "op": "move", "bodies": ["upright"], "rotate": { "axis": { "origin": [0,0,0], "direction": [0,0,1] }, "angle": 90 },
+  "translate": [0, 50, 0], "copy": true, "newBody": "upright_2" }  turns, then moves; with copy the copies are new
+  bodies "<name>_copy" (or newBody for one).
+{ "id": "keep_1", "op": "deleteBody", "bodies": ["scrap"] } or { ..., "keep": ["base"] }  deletes bodies, or all but these.
+A member mirrored, patterned, moved, copied or split stays a member: the cut list measures it along its own line,
+under its body's name.
+"bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } } at the top of the document
+gives a body its own material (setBodyMaterial); its mass and the part's follow.
+
 ## drawing (one sheet of views, measured on the rebuild)
 "drawing": { "sheet": { "size": "A3", "projection": "third", "scale": "1:10" (optional: else what fits), "title": "",
   "number": "", "revision": "", "drawnBy": "", "date": "" },
@@ -145,6 +163,7 @@ renameBody(from, to) - every feature and selector that names the body follows.
 addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
 exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.
+setBodyMaterial(body, material | null) - a body's own material. saveBody(body, file?) - one body as a part of its own, written to the output folder.
 newDrawing(date?) - code plans the sheet: front, top, right and iso views, the overall size, every hole, a balloon per cut list item, the tables.
 setSheet(patch), setView(id, view | null), setAnnotation(id, annotation | null) - edit the drawing; a view takes its annotations with it.
 drawing - the composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.
