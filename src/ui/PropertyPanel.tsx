@@ -356,7 +356,7 @@ function ExtrudeProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: 
         />
       </Field>
       {extent !== "throughAll" && (
-        <Field label={extent === "midplane" ? "Total depth" : "Depth"}>
+        <Field label={extent === "midplane" ? "Total depth" : "Depth"} unit="mm">
           <NumberInput value={(f.distance as number) ?? 10} min={0} onCommit={(v) => update({ distance: v })} testId="prop-distance" />
         </Field>
       )}
@@ -415,13 +415,13 @@ function HoleProps({
       >
         Use selected face
       </button>
-      <Field label="Centre X">
+      <Field label="Centre X" unit="mm">
         <NumberInput value={center[0]} onCommit={(v) => update({ center: [v, center[1]] })} testId="prop-center-x" />
       </Field>
-      <Field label="Centre Y">
+      <Field label="Centre Y" unit="mm">
         <NumberInput value={center[1]} onCommit={(v) => update({ center: [center[0], v] })} testId="prop-center-y" />
       </Field>
-      <Field label="Diameter">
+      <Field label="Diameter" unit="mm">
         <NumberInput value={f.diameter as NumberValue} min={0} onCommit={(v) => update({ diameter: v })} testId="prop-diameter" />
       </Field>
       <Field label="Depth">
@@ -457,13 +457,13 @@ function HoleProps({
       </Field>
       {type === "counterbore" && (
         <>
-          <Field label="C'bore Ø">
+          <Field label="C'bore Ø" unit="mm">
             <NumberInput
               value={(f.counterbore as { diameter: number }).diameter}
               onCommit={(v) => update({ counterbore: { ...(f.counterbore as object), diameter: v } })}
             />
           </Field>
-          <Field label="C'bore depth">
+          <Field label="C'bore depth" unit="mm">
             <NumberInput
               value={(f.counterbore as { depth: number }).depth}
               onCommit={(v) => update({ counterbore: { ...(f.counterbore as object), depth: v } })}
@@ -473,13 +473,13 @@ function HoleProps({
       )}
       {type === "countersink" && (
         <>
-          <Field label="C'sink Ø">
+          <Field label="C'sink Ø" unit="mm">
             <NumberInput
               value={(f.countersink as { diameter: number }).diameter}
               onCommit={(v) => update({ countersink: { ...(f.countersink as object), diameter: v } })}
             />
           </Field>
-          <Field label="Angle">
+          <Field label="Angle" unit="°">
             <NumberInput
               value={(f.countersink as { angle: number }).angle}
               onCommit={(v) => update({ countersink: { ...(f.countersink as object), angle: v } })}
@@ -528,7 +528,7 @@ function EdgeTreatmentProps({
       >
         Use selected edges
       </button>
-      <Field label={fillet ? "Radius" : "Distance"}>
+      <Field label={fillet ? "Radius" : "Distance"} unit="mm">
         <NumberInput
           value={(fillet ? f.radius : f.distance) as number}
           min={0}
@@ -555,7 +555,7 @@ function PatternProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: 
           <Field label="Direction">
             <DirectionInput value={f.direction as Vec3} onCommit={(v) => update({ direction: v })} testId="prop-pattern-direction" />
           </Field>
-          <Field label="Spacing">
+          <Field label="Spacing" unit="mm">
             <NumberInput value={f.spacing as number} min={0} onCommit={(v) => update({ spacing: v })} testId="prop-spacing" />
           </Field>
           <Field label="Count">
@@ -576,7 +576,7 @@ function PatternProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: 
               <Field label="Direction 2">
                 <DirectionInput value={f.direction2 as Vec3} onCommit={(v) => update({ direction2: v })} />
               </Field>
-              <Field label="Spacing 2">
+              <Field label="Spacing 2" unit="mm">
                 <NumberInput value={f.spacing2 as number} min={0} onCommit={(v) => update({ spacing2: v })} />
               </Field>
               <Field label="Count 2">
@@ -588,7 +588,7 @@ function PatternProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: 
       ) : (
         axis && (
           <>
-            <Field label="Axis through">
+            <Field label="Axis through" unit="mm">
               <Vec3Input value={axis.origin} onCommit={(v) => update({ axis: { ...axis, origin: v } })} />
             </Field>
             <Field label="Axis direction">
@@ -597,7 +597,7 @@ function PatternProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: 
             <Field label="Count">
               <NumberInput value={f.count as number} min={2} step={1} onCommit={(v) => update({ count: v })} testId="prop-count" />
             </Field>
-            <Field label="Total angle">
+            <Field label="Total angle" unit="°">
               <NumberInput value={(f.angle as number) ?? 360} min={0} onCommit={(v) => update({ angle: v === 360 ? null : v })} />
             </Field>
           </>

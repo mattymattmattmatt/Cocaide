@@ -9,6 +9,9 @@ import { commit, expectVolume, openApp, savedDocument } from "./helpers";
 import { addParameter, saveSHS } from "./sections";
 
 async function addNode(page: Page, name: string, at: string[]) {
+  // A part with no nodes yet has the Nodes section folded.
+  const toggle = page.getByTestId("nodes-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
   await page.getByTestId("node-new-name").fill(name);
   for (let k = 0; k < 3; k++) await commit(page, `node-new-${"xyz"[k]}`, at[k]);
   await page.getByTestId("node-add").click();

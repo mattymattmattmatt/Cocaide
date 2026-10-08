@@ -5,7 +5,29 @@ import { useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import type { RebuildView } from "../worker/protocol";
+import { Icon, type IconName } from "./icons";
 import { OP_LABEL } from "./PropertyPanel";
+
+/** The picture of each kind of feature: the same one its tool has. */
+const OP_ICON: Record<string, IconName> = {
+  sketch: "sketch",
+  extrude: "extrude",
+  cut: "cut",
+  hole: "hole",
+  fillet: "fillet",
+  chamfer: "chamfer",
+  linearPattern: "linearPattern",
+  circularPattern: "circularPattern",
+  mirror: "mirror",
+  combine: "combine",
+  split: "split",
+  move: "move",
+  deleteBody: "deleteBody",
+  member: "member",
+  joint: "joint",
+  endCap: "endCap",
+  gusset: "gusset",
+};
 
 interface Props {
   doc: RawDocument | null;
@@ -35,7 +57,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
   return (
     <section className="panel features" aria-label="Feature tree">
       <h2>Features</h2>
-      {features.length === 0 && <p className="muted">Empty part. Start with a sketch.</p>}
+      {features.length === 0 && <p className="muted empty-hint">Empty part. Start with <strong>Sketch</strong> in the toolbar, or right-click the view to describe a part.</p>}
       <ol className="feature-list" onDragLeave={() => setDropAt(null)}>
         {features.map((f, i) => {
           const id = String(f.id);
@@ -81,11 +103,13 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   }}
                   title={f.op === "sketch" ? "Double-click to edit the sketch" : undefined}
                 >
+                  {/* What it is; a failed or suppressed one says so instead. */}
                   <span
-                    className={`badge ${suppressed ? "off" : failed ? "failed" : "ok"}`}
+                    className={`feature-icon ${suppressed ? "off" : failed ? "failed" : "ok"}`}
                     aria-label={suppressed ? "suppressed" : failed ? "failed" : "rebuilt"}
+                    title={suppressed ? "Suppressed: left out of the rebuild" : failed ? "Failed: see the error below" : undefined}
                   >
-                    {suppressed ? "–" : failed ? "!" : "✓"}
+                    <Icon name={suppressed ? "suppress" : failed ? "alert" : (OP_ICON[String(f.op)] ?? "sketch")} />
                   </span>
                   <span className="feature-op">{OP_LABEL[String(f.op)] ?? String(f.op)}</span>
                   <span className="feature-id">{id}</span>
@@ -110,7 +134,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   {f.op === "deleteBody" && <span className="feature-body">{Array.isArray(f.keep) ? `keep ${(f.keep as string[]).join(", ")}` : Array.isArray(f.bodies) ? (f.bodies as string[]).join(", ") : ""}</span>}
                   {f.op === "sketch" && typeof (f.profile as { name?: unknown } | undefined)?.name === "string" && (
                     <span className="feature-body weldment-tag" title="A weldment profile: it is in the section library">
-                      ⌗ {String((f.profile as { name: string }).name)}
+                      {String((f.profile as { name: string }).name)}
                     </span>
                   )}
                 </button>
@@ -120,7 +144,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                     aria-label={`${suppressed ? "Unsuppress" : "Suppress"} ${id}`}
                     onClick={() => run({ type: "suppressFeature", id, suppressed: !suppressed })}
                   >
-                    {suppressed ? "◌" : "◉"}
+                    <Icon name={suppressed ? "eye" : "suppress"} />
                   </button>
                   <button
                     title="Move up"
@@ -128,7 +152,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                     disabled={i === 0}
                     onClick={() => run({ type: "reorderFeature", id, index: i - 1 })}
                   >
-                    ↑
+                    <Icon name="up" />
                   </button>
                   <button
                     title="Move down"
@@ -136,16 +160,17 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                     disabled={i === features.length - 1}
                     onClick={() => run({ type: "reorderFeature", id, index: i + 1 })}
                   >
-                    ↓
+                    <Icon name="down" />
                   </button>
                   <button
                     title="Delete"
                     aria-label={`Delete ${id}`}
+                    className="danger-hover"
                     onClick={() => {
                       if (!run({ type: "deleteFeature", id }) && selectedId === id) onSelect(null);
                     }}
                   >
-                    ×
+                    <Icon name="trash" />
                   </button>
                 </span>
               </div>

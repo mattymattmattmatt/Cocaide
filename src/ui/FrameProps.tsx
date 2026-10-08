@@ -110,7 +110,7 @@ export function MemberProps({
       )}
       <EndField label="From" value={f.from} at={from} nodes={nodes} onChange={(v) => update({ from: v })} testId="prop-from" />
       <EndField label="To" value={f.to} at={to} nodes={nodes} onChange={(v) => update({ to: v })} testId="prop-to" />
-      <Field label="Length" hint={onNodes ? "Between its nodes: move a node to change it" : "Moves the end along the member"}>
+      <Field label="Length" unit="mm" hint={onNodes ? "Between its nodes: move a node to change it" : "Moves the end along the member"}>
         {onNodes ? (
           <span className="readout" data-testid="prop-length">
             {r2(length)}
@@ -128,7 +128,7 @@ export function MemberProps({
           />
         )}
       </Field>
-      <Field label="Rotation" hint="Degrees about the member's line">
+      <Field label="Rotation" unit="°" hint="About the member's line">
         <NumberInput value={(f.rotation as NumberValue) ?? 0} onCommit={(v) => update({ rotation: v === 0 ? null : v })} testId="prop-rotation" />
       </Field>
       <Field label="On the line" hint="Seen from the To end: which point of the section the line runs through">
@@ -297,7 +297,7 @@ export function JointProps({ f, doc, view, update, actions }: { f: Raw; doc: Raw
           <Select value={String(f.through)} options={options([...ending, ...passing])} testId="prop-joint-through" onChange={(v) => update({ through: v })} />
         </Field>
       )}
-      <Field label="Gap" hint="Left between the cut faces, mm">
+      <Field label="Gap" unit="mm" hint="Left between the cut faces">
         <NumberInput value={(f.gap as NumberValue) ?? 0} min={0} onCommit={(v) => update({ gap: v === 0 ? null : v })} testId="prop-joint-gap" />
       </Field>
       <Field label="Butting">
@@ -355,7 +355,7 @@ export function EndCapProps({ f, doc, update }: { f: Raw; doc: RawDocument; upda
           onChange={(v) => update({ end: v })}
         />
       </Field>
-      <Field label="Thickness">
+      <Field label="Thickness" unit="mm">
         <NumberInput value={f.thickness as NumberValue} min={0} onCommit={(v) => update({ thickness: v })} testId="prop-cap-thickness" />
       </Field>
     </>
@@ -388,13 +388,13 @@ export function GussetProps({ f, doc, update }: { f: Raw; doc: RawDocument; upda
           />
         </Field>
       ))}
-      <Field label="Size" hint="Along each member from the inside corner">
+      <Field label="Size" unit="mm" hint="Along each member from the inside corner">
         <NumberInput value={f.size as NumberValue} min={0} onCommit={(v) => update({ size: v })} testId="prop-gusset-size" />
       </Field>
-      <Field label="Thickness">
+      <Field label="Thickness" unit="mm">
         <NumberInput value={f.thickness as NumberValue} min={0} onCommit={(v) => update({ thickness: v })} testId="prop-gusset-thickness" />
       </Field>
-      <Field label="Chamfer" hint="Clips the corner for the weld">
+      <Field label="Chamfer" unit="mm" hint="Clips the corner for the weld">
         <NumberInput value={(f.chamfer as NumberValue) ?? 0} min={0} onCommit={(v) => update({ chamfer: v === 0 ? null : v })} testId="prop-gusset-chamfer" />
       </Field>
     </>

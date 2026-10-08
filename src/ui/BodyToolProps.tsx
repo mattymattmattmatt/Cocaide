@@ -19,7 +19,7 @@ function PlaneFields({ f, update, testId }: { f: Raw; update(p: Raw): unknown; t
   const plane = (f.plane ?? { type: "datum", normal: [1, 0, 0], origin: [0, 0, 0] }) as { normal: Vec3; origin: Vec3 };
   return (
     <>
-      <Field label="Plane through">
+      <Field label="Plane through" unit="mm">
         <Vec3Input value={plane.origin} onCommit={(origin) => update({ plane: { ...plane, type: "datum", origin } })} testId={`${testId}-origin`} />
       </Field>
       <Field label="Plane normal">
@@ -129,7 +129,7 @@ export function MoveProps({ f, bodies, update, rename }: ToolProps) {
         <input type="checkbox" checked={copy} onChange={(e) => update({ copy: e.target.checked || null, ...(e.target.checked ? {} : { newBody: null }) })} data-testid="prop-move-copy" />
         Copy (keep the originals)
       </label>
-      <Field label="Move by">
+      <Field label="Move by" unit="mm">
         <Vec3Input value={(f.translate as Vec3) ?? [0, 0, 0]} onCommit={(v) => update({ translate: v.every((x) => x === 0) && rotate ? null : v })} testId="prop-move-translate" />
       </Field>
       <label className="check">
@@ -143,13 +143,13 @@ export function MoveProps({ f, bodies, update, rename }: ToolProps) {
       </label>
       {rotate && (
         <>
-          <Field label="About axis through">
+          <Field label="About axis through" unit="mm">
             <Vec3Input value={rotate.axis.origin} onCommit={(origin) => update({ rotate: { ...rotate, axis: { ...rotate.axis, origin } } })} testId="prop-move-axis-origin" />
           </Field>
           <Field label="Axis direction">
             <DirectionInput value={rotate.axis.direction} onCommit={(direction) => update({ rotate: { ...rotate, axis: { ...rotate.axis, direction } } })} testId="prop-move-axis" />
           </Field>
-          <Field label="Angle (deg)">
+          <Field label="Angle" unit="°">
             <NumberInput value={rotate.angle} onCommit={(angle) => update({ rotate: { ...rotate, angle } })} testId="prop-move-angle" />
           </Field>
         </>

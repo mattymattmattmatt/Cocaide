@@ -20,7 +20,7 @@ export function AskSettingsDialog({ settings, onSave, onClose }: Props) {
       <form
         className="modal"
         role="dialog"
-        aria-label="Ask settings"
+        aria-label="Settings"
         data-testid="ask-settings"
         onSubmit={(e) => {
           e.preventDefault();
@@ -28,7 +28,16 @@ export function AskSettingsDialog({ settings, onSave, onClose }: Props) {
           onClose();
         }}
       >
-        <h2>Ask settings</h2>
+        <h2>Settings</h2>
+        <h3 className="modal-section">Units</h3>
+        <div className="field">
+          <span className="field-label">Lengths</span>
+          <span className="units-readout" data-testid="settings-units">
+            Millimetres (mm), metric
+          </span>
+        </div>
+        <p className="muted small">Every length is in millimetres, angles in degrees and mass in kilograms. Parts are saved in millimetres.</p>
+        <h3 className="modal-section">Assistant</h3>
         <p className="muted small">
           Right-click a feature, face, edge, sketch entity or failed rebuild to ask about it. The ask sends that thing's context packet to the model,
           never the whole part. Modelling and STEP export work without any of this.

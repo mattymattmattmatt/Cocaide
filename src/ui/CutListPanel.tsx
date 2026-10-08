@@ -7,6 +7,7 @@ import { WELD_TYPES, type Weld } from "../doc/types";
 import type { Measurements } from "../kernel";
 import { anglesText, cutList, cutListCSV, weldTableCSV } from "../weldment/cutlist";
 import { NumberInput } from "./fields";
+import { Icon } from "./icons";
 
 interface Props {
   doc: RawDocument | null;
@@ -103,7 +104,7 @@ export function CutListPanel({ doc, measurements, dispatch, onError, onSelect, o
                     if (problem) onError(problem);
                   }}
                 >
-                  ×
+                  <Icon name="trash" size={14} />
                 </button>
               </div>
               <div className="weld-fields">

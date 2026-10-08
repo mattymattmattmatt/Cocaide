@@ -8,6 +8,7 @@ import type { Vec2, Vec3 } from "../doc/types";
 import { formatDirection } from "../geom/vec";
 import type { EdgeInfo, FaceInfo } from "../kernel";
 import type { RebuildView } from "../worker/protocol";
+import { Icon } from "./icons";
 
 export type ViewName = "iso" | "top" | "front" | "right";
 
@@ -642,14 +643,18 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       <div ref={host} className="viewport-canvas" data-testid="viewport" />
       <div className="view-buttons" role="toolbar" aria-label="Views">
         {(Object.keys(VIEW_DIRS) as ViewName[]).map((name) => (
-          <button key={name} onClick={() => api.current?.fit(VIEW_DIRS[name])}>
+          <button key={name} onClick={() => api.current?.fit(VIEW_DIRS[name])} title={name === "iso" ? "Look from the front, right and above" : `Look from the ${name}`}>
+            <Icon name={name} />
             {name[0].toUpperCase() + name.slice(1)}
           </button>
         ))}
-        <button onClick={() => api.current?.fit()} title="Frame the part from the current direction">
+        <span className="sep" />
+        <button onClick={() => api.current?.fit()} title="Frame the whole part from the current direction">
+          <Icon name="fit" />
           Fit
         </button>
         <button aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} title="Show or hide sketch geometry and the frame's nodes">
+          <Icon name={showSketches ? "eye" : "eyeOff"} />
           Sketches
         </button>
       </div>

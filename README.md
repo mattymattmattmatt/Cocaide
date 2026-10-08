@@ -71,7 +71,7 @@ npm run test:e2e       # 44 browser tests (Playwright, Chromium), including the 
 npm run build          # typecheck + production bundle in dist/
 ```
 
-The right-click ask needs a model. Either start the dev server with a key, so the page never holds it, or paste a key into **Ask…** in the top bar (it stays in that browser):
+The right-click ask needs a model. Either start the dev server with a key, so the page never holds it, or paste a key into **Settings** in the top bar (it stays in that browser):
 
 ```sh
 ANTHROPIC_API_KEY=sk-ant-... npm run dev     # the dev server proxies /anthropic and adds the key
@@ -102,7 +102,7 @@ On the stand (`examples/stand.cocaide.json`: a 120 × 80 × 8 base with two Ø10
 | Check | Result |
 |---|---|
 | Mirror `hole_1` about the XZ plane | Select it in the tree, then **Mirror**, with the plane's normal +Y. The base has three holes, and the part loses 628.319 mm³, one hole's volume (π × 5² × 8): 132,515.044 mm³. |
-| Move the upright 30 mm along Y, then mirror it | **Move/Copy** with copy off and Y = 30, then **Mirror** with the upright clicked. There are three bodies, `base`, `upright` and `upright_mirror`. The volume is up by 57,600 mm³, and there is no interference. |
+| Move the upright 30 mm along Y, then mirror it | **Move** with copy off and Y = 30, then **Mirror** with the upright clicked. There are three bodies, `base`, `upright` and `upright_mirror`. The volume is up by 57,600 mm³, and there is no interference. |
 | Split the base at x = 0 | Two halves of 37,771.681 mm³ each, one hole in each: `base` and `base_split`. |
 | Keep the base alone | `{ "op": "deleteBody", "keep": ["base"] }` leaves one body. In the Bodies panel, **⋯ → Delete body** adds `{ "bodies": [name] }`. |
 | The upright in aluminium | **⋯ → Material: aluminium 6061** sets `bodyMaterials.upright`. The upright weighs 0.15552 kg, the base 0.59302 kg, and the part their sum, 0.74854 kg. |
@@ -241,7 +241,7 @@ These checks are covered at two levels:
 
 ### Phase H: multibody parts
 
-The example is `examples/stand.cocaide.json` (in **Examples…** as "stand (two bodies)"). It is a 120 × 80 × 8 base plate with two Ø10 holes, and a 120 × 8 × 60 upright plate standing on it, as two bodies.
+The example is `examples/stand.cocaide.json` (in **Examples** as "stand (two bodies)"). It is a 120 × 80 × 8 base plate with two Ø10 holes, and a 120 × 8 × 60 upright plate standing on it, as two bodies.
 
 | Check | Result |
 |---|---|
@@ -387,9 +387,11 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 
 ## Modelling in the browser
 
-- **Sketch ▾** starts a sketch on the Top, Front or Right plane, or on a flat face you clicked. Draw with Line (clicks chain; clicking the first point closes the loop), Rectangle, Circle, Arc (centre, start, end) and Slot (two centres, then the width). Points snap to existing points, which adds a coincident constraint, or else to the grid.
+- **Units.** Millimetres (metric) throughout, and only millimetres: every length field says mm, every angle °, masses are in g or kg, and the `mm` badge in the top bar and **Settings → Units** say so. Parts are stored in millimetres.
+- **The toolbar** has a picture over each tool's name, in groups: Sketch; Extrude, Cut, Hole, Fillet, Chamfer; Pattern (linear or circular) and Mirror; the body tools (Combine, Split, Move, Delete body); and Member for weldments. A tool that needs something it doesn't have yet (Combine with one body) is greyed out and says why. The feature tree shows the same picture for each feature. The left column's sections fold under their headings; **Nodes** starts folded on a part without nodes. Ctrl+S saves.
+- **Sketch** starts a sketch on the Top, Front or Right plane, or on a flat face you clicked. Draw with Line (clicks chain; clicking the first point closes the loop), Rectangle, Circle, Arc (centre, start, end) and Slot (two centres, then the width). Points snap to existing points, which adds a coincident constraint, or else to the grid.
 - Select geometry to see the constraints that fit it, valued at what the geometry measures now; type a new value and the solver moves the sketch. Drag points, corners, circle edges or whole entities, and the solver keeps every constraint. The panel shows the degrees of freedom left and whether the profile is closed. **Finish** turns the session into one undo step.
-- **Extrude** and **Cut** use the selected or latest sketch. A new cut points into the material. Click a flat face, then **Hole**: the hole is placed where you clicked. Click edges (shift-click for more), then **Fillet** or **Chamfer**. Select an extrude, cut or hole in the tree, then **Linear pattern** or **Circular pattern**.
+- **Extrude** and **Cut** use the selected or latest sketch. A new cut points into the material. Click a flat face, then **Hole**: the hole is placed where you clicked. Click edges (shift-click for more), then **Fillet** or **Chamfer**. Select an extrude, cut or hole in the tree, then **Pattern → Linear pattern** or **Circular pattern**.
 - Picks become selectors that are checked to find exactly what was clicked. The most robust form is preferred, such as "the largest face facing +Z" or "the edge between this face and that one". Four picked corners become "straight edges parallel to +Z". Position (`near`) is used only when nothing else tells two faces or edges apart.
 - In the tree, select a feature to edit it in the Properties panel. Each field commits on Enter or blur as one command. You can also suppress, move up or down, drag to reorder, and delete. Moves that break a reference are refused and the notice says why.
 - Ctrl+Z / Ctrl+Shift+Z undo and redo any change to the document. Inside a sketch they undo sketch edits. The Document tab is the same document as JSON.
@@ -441,9 +443,9 @@ Every ask is logged in the browser next to the revisions it produced:
 - each tool call with the sandbox revision and hash after it;
 - whether the proposal was accepted, and the hash of what was accepted.
 
-**Ask… → Download ask log** saves it as JSON Lines.
+**Settings → Download ask log** saves it as JSON Lines.
 
-**Model.** The default is Claude Opus 5.5 at low effort; Sonnet 5.5 and Haiku 4.5 can be chosen under **Ask…**. The SDK is loaded on the first ask, not with the app. What leaves the machine is the packet, plus the one framed image for a visual prompt. Modelling and STEP export never need a key.
+**Model.** The default is Claude Opus 5.5 at low effort; Sonnet 5.5 and Haiku 4.5 can be chosen under **Settings**. The SDK is loaded on the first ask, not with the app. What leaves the machine is the packet, plus the one framed image for a visual prompt. Modelling and STEP export never need a key.
 
 ## The part-level prompt
 
@@ -809,7 +811,8 @@ src/weldment  the section library (profiles from sketches, versions, search, exp
 src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover,
-              the profile card and the Sections tab; src/ui/drawing: the sheet, and the drawing's panels
+              the profile card and the Sections tab; the icon set (icons.tsx), toolbar buttons and menus (tools.tsx), folding
+              sections (Section.tsx); src/ui/drawing: the sheet, and the drawing's panels
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
 scripts       headless CLI, FreeCAD verification, log replay, the drawing and photo fixtures (make-drawings.ts, make-photos.ts)
 examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet), stand (two bodies),

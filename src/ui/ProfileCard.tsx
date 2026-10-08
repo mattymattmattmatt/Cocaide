@@ -12,6 +12,7 @@ import { kgPerMetre, sectionAt, sizedEntities, STEEL_DENSITY, suggestTags } from
 import { designationFor, nameTaken, profileFromSketch, sketchParameters, type LibraryEntry } from "../weldment/library";
 import type { ProfileFacts, ProfileSuggestion } from "../ask/profile";
 import { ProfileDrawing } from "./ProfileDrawing";
+import { Icon } from "./icons";
 
 interface Props {
   doc: RawDocument;
@@ -247,7 +248,7 @@ export function ProfileCard({ doc, sketchId, library, onSave, onClose, onSuggest
                           setShown(0);
                         }}
                       >
-                        ×
+                        <Icon name="x" size={14} />
                       </button>
                     )}
                   </td>

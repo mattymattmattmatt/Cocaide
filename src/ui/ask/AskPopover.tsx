@@ -10,6 +10,7 @@ import { scopedActions } from "../../ask/prompt";
 import { IntentCard } from "./IntentCard";
 import type { useAsk } from "./useAsk";
 import { canAsk } from "./settings";
+import { Icon } from "../icons";
 
 type Ask = ReturnType<typeof useAsk>;
 
@@ -95,7 +96,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
           Ask about <strong data-testid="ask-target">{ctx.label}</strong>
         </span>
         <button className="icon" aria-label="Close" onClick={ask.close}>
-          ×
+          <Icon name="x" size={15} />
         </button>
       </header>
 

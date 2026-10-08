@@ -8,6 +8,8 @@ import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, PARAMETER_NAME, parameterRefs } from "../doc/parameters";
 import { photoOf } from "../doc/photo";
 import { NumberInput } from "./fields";
+import { Section } from "./Section";
+import { Icon } from "./icons";
 
 interface Props {
   doc: RawDocument | null;
@@ -47,8 +49,7 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
   };
 
   return (
-    <section className="panel parameters" data-testid="parameters">
-      <h2>Parameters</h2>
+    <Section title="Parameters" className="parameters" testId="parameters" count={Object.keys(params).length}>
       {Object.keys(params).length === 0 && <p className="muted small">Name a number here, then type =name in any number field.</p>}
       <ul>
         {Object.entries(params).map(([p, v]) => {
@@ -86,7 +87,7 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
               />
               {mark ? (
                 <button className="icon keep" aria-label={`Keep ${p}`} title="Keep this value: it becomes yours, not the photo's" onClick={() => run({ type: "setParameter", name: p, value: v })}>
-                  ✓
+                  <Icon name="check" size={14} />
                 </button>
               ) : (
                 <button
@@ -96,7 +97,7 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
                   title={users.length ? `used by ${users.join(", ")}` : "Delete"}
                   onClick={() => run({ type: "deleteParameter", name: p })}
                 >
-                  ×
+                  <Icon name="trash" size={14} />
                 </button>
               )}
             </li>
@@ -119,10 +120,11 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
           aria-label="New parameter value"
           data-testid="param-new-value"
         />
-        <button type="submit" data-testid="param-add">
+        <button type="submit" data-testid="param-add" title="Add the parameter">
+          <Icon name="plus" size={14} />
           Add
         </button>
       </form>
-    </section>
+    </Section>
   );
 }

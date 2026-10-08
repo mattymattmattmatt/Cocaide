@@ -21,7 +21,7 @@ test("edits a sketch dimension and the part follows", async ({ page }) => {
   await commit(page, "constraint-value-0", "100");
   await page.getByTestId("finish-sketch").click();
   await expectVolume(page, "23,794.728");
-  await expect(page.getByTestId("holes")).toHaveText("1 · Ø 6.6"); // the hole followed the top face
+  await expect(page.getByTestId("holes")).toHaveText("1 × Ø6.6"); // the hole followed the top face
 });
 
 test("cancelling a sketch leaves the document alone", async ({ page }) => {
@@ -119,6 +119,7 @@ test("chamfers a picked edge and patterns the hole", async ({ page }) => {
   await expectVolume(page, "18,954.728"); // 0.5 x 1 x 1 x 80
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
+  await page.getByTestId("tool-pattern").click();
   await page.getByTestId("tool-linear-pattern").click();
   await page.getByTestId("prop-pattern-direction").selectOption("−X");
   await commit(page, "prop-spacing", "20");
@@ -126,6 +127,7 @@ test("chamfers a picked edge and patterns the hole", async ({ page }) => {
   await expect(page.getByTestId("holes")).toHaveText(/^4 /);
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
+  await page.getByTestId("tool-pattern").click();
   await page.getByTestId("tool-circular-pattern").click();
   await commit(page, "prop-count", "2");
   await expect(page.getByTestId("holes")).toHaveText(/^4 /); // the 180° copy lands on an existing pattern hole

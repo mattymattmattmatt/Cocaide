@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import bracketText from "../../examples/bracket.cocaide.json?raw";
 import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
@@ -53,6 +53,8 @@ import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
+import { Icon, type IconName } from "./icons";
+import { MenuItem, ToolButton, ToolMenu } from "./tools";
 import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = {
@@ -119,7 +121,6 @@ export function App() {
   const [selectedFeature, setSelectedFeature] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"properties" | "sections" | "cutlist" | "document">("properties");
   const [sketch, setSketch] = useState<SketchSession | null>(null);
-  const [planeMenu, setPlaneMenu] = useState(false);
   const [hiddenBodies, setHiddenBodies] = useState<ReadonlySet<string>>(new Set());
   /** The section library in this browser (Phase I). */
   const [library, setLibrary] = useState<LibraryEntry[]>([]);
@@ -368,14 +369,12 @@ export function App() {
   const selected = resolved.find((f) => f.id === selectedFeature);
 
   const startSketch = (plane: DatumPlane) => {
-    setPlaneMenu(false);
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
     setSketch({ id: nextId(doc, "sketch"), isNew: true, plane, entities: [], constraints: [] });
     setSelection(EMPTY_SELECTION);
   };
 
   const sketchOnFace = () => {
-    setPlaneMenu(false);
     const f = view?.faces[selection.faces[0]];
     if (selection.faces.length !== 1 || f?.type !== "plane" || !f.normal) {
       return setNotice({ kind: "error", text: "Click a flat face first, then Sketch → On selected face." });
@@ -448,7 +447,7 @@ export function App() {
   const suggestNames = async (facts: ProfileFacts) => {
     if (!canAsk(ask.settings)) {
       ask.setSettingsOpen(true);
-      throw new Error("set up a model with Ask… first");
+      throw new Error("set up a model in Settings first");
     }
     const [model, { suggestProfile }] = await Promise.all([modelFor(ask.settings), import("../ask/profile")]);
     return suggestProfile(model, facts);
@@ -863,6 +862,12 @@ export function App() {
   // Undo / redo from the keyboard, except while typing in a field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl+S saves the part, from anywhere but the sketcher (it saves on Finish).
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (!sketch) saveRef.current();
+        return;
+      }
       if (sketch) return;
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
@@ -883,6 +888,9 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [d, sketch]);
+
+  const saveRef = useRef(save);
+  saveRef.current = save;
 
   const reference = useMemo(() => (sketch && view ? projectEdges(view, sketch.plane) : new Float32Array(0)), [sketch, view]);
 
@@ -939,31 +947,40 @@ export function App() {
           </div>
           <div className="mode-switch" role="tablist" aria-label="Model or drawing">
             <button role="tab" aria-selected={mode === "model"} onClick={() => setMode("model")} data-testid="mode-model">
+              <Icon name="model" />
               Model
             </button>
             <button role="tab" aria-selected={mode === "drawing"} onClick={() => setMode("drawing")} disabled={!!sketch} data-testid="mode-drawing">
+              <Icon name="drawing" />
               Drawing
             </button>
           </div>
-          <nav className="actions">
-            <select
-              aria-label="Open an example"
-              value=""
-              onChange={(e) => {
-                if (e.target.value) replaceDocument(EXAMPLES[e.target.value], `Opened example "${e.target.value}"`);
-              }}
-            >
-              <option value="">Examples…</option>
-              {Object.keys(EXAMPLES).map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-            <button onClick={() => replaceDocument(BLANK, "New part")} data-testid="new-part">
-              New
+          <nav className="actions" aria-label="File">
+            <label className="examples" title="Open one of the example parts">
+              <Icon name="examples" />
+              <select
+                aria-label="Open an example"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) replaceDocument(EXAMPLES[e.target.value], `Opened example "${e.target.value}"`);
+                }}
+              >
+                <option value="">Examples</option>
+                {Object.keys(EXAMPLES).map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button aria-label="New" onClick={() => replaceDocument(BLANK, "New part")} title="A new, empty part (Ctrl+Z brings the last one back)" data-testid="new-part">
+              <Icon name="new" />
+              <span className="label">New</span>
             </button>
-            <button onClick={() => fileInput.current?.click()}>Open</button>
+            <button aria-label="Open" onClick={() => fileInput.current?.click()} title="Open a .cocaide.json part">
+              <Icon name="open" />
+              <span className="label">Open</span>
+            </button>
             <input
               ref={fileInput}
               type="file"
@@ -975,14 +992,23 @@ export function App() {
                 e.target.value = "";
               }}
             />
-            <button onClick={save}>Save</button>
-          <button onClick={() => ask.setSettingsOpen(true)} title="Model and key for right-click asks" data-testid="ask-settings-open">
-            Ask…
-          </button>
-            <button className="primary" onClick={exportStep} disabled={kernelState.phase !== "ready" || !!sketch}>
+            <button aria-label="Save" onClick={save} title="Download the part as .cocaide.json (Ctrl+S)">
+              <Icon name="save" />
+              <span className="label">Save</span>
+            </button>
+            <span className="sep" />
+            <button aria-label="Settings" onClick={() => ask.setSettingsOpen(true)} title="Settings: units, and the model and key for right-click asks" data-testid="ask-settings-open">
+              <Icon name="settings" />
+              <span className="label">Settings</span>
+            </button>
+            <button className="primary" onClick={exportStep} disabled={kernelState.phase !== "ready" || !!sketch} title="Download the solid as STEP, for other CAD and CAM">
+              <Icon name="export" />
               Export STEP
             </button>
           </nav>
+          <div className="units" title="Units: millimetres (metric). Lengths in mm, angles in degrees, mass in kg." data-testid="units">
+            mm
+          </div>
           <div
             className={`status ${(view && !view.ok && status !== "No solid yet") || kernelState.phase === "failed" ? "bad" : ""}`}
             data-testid="status"
@@ -993,98 +1019,111 @@ export function App() {
 
         {!sketch && mode === "drawing" && (
           <div className="toolbar" role="toolbar" aria-label="Drawing">
-            <button onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" data-testid="undo">
-              ↶ Undo
-            </button>
-            <button onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" data-testid="redo">
-              ↷ Redo
-            </button>
+            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" testId="undo" />
+            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" testId="redo" />
             <span className="sep" />
-            <button onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready"} title="Plan the sheet from the part: views, overall size, holes, balloons, tables" data-testid="drawing-new">
-              New drawing
-            </button>
-            <button onClick={balloonAll} disabled={!sheet || sheet.cutList.length === 0} data-testid="drawing-balloon-all">
-              Balloon every item
-            </button>
+            <ToolButton
+              icon="drawing"
+              label="New drawing"
+              onClick={() => void newDrawing()}
+              disabled={kernelState.phase !== "ready"}
+              title="Plan the sheet from the part: views, overall size, holes, balloons, tables"
+              testId="drawing-new"
+            />
+            <ToolButton icon="balloon" label="Balloon all" onClick={balloonAll} disabled={!sheet || sheet.cutList.length === 0} title="A balloon for every cut list item that has none" testId="drawing-balloon-all" />
             <span className="sep" />
-            <button onClick={() => exportDrawing("pdf")} disabled={!sheet} data-testid="drawing-export-pdf">
-              Export PDF
-            </button>
-            <button onClick={() => exportDrawing("svg")} disabled={!sheet} data-testid="drawing-export-svg">
-              Export SVG
-            </button>
+            <ToolButton icon="export" label="Export PDF" onClick={() => exportDrawing("pdf")} disabled={!sheet} title="Download the sheet as a PDF, to print or send" testId="drawing-export-pdf" />
+            <ToolButton icon="export" label="Export SVG" onClick={() => exportDrawing("svg")} disabled={!sheet} title="Download the sheet as an SVG drawing" testId="drawing-export-svg" />
           </div>
         )}
         {!sketch && mode === "model" && (
           <div className="toolbar" role="toolbar" aria-label="Modelling">
-            <button onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" data-testid="undo">
-              ↶ Undo
-            </button>
-            <button onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" data-testid="redo">
-              ↷ Redo
-            </button>
+            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" testId="undo" />
+            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" testId="redo" />
             <span className="sep" />
-            <div className="menu">
-              <button onClick={() => setPlaneMenu((m) => !m)} aria-expanded={planeMenu} data-testid="tool-sketch">
-                Sketch ▾
-              </button>
-              {planeMenu && (
-                <div className="menu-items" role="menu">
+            <ToolMenu icon="sketch" label="Sketch" title="Start a sketch on a plane or a flat face" testId="tool-sketch">
+              {(close) => (
+                <>
                   {PLANES.map(([label, plane]) => (
-                    <button key={label} role="menuitem" onClick={() => startSketch(plane)} data-testid={`plane-${label.split(" ")[0].toLowerCase()}`}>
-                      {label}
-                    </button>
+                    <MenuItem
+                      key={label}
+                      icon={label.startsWith("Top") ? "top" : label.startsWith("Front") ? "front" : "right"}
+                      label={label}
+                      onClick={() => {
+                        close();
+                        startSketch(plane);
+                      }}
+                      testId={`plane-${label.split(" ")[0].toLowerCase()}`}
+                    />
                   ))}
-                  <button role="menuitem" onClick={sketchOnFace} disabled={selection.faces.length !== 1}>
-                    On selected face
-                  </button>
-                </div>
+                  <MenuItem
+                    icon="select"
+                    label="On selected face"
+                    hint="Click a flat face first"
+                    onClick={() => {
+                      close();
+                      sketchOnFace();
+                    }}
+                    disabled={selection.faces.length !== 1}
+                  />
+                </>
               )}
-            </div>
-            <button onClick={() => extrude("extrude")} data-testid="tool-extrude">
-              Extrude
-            </button>
-            <button onClick={() => extrude("cut")} data-testid="tool-cut">
-              Cut
-            </button>
-            <button onClick={hole} data-testid="tool-hole" title="Click a flat face, then Hole">
-              Hole
-            </button>
-            <button onClick={() => edgeFeature("fillet")} data-testid="tool-fillet" title="Click edges, then Fillet">
-              Fillet
-            </button>
-            <button onClick={() => edgeFeature("chamfer")} data-testid="tool-chamfer" title="Click edges, then Chamfer">
-              Chamfer
-            </button>
-            <button onClick={() => patternFeature("linearPattern")} data-testid="tool-linear-pattern" title="Select a feature in the tree, then Pattern">
-              Linear pattern
-            </button>
-            <button onClick={() => patternFeature("circularPattern")} data-testid="tool-circular-pattern">
-              Circular pattern
-            </button>
-            <button onClick={mirrorTool} data-testid="tool-mirror" title="Mirror the selected feature, or the clicked body, about a plane">
-              Mirror
-            </button>
-            {(view?.bodies.length ?? 0) > 1 && (
-              <button onClick={combine} data-testid="tool-combine" title="Join, subtract or intersect bodies">
-                Combine
-              </button>
-            )}
-            <button onClick={splitTool} data-testid="tool-split" title="Cut the clicked body in two with a plane">
-              Split
-            </button>
-            <button onClick={moveTool} data-testid="tool-move" title="Move, turn or copy the clicked body">
-              Move/Copy
-            </button>
-            {(view?.bodies.length ?? 0) > 1 && (
-              <button onClick={() => deleteBodyTool()} data-testid="tool-delete-body" title="Delete the clicked body, or keep only some">
-                Delete body
-              </button>
-            )}
+            </ToolMenu>
             <span className="sep" />
-            <button onClick={memberTool} data-testid="tool-member" title="A straight member of a weldment profile: another like the selected one, or pick a size in Sections">
-              Member
-            </button>
+            <ToolButton icon="extrude" label="Extrude" onClick={() => extrude("extrude")} title="Add material: push the selected (or latest) sketch out" testId="tool-extrude" />
+            <ToolButton icon="cut" label="Cut" onClick={() => extrude("cut")} title="Remove material: cut the selected (or latest) sketch in" testId="tool-cut" />
+            <ToolButton icon="hole" label="Hole" onClick={hole} title="Click a flat face, then Hole" testId="tool-hole" />
+            <ToolButton icon="fillet" label="Fillet" onClick={() => edgeFeature("fillet")} title="Round edges: click edges (shift-click for more), then Fillet" testId="tool-fillet" />
+            <ToolButton icon="chamfer" label="Chamfer" onClick={() => edgeFeature("chamfer")} title="Bevel edges: click edges (shift-click for more), then Chamfer" testId="tool-chamfer" />
+            <span className="sep" />
+            <ToolMenu icon="pattern" label="Pattern" title="Repeat the selected feature in a row or around an axis" testId="tool-pattern">
+              {(close) => (
+                <>
+                  <MenuItem
+                    icon="linearPattern"
+                    label="Linear pattern"
+                    hint="Copies in a row (or a grid)"
+                    onClick={() => {
+                      close();
+                      patternFeature("linearPattern");
+                    }}
+                    testId="tool-linear-pattern"
+                  />
+                  <MenuItem
+                    icon="circularPattern"
+                    label="Circular pattern"
+                    hint="Copies around an axis"
+                    onClick={() => {
+                      close();
+                      patternFeature("circularPattern");
+                    }}
+                    testId="tool-circular-pattern"
+                  />
+                </>
+              )}
+            </ToolMenu>
+            <ToolButton icon="mirror" label="Mirror" onClick={mirrorTool} title="Mirror the selected feature, or the clicked body, about a plane" testId="tool-mirror" />
+            <span className="sep" />
+            <ToolButton
+              icon="combine"
+              label="Combine"
+              onClick={combine}
+              disabled={(view?.bodies.length ?? 0) < 2}
+              title={(view?.bodies.length ?? 0) < 2 ? "Combine needs two or more bodies" : "Join, subtract or intersect bodies"}
+              testId="tool-combine"
+            />
+            <ToolButton icon="split" label="Split" onClick={splitTool} title="Cut the clicked body in two with a plane" testId="tool-split" />
+            <ToolButton icon="move" label="Move" onClick={moveTool} title="Move, turn or copy the clicked body" testId="tool-move" />
+            <ToolButton
+              icon="deleteBody"
+              label="Delete body"
+              onClick={() => deleteBodyTool()}
+              disabled={(view?.bodies.length ?? 0) < 2}
+              title={(view?.bodies.length ?? 0) < 2 ? "A part needs at least one body" : "Delete the clicked body, or keep only some"}
+              testId="tool-delete-body"
+            />
+            <span className="sep" />
+            <ToolButton icon="member" label="Member" onClick={memberTool} title="A straight member of a weldment profile: another like the selected one, or pick a size in Sections" testId="tool-member" />
           </div>
         )}
 
@@ -1092,7 +1131,7 @@ export function App() {
           <div className={`notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"} data-testid="notice">
             <span>{notice.text}</span>
             <button aria-label="Dismiss" onClick={() => setNotice(null)}>
-              ×
+              <Icon name="x" size={15} />
             </button>
           </div>
         )}
@@ -1157,7 +1196,7 @@ export function App() {
                   />
                 ) : (
                   <section className="panel">
-                    <Help />
+                    <DrawingHelp />
                   </section>
                 )}
               </aside>
@@ -1338,27 +1377,59 @@ export function App() {
   );
 }
 
+/** What to do first, when nothing is selected: the toolbar's tools, in the order a part is made. */
 function Help() {
+  const step = (icon: IconName, title: string, text: ReactNode) => (
+    <li>
+      <span className="help-icon">
+        <Icon name={icon} />
+      </span>
+      <span>
+        <strong>{title}</strong> {text}
+      </span>
+    </li>
+  );
   return (
-    <div className="help muted">
-      <p>
-        <strong>Sketch ▾</strong> starts a sketch on a datum plane. Draw, select geometry to add dimensions, then <strong>Finish sketch</strong>.
+    <div className="help" data-testid="help">
+      <h2>Getting started</h2>
+      <ol className="help-steps">
+        {step("sketch", "Sketch", <>on a plane or a flat face. Draw, click geometry to dimension it, then Finish sketch.</>)}
+        {step("extrude", "Extrude or Cut", "the selected (or latest) sketch into a solid, or out of one.")}
+        {step("hole", "Hole, Fillet, Chamfer", "on what you click: a flat face for a hole, edges (shift-click for more) for a fillet or chamfer.")}
+        {step("pattern", "Pattern or Mirror", "the feature selected in the tree; Mirror, Split and Move work on the clicked body too.")}
+        {step("member", "Member", "for weldments: tick Weldment profile on a sketch to add a section, then add members from Sections.")}
+        {step("ask", "Right-click", "anything (a feature, face, edge, parameter, or empty space) to ask about it or describe a change.")}
+      </ol>
+      <p className="muted small">
+        Select a feature in the tree to edit it. Every change can be undone (Ctrl+Z). Drop a part file, a drawing (PDF or image) or a photo of a part on the
+        window to start from it. All lengths are in millimetres.
       </p>
-      <p>
-        <strong>Extrude</strong> and <strong>Cut</strong> use the selected (or latest) sketch. Click a face for <strong>Hole</strong>; click edges
-        (shift-click for more) for <strong>Fillet</strong> and <strong>Chamfer</strong>; select a feature in the tree to pattern it.
-      </p>
-      <p>Select a feature in the tree to edit it. Ctrl+Z undoes any change.</p>
-      <p>
-        <strong>Weldments:</strong> draw a section as a normal sketch (write its sizes as <code>=b</code>, <code>=t</code>), tick{" "}
-        <strong>Weldment profile</strong> and finish: the profile card names it, adds sizes and tags it, and it goes into <strong>Sections</strong>{" "}
-        for this part and the next. <strong>+ Member</strong> on a size adds a straight member; each member is its own body.
-      </p>
-      <p>
-        <strong>Right-click</strong> a feature, a failed rebuild, a face, an edge, a parameter, or (in the sketcher) an entity or constraint to ask
-        about it. The answer or proposed change is scoped to what you clicked. Right-click empty space to ask about the whole part or describe a
-        new one, or drop a drawing (PDF or image) or a photo of a part on the window.
-      </p>
+    </div>
+  );
+}
+
+/** Drawing mode before there is a drawing: what it will make, and how to work on it. */
+function DrawingHelp() {
+  const step = (icon: IconName, title: string, text: string) => (
+    <li>
+      <span className="help-icon">
+        <Icon name={icon} />
+      </span>
+      <span>
+        <strong>{title}</strong> {text}
+      </span>
+    </li>
+  );
+  return (
+    <div className="help" data-testid="help">
+      <h2>Drawings</h2>
+      <ol className="help-steps">
+        {step("drawing", "New drawing", "plans a sheet from the part: views, overall sizes, hole callouts, balloons and the cut list.")}
+        {step("view", "Drag a view", "to place it; click a view or an annotation to edit it on the right.")}
+        {step("ask", "Right-click", "a view or an annotation to ask for a change, like a missing dimension.")}
+        {step("export", "Export PDF or SVG", "when the checks are all green.")}
+      </ol>
+      <p className="muted small">The sheet follows the model: change a size and the drawing updates.</p>
     </div>
   );
 }

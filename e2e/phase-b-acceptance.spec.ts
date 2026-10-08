@@ -53,7 +53,7 @@ async function buildBracket(page: Page) {
 test("a human makes the bracket with no JSON editing", async ({ page }) => {
   const problems = await openApp(page);
   await buildBracket(page);
-  await expect(page.getByTestId("holes")).toHaveText("1 · Ø 6.6");
+  await expect(page.getByTestId("holes")).toHaveText("1 × Ø6.6");
 
   // The document the clicks produced is the spec's bracket.
   const doc = (await savedDocument(page)) as { features: Record<string, unknown>[] };
@@ -100,7 +100,7 @@ test("undo returns the previous solid, redo brings it back", async ({ page }) =>
   await buildBracket(page);
 
   await page.getByTestId("undo").click(); // diameter 6.6 -> 5
-  await expect(page.getByTestId("holes")).toHaveText("1 · Ø 5");
+  await expect(page.getByTestId("holes")).toHaveText("1 × Ø5");
   await page.getByTestId("undo").click(); // centre y
   await page.getByTestId("undo").click(); // centre x
   await page.getByTestId("undo").click(); // the hole itself
@@ -134,7 +134,7 @@ test("a bad selector shows the error, not a crash", async ({ page }) => {
     "edges: selector matched 0 edges (wanted circle edges radius 3.3 on the planar face normal +Z)",
   );
   // The rest of the part still rebuilds and shows.
-  await expect(page.getByTestId("holes")).toHaveText("1 · Ø 5");
+  await expect(page.getByTestId("holes")).toHaveText("1 × Ø5");
   await expect(page.getByRole("button", { name: "Export STEP" })).toBeEnabled();
 
   // Export is refused while the rebuild has errors.

@@ -86,7 +86,7 @@ test('"80 x 40 x 6 plate, four 6.6 holes 8 mm from corners" produces the plate w
   await expect(page.getByTestId("ask-outcome")).toHaveText("Applied");
   const doc = await savedDocument(page);
   expect(doc.parameters).toEqual({ plate_w: 80, plate_h: 40, part_t: 6, hole_d: 6.6, hole_inset: 8 });
-  await expect(page.getByTestId("holes")).toHaveText("4 · Ø 6.6 × 4");
+  await expect(page.getByTestId("holes")).toHaveText("4 × Ø6.6");
 
   // One request: the intent reading, as structured output, the user's words last.
   expect(sent).toHaveLength(1);

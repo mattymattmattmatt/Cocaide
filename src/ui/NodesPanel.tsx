@@ -7,6 +7,8 @@ import type { Command, RawDocument } from "../doc/commands";
 import { NODE_NAME } from "../doc/types";
 import { nodeUsers } from "../doc/commands";
 import { NumberInput, TextInput, Vec3Input, type NumberValue } from "./fields";
+import { Section } from "./Section";
+import { Icon } from "./icons";
 
 export interface SizeChoice {
   /** "part|<profile>|<designation>" or "lib|<library id>|<designation>". */
@@ -62,8 +64,7 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
   const chosen = sizes.some((s) => s.value === size) ? size : (sizes[0]?.value ?? "");
 
   return (
-    <section className="panel nodes" data-testid="nodes">
-      <h2>Nodes</h2>
+    <Section title="Nodes" className="nodes" testId="nodes" count={names.length} open={names.length > 0} autoOpen={names.length > 0}>
       {names.length === 0 && <p className="muted small">Points a frame is built on: members run from node to node, and move with them.</p>}
       <ul>
         {names.map((n) => {
@@ -74,8 +75,8 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
                 <TextInput value={n} onCommit={(to) => run({ type: "renameNode", from: n, to })} testId={`node-name-${n}`} />
               </span>
               <Vec3Input value={nodes[n]} onCommit={(v) => run({ type: "setNode", name: n, at: v })} testId={`node-${n}`} />
-              <button aria-label={`Delete ${n}`} title={users.length ? `Used by ${users.join(", ")}` : "Delete"} onClick={() => run({ type: "setNode", name: n, at: null })} data-testid={`node-delete-${n}`}>
-                ×
+              <button className="icon" aria-label={`Delete ${n}`} title={users.length ? `Used by ${users.join(", ")}` : "Delete"} onClick={() => run({ type: "setNode", name: n, at: null })} data-testid={`node-delete-${n}`}>
+                <Icon name="trash" size={14} />
               </button>
             </li>
           );
@@ -88,7 +89,8 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
             <NumberInput key={k} value={at[k]} ariaLabel={`new node ${"xyz"[k]}`} testId={`node-new-${"xyz"[k]}`} onCommit={(v) => setAt(at.map((c, i) => (i === k ? v : c)))} />
           ))}
         </span>
-        <button onClick={add} data-testid="node-add">
+        <button onClick={add} data-testid="node-add" title="Add the node">
+          <Icon name="plus" size={14} />
           Add
         </button>
       </div>
@@ -126,6 +128,6 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
           </button>
         </form>
       )}
-    </section>
+    </Section>
   );
 }

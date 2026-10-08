@@ -9,6 +9,8 @@ import type { Measurements } from "../kernel";
 import { cutList } from "../weldment/cutlist";
 import type { BodyRange } from "../kernel/bodies";
 import { BODY_COLORS } from "./Viewport";
+import { Section } from "./Section";
+import { Icon } from "./icons";
 
 interface Props {
   measurements: Measurements | null;
@@ -44,8 +46,7 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
   const [open, setOpen] = useState<string | null>(null);
   if (!m || (bodies.length < 2 && !m.members.length)) return null;
   return (
-    <section className="panel bodies" aria-label="Bodies" data-testid="bodies">
-      <h2>Bodies</h2>
+    <Section title="Bodies" className="bodies" testId="bodies" count={bodies.length}>
       <ul>
         {bodies.map((b, i) => {
           const mb = m.bodies.find((x) => x.name === b.name);
@@ -68,11 +69,11 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
                 {mb ? `${n(mb.volume)} mm³` : ""}
               </span>
               <button className="icon" aria-pressed={!hidden.has(b.name)} aria-label={`${hidden.has(b.name) ? "Show" : "Hide"} ${b.name}`} onClick={() => onToggle(b.name)} data-testid={`body-toggle-${b.name}`}>
-                {hidden.has(b.name) ? "◌" : "●"}
+                <Icon name={hidden.has(b.name) ? "eyeOff" : "eye"} size={15} />
               </button>
               {(onMaterial || onDelete || onSave) && (
                 <button className="icon" aria-expanded={open === b.name} aria-label={`More for ${b.name}`} onClick={() => setOpen(open === b.name ? null : b.name)} data-testid={`body-more-${b.name}`}>
-                  ⋯
+                  <Icon name="more" size={15} />
                 </button>
               )}
               {open === b.name && (
@@ -119,7 +120,7 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
           </table>
         </>
       )}
-    </section>
+    </Section>
   );
 }
 

@@ -21,6 +21,7 @@ import { validateDocument } from "../../doc/validate";
 import type { ComposedSheet } from "../../drafting/compose";
 import type { Check } from "../../intent/critic";
 import type { SheetTarget } from "./SheetView";
+import { Icon, type IconName } from "../icons";
 
 type Dispatch = (cmd: Command) => string | null;
 
@@ -56,6 +57,16 @@ function memberIds(doc: RawDocument): string[] {
   return validateDocument(doc).features.flatMap((f) => (f.feature?.op === "member" && !f.feature.suppressed ? [f.feature.id] : []));
 }
 
+/** Each kind of annotation's picture in the list. */
+const ANNOTATION_ICON: Record<Annotation["type"], IconName> = {
+  dimension: "dimension",
+  hole: "hole",
+  balloon: "balloon",
+  weld: "joint",
+  table: "grid",
+  note: "note",
+};
+
 const lookName = (l: ViewLook) => (l === "iso" ? "iso" : `from the ${l}`);
 
 // ---------------------------------------------------------------- left
@@ -86,10 +97,10 @@ export function DrawingTree({
     if (problem) onError(problem);
     return problem;
   };
-  const row = (t: SheetTarget, label: string, detail: string, problem?: string) => (
+  const row = (t: SheetTarget, icon: IconName, label: string, detail: string, problem?: string, nested = false) => (
     <li
       key={t.id}
-      className={`drawing-row${selected === t.id ? " selected" : ""}${problem ? " failed" : ""}`}
+      className={`drawing-row${selected === t.id ? " selected" : ""}${problem ? " failed" : ""}${nested ? " nested" : ""}`}
       onClick={() => onSelect(t)}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -98,8 +109,9 @@ export function DrawingTree({
       data-testid={`drawing-item-${t.id}`}
       title={problem}
     >
+      <Icon name={problem ? "alert" : icon} size={14} className="drawing-icon" />
       <span className="drawing-id">{label}</span>
-      <span className="muted">{problem ? `⚠ ${problem}` : detail}</span>
+      <span className="muted">{problem ?? detail}</span>
     </li>
   );
   const loose = drawing.annotations.filter((a) => !("view" in a));
@@ -110,31 +122,38 @@ export function DrawingTree({
         {drawing.views.map((v) => {
           const cv = sheet?.views.find((x) => x.id === v.id);
           return [
-            row({ kind: "view", id: v.id }, v.id, `${lookName(v.look)}${cv ? `, ${cv.scaleText}` : ""}${v.at ? ", placed" : ""}`),
+            row({ kind: "view", id: v.id }, "view", v.id, `${lookName(v.look)}${cv ? `, ${cv.scaleText}` : ""}${v.at ? ", placed" : ""}`),
             ...drawing.annotations
               .filter((a) => "view" in a && a.view === v.id)
-              .map((a) => row({ kind: "annotation", id: a.id }, `  ${a.id}`, `${a.type} ${said(a.id)?.text ?? ""}`.trim(), said(a.id)?.problem)),
+              .map((a) => row({ kind: "annotation", id: a.id }, ANNOTATION_ICON[a.type], a.id, `${a.type} ${said(a.id)?.text ?? ""}`.trim(), said(a.id)?.problem, true)),
           ];
         })}
-        {loose.map((a) => row({ kind: "annotation", id: a.id }, a.id, `${a.type} ${said(a.id)?.text ?? ""}`.trim()))}
+        {loose.map((a) => row({ kind: "annotation", id: a.id }, ANNOTATION_ICON[a.type], a.id, `${a.type} ${said(a.id)?.text ?? ""}`.trim()))}
       </ul>
-      <div className="drawing-add">
-        <select value={look} onChange={(e) => setLook(e.target.value as ViewLook)} aria-label="New view looks from" data-testid="drawing-new-look">
-          {VIEW_LOOKS.map((l) => (
-            <option key={l} value={l}>
-              {lookName(l)}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => {
-            const id = drawing.views.some((v) => v.id === look) ? nextDrawingId(drawing, `${look}_`) : look;
-            if (!run({ type: "setView", id, view: { look } })) onSelect({ kind: "view", id });
-          }}
-          data-testid="drawing-add-view"
-        >
-          + View
-        </button>
+      <div className="drawing-form">
+        <h2>Add a view</h2>
+        <label className="field">
+          <span className="field-label">Looking</span>
+          <select value={look} onChange={(e) => setLook(e.target.value as ViewLook)} aria-label="New view looks from" data-testid="drawing-new-look">
+            {VIEW_LOOKS.map((l) => (
+              <option key={l} value={l}>
+                {lookName(l)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="form-actions">
+          <button
+            onClick={() => {
+              const id = drawing.views.some((v) => v.id === look) ? nextDrawingId(drawing, `${look}_`) : look;
+              if (!run({ type: "setView", id, view: { look } })) onSelect({ kind: "view", id });
+            }}
+            data-testid="drawing-add-view"
+          >
+            <Icon name="plus" size={14} />
+            Add view
+          </button>
+        </div>
       </div>
       <AddAnnotation doc={doc} drawing={drawing} selectedView={drawing.views.find((v) => v.id === selected)?.id ?? (drawing.annotations.find((a) => a.id === selected && "view" in a) as { view?: string } | undefined)?.view} run={run} onSelect={onSelect} />
     </section>
@@ -186,15 +205,19 @@ function AddAnnotation({
   };
   return (
     <div className="drawing-form" data-testid="drawing-add">
-      <h2>Add</h2>
-      <div className="drawing-add">
+      <h2>Add an annotation</h2>
+      <label className="field">
+        <span className="field-label">What</span>
         <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} aria-label="What to add" data-testid="drawing-add-kind">
-          <option value="between">dimension between</option>
-          <option value="member">member length</option>
-          <option value="balloon">balloon</option>
-          <option value="note">note</option>
+          <option value="between">Dimension, two points</option>
+          <option value="member">Member length</option>
+          <option value="balloon">Balloon</option>
+          <option value="note">Note</option>
         </select>
-        {kind !== "note" && (
+      </label>
+      {kind !== "note" && (
+        <label className="field">
+          <span className="field-label">In view</span>
           <select value={view} onChange={(e) => setView(e.target.value)} aria-label="In view" data-testid="drawing-add-view-id">
             {drawing.views.map((v) => (
               <option key={v.id} value={v.id}>
@@ -202,16 +225,23 @@ function AddAnnotation({
               </option>
             ))}
           </select>
-        )}
-      </div>
-      <div className="drawing-add">
-        {kind === "between" && (
-          <>
+        </label>
+      )}
+      {kind === "between" && (
+        <>
+          <label className="field">
+            <span className="field-label">From</span>
             <PointSelect value={from} points={points} onChange={setFrom} testId="drawing-add-from" />
+          </label>
+          <label className="field">
+            <span className="field-label">To</span>
             <PointSelect value={to} points={points} onChange={setTo} testId="drawing-add-to" />
-          </>
-        )}
-        {(kind === "member" || kind === "balloon") && (
+          </label>
+        </>
+      )}
+      {(kind === "member" || kind === "balloon") && (
+        <label className="field">
+          <span className="field-label">Member</span>
           <select value={member} onChange={(e) => setMember(e.target.value)} aria-label="Member" data-testid="drawing-add-member">
             {members.map((m) => (
               <option key={m} value={m}>
@@ -219,10 +249,18 @@ function AddAnnotation({
               </option>
             ))}
           </select>
-        )}
-        {kind === "note" && <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Note text" aria-label="Note text" data-testid="drawing-add-text" />}
+        </label>
+      )}
+      {kind === "note" && (
+        <label className="field">
+          <span className="field-label">Text</span>
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Note text" aria-label="Note text" data-testid="drawing-add-text" />
+        </label>
+      )}
+      <div className="form-actions">
         <button onClick={add} data-testid="drawing-add-go">
-          Add
+          <Icon name={kind === "balloon" ? "balloon" : kind === "note" ? "note" : "dimension"} size={14} />
+          Add {kind === "between" || kind === "member" ? "dimension" : kind}
         </button>
       </div>
     </div>
@@ -275,8 +313,8 @@ export function DrawingSide({
       <h2>Checks</h2>
       <ul className="checks" data-testid="drawing-checks">
         {checks.map((c) => (
-          <li key={c.label} className={c.ok ? "ok" : "bad"} title={c.expected}>
-            <span>{c.ok ? "✓" : "✗"}</span> {c.label}
+          <li key={c.label} className={c.ok ? "ok" : "bad"} title={`Expected: ${c.expected}`}>
+            <span className="check-mark">{c.ok ? "✓" : "✗"}</span> {c.label}
             <span className="muted">: {c.actual}</span>
           </li>
         ))}

@@ -11,6 +11,8 @@ import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
 import { describeConstraint, removeEntities, suggestions, type SketchItem } from "./draft";
 import { SketchCanvas, type Tool } from "./SketchCanvas";
+import { ToolButton } from "../tools";
+import { Icon } from "../icons";
 
 export interface SketchSession {
   /** Existing feature id, or the id the new sketch will get. */
@@ -241,24 +243,14 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
       <section className="center sketch-center">
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
           {TOOLS.map(([t, label, key]) => (
-            <button key={t} aria-pressed={tool === t} onClick={() => setTool(t)} title={`${label} (${key})`} data-testid={`tool-${t}`}>
-              {label}
-            </button>
+            <ToolButton key={t} icon={t} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${label} (${key})`} testId={`tool-${t}`} />
           ))}
           <span className="sep" />
-          <button aria-pressed={construction} onClick={toggleConstruction} title="Construction geometry (toggle for new or selected entities)">
-            Construction
-          </button>
-          <button aria-pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Snap new points to the grid">
-            Grid snap
-          </button>
+          <ToolButton icon="construction" label="Construction" pressed={construction} onClick={toggleConstruction} title="Construction geometry: guides that are not part of the profile (toggles new or selected entities)" />
+          <ToolButton icon="grid" label="Grid snap" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Snap new points to the grid" />
           <span className="sep" />
-          <button onClick={undo} disabled={!past.length} title="Undo in sketch (Ctrl+Z)">
-            Undo
-          </button>
-          <button onClick={redo} disabled={!future.length} title="Redo in sketch (Ctrl+Shift+Z)">
-            Redo
-          </button>
+          <ToolButton icon="undo" label="Undo" onClick={undo} disabled={!past.length} title="Undo in sketch (Ctrl+Z)" />
+          <ToolButton icon="redo" label="Redo" onClick={redo} disabled={!future.length} title="Redo in sketch (Ctrl+Shift+Z)" />
         </div>
         <SketchCanvas
           entities={entities}
@@ -351,11 +343,14 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
                     }}
                   />
                 )}
+                {"value" in k && <span className="unit">mm</span>}
                 <button
+                  className="icon"
                   aria-label="Remove constraint"
+                  title="Remove constraint"
                   onClick={() => setConstraints(draft.constraints.filter((_, j) => j !== i))}
                 >
-                  ×
+                  <Icon name="x" size={14} />
                 </button>
               </li>
             ))}
