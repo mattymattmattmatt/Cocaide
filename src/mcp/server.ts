@@ -16,7 +16,7 @@ import { parseDocumentText } from "../doc/format";
 import { VIEWS, type Camera } from "../render/raster";
 import { INSTRUCTIONS, REFERENCE } from "./reference";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const obj = z.record(z.string(), z.unknown());
 const vec3 = z.array(z.number()).length(3);
@@ -141,6 +141,30 @@ export const TOOLS: Record<string, ToolSpec> = {
       height: z.number().int().optional(),
     },
     readOnly: true,
+  },
+  newDrawing: {
+    description: "Make the part's drawing, planned by code: an A3 sheet with front, top, right and iso views, the overall size dimensioned, every hole called out, a balloon per cut list item, the cut list and weld tables and the title block. Replaces a drawing the part has.",
+    input: { date: z.string().optional().describe("The title block's date, e.g. 2026-10-08") },
+  },
+  setSheet: {
+    description: 'Change the drawing\'s sheet: { "size": "A4".."A0", "scale": "1:10" (null: what fits), "projection": "third" | "first", "title", "number", "revision", "drawnBy", "date" }. Merged in; null removes a field.',
+    input: { patch: obj },
+  },
+  setView: {
+    description: 'Add or replace a view by id: { "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso", "at"?: [x, y], "scale"?: "1:20", "hidden"?: true }; or remove it (view: null) with its annotations.',
+    input: { id: z.string(), view: obj.nullable() },
+  },
+  setAnnotation: {
+    description: "Add or replace an annotation by id, or remove it (annotation: null): a dimension, hole callout, balloon, weld symbol, table or note (see cocaide://reference). What it reads is measured on the rebuild; the result says what it reads.",
+    input: { id: z.string(), annotation: obj.nullable() },
+  },
+  drawing: {
+    description: "The drawing as composed: the sheet's size, scale and projection, each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.",
+    readOnly: true,
+  },
+  exportDrawing: {
+    description: "Write the drawing's sheet as a vector PDF (Helvetica text) or an SVG to the output folder.",
+    input: { format: z.enum(["pdf", "svg"]), file: z.string().optional().describe("File name; default <document name>-drawing.<format>") },
   },
   undo: { description: "Step back to the previous revision." },
   redo: { description: "Step forward again after undo." },

@@ -304,7 +304,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       } else {
         if (!isObject(cmd.view)) return { ok: false, error: `setView: view must be an object (got ${JSON.stringify(cmd.view)})` };
         if (i < 0 && annotations.some((a) => a.id === cmd.id)) return { ok: false, error: `setView: "${cmd.id}" is an annotation's id` };
-        const v = { ...structuredClone(cmd.view), id: cmd.id };
+        const { id: _v, ...view } = structuredClone(cmd.view) as Record<string, unknown>;
+        const v = { id: cmd.id, ...view };
         if (i < 0) views.push(v);
         else views[i] = v;
       }
@@ -322,7 +323,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       } else {
         if (!isObject(cmd.annotation)) return { ok: false, error: `setAnnotation: annotation must be an object (got ${JSON.stringify(cmd.annotation)})` };
         if (i < 0 && d.views.some((v) => v.id === cmd.id)) return { ok: false, error: `setAnnotation: "${cmd.id}" is a view's id` };
-        const a = { ...structuredClone(cmd.annotation), id: cmd.id };
+        const { id: _a, ...annotation } = structuredClone(cmd.annotation) as Record<string, unknown>;
+        const a = { id: cmd.id, ...annotation };
         const problem = targetProblem(doc, [a]);
         if (problem) return { ok: false, error: `setAnnotation: ${problem}` };
         if (i < 0) annotations.push(a);

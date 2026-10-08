@@ -13,7 +13,15 @@ import { formatDocument } from "../doc/format";
 import { createHistory, record, redo, undo, canRedo, canUndo, type History } from "../doc/history";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
 import { exportRefusal, photoNote } from "../doc/photo";
-import type { Constraint, SketchEntity, Vec3 } from "../doc/types";
+import type { DrawingGeometry } from "../ask/kernel";
+import { geometryKey } from "../doc/drawing";
+import type { Constraint, SketchEntity, Vec3, ViewLook } from "../doc/types";
+import { drawingChecks } from "../drafting/checks";
+import { composeSheet } from "../drafting/compose";
+import { sheetPDF } from "../drafting/pdf";
+import { DEFAULT_VIEWS, planDrawing } from "../drafting/plan";
+import { sheetSVG } from "../drafting/svg";
+import { projectViews } from "../kernel/project";
 import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
 import { exportSTEP, heapBytes, loadOC, rebuild, RECYCLE_HEAP_BYTES, recycleOC, tessellate, type OC, type RebuildResult } from "../kernel";
@@ -60,6 +68,10 @@ export const EDIT_TOOLS = [
   "setNode",
   "renameNode",
   "setWeld",
+  "newDrawing",
+  "setSheet",
+  "setView",
+  "setAnnotation",
   "setDimension",
   "addEntity",
   "updateEntity",
@@ -69,7 +81,7 @@ export const EDIT_TOOLS = [
   "undo",
   "redo",
 ] as const;
-export const READ_TOOLS = ["listFeatures", "getFeature", "validate", "rebuild", "measure", "exportSTEP", "exportSTL", "screenshot"] as const;
+export const READ_TOOLS = ["listFeatures", "getFeature", "validate", "rebuild", "measure", "exportSTEP", "exportSTL", "screenshot", "drawing", "exportDrawing"] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
 export interface LogSession {
@@ -235,6 +247,21 @@ export class AgentSession {
         return this.edit({ type: "renameNode", from: String(a.from), to: String(a.to) });
       case "setWeld":
         return this.edit({ type: "setWeld", id: String(a.id), weld: isObject(a.weld) ? a.weld : null });
+      case "newDrawing": {
+        if (!this.built.solid || !this.built.measurements) return this.fail("newDrawing: there is no solid to draw yet");
+        const drawing = planDrawing(this.doc, this.built.measurements, this.geometry(DEFAULT_VIEWS), typeof a.date === "string" ? { date: a.date } : {});
+        return this.edit({ type: "setDrawing", drawing });
+      }
+      case "setSheet":
+        return this.edit({ type: "setSheet", patch: isObject(a.patch) ? a.patch : {} });
+      case "setView":
+        return this.edit({ type: "setView", id: String(a.id), view: isObject(a.view) ? a.view : null });
+      case "setAnnotation":
+        return this.edit({ type: "setAnnotation", id: String(a.id), annotation: isObject(a.annotation) ? a.annotation : null });
+      case "drawing":
+        return this.drawing();
+      case "exportDrawing":
+        return this.exportDrawing(a.format, a.file);
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), index: a.index as number, value: a.value as number | string });
       case "addEntity":
@@ -277,6 +304,14 @@ export class AgentSession {
     const scope = this.writeScope ? [...this.writeScope, ...this.owned] : undefined;
     const applied = apply(this.doc, cmd, { writeScope: scope });
     if (!applied.ok) return this.fail(applied.error);
+    if (geometryKey(applied.doc) === geometryKey(this.doc)) {
+      // Only the drawing changed: the part is as it was.
+      const text = formatDocument(applied.doc);
+      if (text === this.history.present) return { result: { ok: true, changed: false, ...this.status() } };
+      this.history = record(this.history, text);
+      this.commit(applied.doc, text, null);
+      return { result: { ok: true, changed: true, ...this.status(), ...this.drawingStatus(cmd) } };
+    }
     const next = rebuild(applied.doc, this.oc);
     const broke = newFailures(this.built, next);
     if (broke.length) {
@@ -297,13 +332,16 @@ export class AgentSession {
     if (which === "undo" ? !canUndo(this.history) : !canRedo(this.history)) return this.fail(`${which}: nothing to ${which}`);
     this.history = which === "undo" ? undo(this.history) : redo(this.history);
     const doc = JSON.parse(this.history.present) as RawDocument;
-    this.commit(doc, this.history.present, rebuild(doc, this.oc));
+    this.commit(doc, this.history.present, geometryKey(doc) === geometryKey(this.doc) ? null : rebuild(doc, this.oc));
     return { result: { ok: true, changed: true, ...this.status() } };
   }
 
-  private commit(doc: RawDocument, text: string, built: RebuildResult) {
-    this.built.dispose();
-    this.built = built;
+  /** Commits a new revision; `built` is its rebuild, or null when the part didn't change. */
+  private commit(doc: RawDocument, text: string, built: RebuildResult | null) {
+    if (built) {
+      this.built.dispose();
+      this.built = built;
+    }
     this.doc = doc;
     this.revision++;
     this.hash = sha256(text);
@@ -496,6 +534,65 @@ export class AgentSession {
     const result: CallResult["result"] = { ok: true, view, revision: this.revision, width: img.width, height: img.height, file };
     if (highlighted !== undefined) result.highlighted = highlighted;
     return { result, image: png };
+  }
+
+  // ------------------------------------------------------------ drawing
+
+  /** The part projected for these views, with where its holes were drilled. */
+  private geometry(views: { id: string; look: ViewLook }[]): DrawingGeometry {
+    return { views: projectViews(this.oc, this.built.bodies, views), holes: this.built.holes };
+  }
+
+  private composed() {
+    const v = validateDocument(this.doc);
+    if (!v.drawing) return null;
+    const geometry = this.built.solid ? this.geometry(v.drawing.views.map((x) => ({ id: x.id, look: x.look }))) : null;
+    const sheet = composeSheet(this.doc, { measurements: this.built.measurements, geometry });
+    return sheet ? { sheet, geometry, drawingErrors: v.drawingErrors } : { sheet: null, geometry, drawingErrors: v.drawingErrors };
+  }
+
+  /** After a drawing edit: what the annotation it set reads, and the checks that fail. */
+  private drawingStatus(cmd: Command): Record<string, unknown> {
+    const c = this.composed();
+    if (!c?.sheet) return {};
+    const id = cmd.type === "setAnnotation" || cmd.type === "setView" ? cmd.id : null;
+    const a = id ? c.sheet.annotations.find((x) => x.id === id) : undefined;
+    const failing = drawingChecks(c.sheet, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok);
+    return {
+      ...(a ? { annotation: { id: a.id, type: a.type, ...(a.problem ? { problem: a.problem } : { reads: a.text }) } } : {}),
+      ...(failing.length ? { failingChecks: failing.map((x) => `${x.label}: ${x.actual}`) } : {}),
+    };
+  }
+
+  private drawing(): CallResult {
+    const c = this.composed();
+    if (!c) return this.fail("drawing: the part has no drawing (newDrawing makes one)");
+    if (!c.sheet) return this.fail(`drawing: the drawing is not valid: ${c.drawingErrors.join("; ")}`);
+    const { sheet, geometry } = c;
+    return {
+      result: {
+        ok: true,
+        revision: this.revision,
+        sheet: { size: sheet.size, scale: sheet.scaleText, projection: sheet.projection },
+        views: sheet.views.map((v) => ({ id: v.id, look: v.look, scale: v.scaleText, centre: v.centre.map((x) => Math.round(x * 10) / 10), placed: !v.auto })),
+        annotations: sheet.annotations.map((a) => ({ id: a.id, type: a.type, ...(a.view ? { view: a.view } : {}), ...(a.problem ? { problem: a.problem } : { reads: a.text }) })),
+        checks: drawingChecks(sheet, this.doc, this.built.measurements, geometry),
+      },
+    };
+  }
+
+  private exportDrawing(format: unknown, file: unknown): CallResult {
+    if (format !== "pdf" && format !== "svg") return this.fail('exportDrawing: format must be "pdf" or "svg"');
+    const c = this.composed();
+    if (!c?.sheet) return this.fail(c ? `exportDrawing: the drawing is not valid: ${c.drawingErrors.join("; ")}` : "exportDrawing: the part has no drawing (newDrawing makes one)");
+    const ext = `.${format}`;
+    const name = typeof file === "string" && file.trim() ? basename(file.trim()) : `${safeName(this.built.name)}-drawing${ext}`;
+    const path = join(this.outDir, name.endsWith(ext) ? name : `${name}${ext}`);
+    const bytes = format === "pdf" ? sheetPDF(c.sheet, { title: validateDocument(this.doc).drawing?.sheet.title ?? this.built.name }) : new TextEncoder().encode(sheetSVG(c.sheet));
+    mkdirSync(this.outDir, { recursive: true });
+    writeFileSync(path, bytes);
+    const failing = drawingChecks(c.sheet, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok).map((x) => `${x.label}: ${x.actual}`);
+    return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision, ...(failing.length ? { failingChecks: failing } : {}) } };
   }
 
   // ------------------------------------------------------------ plumbing

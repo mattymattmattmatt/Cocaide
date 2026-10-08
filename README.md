@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase K (the agent on weldments) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list) and K (the agent on weldments).
+**Status: Phase L (fabrication drawings) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list), K (the agent on weldments) and L (fabrication drawings).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -45,6 +45,12 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - "A 1200 × 600 table frame, 900 high, SHS 40×40×3" is read as a frame. The section is the user's words, matched against the section library by code: the model never picks one, and anything not in the library is asked for.
   - A frame always goes through the confirmation card, and then a planner builds it the way a person would in Phase J. A fabrication critic checks it: every member connected, no clashes after trimming, nothing longer than stock bar, alike members cut alike.
   - Right-click a joint to mitre or butt it, or a member to swap its size. In the profile card, **Suggest** asks the model for a name, designations, tags and the anchor, from the measured section.
+- Phase L adds fabrication drawings, projected from the solid.
+  - The drawing is part of the document: a sheet, views and annotations. Every number on it is measured on the rebuild; only notes and the title block are typed, so a drawing can't disagree with its part.
+  - **New drawing** is planned by code: an A3 sheet, third-angle, with front, top and right views and an iso; the overall size dimensioned; every hole called out and placed; a balloon per cut list item; the cut list; the title block.
+  - Drawing checks say what a checker would: every view shows the part, every annotation is attached, every item ballooned, the size dimensioned three ways, nothing overlapping.
+  - Right-click a view or an annotation on the sheet to ask about it. The ask may change that view's annotations, never the part, and its proposal is judged by the same checks.
+  - Export writes a vector PDF (real text, no fonts or libraries needed) or the SVG the app shows.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -53,9 +59,9 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 290 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J and K acceptance logic
-                       #   (+12 live-model Phase D–G and K tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 38 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J and K acceptance suites
+npm test               # 319 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J, K and L acceptance logic
+                       #   (+14 live-model Phase D–G, K and L tests, run when ANTHROPIC_API_KEY is set)
+npm run test:e2e       # 42 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J, K and L acceptance suites
 npm run build          # typecheck + production bundle in dist/
 ```
 
@@ -82,6 +88,39 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase L: fabrication drawings
+
+Open the example "table frame (weldment)", switch to **Drawing** and click **New drawing**.
+
+| Check | Result |
+|---|---|
+| New drawing gives one A3 sheet, third-angle, with front, top and right views and an iso | Planned by code, at the largest standard scale that fits: 1:10. The top view sits above the front and the right view to its right, both lined up with it, as third-angle puts them; the iso goes top right. Hidden edges are off for a weldment, whose hollow sections would fill every view with dashes, and on for a plate. |
+| It is dimensioned 1200, 600 and 900 | `d1` (front, `@left` → `@right`) reads 1200, `d2` (front, `@bottom` → `@top`) 900, `d3` (right view) 600. Each is measured on the projected part; no annotation takes a value. |
+| Its balloons 1–3 sit on members of cut list items 1–3; the cut list and title block are on it | Each balloon names a member, and its number is that member's cut list item, worked out on every rebuild. The planner puts it on the member of its item the iso shows most of, and places it on the sheet near that member, clear of the others. The cut list table (item, size, length, ends, quantity, kg) sits above the title block. The title block has the name, steel (default), 23.98 kg, 1:10, A3, the date and the third-angle symbol. |
+| The drawing checks pass | Every view shows the part. Every annotation is attached. Every cut list item has a balloon. The overall size is dimensioned in all three directions. Nothing overlaps or runs off the sheet. A part with holes adds "every hole is called out", and one with welds "every weld has a symbol". |
+| Deleting a balloon fails "every cut list item has a balloon"; moving a view onto the title block fails the overlap check | Deleting `b5` gives "no balloon for item 2 (leg_a, leg_b, leg_c, leg_d)". Dragging the top view onto the title block holds it there (its `at`), the check names it, and the other views stay placed clear of it. **Place with the others** puts it back. |
+| Switching every member to SHS 50×50×3 updates the sheet | In the model, **All like it** → SHS 50x50x3. Back on the sheet, a leg's length dimension reads 850 instead of 860, the cut list reads SHS 50x50x3, 2 × 1200, 4 × 850 and 2 × 600, the balloons still number items 1–3, and the checks still pass. |
+| Right-click the front view and ask for the leg height | The scope is `view:front`, "view front and its annotations", and the model gets the drawing's tools and no others. The packet says where the view's nodes, members and holes are on the sheet, each member's cut list item, and whether it lies flat in the view. The proposal adds `{ "type": "dimension", "view": "front", "member": "leg_a" }`, previewed on the sheet with the five checks; accepted, it reads 860. An edit to a feature from that ask is refused: `writeScope: updateFeature "leg_a" is outside the scope [view:front]`. |
+| The PDF opens in a PDF reader, and its text has the title, the dimensions and the cut list | Export PDF writes one A3 page, 1190.55 × 841.89 pt, every line a vector and every word Helvetica text. Poppler's `pdfinfo` and `pdftotext` read it, and the cut list comes out row by row. Export SVG is the SVG the app shows, word for word. |
+
+These checks are covered at three levels:
+- **Node** (`tests/drafting.test.ts`, `tests/drafting-ask.test.ts`):
+  - validation, commands, scope, and renames that follow onto the sheet;
+  - the projection against nodes and member ends;
+  - the acceptance sheet and its checks, and the SHS 50 switch;
+  - a plate's drawing, with its hole callout and positions;
+  - the PDF through poppler;
+  - the drawing ask with a scripted model: packet, scope, rollback, the correction pass, and a refused feature edit;
+  - the MCP tools, with the log replayed.
+- **Browser** (`e2e/drafting.spec.ts`): the acceptance flow above, with the API answered by a script.
+- **Live** (`tests/phase-l-acceptance.test.ts`, with `ANTHROPIC_API_KEY`): the leg height from a right-click, against the real model.
+
+![The table frame's drawing in the app: the sheet, its views and annotations, the checks and the title block fields](docs/phase-l-drawing.png)
+
+![Right-click the front view: the proposed leg dimension previewed on the sheet, with the drawing checks](docs/phase-l-ask.png)
+
+![The exported PDF, rendered by poppler](docs/phase-l-pdf.png)
 
 ### Phase K: the agent on weldments
 
@@ -446,6 +485,41 @@ Drop a photo of a part (JPEG, PNG, WebP, GIF). An image could be a drawing or a 
 
 v1 limits: flat plates and discs, one part per photo, and the photo pinned on XY. A freeform part is refused. Any other shape gets a message to describe it or build it by hand. A photo taken at an angle is read, with a note that its sizes are rougher and it won't line up exactly.
 
+## Drawings
+
+**Drawing** in the top bar shows the part's drawing: one sheet, made of views of the rebuilt part. **New drawing** plans it:
+- the sheet is A3, at the largest standard scale that fits, third-angle;
+- there are front, top and right views, lined up as the projection puts them, and an iso where there is room (a step or two smaller if it needs to be);
+- the overall length, height and width are dimensioned;
+- every hole is called out where it shows as a circle ("2× Ø10 THRU", with the counterbore or countersink), and placed from the view's left and bottom edges;
+- every cut list item has a balloon;
+- the cut list and the weld table sit above the title block.
+
+Ctrl+Z puts back the drawing it replaced.
+
+**Views** are projected by OCCT's hidden-line removal, every body at once, so one body hides another. The lines are read back per body, so a balloon knows which lines are its member's. Tick **Hidden edges** to see what's behind, dashed. A view without `at` is placed with the others; drag one to hold it where you put it, and **Place with the others** lets it go. A view can have its own scale.
+
+**Annotations** never take a value: what each one says is read from the rebuild when the sheet is drawn.
+- **Dimension:** between two points, horizontal, vertical or aligned. A point is a node, a member end (`leg_a.start`), a hole's centre, or a side of the view (`@left`, `@right`, `@top`, `@bottom`). Or `{ "member": "leg_a" }`: the member's cut length along it, where it lies flat in the view. Dimensions stack outside the view, away from its neighbours, and never go in an iso view.
+- **Hole callout:** the hole feature's size and count, with a centre mark.
+- **Balloon:** a member's cut list item number.
+- **Weld symbol:** a weld from the weld table, with its arrow to where its bodies meet, the fillet, butt or plug symbol, its size and length, and the all-round circle.
+- **Table:** the cut list or the weld table.
+- **Note:** free text.
+
+Click a view or annotation, on the sheet or in the list, to edit it; drag a balloon, callout, weld symbol, table or note to move it.
+
+**The drawing follows the model.** Rename a node or a member, and the sheet follows. Delete a member that a balloon points at, and the delete goes through: the balloon is listed as a problem (in red, and in the checks) until it's moved or deleted. A broken drawing never stops the part rebuilding.
+
+**Checks** run on every change: every view shows the part, every annotation is attached, every cut list item has a balloon, the overall size is dimensioned three ways, every hole is called out, every weld has a symbol, and nothing overlaps or runs off the sheet.
+
+**Asking about the sheet.** Right-click a view, an annotation or empty paper.
+- **Scope:** the ask may change that view and its annotations, that annotation, or the drawing. The API refuses anything else, the part's features included.
+- **The packet:** the view's direction and scale, where its nodes, members and holes are on the sheet, and its annotations with what they read.
+- **Checking the edits:** an edit that leaves an annotation unable to be drawn (a member seen end-on, say) is rolled back with the reason. The finished proposal is judged by the drawing checks, and a check it breaks gets one correction pass.
+
+**Export PDF** writes the sheet as one page of vector lines and Helvetica text, which every PDF reader has built in, so nothing is embedded or rasterised. **Export SVG** writes the sheet the app shows. DWG/DXF stay out of scope, as the spec says.
+
 ## Agents (MCP)
 
 `src/mcp/server.ts` is an MCP server over stdio, one document per server. The host sets the document, the write scope, and where files go; the agent cannot change any of them.
@@ -477,6 +551,9 @@ For Claude Code, for example, in `.mcp.json`:
 | `measure(selector?)` | The part (volume, area, bounding box, mass, holes), or what a face or edge selector picks right now |
 | `exportSTEP(file?)`, `exportSTL(file?)` | Written to the output folder; refused while the part has errors |
 | `screenshot(view \| direction, highlight?)` | One PNG per call. Views `iso`, `front`, `back`, `left`, `right`, `top`, `bottom`, `isoBack`, plus host-named cameras. `highlight` outlines a selector's matches, hidden ones included |
+| `newDrawing(date?)`, `setSheet(patch)`, `setView(id, view)`, `setAnnotation(id, annotation)` | The part's drawing: planned by code, then edited. A drawing edit doesn't rebuild the part, and its result says what the annotation reads and which drawing checks fail |
+| `drawing` | The composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks |
+| `exportDrawing(format, file?)` | The sheet as PDF or SVG, written to the output folder |
 | `undo`, `redo` | The agent's own revisions |
 
 The server's instructions say how edits work. The resource `cocaide://reference` documents every op, field and selector, and `cocaide://document` is the current file.
@@ -490,6 +567,7 @@ The server's instructions say how edits work. The resource `cocaide://reference`
 - `+`: add features and new parameters;
 - `param:<name>`: set that parameter (also allowed when every feature that uses it is in scope);
 - `name`: rename the document;
+- `drawing`: anything in the drawing; `view:<id>`: that view, its annotations and new ones in it; `annotation:<id>`: that annotation. None of them reach the part's features;
 - `*`: everything.
 
 Features the agent adds in a session are its own to keep editing.
@@ -513,6 +591,7 @@ File extension `.cocaide.json`. Units are millimetres, always. Unknown fields ar
   "profiles": { "SHS": { /* a weldment profile: see below */ } },   // optional: the part's copies of library sections
   "nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] },   // optional: a frame's points
   "welds": [{ "id": "w1", "between": ["AB", "EA"], "type": "fillet", "size": 3, "length": 160, "allRound": true }],   // optional: notes
+  "drawing": { "sheet": { "size": "A3", "projection": "third" }, "views": [ /* … */ ], "annotations": [ /* … */ ] },   // optional: see Drawings
   "photo": { "image": "bracket-photo.jpg", "sha256": "…", "width": 1400, "height": 1000, "origin": [620, 420],
              "scale": { "from": [300, 420], "to": [940, 420], "length": 80, "what": "the plate's long edge",
                         "source": "typed", "parameter": "plate_w", "confirmed": false },
@@ -649,6 +728,7 @@ Every edit goes through `apply(doc, command, { writeScope? })` (`src/doc/command
 - `renameBody`, which every feature and selector naming the body follows;
 - `setProfile`, which puts a copy of a profile in the part, replaces it, or removes it (refused while a member uses it);
 - `setNode` (add, move, or remove a node nothing names), `renameNode` (members, joints and gussets follow), and `setWeld` (add, replace or remove a weld by id);
+- `setDrawing` (the whole drawing, or none), `setSheet`, `setView` (a view's removal takes its annotations) and `setAnnotation`, which refuses one that points at nothing in the part;
 - `setDimension`, which changes a sketch constraint's value and re-solves the sketch;
 - `addEntity`, `updateEntity`, `deleteEntity`, `addConstraint`, `deleteConstraint`, inside one sketch, each followed by a re-solve.
 
@@ -660,7 +740,7 @@ When a parameter or dimension changes, the sketches it affects are re-solved. Fi
 src/doc       document types, strict validation, parameters, formatting, commands, write scope, undo history, the photo rules   (no kernel)
 src/geom      plane frames, 2D profiles, constraint checks, the constraint solver, section properties, member placement     (no kernel)
 src/kernel    OCCT: operations, bodies, selectors, picking -> selector synthesis, measurements, interference, the cut list, mesh,
-              STEP (named bodies), rebuild()
+              STEP (named bodies), hidden-line projection for drawings, rebuild()
 src/worker    the kernel in a Web Worker; meshes, topology and STEP text cross the boundary, shapes never do
 src/agent     the MCP agent session (Node): transactions, revisions, log, replay, selector health
 src/ask       the right-click ask: context packet and scope, prompt and tools, the agent loop and sandbox, kernel port, the part-level prompt,
@@ -668,12 +748,14 @@ src/ask       the right-click ask: context packet and scope, prompt and tools, t
 src/intent    intent JSON, the ask-if-missing review, the drawing and photo readings, the planners (parts and frames), the critic
 src/drawing   drawing ingest in the browser: pdf.js rasterising at 200 dpi, text layer, legibility
 src/photo     photos in the browser: preparing for the model, the drawing-or-photo guess, IndexedDB storage
+src/drafting  drawings: view frames and projection placement, the sheet composer (layout, scale, dimensions, balloons, callouts,
+              weld symbols, tables, title block), the New drawing planner, the drawing checks, SVG and PDF writers   (no kernel)
 src/weldment  the section library (profiles from sketches, versions, search, export and merge, part copies, IndexedDB);
               joints, members along a path, the cut list and the weld table, the fabrication checks
 src/render    software renderer (PNG screenshots without a GPU), binary STL, PNG decoding
 src/mcp       the MCP server and the reference it serves
 src/ui        React + Three.js: viewport with picking, feature tree, properties, measurements, JSON tab, the ask popover,
-              the profile card and the Sections tab
+              the profile card and the Sections tab; src/ui/drawing: the sheet, and the drawing's panels
 src/ui/sketcher  the 2D sketcher: canvas, tools, constraint panel
 scripts       headless CLI, FreeCAD verification, log replay, the drawing and photo fixtures (make-drawings.ts, make-photos.ts)
 examples      bracket (the spec's JSON), mounting plate (every Phase A op), flange (patterns, chamfer, fillet), stand (two bodies),

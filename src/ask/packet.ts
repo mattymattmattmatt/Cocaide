@@ -18,6 +18,7 @@ import { dist2 } from "../geom/vec";
 import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/inspect";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { fabricationChecks } from "../weldment/fabrication";
+import { drawingPacket } from "./drawingPacket";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
 export type AskTarget =
@@ -33,9 +34,35 @@ export type AskTarget =
   /** One body of a part of several (Phase H): its features, and new features that touch only it. */
   | { kind: "body"; name: string }
   /** Empty space: the whole part, the weakest scope (spec 6). Never applied without the user accepting. */
-  | { kind: "part" };
+  | { kind: "part" }
+  /** A view on the drawing's sheet (Phase L): the view and the annotations in it. */
+  | { kind: "view"; id: string }
+  /** One annotation on the sheet. */
+  | { kind: "annotation"; id: string }
+  /** Empty paper: the whole drawing, never the part's features. */
+  | { kind: "drawing" };
 
-export type PacketKind = "feature" | "sketch" | "member" | "joint" | "failed" | "entity" | "constraint" | "face" | "edge" | "parameter" | "body" | "part";
+export type PacketKind =
+  | "feature"
+  | "sketch"
+  | "member"
+  | "joint"
+  | "failed"
+  | "entity"
+  | "constraint"
+  | "face"
+  | "edge"
+  | "parameter"
+  | "body"
+  | "part"
+  | "view"
+  | "annotation"
+  | "drawing";
+
+/** Targets on the drawing's sheet: their asks edit the drawing alone. */
+export function isDrawingTarget(t: AskTarget): t is Extract<AskTarget, { kind: "view" | "annotation" | "drawing" }> {
+  return t.kind === "view" || t.kind === "annotation" || t.kind === "drawing";
+}
 
 /** What a feature row is asked about as: a sketch, a member or a joint get their own actions and packet. */
 export function featureKind(op: unknown): PacketKind {
@@ -81,6 +108,12 @@ export function scopeFor(doc: RawDocument, target: AskTarget): string[] {
       return [...bodyFeatures(doc, target.name), `body:${target.name}`];
     case "part":
       return ["*"];
+    case "view":
+      return [`view:${target.id}`];
+    case "annotation":
+      return [`annotation:${target.id}`];
+    case "drawing":
+      return ["drawing"];
   }
 }
 
@@ -115,6 +148,9 @@ export function describeScope(scope: string[]): string {
       if (t.startsWith("body:")) return `new features on body ${t.slice(5)} alone`;
       if (t.startsWith("node:")) return `node ${t.slice(5)}`;
       if (t.startsWith("weld:")) return `weld ${t.slice(5)}`;
+      if (t.startsWith("view:")) return `view ${t.slice(5)} and its annotations`;
+      if (t.startsWith("annotation:")) return `annotation ${t.slice(11)}`;
+      if (t === "drawing") return "the drawing";
       const [sketch, part] = t.split("/");
       if (part === "*") return `the geometry of ${sketch}`;
       if (part) return `${part} in ${sketch} and its constraints`;
@@ -149,6 +185,15 @@ export function targetLabel(doc: RawDocument, target: AskTarget, topo?: PartTopo
       return `body ${target.name}`;
     case "part":
       return doc.features.length ? "the whole part" : "a new part";
+    case "view":
+      return `view ${target.id}`;
+    case "annotation": {
+      const d = doc.drawing as { annotations?: { id?: unknown; type?: unknown }[] } | undefined;
+      const a = d?.annotations?.find((x) => x.id === target.id);
+      return a ? `${String(a.type)} ${target.id}` : target.id;
+    }
+    case "drawing":
+      return "the drawing";
   }
 }
 
@@ -158,6 +203,7 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
   const check = await kernel.check(doc);
   const needsTopology = target.kind === "face" || target.kind === "edge" || target.kind === "feature" || target.kind === "failed";
   if (target.kind === "part") return partPacket(doc, check, targetLabel(doc, target), scopeFor(doc, target));
+  if (isDrawingTarget(target)) return drawingPacket(doc, target, kernel, check, targetLabel(doc, target), scopeFor(doc, target));
   const topo = needsTopology ? await kernel.topology(doc) : null;
   const label = targetLabel(doc, target, topo);
   const writeScope = scopeFor(doc, target);

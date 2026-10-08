@@ -349,6 +349,36 @@ describe("Phase L acceptance: the table frame's drawing", () => {
   });
 });
 
+describe("a weldment's welds on the sheet", () => {
+  const welded: RawDocument = {
+    ...table,
+    welds: [
+      { id: "w1", between: ["leg_a", "rail_front"], type: "fillet", size: 3, length: 160, allRound: true },
+      { id: "w2", between: ["leg_b", "rail_front"], type: "butt", size: 3, length: 40 },
+    ],
+  };
+
+  it("draws a symbol per weld and the weld table, beside the title block, and checks every weld has one", async () => {
+    const doc = await withDrawing(welded);
+    const { sheet, checks } = await sheetOf(doc);
+    expect(sheet.annotations.filter((a) => a.type === "weld").map((a) => [a.view, a.text])).toEqual([
+      ["front", "w1: fillet 3, 160 long, all round"],
+      ["front", "w2: butt 3, 40 long"],
+    ]);
+    expect(sheet.scaleText).toBe("1:10");
+    const weldTable = sheet.blocks.find((b) => b.id === "weld_table")!.box;
+    // Along the bottom border, left of the title block; the cut list stays above it.
+    expect(weldTable.max[0]).toBeCloseTo(sheet.titleBlock.min[0], 9);
+    expect(weldTable.min[1]).toBeCloseTo(sheet.frame.min[1], 9);
+    expect(texts(sheet)).toEqual(expect.arrayContaining(["WELDS", "w1", "leg_a + rail_front", "fillet", "all round", "w2", "butt"]));
+    expect(failed(checks)).toEqual([]);
+    expect(checks.find((c) => c.label === "Every weld has a symbol")!.actual).toBe("2 of 2");
+    const w2 = validateDocument(doc).drawing!.annotations.find((a) => a.type === "weld" && a.weld === "w2")!;
+    const { checks: without } = await sheetOf(run(doc, { type: "setAnnotation", id: w2.id, annotation: null }));
+    expect(without.filter((c) => !c.ok).map((c) => [c.label, c.actual])).toEqual([["Every weld has a symbol", "no symbol for w2"]]);
+  });
+});
+
 describe("a plate's drawing", () => {
   it("calls out the hole where it shows as a circle, places it, and shows it hidden in the front", async () => {
     const doc = await withDrawing(bracket);

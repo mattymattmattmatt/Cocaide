@@ -7,14 +7,19 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { apply, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument } from "../doc/format";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
+import { rawDrawing } from "../doc/drawing";
 import type { Vec3 } from "../doc/types";
+import { drawingChecks } from "../drafting/checks";
 import { isObject } from "../doc/validate";
 import { dot3, normalize3 } from "../geom/vec";
 import { edgeSummary, faceSummary, measurementSummary, newFailures, round6 } from "../kernel/inspect";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 import type { AskModel } from "./model";
-import { buildPacket, type AskTarget, type Packet } from "./packet";
+import { composeFor } from "./drawingPacket";
+import { buildPacket, isDrawingTarget, type AskTarget, type Packet } from "./packet";
 import { classify, isVisual, SYSTEM, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
+
+const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "setView", "setAnnotation"]);
 
 /** Model turns per ask. */
 const MAX_TURNS = 8;
@@ -51,6 +56,8 @@ export interface AskCall {
 export interface Change {
   id: string;
   kind: "added" | "removed" | "changed";
+  /** What it is, when it isn't a feature: "dimension", "view", "sheet". */
+  what?: string;
   /** Leaf changes for a changed feature: "diameter: 6.6 → 8". */
   fields?: { path: string; before: unknown; after: unknown }[];
 }
@@ -106,9 +113,10 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   const image = visual ? await framedShot(req.doc, req.target, packet, req.kernel) : undefined;
   const sandbox = await Sandbox.open(req.doc, req.target, packet, mode, req.kernel);
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image) }];
-  const tools = toolsFor(mode);
+  const tools = toolsFor(mode, packet.target.kind);
   const texts: string[] = [];
   let corrections = 0;
+  let judged = false;
 
   try {
     for (let turn = 1; turn <= MAX_TURNS; turn++) {
@@ -123,7 +131,19 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
         return result;
       }
       const uses = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      if (uses.length === 0) break;
+      if (uses.length === 0) {
+        // A drawing ask is judged by the drawing checks: one that passed before and fails now gets the correction pass.
+        const findings = judged ? [] : await sandbox.drawingFindings();
+        judged = true;
+        if (findings.length && turn < MAX_TURNS && corrections < CORRECTIONS) {
+          messages.push({
+            role: "user",
+            content: [{ type: "text", text: `The drawing checks after your change:\n${findings.join("\n")}\nYou get one correction pass: fix it, or stop and say why.` }],
+          });
+          continue;
+        }
+        break;
+      }
       if (msg.stop_reason === "max_tokens") {
         result.text = "The model ran out of room mid-call; nothing from that turn was applied.";
         return result;
@@ -193,9 +213,9 @@ export function applyProposal(doc: RawDocument, p: Proposal): { ok: true; doc: R
 export function conflictsWith(p: Proposal, doc: RawDocument): string[] {
   // A new part replaces everything, so any edit since it was made conflicts.
   if (p.replace) return formatDocument(doc) === formatDocument(p.base) ? [] : ["the part"];
-  const now = new Map(doc.features.map((f) => [String(f.id), JSON.stringify(f)]));
-  const then = new Map(p.base.features.map((f) => [String(f.id), JSON.stringify(f)]));
-  return p.touched.filter((id) => now.get(id) !== then.get(id));
+  const now = items(doc);
+  const then = items(p.base);
+  return p.touched.filter((id) => now.get(id) !== then.get(id)).map((id) => id.replace(/^drawing:/, ""));
 }
 
 // ---------------------------------------------------------------- sandbox
@@ -299,6 +319,15 @@ class Sandbox {
     const next = await this.kernel.check(applied.doc);
     const broke = newFailures(this.check, next);
     if (broke.length) return { ok: false, error: `${cmd.type} rolled back: ${broke.join("; ")}` };
+    // On the sheet: an annotation that can't be drawn (a member seen end-on, a hole not seen as a circle) is not kept.
+    let drawn: Awaited<ReturnType<Sandbox["drawingNow"]>> = null;
+    if (DRAWING_COMMANDS.has(cmd.type)) {
+      const before = await this.drawingNow(this.doc, this.check);
+      drawn = await this.drawingNow(applied.doc, next);
+      const had = new Set((before?.state.sheet.annotations ?? []).filter((a) => a.problem).map((a) => `${a.id}: ${a.problem}`));
+      const fresh = (drawn?.state.sheet.annotations ?? []).filter((a) => a.problem && !had.has(`${a.id}: ${a.problem}`));
+      if (fresh.length) return { ok: false, error: `${cmd.type} rolled back: ${fresh.map((a) => `${a.id}: ${a.problem}`).join("; ")}` };
+    }
     this.doc = applied.doc;
     this.check = next;
     this.commands.push(cmd);
@@ -312,9 +341,15 @@ class Sandbox {
     this.hash = await hashDoc(this.doc);
     const touched = touchedIds(this.base, this.doc);
     const topo = await this.kernel.topology(this.doc);
+    if (drawn) {
+      // What the drawing now reads, and what it still lacks.
+      const id = "id" in cmd ? cmd.id : null;
+      const a = id ? drawn.state.sheet.annotations.find((x) => x.id === id) : undefined;
+      return { ok: true, ...(a ? { annotation: { id: a.id, type: a.type, reads: a.text } } : {}), checks: drawn.checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.actual}`) };
+    }
     const out: Outcome = { ok: true, volume: next.measurements ? round6(next.measurements.volume) : null };
     if (next.errors.length) out.errors = next.errors;
-    out.features = touched.map((id) => ({ id, ...localMeasurements(this.doc, id, topo) }));
+    out.features = touched.filter((t) => !t.startsWith("drawing:")).map((id) => ({ id, ...localMeasurements(this.doc, id, topo) }));
     return out;
   }
 
@@ -373,8 +408,26 @@ class Sandbox {
     return this.baseTopology;
   }
 
+  /** The drawing as it now stands, for an ask from the sheet. */
+  private async drawingNow(doc: RawDocument, check: CheckResult) {
+    const state = await composeFor(doc, this.kernel, check);
+    return state ? { state, checks: drawingChecks(state.sheet, doc, check.measurements, state.geometry) } : null;
+  }
+
+  /** Drawing checks that passed before this ask and fail now, as sentences. None for an ask that isn't on the sheet. */
+  async drawingFindings(): Promise<string[]> {
+    if (!isDrawingTarget(this.target) || this.commands.length === 0) return [];
+    const before = await this.drawingNow(this.base, this.baseCheck);
+    const after = await this.drawingNow(this.doc, this.check);
+    if (!after) return [];
+    const passed = new Set((before?.checks ?? []).filter((c) => c.ok).map((c) => c.label));
+    return after.checks.filter((c) => !c.ok && passed.has(c.label)).map((c) => `- ${c.label}: ${c.actual}`);
+  }
+
   async proposal(): Promise<Proposal> {
+    const drawn = isDrawingTarget(this.target) ? await this.drawingNow(this.doc, this.check) : null;
     return {
+      ...(drawn ? { checks: drawn.checks } : {}),
       commands: this.commands,
       scope: this.scope,
       base: this.base,
@@ -407,6 +460,12 @@ function toCommand(name: string, a: Record<string, unknown>): Command | string {
       return { type: "setNode", name: str("name"), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null };
     case "setWeld":
       return { type: "setWeld", id: str("id"), weld: obj("weld") };
+    case "setAnnotation":
+      return { type: "setAnnotation", id: str("id"), annotation: obj("annotation") };
+    case "setView":
+      return { type: "setView", id: str("id"), view: obj("view") };
+    case "setSheet":
+      return obj("patch") ? { type: "setSheet", patch: obj("patch")! } : "setSheet: patch must be an object";
     case "setDimension":
       return { type: "setDimension", sketch: str("sketch"), index: a.index as number, value: a.value as number | string };
     case "addEntity":
@@ -443,9 +502,20 @@ function nextFree(doc: RawDocument, op: string): string {
   for (let n = 1; ; n++) if (!used.has(`${op}_${n}`)) return `${op}_${n}`;
 }
 
+/** Features, and the drawing's sheet, views and annotations ("drawing:d4"), by what they are now. */
+function items(doc: RawDocument): Map<string, string> {
+  const out = new Map(doc.features.map((f) => [String(f.id), JSON.stringify(f)]));
+  const d = rawDrawing(doc);
+  if (d) {
+    out.set("drawing:sheet", JSON.stringify(d.sheet));
+    for (const x of [...d.views, ...d.annotations]) out.set(`drawing:${String(x.id)}`, JSON.stringify(x));
+  }
+  return out;
+}
+
 function touchedIds(base: RawDocument, doc: RawDocument): string[] {
-  const before = new Map(base.features.map((f) => [String(f.id), JSON.stringify(f)]));
-  const after = new Map(doc.features.map((f) => [String(f.id), JSON.stringify(f)]));
+  const before = items(base);
+  const after = items(doc);
   const ids = new Set([...before.keys(), ...after.keys()]);
   return [...ids].filter((id) => before.get(id) !== after.get(id));
 }
@@ -464,6 +534,21 @@ export function diffDocs(base: RawDocument, doc: RawDocument): Change[] {
   const pb = JSON.stringify(base.parameters ?? {});
   const pa = JSON.stringify(doc.parameters ?? {});
   if (pb !== pa) out.push({ id: "parameters", kind: "changed", fields: leafDiff(base.parameters ?? {}, doc.parameters ?? {}, "") });
+  // The drawing: its sheet, and each view and annotation.
+  const db = rawDrawing(base);
+  const da = rawDrawing(doc);
+  if (db || da) {
+    if (JSON.stringify(db?.sheet) !== JSON.stringify(da?.sheet)) out.push({ id: "sheet", what: "drawing", kind: !db ? "added" : !da ? "removed" : "changed", fields: leafDiff(db?.sheet ?? {}, da?.sheet ?? {}, "") });
+    const all = (d: typeof db) => new Map([...(d?.views ?? []).map((v) => [String(v.id), { what: "view", x: v }] as const), ...(d?.annotations ?? []).map((a) => [String(a.id), { what: String(a.type), x: a }] as const)]);
+    const vb = all(db);
+    const va = all(da);
+    for (const [id, { what, x }] of va) {
+      const old = vb.get(id);
+      if (!old) out.push({ id, what, kind: "added" });
+      else if (JSON.stringify(old.x) !== JSON.stringify(x)) out.push({ id, what, kind: "changed", fields: leafDiff(old.x, x, "") });
+    }
+    for (const [id, { what }] of vb) if (!va.has(id)) out.push({ id, what, kind: "removed" });
+  }
   return out;
 }
 

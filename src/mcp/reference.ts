@@ -106,6 +106,24 @@ x across, y up): a frame whose nodes are its outside corners has its members ali
 (long point to long point) and end angles (0 square, 45 mitre), read from its trimmed body, and the cut list
 groups alike members.
 
+## drawing (one sheet of views, measured on the rebuild)
+"drawing": { "sheet": { "size": "A3", "projection": "third", "scale": "1:10" (optional: else what fits), "title": "",
+  "number": "", "revision": "", "drawnBy": "", "date": "" },
+  "views": [{ "id": "front", "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso",
+    "at": [x, y] (optional: sheet mm from the lower left, else placed with the others), "scale": "1:20" (optional), "hidden": true (optional) }],
+  "annotations": [
+    { "id": "d1", "type": "dimension", "view": "front", "from": "@left", "to": "@right", "direction": "horizontal" | "vertical" | "aligned" (optional), "offset": 10 (optional, sheet mm; the sign picks the side) },
+    { "id": "d2", "type": "dimension", "view": "front", "member": "leg_a" }   its cut length, where it lies flat in the view
+    { "id": "h1", "type": "hole", "view": "top", "hole": "hole_1" }          "4× Ø6.6 THRU", where the hole shows as a circle
+    { "id": "b1", "type": "balloon", "view": "iso", "member": "rail_front" } its cut list item number
+    { "id": "w1s", "type": "weld", "view": "front", "weld": "w1" }           the weld table's weld, as a symbol
+    { "id": "cut_list", "type": "table", "table": "cutList" | "welds" }
+    { "id": "n1", "type": "note", "text": "Deburr all edges", "at": [30, 30] } ] }
+A dimension point is a node ("A"), a member end ("leg_a.start" / ".end"), a hole feature ("hole_1"), or a side of the
+view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertical). Dimensions are never in an iso
+view. What every annotation reads is measured; none takes a value. The drawing never blocks the part: an annotation
+whose member, node, hole or weld is gone is a drawing problem (see the drawing tool's checks), not an error.
+
 ## Face selectors
 { "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "near": [x,y,z] (optional) }
 { "type": "cylindrical", "radius": 3.3 (optional), "axis": [0,0,1] (optional), "pick": ..., "near": [x,y,z] (optional) }
@@ -127,5 +145,9 @@ renameBody(from, to) - every feature and selector that names the body follows.
 addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
 exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.
+newDrawing(date?) - code plans the sheet: front, top, right and iso views, the overall size, every hole, a balloon per cut list item, the tables.
+setSheet(patch), setView(id, view | null), setAnnotation(id, annotation | null) - edit the drawing; a view takes its annotations with it.
+drawing - the composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.
+exportDrawing(format: "pdf" | "svg", file?) - the sheet, written to the output folder.
 undo, redo.
 `;

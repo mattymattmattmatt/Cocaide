@@ -614,3 +614,33 @@ button.link.danger { color: var(--bad); }
 .modal button.suggest { height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--accent); background: var(--info-bg); color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 6px; }
 .modal button.suggest:disabled { opacity: 0.5; cursor: default; }
 .suggested { color: var(--accent); background: var(--info-bg); border-radius: 6px; padding: 4px 8px; }
+
+/* ---------------------------------------------------------------- drawing (Phase L) */
+.mode-switch { display: flex; margin-left: 18px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.mode-switch button { border: 0; background: transparent; padding: 5px 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.mode-switch button[aria-selected="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+.mode-switch button:disabled { opacity: 0.4; cursor: default; }
+.sheet-center { background: #c9ced6; overflow: hidden; }
+.sheet-view { position: absolute; inset: 0; cursor: default; touch-action: none; }
+.sheet-view svg { display: block; width: 100%; height: 100%; }
+.sheet-view g.selected { color: var(--accent); }
+.sheet-view g.failed { color: var(--bad); }
+.sheet-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #374151; font-size: 14px; }
+.sheet-empty p { max-width: 380px; text-align: center; margin: 0; }
+.drawing-list { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; }
+.drawing-row { display: flex; gap: 8px; padding: 3px 6px; border-radius: 4px; cursor: pointer; white-space: pre; overflow: hidden; }
+.drawing-row:hover { background: var(--panel-2); }
+.drawing-row.selected { background: var(--info-bg); }
+.drawing-row.failed .muted { color: var(--bad); }
+.drawing-row .drawing-id { font-family: var(--mono); min-width: 64px; }
+.drawing-row .muted { overflow: hidden; text-overflow: ellipsis; }
+.drawing-add { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.drawing-add select, .drawing-add input { min-width: 0; flex: 1; font-size: 12px; }
+.drawing-form h2 { margin-top: 14px; }
+.drawing-side .checks { list-style: none; margin: 0 0 14px; padding: 0; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.drawing-side .checks li.ok { color: var(--ok); }
+.drawing-side .checks li.bad { color: var(--bad); }
+.drawing-side .checks li .muted { color: var(--muted); }
+.drawing-side h2 { margin-top: 14px; }
+.drawing-side p.bad { color: var(--bad); font-size: 12px; }
+.drawing-buttons { display: flex; gap: 6px; margin: 8px 0; }

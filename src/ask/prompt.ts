@@ -92,6 +92,25 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Leave a gap", prompt: "Leave a gap of ", submit: false },
         { label: "Explain it", prompt: "What does this joint do to each member?", submit: true },
       ];
+    case "view":
+      return [
+        { label: "Dimension the overall size", prompt: "Dimension the overall size of the part in this view.", submit: true },
+        { label: "Dimension a member's length", prompt: "Dimension the length of ", submit: false },
+        { label: "Balloon what it shows", prompt: "Balloon the cut list items this view shows that have no balloon yet.", submit: true },
+        { label: "Show hidden edges", prompt: "Show the hidden edges in this view.", submit: true },
+      ];
+    case "annotation":
+      return [
+        { label: "What does it say?", prompt: "What does this annotation show, and where is it measured from?", submit: true },
+        { label: "Move it to the other side", prompt: "Move this to the other side of the view.", submit: true },
+        { label: "Delete it", prompt: "Delete this annotation.", submit: true },
+      ];
+    case "drawing":
+      return [
+        { label: "Check the drawing", prompt: "Does this drawing pass its checks? Do not change anything.", submit: true },
+        { label: "Balloon every item", prompt: "Add a balloon for every cut list item that has none.", submit: true },
+        { label: "Change the scale", prompt: "Change the sheet's scale to ", submit: false },
+      ];
     case "part":
       return [
         { label: "New part from a description", prompt: "", submit: false },
@@ -122,6 +141,7 @@ Rules:
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
 - Weldments: a member's size must be one of the sizes in the packet's member.sizes; never invent one. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
+- Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>") or the drawing ("drawing"); the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", or a side of the view "@left", "@right", "@top", "@bottom"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
 - Finish with one or two plain sentences for the user: what you changed and the result, or the answer, or why you stopped. No markdown headings.
@@ -226,11 +246,34 @@ const SKETCH_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS].map((t) => t.name));
+const DRAWING_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "setAnnotation",
+    description:
+      'Add or replace an annotation on the drawing by id, or remove it (annotation: null). Types: dimension {view, from, to, direction?, offset?} or {view, member}; hole {view, hole}; balloon {view, member}; weld {view, weld}; table {table: "cutList" | "welds"}; note {text, at}. What it reads is measured, never given.',
+    input_schema: obj({ id: { type: "string" }, annotation: { type: ["object", "null"] } }, ["id", "annotation"]),
+  },
+  {
+    name: "setView",
+    description: 'Add or replace a view by id ({look: "front" | "back" | "top" | "bottom" | "left" | "right" | "iso", at?, scale?, hidden?}), or remove it and its annotations (view: null).',
+    input_schema: obj({ id: { type: "string" }, view: { type: ["object", "null"] } }, ["id", "view"]),
+  },
+  {
+    name: "setSheet",
+    description: 'Change the sheet: size ("A4".."A0"), scale ("1:10"; null for what fits), projection ("third" | "first"), title, number, revision, drawnBy, date. Merged in; null removes a field.',
+    input_schema: obj({ patch: any }, ["patch"]),
+  },
+];
 
-/** Explain-only asks get no write tools. */
-export function toolsFor(mode: AskMode): Anthropic.Tool[] {
-  return mode === "explain" ? READ_TOOLS : [...READ_TOOLS, ...FEATURE_TOOLS, ...SKETCH_TOOLS];
+export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS].map((t) => t.name));
+
+const DRAWING_KINDS = new Set<string>(["view", "annotation", "drawing"]);
+
+/** Explain-only asks get no write tools. An ask from the sheet gets the drawing's, and only those. */
+export function toolsFor(mode: AskMode, kind?: string): Anthropic.Tool[] {
+  if (mode === "explain") return READ_TOOLS.filter((t) => !kind || !DRAWING_KINDS.has(kind) || t.name === "escalate");
+  if (kind && DRAWING_KINDS.has(kind)) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS];
+  return [...READ_TOOLS, ...FEATURE_TOOLS, ...SKETCH_TOOLS];
 }
 
 /** The user turn: the packet, the screenshot when the prompt is visual, then the user's text, unchanged and last. */

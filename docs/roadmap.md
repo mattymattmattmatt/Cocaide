@@ -1,6 +1,6 @@
 # Cocaide: after v1
 
-Phases A–G (the original build spec) are done: see the README. This file
+Phases A–G (the original build spec) are done: see the README. So are H–L below. This file
 continues the spec in the same form. Each phase ends with an acceptance
 check, and the next phase does not start until it passes.
 
@@ -174,6 +174,8 @@ shared across a team. A shared library needs storage and accounts, which v1
 avoids.
 
 ## Phase L — fabrication drawings
+
+**Done.** See the README's Phase L acceptance.
 
 The spec's "later" list says it: drawing generation projects the solid, not
 the other way around. A drawing is views of the rebuilt part, and every

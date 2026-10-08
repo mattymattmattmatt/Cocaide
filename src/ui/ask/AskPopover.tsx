@@ -258,7 +258,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
                   <li key={i}>{line}</li>
                 ))}
               </ul>
-              {s.result.proposal.volumeBefore !== null && s.result.proposal.volumeAfter !== null && (
+              {s.result.proposal.volumeBefore !== null && s.result.proposal.volumeAfter !== null && s.result.proposal.changes.some((c) => !c.what) && (
                 <div className="ask-volume">
                   Volume {fmt(s.result.proposal.volumeBefore)} → {fmt(s.result.proposal.volumeAfter)} mm³
                 </div>
@@ -317,9 +317,10 @@ const OUTCOME: Record<string, string> = {
 };
 
 function changeLines(c: Change): string[] {
-  if (c.kind === "added") return [`+ ${c.id}`];
-  if (c.kind === "removed") return [`− ${c.id}`];
-  return (c.fields ?? []).map((f) => `${c.id}${c.id === "parameters" ? ":" : ""} ${f.path}: ${short(f.before)} → ${short(f.after)}`);
+  const name = c.what ? `${c.what} ${c.id}` : c.id;
+  if (c.kind === "added") return [`+ ${name}`];
+  if (c.kind === "removed") return [`− ${name}`];
+  return (c.fields ?? []).map((f) => `${name}${c.id === "parameters" ? ":" : ""} ${f.path}: ${short(f.before)} → ${short(f.after)}`);
 }
 
 function short(v: unknown): string {

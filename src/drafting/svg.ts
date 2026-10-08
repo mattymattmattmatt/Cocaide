@@ -13,6 +13,8 @@ export interface SvgOptions {
   selected?: string[];
   /** Ids drawn as problems. */
   failed?: string[];
+  /** Fill its container (in the app) instead of the sheet's paper size. */
+  fit?: boolean;
 }
 
 export function sheetSVG(sheet: ComposedSheet, opts: SvgOptions = {}): string {
@@ -49,7 +51,7 @@ export function sheetSVG(sheet: ComposedSheet, opts: SvgOptions = {}): string {
   }
   if (open) groups.push("</g>");
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${n(sheet.width)}mm" height="${n(H)}mm" viewBox="0 0 ${n(sheet.width)} ${n(H)}" font-family="${SHEET_FONT}" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" color="#000">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" ${opts.fit ? `width="100%" height="100%"` : `width="${n(sheet.width)}mm" height="${n(H)}mm"`} viewBox="0 0 ${n(sheet.width)} ${n(H)}" font-family="${SHEET_FONT}" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" color="#000">`,
     `<rect width="${n(sheet.width)}" height="${n(H)}" fill="#fff" stroke="none"/>`,
     ...groups,
     `</svg>`,

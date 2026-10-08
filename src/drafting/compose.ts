@@ -68,6 +68,8 @@ export interface ComposedAnnotation {
   along?: Vec3;
   /** A balloon's cut list item. */
   item?: number;
+  /** Where it is held on the sheet (a balloon's centre, a callout's text, a weld's knee, a table's top left): what a drag moves. */
+  at?: Vec2;
   box: Box | null;
   /** Why it isn't on the sheet. */
   problem?: string;
@@ -104,6 +106,8 @@ const DIM_FIRST = 10;
 const DIM_STEP = 8;
 const ARROW = { length: 3, half: 0.6 };
 const BALLOON_R = 4.5;
+/** A weld symbol's reference line, mm. */
+const WELD_LINE = 26;
 const ROW = 7;
 
 /** "1200", "12.5", "6.6". */
@@ -164,6 +168,8 @@ class Composer {
   }
 
   private tableBoxes: Box[] = [];
+  /** View labels ("ISO  SCALE 1:20"): balloons and symbols keep clear of them. */
+  private labels: Box[] = [];
 
   compose(): ComposedSheet {
     const tables = this.placeTables();
@@ -275,7 +281,7 @@ class Composer {
     }
     for (const a of this.d.annotations) {
       if (!("view" in a) || a.view !== view.id || ("at" in a && a.at)) continue;
-      const room = a.type === "balloon" ? 2 * BALLOON_R + 7 : a.type === "weld" ? 26 : a.type === "hole" ? 18 : 0;
+      const room = a.type === "balloon" ? 2 * BALLOON_R + 7 : a.type === "weld" ? 16 : a.type === "hole" ? 18 : 0;
       for (let i = 0; i < 4; i++) need(i, room);
     }
     return pad;
@@ -286,27 +292,35 @@ class Composer {
     const grid = this.grid();
     const loose = this.d.views.filter((view) => !view.at && !grid.has(view.id));
     const candidates = fixed ? [fixed] : STANDARD_SCALES.map((s) => parseScale(s)!);
-    let best: { scale: number; views: ComposedView[] } | null = null;
+    if (fixed) return { scale: fixed, views: this.place(fixed, fixed, grid, loose) };
     for (let i = 0; i < candidates.length; i++) {
       // A view placed on its own (the iso) may go a step or two smaller to fit.
-      for (const step of loose.length && !fixed ? [0, 1, 2] : [0]) {
+      for (const step of loose.length ? [0, 1, 2] : [0]) {
         const looseScale = candidates[Math.min(i + step, candidates.length - 1)];
         const views = this.place(candidates[i], looseScale, grid, loose);
-        best ??= { scale: candidates[i], views };
-        if (fixed) return { scale: fixed, views };
         if (this.fits(views, blocked)) return { scale: candidates[i], views };
       }
     }
-    return best ?? { scale: 1, views: [] };
+    // Nothing fits: the smallest scale, and the checks say what overlaps.
+    const smallest = candidates[candidates.length - 1];
+    return { scale: smallest, views: this.place(smallest, smallest, grid, loose) };
   }
 
+  /**
+   * True when every view placed automatically, with the room its annotations
+   * need, is on the sheet and clear of the title block, the tables, the notes
+   * and every other view. A view the user placed is an obstacle, not judged:
+   * where it is is theirs (the checks say if it overlaps).
+   */
   private fits(views: ComposedView[], blocked: Box[]): boolean {
     const padded = views.filter((cv) => cv.box).map((cv) => ({ cv, box: grow(cv.box!, this.padding(this.d.views.find((x) => x.id === cv.id)!)) }));
-    for (const { box } of padded) {
+    const auto = padded.filter((p) => p.cv.auto);
+    const held = padded.filter((p) => !p.cv.auto).map((p) => p.cv.box!);
+    for (const { box } of auto) {
       if (!inside(box, this.frame)) return false;
-      if (blocked.some((b) => overlaps(box, b))) return false;
+      if ([...blocked, ...held].some((b) => overlaps(box, b))) return false;
     }
-    for (let i = 0; i < padded.length; i++) for (let j = i + 1; j < padded.length; j++) if (overlaps(padded[i].box, padded[j].box)) return false;
+    for (let i = 0; i < auto.length; i++) for (let j = i + 1; j < auto.length; j++) if (overlaps(auto[i].box, auto[j].box)) return false;
     return true;
   }
 
@@ -411,7 +425,9 @@ class Composer {
     const sheetScale = parseScale(this.d.sheet.scale);
     const label = cv.look === "iso" ? "ISO" : cv.look.toUpperCase();
     if (cv.box && Math.abs(cv.scale - (sheetScale ?? this.mainScale())) > 1e-9) {
-      this.prims.push({ k: "text", at: [cv.centre[0], cv.box.min[1] - 7], text: `${label}  SCALE ${cv.scaleText}`, size: TEXT.label * 1.4, anchor: "middle", owner: cv.id });
+      const p: Prim = { k: "text", at: [cv.centre[0], cv.box.min[1] - 7], text: `${label}  SCALE ${cv.scaleText}`, size: TEXT.label * 1.4, anchor: "middle", owner: cv.id };
+      this.prims.push(p);
+      this.labels.push(grow(primBox(p, textWidth)!, 1));
     }
   }
 
@@ -437,9 +453,11 @@ class Composer {
       const t = tables.find((x) => x.a.id === a.id)!;
       this.drawTable(t);
       text = a.table === "cutList" ? `cut list, ${t.rows.length - 2} item${t.rows.length - 2 === 1 ? "" : "s"}` : `weld table, ${t.rows.length - 2} weld${t.rows.length - 2 === 1 ? "" : "s"}`;
+      extra = { at: [t.box.min[0], t.box.max[1]] };
     } else if (a.type === "note") {
       this.drawNote(a);
       text = a.text;
+      extra = { at: a.at };
     } else {
       const cv = this.cv(a.view);
       if (!cv || !cv.outline) return this.fail(a, `its view ${a.view} shows nothing`);
@@ -666,7 +684,7 @@ class Composer {
    * tables and the title block.
    */
   private balloonSpot(cv: ComposedView, tip: Vec2, r: number): Vec2 {
-    const blocked = [this.titleBlock, ...this.views.filter((x) => x.id !== cv.id && x.box).map((x) => grow(x.box!, 2)), ...this.tableBoxes];
+    const blocked = [this.titleBlock, ...this.views.filter((x) => x.id !== cv.id && x.box).map((x) => grow(x.box!, 2)), ...this.tableBoxes, ...this.labels];
     const frame = grow(this.frame, -(r + 1));
     let best: { c: Vec2; cost: number } | null = null;
     for (let k = 0; k < 72; k++) {
@@ -682,7 +700,32 @@ class Composer {
     return best?.c ?? this.outside(cv, tip, 6 + r);
   }
 
-  private drawBalloon(a: BalloonAnnotation, cv: ComposedView): { text: string; item: number } | { problem: string } {
+  /**
+   * Where a weld symbol's reference line starts: just outside its view, above
+   * it if there is room, as near the weld as it can be, with the whole line
+   * and its text on the sheet and clear of everything else.
+   */
+  private weldSpot(cv: ComposedView, tip: Vec2): { knee: Vec2; dir: 1 | -1 } {
+    const blocked = [this.titleBlock, ...this.views.filter((x) => x.id !== cv.id && x.box).map((x) => grow(x.box!, 2)), ...this.tableBoxes, ...this.labels];
+    let best: { knee: Vec2; dir: 1 | -1; cost: number } | null = null;
+    for (let k = 0; k < 72; k++) {
+      const t = (k / 72) * 2 * Math.PI;
+      const knee = this.outside(cv, cv.centre, 8, [Math.cos(t), Math.sin(t)]);
+      const away: 1 | -1 = knee[0] >= cv.centre[0] ? 1 : -1;
+      // The reference line runs away from the view if it can, else back over it.
+      for (const dir of [away, -away as 1 | -1]) {
+        const box: Box = { min: [Math.min(knee[0], knee[0] + dir * WELD_LINE) - 2, knee[1] - 6], max: [Math.max(knee[0], knee[0] + dir * WELD_LINE) + 2, knee[1] + 2] };
+        if (!inside(box, this.frame) || blocked.some((b) => overlaps(box, b))) continue;
+        if (this.placedBalloons.some((b) => b.view === cv.id && overlaps(box, { min: [b.c[0] - b.r, b.c[1] - b.r], max: [b.c[0] + b.r, b.c[1] + b.r] }))) continue;
+        // Above or beside the view reads best; below it, under the dimensions, does not.
+        const cost = Math.hypot(knee[0] - tip[0], knee[1] - tip[1]) + (knee[1] < cv.box!.min[1] ? 40 : 0) + (dir === away ? 0 : 6);
+        if (!best || cost < best.cost) best = { knee, dir, cost };
+      }
+    }
+    return best ?? { knee: this.outside(cv, tip, 8, [tip[0] >= cv.centre[0] ? 1 : -1, 1]), dir: tip[0] >= cv.centre[0] ? 1 : -1 };
+  }
+
+  private drawBalloon(a: BalloonAnnotation, cv: ComposedView): { text: string; item: number; at: Vec2 } | { problem: string } {
     const body = this.bodyOf(a.member);
     if (!body) return { problem: `no member "${a.member}" built` };
     const item = this.cut.find((i) => i.members.includes(a.member));
@@ -702,10 +745,10 @@ class Composer {
     }
     this.prims.push({ k: "circle", c, r, w: LINE.thin });
     this.prims.push({ k: "text", at: [c[0], c[1] - (TEXT.balloon * CAP) / 2], text, size: TEXT.balloon, anchor: "middle" });
-    return { text, item: item.item };
+    return { text, item: item.item, at: c };
   }
 
-  private drawHole(a: HoleAnnotation, cv: ComposedView): { text: string } | { problem: string } {
+  private drawHole(a: HoleAnnotation, cv: ComposedView): { text: string; at: Vec2 } | { problem: string } {
     const h = this.holes.get(a.hole);
     if (!h) return { problem: `no hole "${a.hole}" built` };
     const f = viewFrame(cv.look);
@@ -731,7 +774,7 @@ class Composer {
     lines.forEach((l, i) =>
       this.prims.push({ k: "text", at: [at[0] + (right ? 0.5 : -0.5), at[1] + 1.2 - i * TEXT.dimension * 1.25], text: l, size: TEXT.dimension, anchor: right ? "start" : "end" }),
     );
-    return { text: lines.join(" ") };
+    return { text: lines.join(" "), at };
   }
 
   /** Where two bodies meet: the middle of where their boxes overlap (or come closest). */
@@ -746,17 +789,17 @@ class Composer {
     }) as Vec3;
   }
 
-  private drawWeld(a: WeldAnnotation, cv: ComposedView): { text: string } | { problem: string } {
+  private drawWeld(a: WeldAnnotation, cv: ComposedView): { text: string; at: Vec2 } | { problem: string } {
     const w = this.v.welds.find((x) => x.id === a.weld);
     if (!w) return { problem: `no weld "${a.weld}" in the weld table` };
     const at3 = this.weldPoint(w.between);
     if (!at3) return { problem: `the bodies of ${w.id} (${w.between.join(", ")}) aren't built` };
     const f = viewFrame(cv.look);
     const tip = this.toSheet(cv, inView(at3, f));
-    const knee: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.outside(cv, tip, 12, [tip[0] >= cv.centre[0] ? 1 : -1, 1]);
-    const dir = knee[0] >= tip[0] ? 1 : -1;
-    const refLen = 24;
-    const end: Vec2 = [knee[0] + dir * refLen, knee[1]];
+    const spot = a.at ? { knee: [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] as Vec2, dir: (a.at[0] >= 0 ? 1 : -1) as 1 | -1 } : this.weldSpot(cv, tip);
+    const { knee, dir } = spot;
+    const end: Vec2 = [knee[0] + dir * WELD_LINE, knee[1]];
+    this.placedBalloons.push({ view: cv.id, c: [knee[0] + (dir * WELD_LINE) / 2, knee[1] - 2], r: WELD_LINE / 2 });
     const d: Vec2 = [tip[0] - knee[0], tip[1] - knee[1]];
     const len = Math.hypot(d[0], d[1]) || 1;
     this.prims.push({ k: "line", pts: [tip, knee, end], w: LINE.thin });
@@ -773,7 +816,7 @@ class Composer {
     const textY = y - 3.6;
     this.prims.push({ k: "text", at: [sx - 1, textY], text: fmt(w.size), size: TEXT.dimension, anchor: "end" });
     this.prims.push({ k: "text", at: [sx + 5, textY], text: fmt(w.length), size: TEXT.dimension, anchor: "start" });
-    return { text: `${w.id}: ${w.type} ${fmt(w.size)}, ${fmt(w.length)} long${w.allRound ? ", all round" : ""}` };
+    return { text: `${w.id}: ${w.type} ${fmt(w.size)}, ${fmt(w.length)} long${w.allRound ? ", all round" : ""}`, at: knee };
   }
 
   // --------------------------------------------------------------- tables
@@ -795,8 +838,14 @@ class Composer {
     };
   }
 
+  /**
+   * Tables placed automatically: the first above the title block, the rest
+   * along the bottom border to its left, so the column above the title block
+   * stays short and the views keep their room.
+   */
   private placeTables(): { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] {
-    let bottom = this.titleBlock.max[1];
+    let left = this.titleBlock.min[0];
+    let first = true;
     const out: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] = [];
     for (const a of this.d.annotations) {
       if (a.type !== "table") continue;
@@ -805,9 +854,12 @@ class Composer {
       const h = rows.length * ROW;
       let box: Box;
       if (a.at) box = { min: [a.at[0], a.at[1] - h], max: [a.at[0] + w, a.at[1]] };
-      else {
-        box = { min: [this.frame.max[0] - w, bottom], max: [this.frame.max[0], bottom + h] };
-        bottom += h;
+      else if (first) {
+        box = { min: [this.frame.max[0] - w, this.titleBlock.max[1]], max: [this.frame.max[0], this.titleBlock.max[1] + h] };
+        first = false;
+      } else {
+        box = { min: [left - w, this.frame.min[1]], max: [left, this.frame.min[1] + h] };
+        left -= w;
       }
       out.push({ a, box, rows, widths });
     }

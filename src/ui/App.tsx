@@ -5,7 +5,14 @@ import plateText from "../../examples/mounting-plate.cocaide.json?raw";
 import standText from "../../examples/stand.cocaide.json?raw";
 import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
-import { featureKind, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
+import type { DrawingGeometry } from "../ask/kernel";
+import { featureKind, isDrawingTarget, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
+import { geometryKey } from "../doc/drawing";
+import { drawingChecks } from "../drafting/checks";
+import { composeSheet } from "../drafting/compose";
+import { sheetPDF } from "../drafting/pdf";
+import { DEFAULT_VIEWS, planDrawing, visibleLength } from "../drafting/plan";
+import { sheetSVG } from "../drafting/svg";
 import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
@@ -43,6 +50,8 @@ import { nextBodyName, PropertyPanel } from "./PropertyPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
+import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
+import { SheetView, type SheetTarget } from "./drawing/SheetView";
 import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = {
@@ -75,8 +84,8 @@ function readStored(): { text: string; savedText: string } | null {
   }
 }
 
-function download(filename: string, text: string, type: string) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+function download(filename: string, text: string | Uint8Array, type: string) {
+  const url = URL.createObjectURL(new Blob([text as BlobPart], { type }));
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
@@ -117,6 +126,11 @@ export function App() {
   /** The sketch whose profile card is open. */
   const [profileCard, setProfileCard] = useState<string | null>(null);
   const [savedProfile, setSavedProfile] = useState<string | null>(null);
+  /** The 3D model, or the part's drawing (Phase L). */
+  const [mode, setMode] = useState<"model" | "drawing">("model");
+  /** The views projected for the drawing, for the geometry and view directions in `key`. */
+  const [geometry, setGeometry] = useState<{ key: string; g: DrawingGeometry | null } | null>(null);
+  const [drawingSel, setDrawingSel] = useState<string | null>(null);
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef(0);
@@ -131,6 +145,9 @@ export function App() {
   const shown = useMemo(() => ask.previewDoc ?? (parsed.ok ? parsed.value : null), [ask.previewDoc, parsed]);
   /** The frame's nodes, where the viewport draws them. */
   const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
+  /** The drawing as shown (an open proposal's, while it is previewed), and as it is in the document. */
+  const shownDrawing = useMemo(() => (shown ? validateDocument(shown).drawing : null), [shown]);
+  const docDrawing = useMemo(() => (doc ? validateDocument(doc).drawing : null), [doc]);
 
   // The photo pinned under the part (the document's, or an open proposal's): its pixels live in this browser.
   const shownPhoto = photoOf(shown);
@@ -234,6 +251,28 @@ export function App() {
     }, REBUILD_DELAY_MS);
     return () => clearTimeout(timer);
   }, [shown, kernel]);
+
+  // In the drawing: project the rebuilt part for its views. The worker reuses its rebuild, so this is only the projection.
+  const viewsKey = shownDrawing ? shownDrawing.views.map((v) => `${v.id}:${v.look}`).join(",") : "";
+  const projectionKey = shown && shownDrawing && view ? `${geometryKey(shown)}|${viewsKey}` : null;
+  useEffect(() => {
+    if (mode !== "drawing" || !projectionKey || !shown || !shownDrawing || geometry?.key === projectionKey) return;
+    let live = true;
+    kernel.port.project(shown, shownDrawing.views.map((v) => ({ id: v.id, look: v.look }))).then(
+      (g) => live && setGeometry({ key: projectionKey, g }),
+      (e: Error) => live && setNotice({ kind: "error", text: `Could not project the views: ${e.message}` }),
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, projectionKey]);
+  const sheet = useMemo(
+    () => (shown && shownDrawing ? composeSheet(shown, { measurements: view?.measurements ?? null, geometry: geometry?.g ?? null }) : null),
+    [shown, shownDrawing, view, geometry],
+  );
+  const drawingChecksNow = useMemo(() => (sheet && shown ? drawingChecks(sheet, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [sheet, shown, view, geometry]);
+  const failedIds = useMemo(() => (sheet ? sheet.annotations.filter((a) => a.problem).map((a) => a.id) : []), [sheet]);
 
   // Keep the working document across reloads.
   useEffect(() => {
@@ -621,6 +660,79 @@ export function App() {
     );
   };
 
+  // ------------------------------------------------------------ drawing
+
+  /** New drawing: code plans the sheet from the part as rebuilt (Phase L). Ctrl+Z puts the old one back. */
+  const newDrawing = async () => {
+    if (!doc || !view?.measurements) return setNotice({ kind: "error", text: "The part needs to rebuild before it can be drawn." });
+    try {
+      const g = await kernel.port.project(doc, DEFAULT_VIEWS);
+      const drawing = planDrawing(doc, view.measurements, g, { date: new Date().toISOString().slice(0, 10) });
+      if (run({ type: "setDrawing", drawing }) === null) {
+        setDrawingSel(null);
+        setNotice({ kind: "info", text: `New drawing: ${drawing.sheet.size}, ${drawing.views.length} views, ${drawing.annotations.length} annotations.${docDrawing ? " Ctrl+Z puts the old one back." : ""}` });
+      }
+    } catch (e) {
+      setNotice({ kind: "error", text: `No drawing: ${(e as Error).message}` });
+    }
+  };
+
+  /** A balloon for every cut list item without one, on the member of it its view shows most of. */
+  const balloonAll = () => {
+    if (!docDrawing || !sheet) return;
+    const ballooned = new Set(sheet.annotations.filter((a) => a.type === "balloon" && !a.problem).map((a) => a.item));
+    const missing = sheet.cutList.filter((i) => !ballooned.has(i.item));
+    if (!missing.length) return setNotice({ kind: "info", text: "Every cut list item has a balloon." });
+    const viewId = (docDrawing.views.find((v) => v.look === "iso") ?? docDrawing.views[0])?.id;
+    if (!viewId) return setNotice({ kind: "error", text: "Add a view first." });
+    const members = view?.measurements?.members ?? [];
+    let d = docDrawing;
+    const cmds: Command[] = [];
+    for (const item of missing) {
+      const member = [...item.members].sort((a, b) => visibleLength(geometry?.g ?? null, viewId, members.find((m) => m.id === b)?.body ?? b) - visibleLength(geometry?.g ?? null, viewId, members.find((m) => m.id === a)?.body ?? a))[0];
+      const id = nextDrawingId(d, "b");
+      const annotation = { type: "balloon" as const, view: viewId, member };
+      cmds.push({ type: "setAnnotation", id, annotation });
+      d = { ...d, annotations: [...d.annotations, { id, ...annotation }] };
+    }
+    const problem = batch(cmds);
+    if (problem) setNotice({ kind: "error", text: problem });
+    else setNotice({ kind: "info", text: `Ballooned ${missing.length} item${missing.length === 1 ? "" : "s"} in ${viewId}.` });
+  };
+
+  const exportDrawing = (kind: "pdf" | "svg") => {
+    if (!sheet) return setNotice({ kind: "error", text: "There is no drawing to export." });
+    const name = `${fileBase(view?.name ?? "part")}-drawing.${kind}`;
+    if (kind === "pdf") download(name, sheetPDF(sheet, { title: docDrawing?.sheet.title ?? view?.name ?? "drawing" }), "application/pdf");
+    else download(name, sheetSVG(sheet), "image/svg+xml");
+    const failing = drawingChecksNow.filter((c) => !c.ok).length;
+    setNotice({ kind: "info", text: `Exported ${name}.${failing ? ` ${failing} drawing check${failing === 1 ? "" : "s"} fail${failing === 1 ? "s" : ""}: see Checks.` : ""}` });
+  };
+
+  const moveView = (id: string, at: Vec2) => {
+    const v = docDrawing?.views.find((x) => x.id === id);
+    if (!v) return;
+    const { id: _id, ...rest } = v;
+    run({ type: "setView", id, view: { ...rest, at } });
+  };
+
+  const moveAnnotation = (id: string, delta: Vec2) => {
+    const a = docDrawing?.annotations.find((x) => x.id === id);
+    const placed = sheet?.annotations.find((x) => x.id === id)?.at;
+    if (!a || !placed) return;
+    const moved: Vec2 = [placed[0] + delta[0], placed[1] + delta[1]];
+    const cv = "view" in a ? sheet?.views.find((v) => v.id === a.view) : undefined;
+    // Balloons, callouts and weld symbols are held relative to their view, so they move with it.
+    const at: Vec2 = cv ? [moved[0] - cv.centre[0], moved[1] - cv.centre[1]] : moved;
+    const { id: _id, ...rest } = a;
+    run({ type: "setAnnotation", id, annotation: { ...rest, at: at.map((x) => Math.round(x * 10) / 10 + 0) } });
+  };
+
+  const sheetContext = (t: SheetTarget | null, x: number, y: number) => {
+    if (t) setDrawingSel(t.id);
+    openAskRef.current(t ? (t.kind === "view" ? { kind: "view", id: t.id } : { kind: "annotation", id: t.id }) : { kind: "drawing" }, x, y);
+  };
+
   // ------------------------------------------------------------ right-click ask
 
   const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, dropped?: { drawing: Drawing; photo?: Photo; readAs: "drawing" | "photo" }) => {
@@ -638,6 +750,7 @@ export function App() {
       sketchCtx = { id: draftSketch.id, apply: (g) => sketchApply.current?.(g) };
     }
     const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
+    if (isDrawingTarget(target) && !validateDocument(askDoc).drawing) return setNotice({ kind: "error", text: "Make a drawing first: New drawing." });
     const op = target.kind === "feature" ? askDoc.features.find((g) => g.id === target.id)?.op : undefined;
     const kind: PacketKind = target.kind === "feature" ? featureKind(op) : target.kind;
     ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, ...dropped, x, y });
@@ -774,6 +887,14 @@ export function App() {
             {FILE_EXTENSION}
             {dirty && <span className="dirty">•</span>}
           </div>
+          <div className="mode-switch" role="tablist" aria-label="Model or drawing">
+            <button role="tab" aria-selected={mode === "model"} onClick={() => setMode("model")} data-testid="mode-model">
+              Model
+            </button>
+            <button role="tab" aria-selected={mode === "drawing"} onClick={() => setMode("drawing")} disabled={!!sketch} data-testid="mode-drawing">
+              Drawing
+            </button>
+          </div>
           <nav className="actions">
             <select
               aria-label="Open an example"
@@ -820,7 +941,31 @@ export function App() {
           </div>
         </header>
 
-        {!sketch && (
+        {!sketch && mode === "drawing" && (
+          <div className="toolbar" role="toolbar" aria-label="Drawing">
+            <button onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" data-testid="undo">
+              ↶ Undo
+            </button>
+            <button onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" data-testid="redo">
+              ↷ Redo
+            </button>
+            <span className="sep" />
+            <button onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready"} title="Plan the sheet from the part: views, overall size, holes, balloons, tables" data-testid="drawing-new">
+              New drawing
+            </button>
+            <button onClick={balloonAll} disabled={!sheet || sheet.cutList.length === 0} data-testid="drawing-balloon-all">
+              Balloon every item
+            </button>
+            <span className="sep" />
+            <button onClick={() => exportDrawing("pdf")} disabled={!sheet} data-testid="drawing-export-pdf">
+              Export PDF
+            </button>
+            <button onClick={() => exportDrawing("svg")} disabled={!sheet} data-testid="drawing-export-svg">
+              Export SVG
+            </button>
+          </div>
+        )}
+        {!sketch && mode === "model" && (
           <div className="toolbar" role="toolbar" aria-label="Modelling">
             <button onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" data-testid="undo">
               ↶ Undo
@@ -889,6 +1034,72 @@ export function App() {
         )}
 
         <main className="workspace">
+          {mode === "drawing" && !sketch ? (
+            <>
+              <aside className="side left">
+                {doc && docDrawing ? (
+                  <DrawingTree
+                    doc={doc}
+                    drawing={docDrawing}
+                    sheet={sheet}
+                    selected={drawingSel}
+                    dispatch={d.dispatch}
+                    onError={(text) => setNotice({ kind: "error", text })}
+                    onSelect={(t) => setDrawingSel(t?.id ?? null)}
+                    onAsk={sheetContext}
+                  />
+                ) : (
+                  <section className="panel muted">
+                    <p>This part has no drawing yet.</p>
+                  </section>
+                )}
+              </aside>
+              <section className="center sheet-center">
+                {sheet ? (
+                  <SheetView
+                    sheet={sheet}
+                    selected={drawingSel}
+                    failed={failedIds}
+                    onSelect={(t) => setDrawingSel(t?.id ?? null)}
+                    onContext={sheetContext}
+                    onMoveView={moveView}
+                    onMoveAnnotation={moveAnnotation}
+                  />
+                ) : (
+                  <div className="sheet-empty" data-testid="sheet-empty">
+                    <p>Views of the part, dimensioned and ballooned from the rebuild, with its cut list and title block.</p>
+                    <button className="primary" onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} data-testid="drawing-new-empty">
+                      New drawing
+                    </button>
+                  </div>
+                )}
+                {ask.previewDoc && (
+                  <div className="preview-banner" data-testid="preview-banner">
+                    Previewing the proposal
+                  </div>
+                )}
+              </section>
+              <aside className="side right">
+                {doc && docDrawing ? (
+                  <DrawingSide
+                    doc={doc}
+                    drawing={docDrawing}
+                    sheet={sheet}
+                    checks={drawingChecksNow}
+                    selected={drawingSel}
+                    dispatch={d.dispatch}
+                    onError={(text) => setNotice({ kind: "error", text })}
+                    onSelect={(t) => setDrawingSel(t?.id ?? null)}
+                  />
+                ) : (
+                  <section className="panel">
+                    <Help />
+                  </section>
+                )}
+              </aside>
+            </>
+          ) : (
+          <>
           <aside className="side left">
             <FeatureTree
               doc={doc}
@@ -1037,6 +1248,8 @@ export function App() {
                 )}
               </aside>
             </>
+          )}
+          </>
           )}
         </main>
         <AskPopover ask={ask} />
