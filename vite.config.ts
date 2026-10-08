@@ -8,6 +8,8 @@ const apiKey = process.env.ANTHROPIC_API_KEY;
 process.env.VITE_COCAIDE_ANTHROPIC_PROXY = apiKey ? "1" : "";
 
 export default defineConfig({
+  // Served from a subpath (GitHub Pages: /<repo>/), every URL the build writes starts with it.
+  base: process.env.COCAIDE_BASE ?? "/",
   plugins: [react()],
   // The OCCT glue file loads its own .wasm; pre-bundling it breaks the URL.
   optimizeDeps: { exclude: ["replicad-opencascadejs"] },

@@ -62,13 +62,24 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 
 ## Run it
 
+**On GitHub Pages.** Pages can't run the source as it is (the page loads `src/main.tsx`, which only Vite understands: served raw, it is a white screen). `.github/workflows/pages.yml` builds it and publishes `dist/`:
+
+1. In the repository on GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions** (not "Deploy from a branch").
+2. Push to the default branch, or run **Actions → Deploy to GitHub Pages → Run workflow**.
+3. Open `https://<owner>.github.io/<repo>/` once the run is green. The first visit downloads the 23 MB kernel; after that the browser keeps it.
+
+The build is made for the `/<repo>/` subpath (`COCAIDE_BASE`). Modelling, drawings and STEP export need nothing else; the right-click ask needs your own key in **Settings → Assistant**, which stays in that browser.
+
+**On your computer** (Node 22.12 or newer):
+
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 335 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J, K, L and M acceptance logic
+npm test               # 349 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J, K, L and M acceptance logic
                        #   (+14 live-model Phase D–G, K and L tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 44 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J, K, L and M acceptance suites
+npm run test:e2e       # 53 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J, K, L and M acceptance suites
 npm run build          # typecheck + production bundle in dist/
+COCAIDE_BASE=/Cocaide/ npm run build && COCAIDE_BASE=/Cocaide/ npm run preview   # the Pages build, at http://localhost:4173/Cocaide/
 ```
 
 The right-click ask needs a model. Either start the dev server with a key, so the page never holds it, or paste a key into **Settings** in the top bar (it stays in that browser):

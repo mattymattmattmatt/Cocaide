@@ -989,7 +989,7 @@ export function App() {
       >
         <header className="topbar">
           <div className="brand">
-            <img src="/cocaide-mark-256.png" alt="" width={28} height={28} />
+            <img src={`${import.meta.env.BASE_URL}cocaide-mark-256.png`} alt="" width={28} height={28} />
             <span className="wordmark">Cocaide</span>
           </div>
           <div className="doc-title" title={dirty ? "Unsaved changes" : "Click to rename"}>
