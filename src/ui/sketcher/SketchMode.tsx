@@ -11,7 +11,8 @@ import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
 import { describeConstraint, removeEntities, suggestions, type SketchItem } from "./draft";
 import { SketchCanvas, type Tool } from "./SketchCanvas";
-import { ToolButton } from "../tools";
+import { keyHint, pointer, useCommands, useInputPrefs } from "../input";
+import { Popup, ToolButton } from "../tools";
 import { Icon } from "../icons";
 
 export interface SketchSession {
@@ -47,13 +48,14 @@ interface DraftState {
   constraints: Constraint[];
 }
 
+/** The sketch tools, and the commands their keys run (Settings → Keyboard). */
 const TOOLS: [Tool, string, string][] = [
-  ["select", "Select", "V"],
-  ["line", "Line", "L"],
-  ["rect", "Rectangle", "R"],
-  ["circle", "Circle", "C"],
-  ["arc", "Arc", "A"],
-  ["slot", "Slot", "S"],
+  ["select", "Select", "sketch.select"],
+  ["line", "Line", "sketch.line"],
+  ["rect", "Rectangle", "sketch.rect"],
+  ["circle", "Circle", "sketch.circle"],
+  ["arc", "Arc", "sketch.arc"],
+  ["slot", "Slot", "sketch.slot"],
 ];
 
 export function SketchMode({ session, reference, onFinish, onCancel, onAsk, applyRef }: Props) {
@@ -187,41 +189,36 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     onFinish(f, weldment);
   };
 
-  // Keyboard: tools, delete, undo inside the sketch, Esc steps back out.
+  // Keyboard: the sketch's commands (tools, undo inside the sketch, delete, finish, the shortcut bar) are
+  // bound in Settings; Esc steps back out, Backspace deletes too, and Ctrl+Shift+Z redoes as well.
+  const prefs = useInputPrefs();
+  const [bar, setBar] = useState<{ x: number; y: number } | null>(null);
+  useCommands({
+    undo,
+    redo,
+    delete: deleteSelection,
+    shortcutBar: () => setBar({ x: pointer.x, y: pointer.y }),
+    "sketch.construction": toggleConstruction,
+    "sketch.finish": finish,
+    ...Object.fromEntries(TOOLS.map(([t, , id]) => [id, () => setTool(t)])),
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === "z") {
+      if (e.defaultPrevented || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        e.stopPropagation();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
-      if (mod && e.key.toLowerCase() === "y") {
-        e.preventDefault();
-        e.stopPropagation();
         redo();
-        return;
-      }
-      if (mod) return;
-      if (e.key === "Escape") {
+      } else if (e.key === "Escape") {
         if (tool !== "select") setTool("select");
         else setSelection([]);
-        return;
-      }
-      if (e.key === "Delete" || e.key === "Backspace") {
+      } else if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         deleteSelection();
-        return;
       }
-      const t = TOOLS.find(([, , key]) => key.toLowerCase() === e.key.toLowerCase());
-      if (t) setTool(t[0]);
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   });
 
   const dof = useMemo(() => {
@@ -242,15 +239,51 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     <>
       <section className="center sketch-center">
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
-          {TOOLS.map(([t, label, key]) => (
-            <ToolButton key={t} icon={t} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${label} (${key})`} testId={`tool-${t}`} />
+          {TOOLS.map(([t, label, id]) => (
+            <ToolButton key={t} icon={t} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
           ))}
           <span className="sep" />
-          <ToolButton icon="construction" label="Construction" pressed={construction} onClick={toggleConstruction} title="Construction geometry: guides that are not part of the profile (toggles new or selected entities)" />
+          <ToolButton
+            icon="construction"
+            label="Construction"
+            pressed={construction}
+            onClick={toggleConstruction}
+            title={`Construction geometry: guides that are not part of the profile (toggles new or selected entities)${keyHint("sketch.construction", prefs)}`}
+          />
           <ToolButton icon="grid" label="Grid snap" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Snap new points to the grid" />
           <span className="sep" />
-          <ToolButton icon="undo" label="Undo" onClick={undo} disabled={!past.length} title="Undo in sketch (Ctrl+Z)" />
-          <ToolButton icon="redo" label="Redo" onClick={redo} disabled={!future.length} title="Redo in sketch (Ctrl+Shift+Z)" />
+          <ToolButton icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} />
+          <ToolButton icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} />
+          {bar && (
+            <Popup x={bar.x} y={bar.y} bar onClose={() => setBar(null)} label="Shortcut bar" testId="shortcut-bar">
+              {(close) => (
+                <>
+                  {TOOLS.map(([t, label]) => (
+                    <ToolButton
+                      key={t}
+                      icon={t}
+                      label={label}
+                      pressed={tool === t}
+                      testId={`bar-${t}`}
+                      onClick={() => {
+                        close();
+                        setTool(t);
+                      }}
+                    />
+                  ))}
+                  <ToolButton
+                    icon="construction"
+                    label="Construction"
+                    pressed={construction}
+                    onClick={() => {
+                      close();
+                      toggleConstruction();
+                    }}
+                  />
+                </>
+              )}
+            </Popup>
+          )}
         </div>
         <SketchCanvas
           entities={entities}
@@ -306,6 +339,11 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
                 <Offer key={o.testId} offer={o} onAdd={(v, expr) => addConstraint(expr ? ({ ...o.make(v), expr } as unknown as Constraint) : o.make(v))} />
               ))}
             </div>
+          )}
+          {selection.length > 0 && (
+            <p className="muted small" data-testid="sketch-selection">
+              {selection.length} selected · Delete removes, Esc clears
+            </p>
           )}
           {selection.some((s) => s.kind === "entity") && (
             <div className="row-buttons">

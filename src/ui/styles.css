@@ -860,3 +860,62 @@ svg.icon { flex: none; display: block; }
   .wordmark { display: none; }
   .examples select { width: 72px; }
 }
+
+/* pop-ups at the pointer: Space's view menu, S's shortcut bar */
+.popup { position: fixed; z-index: 60; }
+.menu-items.popup { top: auto; }
+.popup-bar {
+  display: flex; flex-wrap: wrap; gap: 1px; max-width: 560px; padding: 4px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--border); box-shadow: 0 10px 28px rgb(0 0 0 / 0.18);
+}
+.popup-bar .tool {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  height: 48px; min-width: 52px; padding: 0 7px; border-radius: 8px; border: 1px solid transparent;
+  background: none; color: var(--text); font-size: 11.5px; line-height: 1; white-space: nowrap; cursor: pointer;
+}
+.popup-bar .tool:hover:not(:disabled) { background: var(--panel-2); border-color: var(--border); }
+.popup-bar .tool:disabled { opacity: 0.4; cursor: default; }
+.popup-bar .tool[aria-pressed="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
+.menu-key, .settings kbd {
+  margin-left: auto; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel-2);
+  font: 600 11px var(--mono); color: var(--muted); white-space: nowrap;
+}
+.menu-items button > span { flex: 1; }
+.view-buttons .caret { opacity: 0.55; }
+
+/* the sketch's selection box: solid for a window, dashed for crossing, as SOLIDWORKS draws them */
+.sketch-canvas .select-box { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: var(--accent); stroke-width: 1; }
+.sketch-canvas .select-box.crossing { fill: color-mix(in srgb, var(--ok) 8%, transparent); stroke: var(--ok); stroke-dasharray: 5 4; }
+
+/* F9 hides the left column */
+.workspace.no-left { grid-template-columns: 0 1fr 420px; }
+.workspace.no-left > .side.left { display: none; }
+@media (max-width: 1100px) {
+  .workspace.no-left { grid-template-columns: 0 1fr 340px; }
+}
+
+/* settings */
+.modal.settings { width: min(620px, calc(100vw - 32px)); }
+.settings-tabs { display: flex; gap: 2px; margin: 4px 0 2px; border-bottom: 1px solid var(--border); }
+.settings-tabs button {
+  height: 32px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); cursor: pointer; font-size: 13px;
+}
+.settings-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.settings-body { display: flex; flex-direction: column; gap: 10px; min-height: 260px; }
+.settings-check { margin: 2px 0; }
+.settings-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.settings-table th, .settings-table td { padding: 5px 6px; border-top: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.settings-table th { font-weight: 500; color: var(--muted); width: 46%; }
+.settings-table .keys-group { padding-top: 12px; border-top: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.keys-scroll { max-height: min(52vh, 460px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0 8px 6px; }
+.key-cell { width: 150px; text-align: right !important; }
+.modal .key-chip {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 96px; height: 26px; padding: 0 8px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; font-size: 12px;
+}
+.modal .key-chip kbd { margin: 0; border: 0; background: none; padding: 0; color: var(--text); }
+.modal .key-chip.none { color: var(--muted); border-style: dashed; }
+.modal .key-chip.changed kbd { color: var(--accent); }
+.modal .key-chip.recording { border-color: var(--accent); color: var(--accent); background: var(--info-bg); }
+.modal .key-chip:hover { border-color: var(--accent); }
+.settings-note { margin: 0; padding: 6px 9px; border-radius: 6px; background: var(--info-bg); }

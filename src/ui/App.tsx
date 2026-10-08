@@ -27,7 +27,7 @@ import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
-import { AskSettingsDialog } from "./ask/AskSettingsDialog";
+import { AskSettingsDialog, type SettingsTab } from "./ask/AskSettingsDialog";
 import { canAsk, modelFor } from "./ask/settings";
 import type { ProfileFacts } from "../ask/profile";
 import { BodiesPanel } from "./BodiesPanel";
@@ -54,7 +54,8 @@ import { useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
 import { Icon, type IconName } from "./icons";
-import { MenuItem, ToolButton, ToolMenu } from "./tools";
+import { keyHint, pointer, useCommands, useInputPrefs } from "./input";
+import { MenuItem, Popup, ToolButton, ToolMenu } from "./tools";
 import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = {
@@ -859,28 +860,14 @@ export function App() {
     });
   }, []);
 
-  // Undo / redo from the keyboard, except while typing in a field.
+  // Escape clears the selection; Ctrl+Shift+Z redoes too (Ctrl+Y is SOLIDWORKS's). Every other key is a command below.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Ctrl+S saves the part, from anywhere but the sketcher (it saves on Finish).
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        if (!sketch) saveRef.current();
-        return;
-      }
-      if (sketch) return;
+      if (sketch || e.defaultPrevented) return;
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) {
-        if (e.key === "Escape") setSelection(EMPTY_SELECTION);
-        return;
-      }
-      if (e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) d.redo();
-        else d.undo();
-      } else if (e.key.toLowerCase() === "y") {
+      if (e.key === "Escape") setSelection(EMPTY_SELECTION);
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z") {
         e.preventDefault();
         d.redo();
       }
@@ -888,6 +875,75 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [d, sketch]);
+
+  // ------------------------------------------------------------ commands
+
+  /** The toolbar's tools, by command: what the shortcut bar, a bound key and Enter (repeat) run. */
+  const bodyCount = view?.bodies.length ?? 0;
+  const TOOLS: Record<string, { icon: IconName; label: string; run(): void; disabled?: string }> = {
+    "tool.sketch": {
+      icon: "sketch",
+      label: "Sketch",
+      run: () => (selection.faces.length === 1 ? sketchOnFace() : startSketch(PLANES[0][1])),
+    },
+    "tool.extrude": { icon: "extrude", label: "Extrude", run: () => extrude("extrude") },
+    "tool.cut": { icon: "cut", label: "Cut", run: () => extrude("cut") },
+    "tool.hole": { icon: "hole", label: "Hole", run: hole },
+    "tool.fillet": { icon: "fillet", label: "Fillet", run: () => edgeFeature("fillet") },
+    "tool.chamfer": { icon: "chamfer", label: "Chamfer", run: () => edgeFeature("chamfer") },
+    "tool.linearPattern": { icon: "linearPattern", label: "Linear pattern", run: () => patternFeature("linearPattern") },
+    "tool.circularPattern": { icon: "circularPattern", label: "Circular pattern", run: () => patternFeature("circularPattern") },
+    "tool.mirror": { icon: "mirror", label: "Mirror", run: mirrorTool },
+    "tool.combine": { icon: "combine", label: "Combine", run: combine, disabled: bodyCount < 2 ? "Combine needs two or more bodies" : undefined },
+    "tool.split": { icon: "split", label: "Split", run: splitTool },
+    "tool.move": { icon: "move", label: "Move", run: moveTool },
+    "tool.deleteBody": { icon: "deleteBody", label: "Delete body", run: () => deleteBodyTool(), disabled: bodyCount < 2 ? "A part needs at least one body" : undefined },
+    "tool.member": { icon: "member", label: "Member", run: memberTool },
+  };
+  /** The last tool run, for Enter. */
+  const lastTool = useRef<string | null>(null);
+  const runTool = (id: string) => {
+    const t = TOOLS[id];
+    if (!t) return;
+    if (t.disabled) return setNotice({ kind: "info", text: t.disabled });
+    lastTool.current = id;
+    t.run();
+  };
+  const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
+  /** The tab Settings opens on: the assistant's when an ask needs it set up, else Units. */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    ask.setSettingsOpen(true);
+  };
+  const prefs = useInputPrefs();
+  const [leftHidden, setLeftHidden] = useState(false);
+  const modelling = !sketch && mode === "model";
+  useCommands(
+    {
+      save: () => saveRef.current(),
+      open: () => fileInput.current?.click(),
+      new: () => replaceDocument(BLANK, "New part"),
+      undo: d.undo,
+      redo: d.redo,
+      settings: () => openSettings("units"),
+      toggleTree: () => setLeftHidden((h) => !h),
+      shortcutBar: () => setShortcutBar({ x: pointer.x, y: pointer.y }),
+      ...(modelling
+        ? {
+            delete: () => {
+              if (!selectedFeature) return setNotice({ kind: "info", text: "Select a feature in the tree to delete it." });
+              const problem = d.dispatch({ type: "deleteFeature", id: selectedFeature });
+              if (problem) setNotice({ kind: "error", text: problem });
+              else setSelectedFeature(null);
+            },
+            repeat: () => lastTool.current && runTool(lastTool.current),
+            ...Object.fromEntries(Object.keys(TOOLS).map((id) => [id, () => runTool(id)])),
+          }
+        : {}),
+    },
+    !sketch,
+  );
 
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -977,7 +1033,7 @@ export function App() {
               <Icon name="new" />
               <span className="label">New</span>
             </button>
-            <button aria-label="Open" onClick={() => fileInput.current?.click()} title="Open a .cocaide.json part">
+            <button aria-label="Open" onClick={() => fileInput.current?.click()} title={`Open a .cocaide.json part${keyHint("open", prefs)}`}>
               <Icon name="open" />
               <span className="label">Open</span>
             </button>
@@ -992,12 +1048,12 @@ export function App() {
                 e.target.value = "";
               }}
             />
-            <button aria-label="Save" onClick={save} title="Download the part as .cocaide.json (Ctrl+S)">
+            <button aria-label="Save" onClick={save} title={`Download the part as .cocaide.json${keyHint("save", prefs)}`}>
               <Icon name="save" />
               <span className="label">Save</span>
             </button>
             <span className="sep" />
-            <button aria-label="Settings" onClick={() => ask.setSettingsOpen(true)} title="Settings: units, and the model and key for right-click asks" data-testid="ask-settings-open">
+            <button aria-label="Settings" onClick={() => openSettings("units")} title="Settings: units, mouse, keyboard shortcuts, and the assistant" data-testid="ask-settings-open">
               <Icon name="settings" />
               <span className="label">Settings</span>
             </button>
@@ -1019,8 +1075,8 @@ export function App() {
 
         {!sketch && mode === "drawing" && (
           <div className="toolbar" role="toolbar" aria-label="Drawing">
-            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" testId="undo" />
-            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" testId="redo" />
+            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title={`Undo${keyHint("undo", prefs)}`} testId="undo" />
+            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title={`Redo${keyHint("redo", prefs)}`} testId="redo" />
             <span className="sep" />
             <ToolButton
               icon="drawing"
@@ -1038,8 +1094,8 @@ export function App() {
         )}
         {!sketch && mode === "model" && (
           <div className="toolbar" role="toolbar" aria-label="Modelling">
-            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title="Undo (Ctrl+Z)" testId="undo" />
-            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title="Redo (Ctrl+Shift+Z)" testId="redo" />
+            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title={`Undo${keyHint("undo", prefs)}`} testId="undo" />
+            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title={`Redo${keyHint("redo", prefs)}`} testId="redo" />
             <span className="sep" />
             <ToolMenu icon="sketch" label="Sketch" title="Start a sketch on a plane or a flat face" testId="tool-sketch">
               {(close) => (
@@ -1051,6 +1107,7 @@ export function App() {
                       label={label}
                       onClick={() => {
                         close();
+                        lastTool.current = "tool.sketch";
                         startSketch(plane);
                       }}
                       testId={`plane-${label.split(" ")[0].toLowerCase()}`}
@@ -1070,11 +1127,11 @@ export function App() {
               )}
             </ToolMenu>
             <span className="sep" />
-            <ToolButton icon="extrude" label="Extrude" onClick={() => extrude("extrude")} title="Add material: push the selected (or latest) sketch out" testId="tool-extrude" />
-            <ToolButton icon="cut" label="Cut" onClick={() => extrude("cut")} title="Remove material: cut the selected (or latest) sketch in" testId="tool-cut" />
-            <ToolButton icon="hole" label="Hole" onClick={hole} title="Click a flat face, then Hole" testId="tool-hole" />
-            <ToolButton icon="fillet" label="Fillet" onClick={() => edgeFeature("fillet")} title="Round edges: click edges (shift-click for more), then Fillet" testId="tool-fillet" />
-            <ToolButton icon="chamfer" label="Chamfer" onClick={() => edgeFeature("chamfer")} title="Bevel edges: click edges (shift-click for more), then Chamfer" testId="tool-chamfer" />
+            <ToolButton icon="extrude" label="Extrude" onClick={() => runTool("tool.extrude")} title={`Add material: push the selected (or latest) sketch out${keyHint("tool.extrude", prefs)}`} testId="tool-extrude" />
+            <ToolButton icon="cut" label="Cut" onClick={() => runTool("tool.cut")} title={`Remove material: cut the selected (or latest) sketch in${keyHint("tool.cut", prefs)}`} testId="tool-cut" />
+            <ToolButton icon="hole" label="Hole" onClick={() => runTool("tool.hole")} title={`Click a flat face, then Hole${keyHint("tool.hole", prefs)}`} testId="tool-hole" />
+            <ToolButton icon="fillet" label="Fillet" onClick={() => runTool("tool.fillet")} title={`Round edges: click edges (Ctrl- or shift-click for more), then Fillet${keyHint("tool.fillet", prefs)}`} testId="tool-fillet" />
+            <ToolButton icon="chamfer" label="Chamfer" onClick={() => runTool("tool.chamfer")} title={`Bevel edges: click edges (Ctrl- or shift-click for more), then Chamfer${keyHint("tool.chamfer", prefs)}`} testId="tool-chamfer" />
             <span className="sep" />
             <ToolMenu icon="pattern" label="Pattern" title="Repeat the selected feature in a row or around an axis" testId="tool-pattern">
               {(close) => (
@@ -1083,9 +1140,10 @@ export function App() {
                     icon="linearPattern"
                     label="Linear pattern"
                     hint="Copies in a row (or a grid)"
+                    shortcut={keyHint("tool.linearPattern", prefs).slice(2, -1)}
                     onClick={() => {
                       close();
-                      patternFeature("linearPattern");
+                      runTool("tool.linearPattern");
                     }}
                     testId="tool-linear-pattern"
                   />
@@ -1093,37 +1151,38 @@ export function App() {
                     icon="circularPattern"
                     label="Circular pattern"
                     hint="Copies around an axis"
+                    shortcut={keyHint("tool.circularPattern", prefs).slice(2, -1)}
                     onClick={() => {
                       close();
-                      patternFeature("circularPattern");
+                      runTool("tool.circularPattern");
                     }}
                     testId="tool-circular-pattern"
                   />
                 </>
               )}
             </ToolMenu>
-            <ToolButton icon="mirror" label="Mirror" onClick={mirrorTool} title="Mirror the selected feature, or the clicked body, about a plane" testId="tool-mirror" />
+            <ToolButton icon="mirror" label="Mirror" onClick={() => runTool("tool.mirror")} title={`Mirror the selected feature, or the clicked body, about a plane${keyHint("tool.mirror", prefs)}`} testId="tool-mirror" />
             <span className="sep" />
             <ToolButton
               icon="combine"
               label="Combine"
-              onClick={combine}
-              disabled={(view?.bodies.length ?? 0) < 2}
-              title={(view?.bodies.length ?? 0) < 2 ? "Combine needs two or more bodies" : "Join, subtract or intersect bodies"}
+              onClick={() => runTool("tool.combine")}
+              disabled={!!TOOLS["tool.combine"].disabled}
+              title={TOOLS["tool.combine"].disabled ?? `Join, subtract or intersect bodies${keyHint("tool.combine", prefs)}`}
               testId="tool-combine"
             />
-            <ToolButton icon="split" label="Split" onClick={splitTool} title="Cut the clicked body in two with a plane" testId="tool-split" />
-            <ToolButton icon="move" label="Move" onClick={moveTool} title="Move, turn or copy the clicked body" testId="tool-move" />
+            <ToolButton icon="split" label="Split" onClick={() => runTool("tool.split")} title={`Cut the clicked body in two with a plane${keyHint("tool.split", prefs)}`} testId="tool-split" />
+            <ToolButton icon="move" label="Move" onClick={() => runTool("tool.move")} title={`Move, turn or copy the clicked body${keyHint("tool.move", prefs)}`} testId="tool-move" />
             <ToolButton
               icon="deleteBody"
               label="Delete body"
-              onClick={() => deleteBodyTool()}
-              disabled={(view?.bodies.length ?? 0) < 2}
-              title={(view?.bodies.length ?? 0) < 2 ? "A part needs at least one body" : "Delete the clicked body, or keep only some"}
+              onClick={() => runTool("tool.deleteBody")}
+              disabled={!!TOOLS["tool.deleteBody"].disabled}
+              title={TOOLS["tool.deleteBody"].disabled ?? `Delete the clicked body, or keep only some${keyHint("tool.deleteBody", prefs)}`}
               testId="tool-delete-body"
             />
             <span className="sep" />
-            <ToolButton icon="member" label="Member" onClick={memberTool} title="A straight member of a weldment profile: another like the selected one, or pick a size in Sections" testId="tool-member" />
+            <ToolButton icon="member" label="Member" onClick={() => runTool("tool.member")} title={`A straight member of a weldment profile: another like the selected one, or pick a size in Sections${keyHint("tool.member", prefs)}`} testId="tool-member" />
           </div>
         )}
 
@@ -1136,7 +1195,7 @@ export function App() {
           </div>
         )}
 
-        <main className="workspace">
+        <main className={`workspace${leftHidden ? " no-left" : ""}`}>
           {mode === "drawing" && !sketch ? (
             <>
               <aside className="side left">
@@ -1269,6 +1328,7 @@ export function App() {
                   onPhotoPoint={photoPick ? onPhotoPoint : null}
                   hiddenBodies={hiddenBodies}
                   nodes={shownNodes}
+                  onMessage={(text) => setNotice({ kind: "info", text })}
                 />
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
@@ -1360,6 +1420,33 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
+        {shortcutBar && !sketch && (
+          <Popup x={shortcutBar.x} y={shortcutBar.y} bar onClose={() => setShortcutBar(null)} label="Shortcut bar" testId="shortcut-bar">
+            {(close) =>
+              (mode === "model"
+                ? Object.entries(TOOLS).map(([id, t]) => ({ id, icon: t.icon, label: t.label, disabled: t.disabled, run: () => runTool(id) }))
+                : [
+                    { id: "drawing-new", icon: "drawing" as IconName, label: "New drawing", disabled: undefined, run: () => void newDrawing() },
+                    { id: "balloon-all", icon: "balloon" as IconName, label: "Balloon all", disabled: !sheet ? "No drawing yet" : undefined, run: balloonAll },
+                    { id: "export-pdf", icon: "export" as IconName, label: "Export PDF", disabled: !sheet ? "No drawing yet" : undefined, run: () => exportDrawing("pdf") },
+                  ]
+              ).map((t) => (
+                <ToolButton
+                  key={t.id}
+                  icon={t.icon}
+                  label={t.label}
+                  disabled={!!t.disabled}
+                  title={t.disabled}
+                  testId={`bar-${t.id}`}
+                  onClick={() => {
+                    close();
+                    t.run();
+                  }}
+                />
+              ))
+            }
+          </Popup>
+        )}
         {profileCard && doc && (
           <ProfileCard
             key={profileCard}
@@ -1371,7 +1458,17 @@ export function App() {
             onSuggest={suggestNames}
           />
         )}
-        {ask.settingsOpen && <AskSettingsDialog settings={ask.settings} onSave={ask.setSettings} onClose={() => ask.setSettingsOpen(false)} />}
+        {ask.settingsOpen && (
+          <AskSettingsDialog
+            settings={ask.settings}
+            onSave={ask.setSettings}
+            tab={settingsTab}
+            onClose={() => {
+              ask.setSettingsOpen(false);
+              setSettingsTab("assistant");
+            }}
+          />
+        )}
       </div>
     </ParametersContext.Provider>
   );
@@ -1399,6 +1496,11 @@ function Help() {
         {step("pattern", "Pattern or Mirror", "the feature selected in the tree; Mirror, Split and Move work on the clicked body too.")}
         {step("member", "Member", "for weldments: tick Weldment profile on a sketch to add a section, then add members from Sections.")}
         {step("ask", "Right-click", "anything (a feature, face, edge, parameter, or empty space) to ask about it or describe a change.")}
+        {step(
+          "move",
+          "Mouse and keys",
+          "as in SOLIDWORKS: middle-drag rotates, Ctrl+middle pans, the wheel zooms; Space for views, S for the shortcut bar, Ctrl+1–8 for the standard views. Settings changes them.",
+        )}
       </ol>
       <p className="muted small">
         Select a feature in the tree to edit it. Every change can be undone (Ctrl+Z). Drop a part file, a drawing (PDF or image) or a photo of a part on the

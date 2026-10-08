@@ -9,6 +9,7 @@ import type { Vec2 } from "../../doc/types";
 import type { ComposedSheet } from "../../drafting/compose";
 import type { Box } from "../../drafting/sheet";
 import { sheetSVG } from "../../drafting/svg";
+import { wheelZoom } from "../input";
 
 export type SheetTarget = { kind: "view"; id: string } | { kind: "annotation"; id: string };
 
@@ -117,7 +118,8 @@ export function SheetView({ sheet, selected, failed, onSelect, onContext, onMove
   const onWheel = (e: React.WheelEvent) => {
     const p = toSheet(e.clientX, e.clientY);
     if (!p) return;
-    const k = Math.exp(e.deltaY * 0.0015);
+    // The box shrinks to zoom in: the wheel's zoom, turned round.
+    const k = 1 / wheelZoom(e);
     const [x, y, w, h] = box.current;
     const nw = Math.min(Math.max(w * k, 20), sheet.width * 4);
     const s = nw / w;

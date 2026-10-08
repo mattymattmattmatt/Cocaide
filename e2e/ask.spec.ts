@@ -30,6 +30,7 @@ test.afterEach(async ({ page }) => {
 test('right-click hole_1, "make it 8 mm": changes that diameter only', async ({ page }) => {
   // Set the key through the settings dialog, as a user would.
   await page.getByTestId("ask-settings-open").click();
+  await page.getByTestId("settings-tab-assistant").click();
   await page.getByTestId("ask-api-key").fill("sk-test");
   await page.getByTestId("ask-settings-save").click();
   const sent = await scriptModel(page, [[tool("updateFeature", { id: "hole_1", patch: { diameter: 8 } })], [text("hole_1 is now Ø8, still through.")]]);

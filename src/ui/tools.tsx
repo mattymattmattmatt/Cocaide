@@ -18,7 +18,8 @@ interface ToolProps {
 /** A toolbar button: icon over label. */
 export function ToolButton({ icon, label, title, onClick, disabled, pressed, testId }: ToolProps) {
   return (
-    <button className="tool" onClick={onClick} disabled={disabled} title={title} aria-pressed={pressed} data-testid={testId}>
+    // A click doesn't take the keyboard: Space and Enter stay the view menu and Repeat, not this button again.
+    <button className="tool" onMouseDown={(e) => e.preventDefault()} onClick={onClick} disabled={disabled} title={title} aria-pressed={pressed} data-testid={testId}>
       <Icon name={icon} size={18} />
       <span className="tool-label">{label}</span>
     </button>
@@ -46,7 +47,7 @@ export function ToolMenu({ icon, label, title, testId, children, disabled }: Omi
   }, [open]);
   return (
     <div className="menu" ref={ref}>
-      <button className="tool" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" title={title} disabled={disabled} data-testid={testId}>
+      <button className="tool" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu" title={title} disabled={disabled} data-testid={testId}>
         <Icon name={icon} size={18} />
         <span className="tool-label">
           {label}
@@ -62,12 +63,61 @@ export function ToolMenu({ icon, label, title, testId, children, disabled }: Omi
   );
 }
 
-/** One choice in a menu: an icon, its name, and a hint of what it needs. */
-export function MenuItem({ icon, label, hint, onClick, disabled, testId }: { icon?: IconName; label: string; hint?: string; onClick(): void; disabled?: boolean; testId?: string }) {
+/** One choice in a menu: an icon, its name, its key, and a hint of what it needs. */
+export function MenuItem({ icon, label, hint, shortcut, onClick, disabled, testId }: { icon?: IconName; label: string; hint?: string; shortcut?: string; onClick(): void; disabled?: boolean; testId?: string }) {
   return (
     <button role="menuitem" onClick={onClick} disabled={disabled} data-testid={testId} title={hint}>
       {icon ? <Icon name={icon} /> : <span className="icon-space" />}
       <span>{label}</span>
+      {shortcut && <kbd className="menu-key">{shortcut}</kbd>}
     </button>
+  );
+}
+
+/**
+ * A menu or a bar of tools that opens where the pointer is (Space's view
+ * menu, S's shortcut bar), or above an anchor. It stays on the screen, and
+ * closes on a choice, a click elsewhere or Escape.
+ */
+export function Popup({ x, y, above, onClose, label, testId, bar, children }: { x: number; y: number; above?: boolean; onClose(): void; label: string; testId?: string; bar?: boolean; children: (close: () => void) => ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const left = Math.max(8, Math.min(bar ? x - w / 2 : x, window.innerWidth - w - 8));
+    const top = Math.max(8, Math.min(above ? y - h - 6 : bar ? y - h - 12 : y, window.innerHeight - h - 8));
+    setAt({ left, top });
+  }, [x, y, above, bar]);
+  useEffect(() => {
+    const away = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("pointerdown", away, true);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [onClose]);
+  return (
+    <div
+      ref={ref}
+      className={`popup ${bar ? "popup-bar" : "menu-items"}`}
+      role={bar ? "toolbar" : "menu"}
+      aria-label={label}
+      data-testid={testId}
+      style={{ left: at?.left ?? x, top: at?.top ?? y, visibility: at ? "visible" : "hidden" }}
+    >
+      {children(onClose)}
+    </div>
   );
 }

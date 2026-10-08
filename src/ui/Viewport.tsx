@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -8,9 +7,13 @@ import type { Vec2, Vec3 } from "../doc/types";
 import { formatDirection } from "../geom/vec";
 import type { EdgeInfo, FaceInfo } from "../kernel";
 import type { RebuildView } from "../worker/protocol";
-import { Icon } from "./icons";
+import { CadControls } from "./cadControls";
+import { Icon, type IconName } from "./icons";
+import { keyHint, pointer, useCommands, useInputPrefs } from "./input";
+import { MenuItem, Popup } from "./tools";
 
-export type ViewName = "iso" | "top" | "front" | "right";
+/** The standard views: SOLIDWORKS's seven, in this part's axes (Z up; Front looks along +Y). */
+export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 /** A click on the part: which B-rep face or edge, and where. */
 export type PickTarget = { kind: "face" | "edge"; index: number; point: Vec3 };
@@ -53,6 +56,8 @@ interface Props {
   hiddenBodies?: ReadonlySet<string>;
   /** A frame's nodes (Phase J), drawn as labelled points with the sketches. */
   nodes?: FrameNode[];
+  /** A short note for the user (a view command that needs a selection, say). */
+  onMessage?(text: string): void;
 }
 
 export interface FrameNode {
@@ -78,12 +83,22 @@ interface Hover {
   target: PickTarget;
 }
 
-const VIEW_DIRS: Record<ViewName, Vec3> = {
-  iso: [1, -1, 0.8],
-  top: [0, -1e-4, 1],
-  front: [0, -1, 0],
-  right: [1, 0, 0],
+/** Where each view looks from (toward the camera), and which way is up on the screen. */
+const VIEWS: Record<ViewName, { dir: Vec3; up: Vec3 }> = {
+  front: { dir: [0, -1, 0], up: [0, 0, 1] },
+  back: { dir: [0, 1, 0], up: [0, 0, 1] },
+  left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+  right: { dir: [1, 0, 0], up: [0, 0, 1] },
+  // Third-angle: the top view's bottom edge is the front, and the bottom view's top edge is.
+  top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  bottom: { dir: [0, 0, -1], up: [0, -1, 0] },
+  iso: { dir: [1, -1, 0.8], up: [0, 0, 1] },
 };
+const VIEW_ORDER: ViewName[] = ["front", "back", "left", "right", "top", "bottom", "iso"];
+const VIEW_ICON: Record<ViewName, IconName> = { front: "front", back: "front", left: "right", right: "right", top: "top", bottom: "top", iso: "iso" };
+const VIEW_LABEL: Record<ViewName, string> = { front: "Front", back: "Back", left: "Left", right: "Right", top: "Top", bottom: "Bottom", iso: "Isometric" };
+/** The quick buttons under the view. */
+const QUICK_VIEWS: ViewName[] = ["iso", "top", "front", "right"];
 
 /** Reads a CSS custom property so the scene follows the page theme. */
 function cssColor(el: Element, name: string, fallback: string): THREE.Color {
@@ -102,13 +117,20 @@ interface ViewportApi {
   setGhost(ghost: boolean): void;
   /** Frame the whole photo from above. */
   fitPhoto(): void;
-  fit(dir?: Vec3): void;
+  fit(dir?: Vec3, up?: Vec3): void;
+  /** Square to a face: from its outside, or from behind if already looking at it. */
+  normalTo(normal: Vec3): void;
+  /** Keyboard view moves: degrees, pixels, a zoom factor. */
+  turn(yawDeg: number, pitchDeg: number): void;
+  pan(dx: number, dy: number): void;
+  zoom(factor: number): void;
+  roll(deg: number): void;
   dispose(): void;
 }
 
 const NO_BODIES: ReadonlySet<string> = new Set();
 
-export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES, nodes = NO_NODES }: Props) {
+export function Viewport({ view, fitToken, selection, onPick, onContext, underlay = null, onPhotoPoint = null, hiddenBodies = NO_BODIES, nodes = NO_NODES, onMessage }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
   const pickRef = useRef(onPick);
@@ -131,9 +153,6 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 10000);
     camera.up.set(0, 0, 1);
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = false;
-    controls.zoomToCursor = true;
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x6f7480, 1.1);
     hemi.position.set(0, 0, 1); // sky is +Z in this Z-up scene
@@ -196,7 +215,27 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       renderer.render(scene, camera);
       placeLabels();
     };
-    controls.addEventListener("change", render);
+    /** The point the next rotation turns about, after a middle click on the part. */
+    const pivotGroup = new THREE.Group();
+    scene.add(pivotGroup);
+    const controls = new CadControls(camera, renderer.domElement, {
+      pick: (x, y) => {
+        const t = pickAt(x, y);
+        return t ? new THREE.Vector3(...t.point) : null;
+      },
+      fit: () => fit(),
+      showPivot: (p) => {
+        disposeGroup(pivotGroup);
+        if (p) {
+          const g = new THREE.BufferGeometry().setFromPoints([p]);
+          const dot = new THREE.Points(g, new THREE.PointsMaterial({ color: SELECT_COLOR, size: 10, sizeAttenuation: false, depthTest: false }));
+          dot.renderOrder = 5;
+          pivotGroup.add(dot);
+        }
+        render();
+      },
+      changed: render,
+    });
 
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = el;
@@ -243,18 +282,15 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       helpers.add(axes);
     };
 
-    const fit = (dir?: Vec3, on = { center, radius }) => {
+    /** Frames the part (or `on`) from `dir`, or from where the camera is now. */
+    const fit = (dir?: Vec3, on = { center, radius }, up?: Vec3) => {
       const d = new THREE.Vector3(...(dir ?? (camera.position.clone().sub(controls.target).toArray() as Vec3)));
-      if (d.lengthSq() === 0) d.set(...VIEW_DIRS.iso);
+      if (d.lengthSq() === 0) d.set(...VIEWS.iso.dir);
       d.normalize();
+      // Looking straight down or up, +Y is up the screen (-Y from below); otherwise +Z.
+      const u = new THREE.Vector3(...(up ?? (dir ? (Math.abs(d.z) > 0.999 ? [0, Math.sign(d.z), 0] : [0, 0, 1]) : (camera.up.toArray() as Vec3))));
       const dist = (on.radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
-      camera.position.copy(on.center).addScaledVector(d, dist);
-      camera.near = dist / 100;
-      camera.far = dist * 100;
-      camera.updateProjectionMatrix();
-      controls.target.copy(on.center);
-      controls.update();
-      render();
+      controls.place(on.center, d, dist, u);
     };
 
     /** Triangles of some faces, sharing the part's vertex buffer. */
@@ -451,7 +487,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       };
       // Hidden bodies are still in the mesh: look through them.
       const faceHit = raycaster.intersectObject(mesh, false).find((h) => !isHidden(shownView?.faces[faceAt(h)]?.body));
-      const worldPerPixel = (2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / rect.height;
+      const worldPerPixel = controls.worldPerPixel();
       raycaster.params.Line = { threshold: PICK_PIXELS * worldPerPixel };
       const edgeHit = edgeLines ? raycaster.intersectObject(edgeLines, false)[0] : undefined;
       const frontEdge = edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + 2 * PICK_PIXELS * worldPerPixel);
@@ -486,6 +522,8 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     let down: { x: number; y: number; button: number } | null = null;
     const onDown = (e: PointerEvent) => {
       if (e.button === 0 || e.button === 2) down = { x: e.clientX, y: e.clientY, button: e.button };
+      // The view is about to move: the hover tip would be left pointing at nothing.
+      if (e.button !== 0 && hovered) onLeave();
     };
     const onUp = (e: PointerEvent) => {
       if (!down || e.button !== down.button) return;
@@ -513,6 +551,11 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
           const v = new THREE.Vector3(...p).project(camera);
           const rect = canvas.getBoundingClientRect();
           return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
+        },
+        /** Where the camera is, what it looks at, and which way is up. */
+        camera() {
+          const r = (v: THREE.Vector3) => v.toArray().map((x) => Math.round(x * 1e4) / 1e4 + 0) as Vec3;
+          return { position: r(camera.position), target: r(controls.target), up: r(camera.up) };
         },
         /** A pixel of the pinned photo -> client pixels. */
         photoPoint(px: Vec2): [number, number] | null {
@@ -557,10 +600,10 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
       },
       setUnderlay,
       fitPhoto() {
-        if (!photo) return fit(VIEW_DIRS.top);
+        if (!photo) return fit(VIEWS.top.dir, undefined, VIEWS.top.up);
         // Half the view's height that shows the whole photo across and down.
         const half = (Math.max(photo.height, photo.width / camera.aspect) * photo.mmPerPx) / 2;
-        fit(VIEW_DIRS.top, { center: photoToWorld(photo, [photo.width / 2, photo.height / 2]), radius: half });
+        fit(VIEWS.top.dir, { center: photoToWorld(photo, [photo.width / 2, photo.height / 2]), radius: half }, VIEWS.top.up);
       },
       setGhost(ghost: boolean) {
         if (mesh) {
@@ -577,7 +620,21 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
         hidden = next;
         setModel(shownView);
       },
-      fit,
+      fit: (dir?: Vec3, up?: Vec3) => fit(dir, undefined, up),
+      normalTo(n: Vec3) {
+        const normal = new THREE.Vector3(...n).normalize();
+        const { forward, up } = controls.axes();
+        // Pressed again while square to the face: look at it from behind.
+        const from = forward.dot(normal) < -0.999 ? normal.clone().negate() : normal;
+        // Keep the screen's up as near as it was.
+        const u = up.clone().addScaledVector(from, -up.dot(from));
+        if (u.lengthSq() < 1e-6) u.set(...(Math.abs(from.z) > 0.999 ? ([0, 1, 0] as Vec3) : ([0, 0, 1] as Vec3)));
+        fit(from.toArray() as Vec3, { center: controls.target.clone(), radius }, u.normalize().toArray() as Vec3);
+      },
+      turn: (yaw: number, pitch: number) => controls.turn(THREE.MathUtils.degToRad(yaw), THREE.MathUtils.degToRad(pitch)),
+      pan: (dx: number, dy: number) => controls.pan(dx, dy),
+      zoom: (f: number) => controls.zoom(f),
+      roll: (deg: number) => controls.roll(THREE.MathUtils.degToRad(deg)),
       dispose() {
         ro.disconnect();
         canvas.removeEventListener("pointermove", onMove);
@@ -591,6 +648,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
         disposeGroup(marks);
         disposeGroup(photoGroup);
         disposeGroup(nodeGroup);
+        disposeGroup(pivotGroup);
         labels.remove();
         photoTexture?.texture.dispose();
         fatMaterials.forEach((m) => m.dispose());
@@ -600,7 +658,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     };
     resize();
     rebuildHelpers();
-    fit(VIEW_DIRS.iso);
+    fit(VIEWS.iso.dir);
     return () => api.current?.dispose();
   }, []);
 
@@ -621,7 +679,7 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
   }, [selection, view]);
 
   useEffect(() => {
-    if (fitToken > 0) api.current?.fit(VIEW_DIRS.iso);
+    if (fitToken > 0) api.current?.fit(VIEWS.iso.dir);
   }, [fitToken]);
 
   useEffect(() => {
@@ -632,6 +690,49 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
     api.current?.setUnderlay(underlay);
   }, [underlay, view]);
 
+  const prefs = useInputPrefs();
+  const [viewMenu, setViewMenu] = useState<{ x: number; y: number; above?: boolean } | null>(null);
+  const orient = (name: ViewName) => api.current?.fit(VIEWS[name].dir, VIEWS[name].up);
+  /** The one flat face selected, for Normal to. */
+  const normalFace = () => {
+    const f = selection.faces.length === 1 ? view?.faces[selection.faces[0]] : undefined;
+    return f?.type === "plane" && f.normal ? f.normal : null;
+  };
+  const normalTo = () => {
+    const n = normalFace();
+    if (n) api.current?.normalTo(n);
+    else onMessage?.("Normal to needs one flat face: click a face first.");
+  };
+  // SOLIDWORKS's view keys: Ctrl+1 to Ctrl+8, F, Z and Shift+Z, the arrows, and Space for the view menu.
+  useCommands({
+    "view.front": () => orient("front"),
+    "view.back": () => orient("back"),
+    "view.left": () => orient("left"),
+    "view.right": () => orient("right"),
+    "view.top": () => orient("top"),
+    "view.bottom": () => orient("bottom"),
+    "view.iso": () => orient("iso"),
+    "view.normal": normalTo,
+    "view.orientation": () => setViewMenu({ x: pointer.x, y: pointer.y }),
+    "view.fit": () => api.current?.fit(),
+    "view.zoomIn": () => api.current?.zoom(1.25),
+    "view.zoomOut": () => api.current?.zoom(0.8),
+    "view.rotateLeft": () => api.current?.turn(15, 0),
+    "view.rotateRight": () => api.current?.turn(-15, 0),
+    "view.rotateUp": () => api.current?.turn(0, 15),
+    "view.rotateDown": () => api.current?.turn(0, -15),
+    "view.rotateLeft90": () => api.current?.turn(90, 0),
+    "view.rotateRight90": () => api.current?.turn(-90, 0),
+    "view.rotateUp90": () => api.current?.turn(0, 90),
+    "view.rotateDown90": () => api.current?.turn(0, -90),
+    "view.panLeft": () => api.current?.pan(-60, 0),
+    "view.panRight": () => api.current?.pan(60, 0),
+    "view.panUp": () => api.current?.pan(0, -60),
+    "view.panDown": () => api.current?.pan(0, 60),
+    "view.rollLeft": () => api.current?.roll(15),
+    "view.rollRight": () => api.current?.roll(-15),
+  });
+
   const picking = !!onPhotoPoint;
   useEffect(() => {
     api.current?.setGhost(picking);
@@ -641,15 +742,28 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
   return (
     <div className={`viewport${picking ? " picking-photo" : ""}`}>
       <div ref={host} className="viewport-canvas" data-testid="viewport" />
-      <div className="view-buttons" role="toolbar" aria-label="Views">
-        {(Object.keys(VIEW_DIRS) as ViewName[]).map((name) => (
-          <button key={name} onClick={() => api.current?.fit(VIEW_DIRS[name])} title={name === "iso" ? "Look from the front, right and above" : `Look from the ${name}`}>
-            <Icon name={name} />
+      <div className="view-buttons" role="toolbar" aria-label="Views" onMouseDown={(e) => e.preventDefault()}>
+        {QUICK_VIEWS.map((name) => (
+          <button key={name} onClick={() => orient(name)} title={`${name === "iso" ? "Look from the front, right and above" : `Look from the ${name}`}${keyHint(`view.${name}`, prefs)}`}>
+            <Icon name={VIEW_ICON[name]} />
             {name[0].toUpperCase() + name.slice(1)}
           </button>
         ))}
+        <button
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setViewMenu({ x: r.left, y: r.top, above: true });
+          }}
+          title={`Every view, and Normal to the selected face${keyHint("view.orientation", prefs)}`}
+          aria-haspopup="menu"
+          data-testid="view-menu-open"
+        >
+          <Icon name="model" />
+          Views
+          <Icon name="up" size={10} className="caret" />
+        </button>
         <span className="sep" />
-        <button onClick={() => api.current?.fit()} title="Frame the whole part from the current direction">
+        <button onClick={() => api.current?.fit()} title={`Frame the whole part from the current direction${keyHint("view.fit", prefs)}`}>
           <Icon name="fit" />
           Fit
         </button>
@@ -658,6 +772,39 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
           Sketches
         </button>
       </div>
+      {viewMenu && (
+        <Popup x={viewMenu.x} y={viewMenu.y} above={viewMenu.above} onClose={() => setViewMenu(null)} label="View orientation" testId="view-menu">
+          {(close) => (
+            <>
+              {VIEW_ORDER.map((name) => (
+                <MenuItem
+                  key={name}
+                  icon={VIEW_ICON[name]}
+                  label={VIEW_LABEL[name]}
+                  shortcut={keyHint(`view.${name}`, prefs).slice(2, -1)}
+                  onClick={() => {
+                    close();
+                    orient(name);
+                  }}
+                  testId={`view-${name}`}
+                />
+              ))}
+              <MenuItem
+                icon="select"
+                label="Normal to"
+                hint="Square to the selected flat face; again to look from behind it"
+                shortcut={keyHint("view.normal", prefs).slice(2, -1)}
+                disabled={!normalFace()}
+                onClick={() => {
+                  close();
+                  normalTo();
+                }}
+                testId="view-normal"
+              />
+            </>
+          )}
+        </Popup>
+      )}
       <SelectionChip selection={selection} faces={view?.faces ?? []} edges={view?.edges ?? []} />
       {hover && <PickTip hover={hover} faces={infoRef.current.faces} edges={infoRef.current.edges} />}
     </div>

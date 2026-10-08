@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { entityPolylines } from "../../geom/profile";
 import { dist2 } from "../../geom/vec";
+import { inputPrefs, useCommands, wheelZoom } from "../input";
 import { CLICKS, entityFromClicks, handlesOf, hitEntity, hitHandle, ID_PREFIX, nextEntityId, type SketchItem } from "./draft";
 
 export type Tool = "select" | SketchEntity["type"];
@@ -43,8 +44,13 @@ export function SketchCanvas(props: Props) {
   const [view, setView] = useState<ViewState | null>(null);
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [clicks, setClicks] = useState<{ p: Vec2; ref: string | null }[]>([]);
+  /** A selection box being dragged: left to right selects what is inside it, right to left what it touches. */
+  const [box, setBox] = useState<{ a: Vec2; b: Vec2 } | null>(null);
+  const lastMiddle = useRef(0);
   const gesture = useRef<
     | { kind: "pan"; startClient: Vec2; startView: ViewState }
+    | { kind: "zoom"; startClient: Vec2; startView: ViewState }
+    | { kind: "box"; start: Vec2; additive: boolean }
     | { kind: "drag"; handle: string; from: Vec2; moved: boolean; item: SketchItem; additive: boolean }
     | { kind: "click"; at: Vec2; item: SketchItem | null; additive: boolean; startClient: Vec2; startView: ViewState }
     | null
@@ -124,6 +130,21 @@ export function SketchCanvas(props: Props) {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const p = toWorld(e.clientX, e.clientY);
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    // The middle button pans (Shift: zooms); twice quickly fits the sketch. The right button pans too.
+    if (e.button === 1) {
+      e.preventDefault();
+      const now = performance.now();
+      if (now - lastMiddle.current < 350) {
+        lastMiddle.current = 0;
+        setView(fitView(entities, reference, size));
+        return;
+      }
+      lastMiddle.current = now;
+    }
+    if (e.button === 1 && e.shiftKey) {
+      gesture.current = { kind: "zoom", startClient: [e.clientX, e.clientY], startView: v };
+      return;
+    }
     if (e.button === 1 || e.button === 2) {
       gesture.current = { kind: "pan", startClient: [e.clientX, e.clientY], startView: v };
       return;
@@ -148,10 +169,25 @@ export function SketchCanvas(props: Props) {
     setCursor(p);
     const g = gesture.current;
     if (!g) return;
+    if (g.kind === "box") {
+      setBox({ a: g.start, b: p });
+      return;
+    }
+    if (g.kind === "zoom") {
+      const scale = Math.min(1e4, Math.max(1e-3, g.startView.scale * Math.exp(-(e.clientY - g.startClient[1]) * 0.01)));
+      setView({ ...g.startView, scale });
+      return;
+    }
     if (g.kind === "pan" || g.kind === "click") {
       const dx = e.clientX - g.startClient[0];
       const dy = e.clientY - g.startClient[1];
       if (g.kind === "click" && Math.hypot(dx, dy) < 4) return;
+      // Dragging empty space: SOLIDWORKS draws a selection box; the trackpad scheme pans.
+      if (g.kind === "click" && inputPrefs().mouse === "solidworks") {
+        gesture.current = { kind: "box", start: g.at, additive: g.additive };
+        setBox({ a: g.at, b: p });
+        return;
+      }
       gesture.current = { kind: "pan", startClient: g.startClient, startView: g.startView };
       setView({ ...g.startView, cx: g.startView.cx - dx / g.startView.scale, cy: g.startView.cy + dy / g.startView.scale });
     } else if (g.kind === "drag") {
@@ -174,6 +210,13 @@ export function SketchCanvas(props: Props) {
       select(g.item, g.additive);
       return;
     }
+    if (g?.kind === "box") {
+      setBox(null);
+      const picked = boxPick(entities, g.start, p);
+      props.onSelect(g.additive ? [...selection, ...picked.filter((x) => !selection.some((s) => sameItem(s, x)))] : picked);
+      return;
+    }
+    if (g?.kind === "zoom") return;
     if (g?.kind === "pan" && e.button === 2 && Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) < 4) {
       const handle = hitHandle(entities, p, PICK_PX * unit);
       const ent = handle && handle.ref !== "origin" ? handle.ref.split(".")[0] : (hitEntity(entities, p, PICK_PX * unit)?.id ?? null);
@@ -212,10 +255,23 @@ export function SketchCanvas(props: Props) {
 
   const onWheel = (e: React.WheelEvent) => {
     const p = toWorld(e.clientX, e.clientY);
-    const k = Math.pow(1.15, -e.deltaY / 100);
+    const k = wheelZoom(e);
     const scale = Math.min(1e4, Math.max(1e-3, v.scale * k));
     setView({ scale, cx: p[0] - (p[0] - v.cx) * (v.scale / scale), cy: p[1] - (p[1] - v.cy) * (v.scale / scale) });
   };
+
+  // The view keys, in two dimensions: fit, zoom and pan.
+  const zoomBy = (k: number) => setView({ ...v, scale: Math.min(1e4, Math.max(1e-3, v.scale * k)) });
+  const panBy = (dx: number, dy: number) => setView({ ...v, cx: v.cx - dx / v.scale, cy: v.cy + dy / v.scale });
+  useCommands({
+    "view.fit": () => setView(fitView(entities, reference, size)),
+    "view.zoomIn": () => zoomBy(1.25),
+    "view.zoomOut": () => zoomBy(0.8),
+    "view.panLeft": () => panBy(-60, 0),
+    "view.panRight": () => panBy(60, 0),
+    "view.panUp": () => panBy(0, -60),
+    "view.panDown": () => panBy(0, 60),
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -265,6 +321,17 @@ export function SketchCanvas(props: Props) {
     >
       <g ref={world} transform="scale(1,-1)">
         <Grid view={v} size={size} step={step} />
+        {box && (
+          <rect
+            x={Math.min(box.a[0], box.b[0])}
+            y={Math.min(box.a[1], box.b[1])}
+            width={Math.abs(box.b[0] - box.a[0])}
+            height={Math.abs(box.b[1] - box.a[1])}
+            className={box.b[0] >= box.a[0] ? "select-box window" : "select-box crossing"}
+            vectorEffect="non-scaling-stroke"
+            data-testid="select-box"
+          />
+        )}
         <line x1={-1e6} y1={0} x2={1e6} y2={0} className="axis-x" vectorEffect="non-scaling-stroke" />
         <line x1={0} y1={-1e6} x2={0} y2={1e6} className="axis-y" vectorEffect="non-scaling-stroke" />
         <ReferenceLines segments={reference} />
@@ -421,4 +488,49 @@ function fitView(entities: SketchEntity[], reference: Float32Array, size: { w: n
   const scale = Math.min(size.w / (w * 1.4), size.h / (h * 1.4));
   const empty = xs.length <= 1;
   return { cx: empty ? 0 : (minX + maxX) / 2, cy: empty ? 0 : (minY + maxY) / 2, scale: empty ? Math.min(size.w, size.h) / 120 : scale };
+}
+
+/**
+ * What a selection box picks, as SOLIDWORKS does: dragged left to right (a
+ * window), the entities wholly inside it; right to left (crossing), every
+ * entity inside it or crossing its edge.
+ */
+export function boxPick(entities: SketchEntity[], a: Vec2, b: Vec2): SketchItem[] {
+  const min: Vec2 = [Math.min(a[0], b[0]), Math.min(a[1], b[1])];
+  const max: Vec2 = [Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+  const inside = (p: Vec2) => p[0] >= min[0] && p[0] <= max[0] && p[1] >= min[1] && p[1] <= max[1];
+  const windowed = b[0] >= a[0];
+  return entities
+    .filter((e) => {
+      const lines = entityPolylines(e);
+      const pts = lines.flat();
+      if (!pts.length) return false;
+      if (windowed) return pts.every(inside);
+      if (pts.some(inside)) return true;
+      return lines.some((l) => l.some((p, i) => i > 0 && segmentMeetsBox(l[i - 1], p, min, max)));
+    })
+    .map((e) => ({ kind: "entity" as const, id: e.id }));
+}
+
+/** Does the segment cross the box (Liang–Barsky)? */
+function segmentMeetsBox(p: Vec2, q: Vec2, min: Vec2, max: Vec2): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const d: Vec2 = [q[0] - p[0], q[1] - p[1]];
+  for (const [pk, qk] of [
+    [-d[0], p[0] - min[0]],
+    [d[0], max[0] - p[0]],
+    [-d[1], p[1] - min[1]],
+    [d[1], max[1] - p[1]],
+  ]) {
+    if (pk === 0) {
+      if (qk < 0) return false;
+      continue;
+    }
+    const t = qk / pk;
+    if (pk < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
 }
