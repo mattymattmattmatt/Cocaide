@@ -53,6 +53,7 @@ test("two named bodies: each measured, coloured, hideable, and exported as named
 });
 
 test("combine joins the upright into the base", async ({ page }) => {
+  await page.getByTestId("tab-bodies").click();
   await page.getByTestId("tool-combine").click();
   await expect(page.getByTestId("bodies")).toHaveCount(0); // one body left: no list to show
   await expectVolume(page, "133,143.363");

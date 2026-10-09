@@ -35,12 +35,14 @@ test("on the stand: mirror a hole and a body, move, split and delete bodies, a b
 
   // 2. Move the upright 30 mm along Y, then mirror it about the XZ plane.
   await pickBody(page, "upright");
+  await page.getByTestId("tab-bodies").click();
   await page.getByTestId("tool-move").click();
   await page.getByTestId("prop-move-copy").uncheck();
   await commit(page, "prop-move-translate-x", "0");
   await commit(page, "prop-move-translate-y", "30");
   await expectVolume(page, "132,515.044");
   await pickBody(page, "upright");
+  await page.getByTestId("tab-features").click();
   await page.getByTestId("tool-mirror").click();
   await page.getByTestId("prop-mirror-plane-normal").selectOption("+Y");
   await expectVolume(page, "190,115.044");
@@ -50,6 +52,7 @@ test("on the stand: mirror a hole and a body, move, split and delete bodies, a b
 
   // 3. Split the base at x = 0, and 4. delete one half from the Bodies panel.
   await pickBody(page, "base");
+  await page.getByTestId("tab-bodies").click();
   await page.getByTestId("tool-split").click();
   await expect.poll(() => bodyNames(page)).toEqual(["base", "upright", "upright_mirror", "base_split"]);
   await expectVolume(page, "190,115.044");

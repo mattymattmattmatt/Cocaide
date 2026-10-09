@@ -29,13 +29,19 @@ test("millimetres are the units, in the top bar, in Settings and on every length
 });
 
 test("every tool has a picture and a name; Pattern and Sketch are menus that close on Escape or a click away", async ({ page }) => {
+  // The tools are on the CommandManager's tabs: look at each tab's.
   const tools = page.getByRole("toolbar", { name: "Modelling" }).locator("button.tool");
-  const count = await tools.count();
-  expect(count).toBeGreaterThan(14);
-  for (let i = 0; i < count; i++) {
-    await expect(tools.nth(i).locator(":scope > svg.icon")).toHaveCount(1);
-    await expect(tools.nth(i).locator(".tool-label")).not.toHaveText("");
+  let count = 0;
+  for (const tab of ["bodies", "weldments", "features"]) {
+    await page.getByTestId(`tab-${tab}`).click();
+    const n = await tools.count();
+    for (let i = 0; i < n; i++) {
+      await expect(tools.nth(i).locator(":scope > svg.icon")).toHaveCount(1);
+      await expect(tools.nth(i).locator(".tool-label")).not.toHaveText("");
+    }
+    count += n;
   }
+  expect(count).toBeGreaterThan(14);
   await page.getByTestId("tool-pattern").click();
   await expect(page.getByRole("menuitem", { name: "Linear pattern" })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -47,6 +53,7 @@ test("every tool has a picture and a name; Pattern and Sketch are menus that clo
 });
 
 test("the body tools say why they're greyed out; Nodes folds away until the part has nodes", async ({ page }) => {
+  await page.getByTestId("tab-bodies").click();
   await expect(page.getByTestId("tool-combine")).toBeDisabled();
   await expect(page.getByTestId("tool-combine")).toHaveAttribute("title", "Combine needs two or more bodies");
   await expect(page.getByTestId("nodes-toggle")).toHaveAttribute("aria-expanded", "false");

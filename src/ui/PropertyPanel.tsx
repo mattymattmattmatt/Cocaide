@@ -4,15 +4,19 @@
 import { useEffect, useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import { DEFAULT_BODY, type EdgeSelector, type FaceSelector, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type FaceSelector, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
-import { describeEdgeSelector, describeWanted } from "../kernel/selectors";
-import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
+import { describeWanted } from "../kernel/selectors";
+import { faceSelectorFor } from "../kernel/synthesize";
 import type { RebuildView } from "../worker/protocol";
-import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
+import { UI_OPS, type EditorProps } from "../features/uiDefs";
+import { Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
 import { DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
+import { nextBodyName } from "./model/names";
+import { describeRef } from "./props/datumRef";
+import { FeatureForm } from "./props/FeatureForm";
 import type { Selection } from "./Viewport";
 
 export const OP_LABEL: Record<string, string> = {
@@ -33,12 +37,11 @@ export const OP_LABEL: Record<string, string> = {
   split: "Split body",
   move: "Move/Copy body",
   deleteBody: "Delete/Keep bodies",
+  // Ops with a UI of their own (src/features/<op>/ui.tsx) name themselves.
+  ...Object.fromEntries(Object.values(UI_OPS).map((u) => [u.op, u.label])),
 };
 
-/** The first free body name of the form body_1, body_2, ... */
-export function nextBodyName(taken: string[]): string {
-  for (let n = 1; ; n++) if (!taken.includes(`body_${n}`)) return `body_${n}`;
-}
+export { nextBodyName } from "./model/names";
 
 type Raw = Record<string, unknown>;
 
@@ -85,6 +88,9 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
     setError(problem);
     return problem;
   } });
+  /** An op with a UI of its own (src/features/<op>/ui.tsx): its editor, or its fields in a FeatureForm. */
+  const ui = UI_OPS[op];
+  const editorProps: EditorProps = { f, resolved, before, bodies: bodiesBefore, doc, view, selection, update, rename, setError };
 
   return (
     <div className="properties" data-testid="properties">
@@ -113,7 +119,11 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         </div>
       )}
       <div className="prop-body">
-        {op === "sketch" && <SketchProps f={resolved} onEdit={() => onEditSketch(featureId)} onProfileCard={onProfileCard && (() => onProfileCard(featureId))} />}
+        {ui ? (
+          ui.Editor ? <ui.Editor {...editorProps} /> : <FeatureForm fields={ui.fields ?? []} {...editorProps} />
+        ) : (
+          <>
+        {op === "sketch" && <SketchProps f={resolved} before={before} onEdit={() => onEditSketch(featureId)} onProfileCard={onProfileCard && (() => onProfileCard(featureId))} />}
         {op === "member" && <MemberProps f={f} resolved={resolved} doc={doc} view={view} update={update} rename={rename} actions={frame && batched(frame)} />}
         {op === "joint" && <JointProps f={f} doc={doc} view={view} update={update} actions={frame && batched(frame)} />}
         {op === "endCap" && <EndCapProps f={f} doc={doc} update={update} />}
@@ -124,10 +134,6 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
         {(op === "cut" || op === "hole") && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
         {op === "combine" && <CombineProps f={f} bodies={bodiesBefore} update={update} />}
-        {(op === "fillet" || op === "chamfer") && (
-          <EdgeTreatmentProps f={f} update={update} selection={selection} view={view} setError={setError} />
-        )}
-        {(op === "linearPattern" || op === "circularPattern") && <PatternProps f={f} before={before} update={update} />}
         {op === "mirror" && (
           <MirrorProps
             f={f}
@@ -142,6 +148,8 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         {op === "split" && <SplitProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "move" && <MoveProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "deleteBody" && <DeleteBodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
+          </>
+        )}
       </div>
       <div className="prop-actions">
         <label className="check">
@@ -273,8 +281,8 @@ function CombineProps({ f, bodies, update }: { f: Raw; bodies: string[]; update(
   );
 }
 
-function SketchProps({ f, onEdit, onProfileCard }: { f: Raw; onEdit(): void; onProfileCard?(): void }) {
-  const plane = f.plane as { normal: Vec3; origin: Vec3 };
+function SketchProps({ f, before, onEdit, onProfileCard }: { f: Raw; before: Raw[]; onEdit(): void; onProfileCard?(): void }) {
+  const plane = f.plane as { type?: string; normal?: Vec3; origin?: Vec3; ref?: unknown; offset?: number };
   const entities = (f.entities as unknown[]) ?? [];
   const constraints = (f.constraints as unknown[]) ?? [];
   let dof: number | null = null;
@@ -286,7 +294,13 @@ function SketchProps({ f, onEdit, onProfileCard }: { f: Raw; onEdit(): void; onP
   return (
     <>
       <Field label="Plane">
-        <span className="readout">{planeName(plane.normal, plane.origin)}</span>
+        <span className="readout">
+          {plane.type === "ref"
+            ? `${describeRef(plane.ref, before)}${plane.offset ? `, offset ${plane.offset}` : ""}`
+            : plane.normal && plane.origin
+              ? planeName(plane.normal, plane.origin)
+              : "—"}
+        </span>
       </Field>
       <Field label="Geometry">
         <span className="readout">
@@ -486,122 +500,6 @@ function HoleProps({
             />
           </Field>
         </>
-      )}
-    </>
-  );
-}
-
-function EdgeTreatmentProps({
-  f,
-  update,
-  selection,
-  view,
-  setError,
-}: {
-  f: Raw;
-  update(p: Raw): string | null | void;
-  selection: Selection;
-  view: RebuildView | null;
-  setError(e: string | null): void;
-}) {
-  const fillet = f.op === "fillet";
-  const edges = f.edges as EdgeSelector | EdgeSelector[];
-  const list = Array.isArray(edges) ? edges : [edges];
-  return (
-    <>
-      <Field label="Edges">
-        <span className="readout">
-          {list.map((e, i) => (
-            <span key={i} className="selector-line">
-              {describeEdgeSelector(e)}
-            </span>
-          ))}
-        </span>
-      </Field>
-      <button
-        disabled={selection.edges.length === 0 || !view}
-        onClick={() => {
-          const s = edgesSelectorFor(view!.edges, view!.faces, selection.edges);
-          if (!s.ok) setError(s.error);
-          else update({ edges: s.selector });
-        }}
-      >
-        Use selected edges
-      </button>
-      <Field label={fillet ? "Radius" : "Distance"} unit="mm">
-        <NumberInput
-          value={(fillet ? f.radius : f.distance) as number}
-          min={0}
-          testId={fillet ? "prop-radius" : "prop-chamfer-distance"}
-          onCommit={(v) => update(fillet ? { radius: v } : { distance: v })}
-        />
-      </Field>
-    </>
-  );
-}
-
-function PatternProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: Raw): void }) {
-  const seeds = before.filter((g) => ["extrude", "cut", "hole", "member"].includes(String(g.op))).map((g) => String(g.id));
-  const linear = f.op === "linearPattern";
-  const axis = f.axis as { origin: Vec3; direction: Vec3 } | undefined;
-  const two = f.direction2 !== undefined;
-  return (
-    <>
-      <Field label="Feature">
-        <Select value={String(f.feature)} options={seeds.map((s) => [s, s])} onChange={(v) => update({ feature: v })} testId="prop-pattern-feature" />
-      </Field>
-      {linear ? (
-        <>
-          <Field label="Direction">
-            <DirectionInput value={f.direction as Vec3} onCommit={(v) => update({ direction: v })} testId="prop-pattern-direction" />
-          </Field>
-          <Field label="Spacing" unit="mm">
-            <NumberInput value={f.spacing as number} min={0} onCommit={(v) => update({ spacing: v })} testId="prop-spacing" />
-          </Field>
-          <Field label="Count">
-            <NumberInput value={f.count as number} min={2} step={1} onCommit={(v) => update({ count: v })} testId="prop-count" />
-          </Field>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={two}
-              onChange={(e) =>
-                update(e.target.checked ? { direction2: [0, 1, 0], spacing2: f.spacing, count2: 2 } : { direction2: null, spacing2: null, count2: null })
-              }
-            />
-            Second direction
-          </label>
-          {two && (
-            <>
-              <Field label="Direction 2">
-                <DirectionInput value={f.direction2 as Vec3} onCommit={(v) => update({ direction2: v })} />
-              </Field>
-              <Field label="Spacing 2" unit="mm">
-                <NumberInput value={f.spacing2 as number} min={0} onCommit={(v) => update({ spacing2: v })} />
-              </Field>
-              <Field label="Count 2">
-                <NumberInput value={f.count2 as number} min={2} step={1} onCommit={(v) => update({ count2: v })} />
-              </Field>
-            </>
-          )}
-        </>
-      ) : (
-        axis && (
-          <>
-            <Field label="Axis through" unit="mm">
-              <Vec3Input value={axis.origin} onCommit={(v) => update({ axis: { ...axis, origin: v } })} />
-            </Field>
-            <Field label="Axis direction">
-              <DirectionInput value={axis.direction} onCommit={(v) => update({ axis: { ...axis, direction: v } })} />
-            </Field>
-            <Field label="Count">
-              <NumberInput value={f.count as number} min={2} step={1} onCommit={(v) => update({ count: v })} testId="prop-count" />
-            </Field>
-            <Field label="Total angle" unit="°">
-              <NumberInput value={(f.angle as number) ?? 360} min={0} onCommit={(v) => update({ angle: v === 360 ? null : v })} />
-            </Field>
-          </>
-        )
       )}
     </>
   );

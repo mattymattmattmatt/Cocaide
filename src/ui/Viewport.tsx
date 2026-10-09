@@ -4,28 +4,19 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { Vec2, Vec3 } from "../doc/types";
-import { formatDirection } from "../geom/vec";
 import type { EdgeInfo, FaceInfo } from "../kernel";
 import type { RebuildView } from "../worker/protocol";
 import { CadControls } from "./cadControls";
 import { Icon, type IconName } from "./icons";
 import { keyHint, pointer, useCommands, useInputPrefs } from "./input";
+import { describeEdge, describeFace, EMPTY_SELECTION, fmt, selectionText, type PickTarget, type Selection } from "./model/selection";
 import { MenuItem, Popup } from "./tools";
 
 /** The standard views: SOLIDWORKS's seven, in this part's axes (Z up; Front looks along +Y). */
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
-/** A click on the part: which B-rep face or edge, and where. */
-export type PickTarget = { kind: "face" | "edge"; index: number; point: Vec3 };
-
-export interface Selection {
-  faces: number[];
-  edges: number[];
-  /** Where the last face was clicked; a new hole goes here. */
-  point?: Vec3;
-}
-
-export const EMPTY_SELECTION: Selection = { faces: [], edges: [] };
+// What a click picks and what is selected: plain data, in a pure module (src/ui/model/selection.ts).
+export { EMPTY_SELECTION, type PickTarget, type Selection } from "./model/selection";
 
 /** A photo pinned under the part on XY (spec 5.3): pixel x along +X, pixel y along -Y. Never geometry. */
 export interface Underlay {
@@ -45,7 +36,7 @@ interface Props {
   /** Bump to re-frame the camera on the current model. */
   fitToken: number;
   selection: Selection;
-  /** A click on the part (target) or on empty space (null). `additive` when shift is held. */
+  /** A click on the part (target) or on empty space (null). `additive` when Ctrl, Shift or Cmd is held: the target goes in or out of the selection. */
   onPick(target: PickTarget | null, additive: boolean): void;
   /** A right-click (press and release without dragging): what is under the cursor, and where. */
   onContext?(target: PickTarget | null, clientX: number, clientY: number): void;
@@ -815,22 +806,6 @@ export function Viewport({ view, fitToken, selection, onPick, onContext, underla
   );
 }
 
-function describeFace(f: FaceInfo | undefined): string {
-  if (!f) return "face";
-  const of = f.body ? ` of ${f.body}` : "";
-  if (f.type === "plane" && f.normal) return `planar face${of} · normal ${formatDirection(f.normal)} · offset ${fmt(f.offset ?? 0)}`;
-  if (f.type === "cylinder" && f.cylinder) return `cylindrical face${of} · Ø${fmt(2 * f.cylinder.radius)} · ${f.cylinder.concave ? "hole wall" : "boss"}`;
-  return (f.type === "cone" ? "conical face" : "freeform face") + of;
-}
-
-function describeEdge(e: EdgeInfo | undefined): string {
-  if (!e) return "edge";
-  const of = e.body ? ` of ${e.body}` : "";
-  if (e.kind === "line") return `straight edge${of} · ${formatDirection(e.direction!)} · length ${fmt(e.length)}`;
-  if (e.kind === "circle") return `circular edge${of} · Ø${fmt(2 * e.radius!)}`;
-  return `curved edge${of} · length ${fmt(e.length)}`;
-}
-
 function PickTip({ hover, faces, edges }: { hover: Hover; faces: FaceInfo[]; edges: EdgeInfo[] }) {
   const t = hover.target;
   const face = t.kind === "face" ? faces[t.index] : undefined;
@@ -843,26 +818,11 @@ function PickTip({ hover, faces, edges }: { hover: Hover; faces: FaceInfo[]; edg
 }
 
 function SelectionChip({ selection, faces, edges }: { selection: Selection; faces: FaceInfo[]; edges: EdgeInfo[] }) {
-  const n = selection.faces.length + selection.edges.length;
-  if (n === 0) return null;
-  const text =
-    selection.faces.length === 1 && selection.edges.length === 0
-      ? describeFace(faces[selection.faces[0]])
-      : selection.edges.length === 1 && selection.faces.length === 0
-        ? describeEdge(edges[selection.edges[0]])
-        : [
-            selection.faces.length ? `${selection.faces.length} face${selection.faces.length === 1 ? "" : "s"}` : "",
-            selection.edges.length ? `${selection.edges.length} edge${selection.edges.length === 1 ? "" : "s"}` : "",
-          ]
-            .filter(Boolean)
-            .join(" + ");
+  const text = selectionText(selection, faces, edges);
+  if (!text) return null;
   return (
-    <div className="selection-chip" data-testid="selection">
+    <div className="selection-chip" data-testid="selection" title="Ctrl- or Shift-click adds a face or an edge, or takes it out again">
       Selected: {text}
     </div>
   );
-}
-
-function fmt(x: number): string {
-  return String(Math.round(x * 1000) / 1000);
 }

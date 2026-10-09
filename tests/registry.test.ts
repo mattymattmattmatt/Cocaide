@@ -3,7 +3,7 @@
 // kernel, the shared code reaches them through its hooks, and the doc-layer
 // files never import a value from the document layer they plug into.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { apply, references, type RawDocument } from "../src/doc/commands";
@@ -83,7 +83,8 @@ describe("the registry's lists", () => {
       ...["defs.ts", "docIndex.ts", "types.ts", "datum.ts", "operation.ts"].map((f) => join(SRC, "features", f)),
       ...readdirSync(join(SRC, "features"))
         .filter((d) => statSync(join(SRC, "features", d)).isDirectory())
-        .map((d) => join(SRC, "features", d, "doc.ts")),
+        .map((d) => join(SRC, "features", d, "doc.ts"))
+        .filter((f) => existsSync(f)),
     ];
     const offending: string[] = [];
     for (const file of files) {

@@ -103,6 +103,7 @@ test("the toolbar's Member adds another like the selected one; undo takes the me
   await page.getByTestId("profile-save").click();
 
   await page.getByTestId("new-part").click();
+  await page.getByTestId("tab-weldments").click();
   await page.getByTestId("tool-member").click(); // nothing to copy yet: the library opens
   await expect(page.getByTestId("notice")).toContainText("Pick a size in Sections");
   await page.getByTestId("section-add-SHS 40x40x3").click();
