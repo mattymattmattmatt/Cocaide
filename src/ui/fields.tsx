@@ -11,17 +11,22 @@ export const ParametersContext = createContext<Parameters>({});
 /** A number field's value: a number, or an expression over parameters ("=plate_t * 2"). */
 export type NumberValue = number | string;
 
-/** A labelled field. `unit` follows the value: "mm" for lengths, "°" for angles. */
-export function Field({ label, children, hint, unit }: { label: string; children: ReactNode; hint?: string; unit?: string }) {
+/**
+ * A labelled field. `unit` follows the value: "mm" for lengths, "°" for angles.
+ * `block` for a field of several controls (a list with buttons, checkboxes):
+ * not a <label>, whose clicks would go to its first control.
+ */
+export function Field({ label, children, hint, unit, block }: { label: string; children: ReactNode; hint?: string; unit?: string; block?: boolean }) {
+  const Tag = block ? "div" : "label";
   return (
-    <label className="field">
+    <Tag className="field">
       <span className="field-label">{label}</span>
       <span className={`field-input${unit ? " with-unit" : ""}`}>
         {children}
         {unit && <span className="unit">{unit}</span>}
       </span>
       {hint && <span className="field-hint">{hint}</span>}
-    </label>
+    </Tag>
   );
 }
 

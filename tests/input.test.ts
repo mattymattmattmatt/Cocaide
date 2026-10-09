@@ -50,6 +50,13 @@ describe("keys", () => {
     expect(keyFor("view.fit")).toBe("F");
     expect(inputPrefs().keys).toEqual({});
   });
+
+  it("keeps keys for the sketch tools still to come; one of them gives its key up without a word", () => {
+    expect(["sketch.trim", "sketch.extend", "sketch.point", "sketch.mirror", "sketch.centerline"].map((id) => keyFor(id))).toEqual(["T", "E", "P", "M", "Shift+L"]);
+    expect(bindKey("sketch.line", "T")).toBeNull();
+    expect(keyFor("sketch.trim")).toBeNull();
+    expect(keyFor("sketch.line")).toBe("T");
+  });
 });
 
 describe("the wheel", () => {

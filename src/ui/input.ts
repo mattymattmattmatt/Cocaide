@@ -17,6 +17,11 @@ export interface CommandDef {
   group: CommandGroup;
   /** SOLIDWORKS's key for it, or ours where it has none; null: unbound until you bind it. */
   key: string | null;
+  /**
+   * Listed ahead of its tool, so that its id and key are taken: Settings leaves
+   * it out until the tool that runs it lands (that change drops this flag).
+   */
+  planned?: true;
 }
 
 /**
@@ -76,6 +81,24 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.move", label: "Move", group: "Model tools", key: null },
   { id: "tool.deleteBody", label: "Delete body", group: "Model tools", key: null },
   { id: "tool.member", label: "Member", group: "Model tools", key: null },
+  // Model tools still to come: ids, labels and keys reserved (each loses `planned` when its tool lands).
+  { id: "tool.plane", label: "Reference plane", group: "Model tools", key: null, planned: true },
+  { id: "tool.axis", label: "Reference axis", group: "Model tools", key: null, planned: true },
+  { id: "tool.point", label: "Reference point", group: "Model tools", key: null, planned: true },
+
+  { id: "tool.revolve", label: "Revolve", group: "Model tools", key: null, planned: true },
+  { id: "tool.shell", label: "Shell", group: "Model tools", key: null, planned: true },
+  { id: "tool.draft", label: "Draft", group: "Model tools", key: null, planned: true },
+  { id: "tool.scale", label: "Scale bodies", group: "Model tools", key: null, planned: true },
+
+  { id: "tool.sweep", label: "Sweep", group: "Model tools", key: null, planned: true },
+  { id: "tool.loft", label: "Loft", group: "Model tools", key: null, planned: true },
+  { id: "tool.rib", label: "Rib", group: "Model tools", key: null, planned: true },
+
+  { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null, planned: true },
+
+  { id: "tool.measure", label: "Measure", group: "Model tools", key: null, planned: true },
+  { id: "tool.section", label: "Section view", group: "Model tools", key: null, planned: true },
 
   { id: "sketch.select", label: "Select", group: "Sketch", key: "V" },
   { id: "sketch.dimension", label: "Smart Dimension", group: "Sketch", key: "D" },
@@ -86,6 +109,38 @@ export const COMMANDS: CommandDef[] = [
   { id: "sketch.slot", label: "Slot", group: "Sketch", key: "O" },
   { id: "sketch.construction", label: "Construction on or off", group: "Sketch", key: "Q" },
   { id: "sketch.finish", label: "Finish the sketch", group: "Sketch", key: "Ctrl+B" },
+  // Sketch tools still to come: ids, labels and keys reserved (each loses `planned` when its tool lands).
+  { id: "sketch.centerline", label: "Centreline", group: "Sketch", key: "Shift+L", planned: true },
+  { id: "sketch.point", label: "Point", group: "Sketch", key: "P", planned: true },
+  { id: "sketch.rectCenter", label: "Centre rectangle", group: "Sketch", key: "Shift+R", planned: true },
+  { id: "sketch.rect3", label: "3-point rectangle", group: "Sketch", key: null, planned: true },
+  { id: "sketch.parallelogram", label: "Parallelogram", group: "Sketch", key: null, planned: true },
+  { id: "sketch.polygon", label: "Polygon", group: "Sketch", key: null, planned: true },
+  { id: "sketch.arc3", label: "3-point arc", group: "Sketch", key: "Shift+A", planned: true },
+  { id: "sketch.tangentArc", label: "Tangent arc", group: "Sketch", key: null, planned: true },
+  { id: "sketch.circle3", label: "3-point circle", group: "Sketch", key: "Shift+C", planned: true },
+  { id: "sketch.slotCenter", label: "Centrepoint slot", group: "Sketch", key: "Shift+O", planned: true },
+
+  { id: "sketch.convert", label: "Convert entities (model edges into the sketch)", group: "Sketch", key: null, planned: true },
+
+  { id: "sketch.trim", label: "Trim", group: "Sketch", key: "T", planned: true },
+  { id: "sketch.extend", label: "Extend", group: "Sketch", key: "E", planned: true },
+  { id: "sketch.split", label: "Split entity", group: "Sketch", key: null, planned: true },
+  { id: "sketch.fillet", label: "Sketch fillet", group: "Sketch", key: null, planned: true },
+  { id: "sketch.chamfer", label: "Sketch chamfer", group: "Sketch", key: null, planned: true },
+  { id: "sketch.offset", label: "Offset entities", group: "Sketch", key: null, planned: true },
+  { id: "sketch.mirror", label: "Mirror entities", group: "Sketch", key: "M", planned: true },
+  { id: "sketch.linearPattern", label: "Linear sketch pattern", group: "Sketch", key: null, planned: true },
+  { id: "sketch.circularPattern", label: "Circular sketch pattern", group: "Sketch", key: null, planned: true },
+  { id: "sketch.move", label: "Move entities", group: "Sketch", key: null, planned: true },
+  { id: "sketch.rotate", label: "Rotate entities", group: "Sketch", key: null, planned: true },
+  { id: "sketch.scale", label: "Scale entities", group: "Sketch", key: null, planned: true },
+  { id: "sketch.copy", label: "Copy entities", group: "Sketch", key: null, planned: true },
+
+  { id: "sketch.fullyDefine", label: "Fully define the sketch", group: "Sketch", key: null, planned: true },
+
+  { id: "sketch.ellipse", label: "Ellipse", group: "Sketch", key: null, planned: true },
+  { id: "sketch.spline", label: "Spline", group: "Sketch", key: null, planned: true },
 ];
 
 export interface InputPrefs {
@@ -173,7 +228,8 @@ export function bindKey(id: string, key: string | null): string | null {
     for (const c of COMMANDS) {
       if (c.id !== id && keyFor(c.id) === key && clashes(c.group, def.group)) {
         keys[c.id] = null;
-        lost = c.label;
+        // A planned command is not in Settings yet: it gives the key up without a word.
+        if (!c.planned) lost = c.label;
       }
     }
   }

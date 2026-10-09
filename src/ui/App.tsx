@@ -18,12 +18,10 @@ import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import { DEFAULT_BODY, type Constraint, type DatumPlane, type Material, type ProfileDef, type SketchEntity, type SketchFeature, type Vec2, type Vec3 } from "../doc/types";
+import type { Constraint, DatumPlane, Material, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
-import { facePlaneFrame, planeFrame, to2D } from "../geom/frame";
+import { planeFrame, to2D } from "../geom/frame";
 import { STEEL_DENSITY } from "../geom/section";
-import { dot3 } from "../geom/vec";
-import { edgesSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
@@ -38,7 +36,7 @@ import { useAsk } from "./ask/useAsk";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
-import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, placeMember, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
+import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { FeatureTree, OP_ICON } from "./FeatureTree";
@@ -48,7 +46,7 @@ import { MeasurementsPanel } from "./MeasurementsPanel";
 import { ParametersPanel } from "./ParametersPanel";
 import { PhotoBar } from "./PhotoBar";
 import { ProfileCard } from "./ProfileCard";
-import { nextBodyName, PropertyPanel } from "./PropertyPanel";
+import { PropertyPanel } from "./PropertyPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
 import { useDocument } from "./useDocument";
@@ -56,8 +54,16 @@ import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
 import { Icon, type IconName } from "./icons";
 import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "./input";
-import { MenuItem, Popup, ToolButton, ToolMenu } from "./tools";
+import { Popup, ToolButton } from "./tools";
 import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
+import { UI_OPS } from "../features/uiDefs";
+import { CommandManager } from "./model/CommandManager";
+import { makeToolCtx } from "./model/context";
+import { contextTools, MODEL_TOOLS, toolById } from "./model/registry";
+import { pickInto } from "./model/selection";
+import type { ContextTarget, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
+import { deleteBody } from "./model/tools/bodies";
+import { PLANES } from "./model/tools/sketch";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -70,12 +76,6 @@ const EXAMPLES: Record<string, string> = {
 const STORAGE_KEY = "cocaide.document.v1";
 const REBUILD_DELAY_MS = 250;
 const BLANK = formatDocument({ version: 1, units: "mm", name: "part", features: [] });
-
-const PLANES: [string, DatumPlane][] = [
-  ["Top (XY)", { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }],
-  ["Front (XZ)", { type: "datum", normal: [0, -1, 0], origin: [0, 0, 0] }],
-  ["Right (YZ)", { type: "datum", normal: [1, 0, 0], origin: [0, 0, 0] }],
-];
 
 type KernelState = { phase: "loading" } | { phase: "ready"; loadMs: number } | { phase: "failed"; message: string };
 type Notice = { kind: "info" | "error"; text: string };
@@ -104,7 +104,6 @@ function fileBase(name: string): string {
   return name.replace(/[^\w.-]+/g, "_") || "part";
 }
 
-const round3 = (x: number) => Math.round(x * 1000) / 1000 + 0;
 /** Files that open the part-level ask as a drawing rather than as a document. */
 const DRAWING_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"];
 
@@ -376,26 +375,19 @@ export function App() {
     setSelection(EMPTY_SELECTION);
   };
 
-  const sketchOnFace = () => {
-    const f = view?.faces[selection.faces[0]];
-    if (selection.faces.length !== 1 || f?.type !== "plane" || !f.normal) {
-      return setNotice({ kind: "error", text: "Click a flat face first, then Sketch → On selected face." });
-    }
-    const n = f.normal.map(round9) as Vec3;
-    startSketch({ type: "datum", normal: n, origin: n.map((c) => round9(c * (f.offset ?? 0))) as Vec3 });
-  };
-
   const editSketch = (id: string) => {
     // The sketcher works on numbers; finishSketch puts back the expressions it did not change.
     const f = resolved.find((g) => g.id === id) as Partial<SketchFeature> | undefined;
     if (!f || f.op !== "sketch" || !f.plane) return;
+    // A sketch placed on a reference (a face, a plane feature) has its plane worked out by the rebuild, which the sketcher can't read yet.
+    if (!Array.isArray((f.plane as { normal?: unknown }).normal)) return setNotice({ kind: "error", text: `${id} sits on a reference plane, which the sketcher can't open yet: edit it in the Document tab.` });
     // A dimension written as "=b" goes in with its value, and the expression beside it, so the sketcher shows and keeps it.
     const raw = (features.find((g) => g.id === id)?.constraints ?? []) as { value?: unknown }[];
     const constraints = (f.constraints ?? []).map((c, i) => (typeof raw[i]?.value === "string" ? ({ ...c, expr: raw[i].value } as unknown as Constraint) : c));
     setSketch({
       id,
       isNew: false,
-      plane: f.plane,
+      plane: f.plane as DatumPlane,
       entities: (f.entities ?? []) as SketchEntity[],
       constraints,
       suppressed: f.suppressed,
@@ -467,27 +459,6 @@ export function App() {
     const used = { ...entry, uses: entry.uses + 1 };
     setLibrary((l) => l.map((e) => (e.id === entry.id ? used : e)));
     void saveProfile(used).catch(() => undefined);
-  };
-
-  /** The toolbar's Member: another of the selected (or last) member, else the library. */
-  const memberTool = () => {
-    if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
-    const like = (selected?.op === "member" ? selected : [...resolved].reverse().find((f) => f.op === "member")) as { profile: string; size: string } | undefined;
-    if (!like || !(doc.profiles as Record<string, ProfileDef> | undefined)?.[like.profile]) {
-      setRightTab("sections");
-      return setNotice({
-        kind: "info",
-        text: library.length
-          ? "Pick a size in Sections, then + Member."
-          : "The section library is empty: draw a section as a sketch, tick Weldment profile and finish it.",
-      });
-    }
-    const r = placeMember(doc, like.profile, like.size);
-    if (!r.ok) return setNotice({ kind: "error", text: r.error });
-    d.replaceDoc(r.doc);
-    setSelectedFeature(r.id);
-    setRightTab("properties");
-    setNotice(null);
   };
 
   const updateCopy = (entry: LibraryEntry) => {
@@ -592,103 +563,7 @@ export function App() {
     setNotice({ kind: merged.skipped.length ? "error" : "info", text: `Imported ${file.name}: ${merged.added} new, ${merged.updated} updated.${skipped}` });
   };
 
-  const sketchFor = (): Record<string, unknown> | undefined =>
-    selected?.op === "sketch" ? selected : [...resolved].reverse().find((f) => f.op === "sketch");
-
-  const extrude = (op: "extrude" | "cut") => {
-    const sk = sketchFor();
-    if (!doc || !sk) return setNotice({ kind: "error", text: `Make a sketch first, then ${op === "cut" ? "Cut" : "Extrude"}.` });
-    const plane = sk.plane as DatumPlane;
-    const feature: Record<string, unknown> = { id: nextId(doc, op), op, sketch: sk.id, distance: op === "cut" ? 5 : 10 };
-    // Where new material goes: the one body there is, or, in a part of several, a new body.
-    const bodies = validateDocument(doc).bodies;
-    if (op === "extrude" && bodies.length === 1 && bodies[0] !== DEFAULT_BODY) feature.body = bodies[0];
-    if (op === "extrude" && bodies.length > 1) feature.newBody = nextBodyName(bodies);
-    if (op === "cut" && view?.measurements?.boundingBox) {
-      // Cut toward the material: if nothing of the part lies in front of the sketch plane, cut backwards.
-      const { min, max } = view.measurements.boundingBox;
-      const n = planeFrame(plane.normal, plane.origin).z;
-      let far = -Infinity;
-      for (let i = 0; i < 8; i++) {
-        const c: Vec3 = [i & 1 ? max[0] : min[0], i & 2 ? max[1] : min[1], i & 4 ? max[2] : min[2]];
-        far = Math.max(far, dot3(n, c) - dot3(n, plane.origin));
-      }
-      if (far <= 1e-6) feature.direction = n.map((c) => -c);
-    }
-    create(feature);
-  };
-
-  const hole = () => {
-    const f = view?.faces[selection.faces[0]];
-    if (!doc || selection.faces.length !== 1 || !f || !selection.point) {
-      return setNotice({ kind: "error", text: "Click a flat face where the hole goes, then Hole." });
-    }
-    const s = faceSelectorFor(view!.faces, selection.faces[0]);
-    if (!s.ok || f.type !== "plane") return setNotice({ kind: "error", text: s.ok ? "A hole needs a flat face." : s.error });
-    const frame = facePlaneFrame(f.normal!, f.point!);
-    const c = to2D(frame, selection.point).map(round3) as [number, number];
-    // In a part of several bodies, the hole drills the body that was clicked.
-    create({ id: nextId(doc, "hole"), op: "hole", face: s.selector, center: c, diameter: 5, depth: "through", ...(f.body ? { bodies: [f.body] } : {}) });
-  };
-
-  const combine = () => {
-    const names = view?.bodies.map((b) => b.name) ?? [];
-    if (!doc || names.length < 2) return setNotice({ kind: "error", text: "Combine needs two bodies or more." });
-    // The clicked face's body goes into the first other body; change either in Properties.
-    const picked = selection.faces.length ? view?.faces[selection.faces[0]]?.body : undefined;
-    const tool = picked ?? names[1];
-    const target = names.find((n) => n !== tool)!;
-    create({ id: nextId(doc, "combine"), op: "combine", operation: "add", target, tools: [tool] });
-  };
-
-  const edgeFeature = (op: "fillet" | "chamfer") => {
-    if (!doc || !view || selection.edges.length === 0) {
-      return setNotice({ kind: "error", text: `Click one or more edges (shift-click for more), then ${op === "fillet" ? "Fillet" : "Chamfer"}.` });
-    }
-    const s = edgesSelectorFor(view.edges, view.faces, selection.edges);
-    if (!s.ok) return setNotice({ kind: "error", text: s.error });
-    create(op === "fillet" ? { id: nextId(doc, op), op, edges: s.selector, radius: 1 } : { id: nextId(doc, op), op, edges: s.selector, distance: 1 });
-  };
-
-  // ------------------------------------------------------------ multibody tools (Phase M)
-
-  /** The body a body tool works on: the clicked face's, else the newest. */
-  const pickedBody = (): string | undefined => (selection.faces.length ? view?.faces[selection.faces[0]]?.body : undefined) ?? view?.bodies.at(-1)?.name;
-  const bodyBox = (name: string) => view?.measurements?.bodies.find((b) => b.name === name)?.boundingBox ?? view?.measurements?.boundingBox ?? null;
-  const yz = (x: number) => ({ type: "datum", normal: [1, 0, 0], origin: [round3(x), 0, 0] });
-
-  /** Mirror: the selected feature about the part's middle, or the clicked body beside itself. */
-  const mirrorTool = () => {
-    const bb = view?.measurements?.boundingBox;
-    if (!doc || !bb) return setNotice({ kind: "error", text: "Mirror needs a part to mirror." });
-    if (selected && ["extrude", "cut", "hole", "member"].includes(String(selected.op))) {
-      return create({ id: nextId(doc, "mirror"), op: "mirror", plane: yz((bb.min[0] + bb.max[0]) / 2), feature: selected.id });
-    }
-    const body = pickedBody();
-    const box = body ? bodyBox(body) : null;
-    if (!body || !box) return setNotice({ kind: "error", text: "Select a feature in the tree, or click a body, then Mirror." });
-    create({ id: nextId(doc, "mirror"), op: "mirror", plane: yz(box.max[0]), bodies: [body] });
-  };
-
-  const splitTool = () => {
-    const body = pickedBody();
-    const box = body ? bodyBox(body) : null;
-    if (!doc || !body || !box) return setNotice({ kind: "error", text: "Split needs a body: click one, then Split." });
-    create({ id: nextId(doc, "split"), op: "split", body, plane: yz((box.min[0] + box.max[0]) / 2) });
-  };
-
-  const moveTool = () => {
-    const body = pickedBody();
-    const box = body ? bodyBox(body) : null;
-    if (!doc || !body || !box) return setNotice({ kind: "error", text: "Move/Copy needs a body: click one, then Move/Copy." });
-    create({ id: nextId(doc, "move"), op: "move", bodies: [body], translate: [round3(box.size[0] + 20), 0, 0], copy: true });
-  };
-
-  const deleteBodyTool = (name = pickedBody()) => {
-    if (!doc || !name) return;
-    if ((view?.bodies.length ?? 0) < 2) return setNotice({ kind: "error", text: "A part's only body can't be deleted." });
-    create({ id: nextId(doc, "delete"), op: "deleteBody", bodies: [name] });
-  };
+  // ------------------------------------------------------------ bodies
 
   const saveBody = (name: string) => {
     if (!doc) return;
@@ -697,18 +572,6 @@ export function App() {
     const file = bodyPartFile(doc, name);
     download(file, formatDocument(r.doc), "application/json");
     setNotice({ kind: "info", text: `Saved ${file}: this part keeping only ${name}, as a part of its own. Open it to work on it alone.` });
-  };
-
-  const patternFeature = (op: "linearPattern" | "circularPattern") => {
-    if (!doc || !selected || !["extrude", "cut", "hole", "member"].includes(String(selected.op))) {
-      return setNotice({ kind: "error", text: "Select an extrude, cut, hole or member in the feature tree, then Pattern." });
-    }
-    const id = nextId(doc, op === "linearPattern" ? "pattern" : "circular");
-    create(
-      op === "linearPattern"
-        ? { id, op, feature: selected.id, direction: [1, 0, 0], spacing: 10, count: 3 }
-        : { id, op, feature: selected.id, axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, count: 4 },
-    );
   };
 
   // ------------------------------------------------------------ drawing
@@ -851,15 +714,8 @@ export function App() {
     contextMenuRef.current({ kind: target.kind, index: target.index }, x, y);
   }, []);
 
-  const onPick = useCallback((target: PickTarget | null, additive: boolean) => {
-    setSelection((sel) => {
-      if (!target) return additive ? sel : EMPTY_SELECTION;
-      if (target.kind === "face") return { faces: [target.index], edges: [], point: target.point };
-      const has = sel.edges.includes(target.index);
-      if (additive) return { faces: [], edges: has ? sel.edges.filter((e) => e !== target.index) : [...sel.edges, target.index] };
-      return { faces: [], edges: [target.index] };
-    });
-  }, []);
+  // A plain click selects one face or edge; Ctrl- or Shift-click adds one, or takes it out again.
+  const onPick = useCallback((target: PickTarget | null, additive: boolean) => setSelection((sel) => pickInto(sel, target, additive)), []);
 
   // Escape clears the selection; Ctrl+Shift+Z redoes too (Ctrl+Y is SOLIDWORKS's). Every other key is a command below.
   useEffect(() => {
@@ -879,36 +735,47 @@ export function App() {
 
   // ------------------------------------------------------------ commands
 
-  /** The toolbar's tools, by command: what the shortcut bar, a bound key and Enter (repeat) run. */
-  const bodyCount = view?.bodies.length ?? 0;
-  const TOOLS: Record<string, { icon: IconName; label: string; run(): void; disabled?: string }> = {
-    "tool.sketch": {
-      icon: "sketch",
-      label: "Sketch",
-      run: () => (selection.faces.length === 1 ? sketchOnFace() : startSketch(PLANES[0][1])),
+  /**
+   * What the model tools (src/ui/model/tools) read and do: the document, the
+   * last rebuild, the selection, and the app's actions. Built on every render,
+   * so a tool always sees the current state.
+   */
+  const toolCtx: ToolCtx = makeToolCtx(
+    { doc, view, selection, selected, resolved, features, library },
+    {
+      run,
+      create,
+      replace: (next, select) => {
+        d.replaceDoc(next);
+        if (select) {
+          setSelectedFeature(select);
+          setRightTab("properties");
+        }
+        setNotice(null);
+      },
+      notice: (text, kind = "error") => setNotice({ kind, text }),
+      clearNotice: () => setNotice(null),
+      startSketch,
+      setSelection,
+      selectFeature: setSelectedFeature,
+      setRightTab,
     },
-    "tool.extrude": { icon: "extrude", label: "Extrude", run: () => extrude("extrude") },
-    "tool.cut": { icon: "cut", label: "Cut", run: () => extrude("cut") },
-    "tool.hole": { icon: "hole", label: "Hole", run: hole },
-    "tool.fillet": { icon: "fillet", label: "Fillet", run: () => edgeFeature("fillet") },
-    "tool.chamfer": { icon: "chamfer", label: "Chamfer", run: () => edgeFeature("chamfer") },
-    "tool.linearPattern": { icon: "linearPattern", label: "Linear pattern", run: () => patternFeature("linearPattern") },
-    "tool.circularPattern": { icon: "circularPattern", label: "Circular pattern", run: () => patternFeature("circularPattern") },
-    "tool.mirror": { icon: "mirror", label: "Mirror", run: mirrorTool },
-    "tool.combine": { icon: "combine", label: "Combine", run: combine, disabled: bodyCount < 2 ? "Combine needs two or more bodies" : undefined },
-    "tool.split": { icon: "split", label: "Split", run: splitTool },
-    "tool.move": { icon: "move", label: "Move", run: moveTool },
-    "tool.deleteBody": { icon: "deleteBody", label: "Delete body", run: () => deleteBodyTool(), disabled: bodyCount < 2 ? "A part needs at least one body" : undefined },
-    "tool.member": { icon: "member", label: "Member", run: memberTool },
-  };
+  );
   /** The last tool run, for Enter. */
   const lastTool = useRef<string | null>(null);
+  /** Runs a model tool by command id: the toolbar, the shortcut bar, its key, Enter and right-click menus all come here. */
   const runTool = (id: string) => {
-    const t = TOOLS[id];
+    const t = toolById(id);
     if (!t) return;
-    if (t.disabled) return setNotice({ kind: "info", text: t.disabled });
+    const why = t.disabled?.(toolCtx);
+    if (why) return setNotice({ kind: "info", text: why });
     lastTool.current = id;
-    t.run();
+    t.run(toolCtx);
+  };
+  /** One choice in a tool's own dropdown (Sketch ▾ → Top): Enter repeats that tool. */
+  const runToolItem = (t: ToolDef, item: ToolItem) => {
+    lastTool.current = t.id;
+    item.run(toolCtx);
   };
   // ------------------------------------------------------------ right-click menus
 
@@ -938,17 +805,29 @@ export function App() {
   const contextMenu = (target: AskTarget, x: number, y: number) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
     const ask = askEntry(() => openAskRef.current(target, x, y));
-    const tool = (id: string, label?: string): MenuEntry => {
-      const t = TOOLS[id];
-      return { label: label ?? t.label, icon: t.icon, hint: t.disabled, disabled: !!t.disabled, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => runToolRef.current(id), testId: `ctx-${id}` };
-    };
+    /** The registry's tools for what was right-clicked (contextOn), each run at the click. */
+    const toolsFor = (on: ContextTarget): MenuEntry[] =>
+      contextTools(on.kind)
+        .filter((t) => !t.contextWhen || t.contextWhen(toolCtx, on))
+        .map((t) => {
+          const why = t.disabled?.(toolCtx);
+          return {
+            label: t.contextLabel ?? t.label,
+            icon: t.icon,
+            hint: why,
+            disabled: !!why,
+            shortcut: keyFor(t.id, prefs) ?? undefined,
+            onClick: () => runToolRef.current(t.id),
+            testId: t.contextTestId ?? `ctx-${t.id}`,
+          };
+        });
     const viewCmd = (id: string, label: string, icon: IconName): MenuEntry => ({ label, icon, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => viewCommands.current?.(id), testId: `ctx-${id}` });
     const featureItems = (id: string): MenuEntry[] => {
       const f = features.find((g) => g.id === id);
       if (!f) return [];
       const op = String(f.op);
       const suppressed = f.suppressed === true;
-      const sketchId = op === "sketch" ? id : (op === "extrude" || op === "cut") && typeof f.sketch === "string" ? f.sketch : null;
+      const sketchId = op === "sketch" ? id : (op === "extrude" || op === "cut") && typeof f.sketch === "string" ? f.sketch : (UI_OPS[op]?.sketchOf?.(f) ?? null);
       return [
         {
           label: "Edit feature",
@@ -986,22 +865,24 @@ export function App() {
         const f = view?.faces[target.index];
         const flat = f?.type === "plane";
         items = [
-          ...(flat ? [{ label: "Sketch on this face", icon: "sketch", onClick: () => runToolRef.current("tool.sketch"), testId: "ctx-sketch-face" } as MenuEntry, tool("tool.hole", "Hole here")] : []),
+          ...toolsFor({ kind: "face", index: target.index }),
           "sep",
           ...(flat ? [viewCmd("view.normal", "Normal to", "front")] : []),
           viewCmd("view.fit", "Zoom to fit", "fit"),
-          ...(f?.body && bodyCount > 1 ? [{ label: `Hide ${f.body}`, icon: "eyeOff", onClick: () => toggleBody(f.body!), testId: "ctx-hide-body" } as MenuEntry] : []),
+          ...(f?.body && (view?.bodies.length ?? 0) > 1 ? [{ label: `Hide ${f.body}`, icon: "eyeOff", onClick: () => toggleBody(f.body!), testId: "ctx-hide-body" } as MenuEntry] : []),
         ];
         break;
       }
       case "edge":
-        items = [tool("tool.fillet"), tool("tool.chamfer"), "sep", viewCmd("view.fit", "Zoom to fit", "fit")];
+        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", viewCmd("view.fit", "Zoom to fit", "fit")];
         break;
       case "part":
         title = "Part";
         items = [
           { heading: "Sketch on" },
           ...PLANES.map(([name, plane]): MenuEntry => ({ label: name, icon: "sketch", onClick: () => startSketch(plane), testId: `ctx-sketch-${name.split(" ")[0].toLowerCase()}` })),
+          "sep",
+          ...toolsFor({ kind: "part" }),
           "sep",
           viewCmd("view.fit", "Zoom to fit", "fit"),
           viewCmd("view.iso", "Isometric", "iso"),
@@ -1023,7 +904,7 @@ export function App() {
           { label: hidden ? "Show" : "Hide", icon: hidden ? "eye" : "eyeOff", onClick: () => toggleBody(target.name), testId: "ctx-toggle-body" },
           ...(b ? [{ label: "Select its faces", icon: "select", onClick: () => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] }) } as MenuEntry] : []),
           { label: "Save as a part…", icon: "save", onClick: () => saveBody(target.name), testId: "ctx-save-body" },
-          { label: "Delete body", icon: "deleteBody", disabled: bodyCount < 2, onClick: () => deleteBodyTool(target.name), testId: "ctx-delete-body" },
+          { label: "Delete body", icon: "deleteBody", disabled: (view?.bodies.length ?? 0) < 2, onClick: () => deleteBody(toolCtx, target.name), testId: "ctx-delete-body" },
         ];
         break;
       }
@@ -1075,7 +956,7 @@ export function App() {
               else setSelectedFeature(null);
             },
             repeat: () => lastTool.current && runTool(lastTool.current),
-            ...Object.fromEntries(Object.keys(TOOLS).map((id) => [id, () => runTool(id)])),
+            ...Object.fromEntries(MODEL_TOOLS.map((t) => [t.id, () => runTool(t.id)])),
           }
         : {}),
     },
@@ -1230,97 +1111,7 @@ export function App() {
           </div>
         )}
         {!sketch && mode === "model" && (
-          <div className="toolbar" role="toolbar" aria-label="Modelling">
-            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title={`Undo${keyHint("undo", prefs)}`} testId="undo" />
-            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title={`Redo${keyHint("redo", prefs)}`} testId="redo" />
-            <span className="sep" />
-            <ToolMenu icon="sketch" label="Sketch" title="Start a sketch on a plane or a flat face" testId="tool-sketch">
-              {(close) => (
-                <>
-                  {PLANES.map(([label, plane]) => (
-                    <MenuItem
-                      key={label}
-                      icon={label.startsWith("Top") ? "top" : label.startsWith("Front") ? "front" : "right"}
-                      label={label}
-                      onClick={() => {
-                        close();
-                        lastTool.current = "tool.sketch";
-                        startSketch(plane);
-                      }}
-                      testId={`plane-${label.split(" ")[0].toLowerCase()}`}
-                    />
-                  ))}
-                  <MenuItem
-                    icon="select"
-                    label="On selected face"
-                    hint="Click a flat face first"
-                    onClick={() => {
-                      close();
-                      sketchOnFace();
-                    }}
-                    disabled={selection.faces.length !== 1}
-                  />
-                </>
-              )}
-            </ToolMenu>
-            <span className="sep" />
-            <ToolButton icon="extrude" label="Extrude" onClick={() => runTool("tool.extrude")} title={`Add material: push the selected (or latest) sketch out${keyHint("tool.extrude", prefs)}`} testId="tool-extrude" />
-            <ToolButton icon="cut" label="Cut" onClick={() => runTool("tool.cut")} title={`Remove material: cut the selected (or latest) sketch in${keyHint("tool.cut", prefs)}`} testId="tool-cut" />
-            <ToolButton icon="hole" label="Hole" onClick={() => runTool("tool.hole")} title={`Click a flat face, then Hole${keyHint("tool.hole", prefs)}`} testId="tool-hole" />
-            <ToolButton icon="fillet" label="Fillet" onClick={() => runTool("tool.fillet")} title={`Round edges: click edges (Ctrl- or shift-click for more), then Fillet${keyHint("tool.fillet", prefs)}`} testId="tool-fillet" />
-            <ToolButton icon="chamfer" label="Chamfer" onClick={() => runTool("tool.chamfer")} title={`Bevel edges: click edges (Ctrl- or shift-click for more), then Chamfer${keyHint("tool.chamfer", prefs)}`} testId="tool-chamfer" />
-            <span className="sep" />
-            <ToolMenu icon="pattern" label="Pattern" title="Repeat the selected feature in a row or around an axis" testId="tool-pattern">
-              {(close) => (
-                <>
-                  <MenuItem
-                    icon="linearPattern"
-                    label="Linear pattern"
-                    hint="Copies in a row (or a grid)"
-                    shortcut={keyHint("tool.linearPattern", prefs).slice(2, -1)}
-                    onClick={() => {
-                      close();
-                      runTool("tool.linearPattern");
-                    }}
-                    testId="tool-linear-pattern"
-                  />
-                  <MenuItem
-                    icon="circularPattern"
-                    label="Circular pattern"
-                    hint="Copies around an axis"
-                    shortcut={keyHint("tool.circularPattern", prefs).slice(2, -1)}
-                    onClick={() => {
-                      close();
-                      runTool("tool.circularPattern");
-                    }}
-                    testId="tool-circular-pattern"
-                  />
-                </>
-              )}
-            </ToolMenu>
-            <ToolButton icon="mirror" label="Mirror" onClick={() => runTool("tool.mirror")} title={`Mirror the selected feature, or the clicked body, about a plane${keyHint("tool.mirror", prefs)}`} testId="tool-mirror" />
-            <span className="sep" />
-            <ToolButton
-              icon="combine"
-              label="Combine"
-              onClick={() => runTool("tool.combine")}
-              disabled={!!TOOLS["tool.combine"].disabled}
-              title={TOOLS["tool.combine"].disabled ?? `Join, subtract or intersect bodies${keyHint("tool.combine", prefs)}`}
-              testId="tool-combine"
-            />
-            <ToolButton icon="split" label="Split" onClick={() => runTool("tool.split")} title={`Cut the clicked body in two with a plane${keyHint("tool.split", prefs)}`} testId="tool-split" />
-            <ToolButton icon="move" label="Move" onClick={() => runTool("tool.move")} title={`Move, turn or copy the clicked body${keyHint("tool.move", prefs)}`} testId="tool-move" />
-            <ToolButton
-              icon="deleteBody"
-              label="Delete body"
-              onClick={() => runTool("tool.deleteBody")}
-              disabled={!!TOOLS["tool.deleteBody"].disabled}
-              title={TOOLS["tool.deleteBody"].disabled ?? `Delete the clicked body, or keep only some${keyHint("tool.deleteBody", prefs)}`}
-              testId="tool-delete-body"
-            />
-            <span className="sep" />
-            <ToolButton icon="member" label="Member" onClick={() => runTool("tool.member")} title={`A straight member of a weldment profile: another like the selected one, or pick a size in Sections${keyHint("tool.member", prefs)}`} testId="tool-member" />
-          </div>
+          <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} />
         )}
 
         {notice && (
@@ -1435,7 +1226,7 @@ export function App() {
               }}
               materials={(doc?.bodyMaterials ?? {}) as Record<string, Material>}
               onMaterial={(body, material) => run({ type: "setBodyMaterial", body, material })}
-              onDelete={(name) => deleteBodyTool(name)}
+              onDelete={(name) => deleteBody(toolCtx, name)}
               onSave={saveBody}
             />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
@@ -1542,6 +1333,7 @@ export function App() {
                   <section className="panel">
                     {doc && selectedFeature ? (
                       <PropertyPanel
+                        key={selectedFeature}
                         doc={doc}
                         featureId={selectedFeature}
                         view={view}
@@ -1572,7 +1364,7 @@ export function App() {
           <Popup x={shortcutBar.x} y={shortcutBar.y} bar onClose={() => setShortcutBar(null)} label="Shortcut bar" testId="shortcut-bar">
             {(close) =>
               (mode === "model"
-                ? Object.entries(TOOLS).map(([id, t]) => ({ id, icon: t.icon, label: t.label, disabled: t.disabled, run: () => runTool(id) }))
+                ? MODEL_TOOLS.map((t) => ({ id: t.id, icon: t.icon, label: t.label, disabled: t.disabled?.(toolCtx), run: () => runTool(t.id) }))
                 : [
                     { id: "drawing-new", icon: "drawing" as IconName, label: "New drawing", disabled: undefined, run: () => void newDrawing() },
                     { id: "balloon-all", icon: "balloon" as IconName, label: "Balloon all", disabled: !sheet ? "No drawing yet" : undefined, run: balloonAll },
@@ -1640,9 +1432,9 @@ function Help() {
       <ol className="help-steps">
         {step("sketch", "Sketch", <>on a plane or a flat face. Draw, add relations to what you select, dimension with Smart Dimension (D), then Finish sketch.</>)}
         {step("extrude", "Extrude or Cut", "the selected (or latest) sketch into a solid, or out of one.")}
-        {step("hole", "Hole, Fillet, Chamfer", "on what you click: a flat face for a hole, edges (shift-click for more) for a fillet or chamfer.")}
-        {step("pattern", "Pattern or Mirror", "the feature selected in the tree; Mirror, Split and Move work on the clicked body too.")}
-        {step("member", "Member", "for weldments: tick Weldment profile on a sketch to add a section, then add members from Sections.")}
+        {step("hole", "Hole, Fillet, Chamfer", "on what you click: a flat face for a hole, edges (Ctrl- or Shift-click for more) for a fillet or chamfer.")}
+        {step("pattern", "Pattern or Mirror", "the feature selected in the tree; Mirror, and Split and Move on the Bodies tab, work on the clicked body too.")}
+        {step("member", "Member", "on the Weldments tab: tick Weldment profile on a sketch to add a section, then add members from Sections.")}
         {step("ask", "Right-click", "anything (a feature, face, edge, body, or empty space) for its menu; Ask AI… at the bottom asks about it or describes a change.")}
         {step(
           "move",
@@ -1699,9 +1491,5 @@ function projectEdges(view: RebuildView, plane: DatumPlane): Float32Array {
     }
   });
   return new Float32Array(out);
-}
-
-function round9(x: number): number {
-  return Math.round(x * 1e9) / 1e9 + 0;
 }
 

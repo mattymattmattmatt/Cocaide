@@ -4,6 +4,7 @@
 import { useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
+import { UI_OPS } from "../features/uiDefs";
 import type { RebuildView } from "../worker/protocol";
 import { Icon, type IconName } from "./icons";
 import { OP_LABEL } from "./PropertyPanel";
@@ -27,6 +28,8 @@ export const OP_ICON: Record<string, IconName> = {
   joint: "joint",
   endCap: "endCap",
   gusset: "gusset",
+  // Ops with a UI of their own (src/features/<op>/ui.tsx) bring their icon.
+  ...Object.fromEntries(Object.values(UI_OPS).map((u) => [u.op, u.icon])),
 };
 
 interface Props {
@@ -132,6 +135,8 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   {f.op === "split" && <span className="feature-body">{String(f.body)}{f.newBody ? ` → ${String(f.newBody)}` : ""}</span>}
                   {f.op === "move" && <span className="feature-body">{f.copy ? "copy " : ""}{Array.isArray(f.bodies) ? (f.bodies as string[]).join(", ") : ""}</span>}
                   {f.op === "deleteBody" && <span className="feature-body">{Array.isArray(f.keep) ? `keep ${(f.keep as string[]).join(", ")}` : Array.isArray(f.bodies) ? (f.bodies as string[]).join(", ") : ""}</span>}
+                  {/* An op with a UI of its own says what matters about it ("360°", "2 faces"). */}
+                  {UI_OPS[String(f.op)]?.summary && <OpSummary f={f} />}
                   {f.op === "sketch" && typeof (f.profile as { name?: unknown } | undefined)?.name === "string" && (
                     <span className="feature-body weldment-tag" title="A weldment profile: it is in the section library">
                       {String((f.profile as { name: string }).name)}
@@ -203,4 +208,14 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
       )}
     </section>
   );
+}
+
+/** A registered op's chip in the tree; nothing when it has nothing to say. */
+function OpSummary({ f }: { f: Record<string, unknown> }) {
+  const text = UI_OPS[String(f.op)]?.summary?.(f);
+  return text ? (
+    <span className="feature-body" data-testid={`feature-summary-${String(f.id)}`}>
+      {text}
+    </span>
+  ) : null;
 }

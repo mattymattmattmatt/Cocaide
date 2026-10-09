@@ -258,7 +258,7 @@ function KeyboardTab() {
                   {g}
                 </th>
               </tr>
-              {COMMANDS.filter((c) => c.group === g).map((c) => {
+              {COMMANDS.filter((c) => c.group === g && !c.planned).map((c) => {
                 const k = keyFor(c.id, prefs);
                 const changed = c.id in prefs.keys;
                 return (

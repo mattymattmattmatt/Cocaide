@@ -46,6 +46,24 @@ export function faceSelectorFor(faces: FaceInfo[], index: number): Synthesis<Fac
   return { ok: false, error: "no selector picks out this face alone (another face matches it exactly)" };
 }
 
+/**
+ * One selector per picked face, in the order they were picked (a face picked
+ * twice counts once), for features that take a list of faces (shell, draft).
+ * Each is faceSelectorFor's: it finds that face alone, and the most robust
+ * selector that does is kept.
+ */
+export function facesSelectorFor(faces: FaceInfo[], indices: number[]): Synthesis<FaceSelector[]> {
+  const want = [...new Set(indices)];
+  if (want.length === 0) return { ok: false, error: "no faces picked" };
+  const out: FaceSelector[] = [];
+  for (const i of want) {
+    const s = faceSelectorFor(faces, i);
+    if (!s.ok) return { ok: false, error: want.length === 1 ? s.error : `face ${out.length + 1} of ${want.length}: ${s.error}` };
+    out.push(s.selector);
+  }
+  return { ok: true, selector: out };
+}
+
 export function edgeSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], index: number): Synthesis<EdgeSelector> {
   const e = edges[index];
   if (!e) return { ok: false, error: `no edge ${index}` };

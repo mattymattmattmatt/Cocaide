@@ -1008,3 +1008,33 @@ svg.icon { flex: none; display: block; }
 .ask-reach button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 /* A long list of relations scrolls the panel; it never squashes the sections above it. */
 .sketch-panel > .panel { flex-shrink: 0; }
+
+/* ======================================================= Phase O: CommandManager, declared property forms, multi-select */
+/* The model toolbar: Undo, Redo and Sketch always at hand, then the active tab's tools over a strip of tabs, as SOLIDWORKS lays it out. */
+.toolbar.command-manager { align-items: flex-start; flex-wrap: nowrap; padding-bottom: 0; }
+.cm-pinned { display: flex; align-items: center; gap: 1px; flex: none; }
+.toolbar.command-manager > .sep.cm-sep { align-self: flex-start; margin-top: 8px; }
+.cm-body { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.cm-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 1px; min-height: 48px; }
+.cm-tabs { display: flex; gap: 2px; margin-top: 1px; }
+.toolbar .cm-tab {
+  height: 22px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: none; color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer;
+}
+.toolbar .cm-tab:hover:not(:disabled) { background: none; border-color: transparent; border-bottom-color: var(--border); color: var(--text); }
+.toolbar .cm-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* Declared property forms: a reference chosen from a list or picked in the view, with what it refers to in words. */
+.datum-ref { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.datum-ref select { flex: 1; min-width: 0; }
+.properties .datum-ref button.use-selected { flex: none; height: 28px; padding: 0 9px; font-size: 12px; }
+.ref-chip {
+  display: block; margin: -3px 0 0 118px; padding: 3px 8px; border-radius: 6px;
+  background: var(--info-bg); color: var(--text); font: 12px var(--mono); word-break: break-word;
+}
+.selector-line { display: flex; align-items: center; gap: 6px; }
+.properties button.selector-remove {
+  margin-left: auto; flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
+  background: none; color: var(--muted); font-size: 14px; line-height: 1;
+}
+.properties button.selector-remove:hover { background: var(--panel-2); color: var(--bad); }
