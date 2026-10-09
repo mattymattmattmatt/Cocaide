@@ -4,7 +4,8 @@
 // or two equations that must be zero. Newton steps with the minimum-norm
 // update (dx = -Jᵀ(JJᵀ + λI)⁻¹ r) move the sketch as little as possible, so
 // typing a dimension changes what it must and leaves the rest alone. Dragging
-// pins the dragged handle to the cursor and solves the rest around it.
+// pins the dragged handle to the cursor and solves the rest around it; where
+// the constraints don't let it reach the cursor, it goes as near as they allow.
 //
 // The document still stores solved geometry: the rebuild checks constraints,
 // it does not solve them. This module is what keeps the two in step.
@@ -16,7 +17,7 @@ const TOL = 1e-9;
 const ACCEPT = 1e-7;
 
 /**
- * A draggable handle: any point ref ("l1.end", "r1.center"), or
+ * A draggable handle: any point ref ("l1.end", "r1.center", "p1.at"), or
  * "<rect>.corner0".."corner3", "<circle>.edge" (sets the radius) and
  * "<entity>.body" (moves the whole entity).
  */
@@ -51,6 +52,7 @@ const FIELDS: Record<SketchEntity["type"], [string, 1 | 2][]> = {
   arc: [["center", 2], ["start", 2], ["end", 2]],
   rect: [["center", 2], ["w", 1], ["h", 1]],
   slot: [["center1", 2], ["center2", 2], ["width", 1]],
+  point: [["at", 2]],
 };
 
 function layout(entities: SketchEntity[]): Layout {
@@ -119,6 +121,7 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
   };
   const x0 = l.x;
   const sign = (f: Fn) => (f(x0) < 0 ? -1 : 1);
+  const joined = coincidentGroups(constraints);
 
   for (const e of l.entities) {
     if (e.type === "arc") {
@@ -228,6 +231,14 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
       }
       case "tangent": {
         const [a, b] = k.entities.map((id) => entityById(l, id));
+        // Joined end to end (a slot's sides, a tangent arc off a line), the touching point is that end: the
+        // radius there is square to the line, or in line with the other arc's. Distance-equals-radius would
+        // only hold there to second order, and the solver could neither count it nor converge on it.
+        const shared = sharedEnd(a, b, joined);
+        if (shared) {
+          push(i, shared.round2 ? radiiInLine(l, shared.round, shared.at, shared.round2, shared.at2!) : radiusSquareTo(l, shared.round, shared.at, shared.line!));
+          break;
+        }
         if (a.type === "line" || b.type === "line") {
           const [line, round] = a.type === "line" ? [a, b] : [b, a];
           const d = offsetFrom(l, line.id, pointOf(l, `${round.id}.center`));
@@ -299,6 +310,66 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
     }
   });
   return { fns, owners };
+}
+
+/** Point refs joined by coincident relations, each mapped to one ref that stands for its group. */
+function coincidentGroups(constraints: Constraint[]): (a: string, b: string) => boolean {
+  const parent = new Map<string, string>();
+  const find = (r: string): string => {
+    let p = parent.get(r) ?? r;
+    while (p !== (parent.get(p) ?? p)) p = parent.get(p)!;
+    return p;
+  };
+  for (const k of constraints) if (k.type === "coincident") parent.set(find(k.points[0]), find(k.points[1]));
+  return (a, b) => a === b || find(a) === find(b);
+}
+
+/**
+ * Where a line and an arc, or two arcs, are joined end to end by coincident
+ * relations: the arc end (and the line, or the other arc and its end) that
+ * meet. Null when they aren't (a circle has no ends).
+ */
+function sharedEnd(
+  a: SketchEntity,
+  b: SketchEntity,
+  joined: (p: string, q: string) => boolean,
+): { round: string; at: string; line?: string; round2?: string; at2?: string } | null {
+  const ends = (e: SketchEntity) => (e.type === "line" || e.type === "arc" ? [`${e.id}.start`, `${e.id}.end`] : []);
+  if (a.type === "arc" && b.type === "arc") {
+    for (const p of ends(a)) for (const q of ends(b)) if (joined(p, q)) return { round: a.id, at: p, round2: b.id, at2: q };
+    return null;
+  }
+  const [line, round] = a.type === "line" ? [a, b] : [b, a];
+  if (line.type !== "line" || round.type !== "arc") return null;
+  for (const p of ends(round)) for (const q of ends(line)) if (joined(p, q)) return { round: round.id, at: p, line: line.id };
+  return null;
+}
+
+/** The cosine between an arc's radius at one of its ends and a line: zero when the line touches the arc there. */
+function radiusSquareTo(l: Layout, arc: string, end: string, line: string): Fn {
+  const [cx, cy] = pointOf(l, `${arc}.center`);
+  const [px, py] = pointOf(l, end);
+  const [ux, uy] = direction(l, line);
+  return (x) => {
+    const rx = px(x) - cx(x);
+    const ry = py(x) - cy(x);
+    return (rx * ux(x) + ry * uy(x)) / (Math.hypot(rx, ry) * Math.hypot(ux(x), uy(x)));
+  };
+}
+
+/** The sine between two arcs' radii at the ends where they meet: zero when their centres and that point are in line (they touch). */
+function radiiInLine(l: Layout, a: string, endA: string, b: string, endB: string): Fn {
+  const [ax, ay] = pointOf(l, `${a}.center`);
+  const [px, py] = pointOf(l, endA);
+  const [bx, by] = pointOf(l, `${b}.center`);
+  const [qx, qy] = pointOf(l, endB);
+  return (x) => {
+    const r1x = px(x) - ax(x);
+    const r1y = py(x) - ay(x);
+    const r2x = qx(x) - bx(x);
+    const r2y = qy(x) - by(x);
+    return (r1x * r2y - r1y * r2x) / (Math.hypot(r1x, r1y) * Math.hypot(r2x, r2y));
+  };
 }
 
 /** A line's direction, end minus start. */
@@ -407,8 +478,8 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     }
   }
   const attempts: Fn[][] = [];
+  let pins: Fn[] = [];
   if (opts.drag?.length) {
-    let pins: Fn[];
     try {
       pins = dragEquations(l, opts.drag);
     } catch (e) {
@@ -421,15 +492,24 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     attempts.push(base);
   }
 
+  const done = (x: Float64Array): SolveResult => {
+    const solved = unpack(l, x);
+    const bad = invalidGeometry(solved);
+    if (bad) return { ok: false, error: bad };
+    return { ok: true, entities: solved, dof: freedom(x, base) };
+  };
   for (const fns of attempts) {
     const x = newton(l.x, fns);
     if (!x) continue;
     // The drag pins are wishes; the constraints are not. Re-check the constraints alone.
     if (maxAbs(evaluate(base, x)) > ACCEPT) continue;
-    const solved = unpack(l, x);
-    const bad = invalidGeometry(solved);
-    if (bad) return { ok: false, error: bad };
-    return { ok: true, entities: solved, dof: freedom(x, base) };
+    return done(x);
+  }
+  if (pins.length) {
+    // The pointer is somewhere the constraints don't let the handle reach (a polygon's corner off its
+    // centre's line once a side is level): go as near as they allow, as SOLIDWORKS slides it along.
+    const x = slide(l.x, base, pins);
+    if (x && maxAbs(evaluate(base, x)) <= ACCEPT && norm(evaluate(pins, x)) < norm(evaluate(pins, l.x)) - 1e-6) return done(x);
   }
   return {
     ok: false,
@@ -567,6 +647,67 @@ function newton(x0: Float64Array, fns: Fn[]): Float64Array | null {
     if (!accepted) return maxAbs(r) < ACCEPT ? x : null;
   }
   return maxAbs(r) < ACCEPT ? x : null;
+}
+
+/**
+ * The geometry nearest the drag pins that the constraints allow. Each step is
+ * the least-squares move towards the pins among the moves the constraints
+ * allow to first order (their rows weighted far above the pins'; damped, so
+ * numbers nothing asks to move stay put), put back onto the constraints
+ * exactly by the minimum-norm Newton, and shortened while that brings the
+ * pins nearer still. Null when the constraints can't be met to start with.
+ */
+function slide(x0: Float64Array, base: Fn[], pins: Fn[]): Float64Array | null {
+  const W2 = 1e6;
+  const n = x0.length;
+  const start = newton(x0, base);
+  if (!start) return null;
+  let x: Float64Array = start;
+  let cost = norm(evaluate(pins, x));
+  for (let iter = 0; iter < 40 && cost > TOL; iter++) {
+    const Jb = jacobian(base, x);
+    const Jp = jacobian(pins, x);
+    const e = evaluate(pins, x);
+    const H = Array.from({ length: n }, () => new Float64Array(n));
+    const g = new Float64Array(n);
+    const addRows = (J: Float64Array[], w: number, r?: Float64Array) =>
+      J.forEach((a, row) => {
+        for (let i = 0; i < n; i++) {
+          if (a[i] === 0) continue;
+          if (r) g[i] += a[i] * r[row];
+          for (let k = 0; k < n; k++) H[i][k] += w * a[i] * a[k];
+        }
+      });
+    addRows(Jb, W2);
+    addRows(Jp, 1, e);
+    // A regularised least-squares step: unknowns that neither the pins nor the constraints touch stay put.
+    const dx = gaussSolve(
+      H.map((row, i) => {
+        const out = Float64Array.from(row);
+        out[i] += 1e-9;
+        return out;
+      }),
+      g.map((v) => -v),
+    );
+    if (!dx) break;
+    // The step ignores how the constraints curve (a point on a circle), so it can overshoot: take the
+    // best of it, half of it, a quarter, … while that keeps getting better.
+    let best: { x: Float64Array; cost: number } | null = null;
+    for (let t = 1; t > 1e-4; t /= 2) {
+      const from = x;
+      const trial = newton(Float64Array.from(from, (v, j) => v + t * dx[j]), base);
+      const ct = trial ? norm(evaluate(pins, trial)) : Infinity;
+      if (trial && ct < (best?.cost ?? cost)) best = { x: trial, cost: ct };
+      else if (best) break;
+    }
+    const moved = !!best && best.cost < cost - 1e-12 * (1 + cost);
+    if (best) {
+      x = best.x;
+      cost = best.cost;
+    }
+    if (!moved) break;
+  }
+  return x;
 }
 
 function norm(v: Float64Array): number {

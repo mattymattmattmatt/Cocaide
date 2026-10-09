@@ -1071,3 +1071,47 @@ svg.icon { flex: none; display: block; }
 .feature-list li.hidden-datum:hover .row-actions button:not(.eye) { display: grid; }
 .row-actions button.eye.closed { color: var(--muted); opacity: 0.8; }
 .feature-list li.hidden-datum .feature-op { opacity: 0.6; }
+/* ======================================================= Phase O wave 1: sketch tool registry, flyouts, sketch points */
+/* A flyout: the button runs the tool used last; the small arrow at its lower right lists them all. */
+.sketch-toolbar .flyout { display: inline-flex; flex: none; }
+.sketch-toolbar .flyout > .tool { padding-right: 15px; }
+.sketch-toolbar .flyout-arrow {
+  position: absolute; right: 1px; bottom: 4px; width: 15px; height: 17px; padding: 0; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); cursor: pointer;
+}
+.sketch-toolbar .flyout-arrow:hover, .sketch-toolbar .flyout-arrow[aria-expanded="true"] { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+.sketch-toolbar .flyout .menu-items { top: calc(100% + 4px); min-width: 230px; }
+.sketch-toolbar .flyout .menu-items button[aria-checked="true"] { background: var(--selected-row); }
+/* Toggles and undo shown as icons alone, so the drawing tools keep their names on one row. */
+.sketch-toolbar .tool.compact { min-width: 34px; width: 34px; padding: 0; }
+/* While a drawing tool is in use: its name, what to click next, its options. */
+.sketch-tool-strip {
+  position: absolute; left: 12px; top: 66px; z-index: 5; display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
+  max-width: calc(100% - 24px); padding: 4px 6px 4px 9px; border-radius: 8px; font-size: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--border); box-shadow: 0 2px 10px rgb(0 0 0 / 0.06);
+}
+.sketch-tool-strip .strip-name { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; flex: none; white-space: nowrap; }
+.sketch-tool-strip .strip-name svg.icon { color: var(--sketch); }
+/* One row: a long prompt gives way (its whole text is the tooltip), the options never do. */
+.sketch-tool-strip .strip-prompt { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sketch-tool-strip .strip-option { display: inline-flex; align-items: center; gap: 5px; padding-left: 8px; border-left: 1px solid var(--border); flex: none; white-space: nowrap; }
+.sketch-tool-strip .strip-option > button {
+  height: 22px; padding: 0 8px; font-size: 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer;
+}
+.sketch-tool-strip .strip-option > button[aria-checked="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
+.sketch-tool-strip .stepper { display: inline-flex; align-items: center; }
+.sketch-tool-strip .stepper button {
+  width: 22px; height: 22px; padding: 0; font-size: 13px; line-height: 1; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer;
+}
+.sketch-tool-strip .stepper button:first-child { border-radius: 5px 0 0 5px; }
+.sketch-tool-strip .stepper button:last-child { border-radius: 0 5px 5px 0; }
+.sketch-tool-strip .stepper button:disabled { opacity: 0.4; cursor: default; }
+.sketch-tool-strip .stepper input { width: 34px; height: 22px; padding: 0 2px; text-align: center; font: 12px var(--mono); border: 1px solid var(--border); border-left: 0; border-right: 0; border-radius: 0; }
+/* A sketch point: a dot in the defined-state colours. */
+.sketch-canvas .entity.point { fill: var(--sketch); stroke: var(--panel); stroke-width: 1; }
+.sketch-canvas .entity.point.defined { fill: var(--sketch-defined); }
+.sketch-canvas .entity.point.conflict { fill: var(--bad); }
+.sketch-canvas .entity.point.related { fill: var(--sketch-selected); stroke-dasharray: none; }
+.sketch-canvas .entity.point.hover { fill: var(--sketch-hover); }
+.sketch-canvas .entity.point.selected { fill: var(--sketch-selected); }
+.sketch-canvas .entity.point.preview { fill: var(--sketch-hover); stroke-dasharray: none; }

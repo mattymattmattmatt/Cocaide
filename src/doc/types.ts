@@ -463,10 +463,20 @@ export interface SlotEntity extends EntityBase {
   width: number;
 }
 
-export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity;
+/**
+ * A sketch point on its own: a hole centre, a pattern instance, a dimension's
+ * anchor, the middle of a centre rectangle. Its point ref is "<id>.at". Never
+ * part of a profile.
+ */
+export interface PointEntity extends EntityBase {
+  type: "point";
+  at: Vec2;
+}
+
+export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity;
 export type SketchEntityType = SketchEntity["type"];
 
-/** "entityId.point", e.g. "l1.end", "a2.center", "s1.center2", or "origin" for the sketch origin. */
+/** "entityId.point", e.g. "l1.end", "a2.center", "s1.center2", "p1.at", or "origin" for the sketch origin. */
 export type PointRef = string;
 
 export interface CoincidentConstraint {
@@ -537,7 +547,7 @@ export interface SymmetricConstraint {
   line: string;
 }
 
-/** An entity, or one point, held where it is: only the document's numbers move it. */
+/** An entity (a point entity too), or one point, held where it is: only the document's numbers move it. */
 export interface FixConstraint {
   type: "fix";
   entity?: string;

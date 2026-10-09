@@ -359,6 +359,7 @@ const ENTITY_FIELDS: Record<SketchEntity["type"], string[]> = {
   arc: ["center", "start", "end", "clockwise"],
   rect: ["center", "w", "h"],
   slot: ["center1", "center2", "width"],
+  point: ["at"],
 };
 
 const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
@@ -367,6 +368,7 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   arc: ["start", "end", "center"],
   rect: ["center"],
   slot: ["center1", "center2"],
+  point: ["at"],
 };
 
 function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>): SketchFeature | null {
@@ -483,6 +485,11 @@ function validateEntity(
       const center2 = c.vec2(e, "center2", label);
       const width = c.num(e, "width", label, { positive: true });
       if (center1 && center2 && width !== undefined) entity = { ...base, type, center1, center2, width };
+      break;
+    }
+    case "point": {
+      const at = c.vec2(e, "at", label);
+      if (at) entity = { ...base, type, at };
       break;
     }
   }
@@ -669,7 +676,7 @@ function validateConstraint(
         if (point === "origin") c.fail(label, "the origin is fixed already");
         return point && c.errors.length === before ? { type: "fix", point } : null;
       }
-      const entity = entityRef("entity", k.entity, ["line", "circle", "arc", "rect", "slot"]);
+      const entity = entityRef("entity", k.entity, ["line", "circle", "arc", "rect", "slot", "point"]);
       return entity && c.errors.length === before ? { type: "fix", entity } : null;
     }
     default:

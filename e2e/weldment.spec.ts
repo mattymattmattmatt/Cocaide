@@ -45,7 +45,8 @@ test("draw an SHS, save it to the section library, and make members of it in ano
   const shs = (await savedDocument(page)) as { features: Record<string, unknown>[] };
   const sketch = shs.features.find((f) => f.id === "sketch_1")!;
   expect(sketch.profile).toMatchObject({ name: "SHS", library: { version: 1 } });
-  expect(sketch.constraints).toContainEqual({ type: "distanceX", entity: "r2", value: "=b - 2 * t" });
+  // The inner square is the second centre rectangle: l7–l10 round it (l9 its top), l11 and l12 its diagonals.
+  expect(sketch.constraints).toContainEqual({ type: "distance", entity: "l9", value: "=b - 2 * t" });
   await page.getByTestId("sections-search").fill("hollow 50x50");
   await expect(entry).toBeVisible();
   await page.getByTestId("sections-search").fill("channel");
@@ -129,7 +130,7 @@ test("editing a profile sketch keeps its expressions, and the card saves the nex
   // Edit the sketch: its dimensions still read =b, the box is still ticked.
   await page.getByTestId("tab-properties").click();
   await page.getByTestId("edit-sketch").click();
-  await expect(page.getByTestId("constraint-value-1")).toHaveValue("=b");
+  await expect(page.getByTestId("constraint-value-14")).toHaveValue("=b"); // after the centre rectangle's 13 relations and its centre on the origin
   await expect(page.getByTestId("sketch-weldment")).toBeChecked();
   await page.getByTestId("finish-sketch").click();
   const card = page.getByTestId("profile-card");

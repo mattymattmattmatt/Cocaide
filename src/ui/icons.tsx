@@ -483,6 +483,13 @@ const ICONS = {
       <path d="M9 9h6v6H9z" fill="currentColor" fillOpacity={0.28} />
     </>
   ),
+  // Phase O wave 1: the sketch tools' own (a line drawn out both ways from its middle)
+  midpointLine: (
+    <>
+      <path d="M4 20 20 4 M3.5 15.5l5 5 M15.5 3.5l5 5" />
+      <circle cx="12" cy="12" r="2.2" fill="currentColor" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;
