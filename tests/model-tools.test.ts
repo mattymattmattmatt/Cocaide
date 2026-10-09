@@ -58,17 +58,22 @@ describe("the registry", () => {
       "tool-plane",
       "tool-axis",
       "tool-point",
+      "tool-revolve",
+      "tool-revolve-cut",
+      "tool-shell",
+      "tool-draft",
+      "tool-scale",
     ]);
   });
 
   it("lays out the CommandManager: Sketch pinned, then each tab's groups in order, patterns in one menu", () => {
     expect(ids(toolbarGroups("pinned"))).toEqual([["tool.sketch"]]);
     expect(ids(toolbarGroups("features"))).toEqual([
-      ["tool.extrude", "tool.cut"],
-      ["tool.hole", "tool.fillet", "tool.chamfer"],
+      ["tool.extrude", "tool.cut", "revolve: tool.revolve, tool.revolveCut"],
+      ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft"],
       ["pattern: tool.linearPattern, tool.circularPattern", "tool.mirror"],
     ]);
-    expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody"]]);
+    expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"]]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point"]]);
   });
@@ -94,15 +99,15 @@ describe("the registry", () => {
     expect(ids(toolbarGroups("features", list))).toEqual([["tool.c"], ["m: tool.b, tool.e", "tool.d"], ["tool.a"], ["tool.f"]]);
   });
 
-  it("offers Sketch and Hole on a face, Fillet and Chamfer on an edge", () => {
-    expect(contextTools("face").map((t) => t.id)).toEqual(["tool.sketch", "tool.hole"]);
+  it("offers Sketch, Hole, Shell and Draft on a face, Fillet and Chamfer on an edge", () => {
+    expect(contextTools("face").map((t) => t.id)).toEqual(["tool.sketch", "tool.hole", "tool.shell", "tool.draft"]);
     expect(contextTools("edge").map((t) => t.id)).toEqual(["tool.fillet", "tool.chamfer"]);
     expect(contextTools("part")).toEqual([]);
   });
 
   it("reserves a command for each tool still to come, out of Settings until it lands", () => {
     const planned = COMMANDS.filter((c) => c.planned).map((c) => c.id);
-    for (const id of ["tool.revolve", "tool.sweep", "tool.loft", "tool.shell", "tool.draft", "tool.rib", "tool.scale", "tool.measure", "tool.section", "tool.sketchPattern"]) {
+    for (const id of ["tool.sweep", "tool.loft", "tool.rib", "tool.measure", "tool.section", "tool.sketchPattern"]) {
       expect(planned).toContain(id);
     }
     const sketch = ["ellipse", "spline", "trim", "extend", "split", "fillet", "chamfer", "offset", "mirror", "linearPattern", "circularPattern", "move", "rotate", "scale", "copy", "convert", "fullyDefine"];

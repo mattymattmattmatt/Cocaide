@@ -13,6 +13,9 @@ import { tools as mirror } from "./mirror";
 import { tools as bodies } from "./bodies";
 import { tools as member } from "./member";
 import { tools as reference } from "./reference";
+import { tools as revolve } from "./revolve";
+import { tools as dress } from "./dress";
+import { tools as scale } from "./scale";
 
 const LISTS: ToolDef[][] = [
   sketch,
@@ -24,6 +27,9 @@ const LISTS: ToolDef[][] = [
   bodies,
   member,
   reference,
+  revolve,
+  dress,
+  scale,
 ];
 
 export const MODEL_TOOLS: ToolDef[] = LISTS.flat();

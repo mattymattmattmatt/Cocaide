@@ -490,6 +490,15 @@ const ICONS = {
       <circle cx="12" cy="12" r="2.2" fill="currentColor" />
     </>
   ),
+  // Phase O wave 2: a revolved cut (the profile, dashed, turned about the axis takes material away)
+  revolveCut: (
+    <>
+      <path d="M10 2.5v19" style={{ strokeDasharray: "5 2.2 1 2.2" }} />
+      <path d="M10 11h8v9h-8z" style={dash} />
+      <path d="M13.5 8.2A7 2.5 0 1 0 6.5 8.2 M4.7 6.3l1.8 1.9-2.4 1" />
+      <path d="M2.5 15.5h5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

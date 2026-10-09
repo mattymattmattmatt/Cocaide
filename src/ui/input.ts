@@ -87,10 +87,11 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.axis", label: "Reference axis", group: "Model tools", key: null },
   { id: "tool.point", label: "Reference point", group: "Model tools", key: null },
 
-  { id: "tool.revolve", label: "Revolve", group: "Model tools", key: null, planned: true },
-  { id: "tool.shell", label: "Shell", group: "Model tools", key: null, planned: true },
-  { id: "tool.draft", label: "Draft", group: "Model tools", key: null, planned: true },
-  { id: "tool.scale", label: "Scale bodies", group: "Model tools", key: null, planned: true },
+  { id: "tool.revolve", label: "Revolve", group: "Model tools", key: null },
+  { id: "tool.shell", label: "Shell", group: "Model tools", key: null },
+  { id: "tool.draft", label: "Draft", group: "Model tools", key: null },
+  { id: "tool.scale", label: "Scale bodies", group: "Model tools", key: null },
+  { id: "tool.revolveCut", label: "Revolved cut", group: "Model tools", key: null },
 
   { id: "tool.sweep", label: "Sweep", group: "Model tools", key: null, planned: true },
   { id: "tool.loft", label: "Loft", group: "Model tools", key: null, planned: true },
