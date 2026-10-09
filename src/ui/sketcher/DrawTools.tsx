@@ -124,7 +124,7 @@ export function ToolStrip({
         <Icon name={tool.icon} size={14} />
         {tool.label}
       </span>
-      <span className="strip-prompt" data-testid="tool-prompt">
+      <span className="strip-prompt" title={prompt} data-testid="tool-prompt">
         {prompt}
       </span>
       {(tool.options ?? []).map((o) =>

@@ -186,10 +186,10 @@ test("in a sketch: L, R and C pick tools, a box left to right selects what's ins
     await page.mouse.move(bx, by, { steps: 4 });
     await page.mouse.up();
   };
-  // Left to right round the rectangle only: just the rectangle.
+  // Left to right round the rectangle only: just the rectangle's four sides.
   await boxDrag([-5, -5], [25, 15]);
-  await expect(page.getByTestId("sketch-selection")).toContainText("1 selected");
-  // Right to left across both: both.
+  await expect(page.getByTestId("sketch-selection")).toContainText("4 selected");
+  // Right to left across both: the rectangle's right side and the circle.
   await boxDrag([42, 7], [10, 3]);
   await expect(page.getByTestId("sketch-selection")).toContainText("2 selected");
 });

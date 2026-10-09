@@ -115,7 +115,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "sketch.rectCenter", label: "Centre rectangle", group: "Sketch", key: "Shift+R" },
   { id: "sketch.rect3", label: "3-point rectangle", group: "Sketch", key: null },
   { id: "sketch.parallelogram", label: "Parallelogram", group: "Sketch", key: null },
-  { id: "sketch.polygon", label: "Polygon", group: "Sketch", key: null },
+  { id: "sketch.polygon", label: "Polygon", group: "Sketch", key: "G" },
   { id: "sketch.arc3", label: "3-point arc", group: "Sketch", key: "Shift+A" },
   { id: "sketch.tangentArc", label: "Tangent arc", group: "Sketch", key: null },
   { id: "sketch.circle3", label: "Perimeter circle", group: "Sketch", key: "Shift+C" },

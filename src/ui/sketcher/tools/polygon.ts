@@ -107,7 +107,7 @@ export const tools: SketchToolDef[] = [
     icon: "polygon",
     title: "Polygon: click the centre, then a corner (inscribed) or the middle of a side (circumscribed). Equal sides round a construction circle",
     clicks: 2,
-    prompts: ["Click the centre", "Click a corner (inscribed) or the middle of a side (circumscribed)"],
+    prompts: ["Click the centre", "Click a corner (inscribed) or a side's middle (circumscribed)"],
     options: [
       { kind: "number", key: "sides", label: "Sides", title: "How many sides: 3 to 40", default: 6, min: MIN_SIDES, max: MAX_SIDES, integer: true },
       {

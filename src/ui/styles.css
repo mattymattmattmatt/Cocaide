@@ -1054,14 +1054,15 @@ svg.icon { flex: none; display: block; }
 .sketch-toolbar .tool.compact { min-width: 34px; width: 34px; padding: 0; }
 /* While a drawing tool is in use: its name, what to click next, its options. */
 .sketch-tool-strip {
-  position: absolute; left: 12px; top: 66px; z-index: 5; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  position: absolute; left: 12px; top: 66px; z-index: 5; display: flex; align-items: center; flex-wrap: nowrap; gap: 8px;
   max-width: calc(100% - 24px); padding: 4px 6px 4px 9px; border-radius: 8px; font-size: 12px;
   background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--border); box-shadow: 0 2px 10px rgb(0 0 0 / 0.06);
 }
-.sketch-tool-strip .strip-name { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.sketch-tool-strip .strip-name { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; flex: none; white-space: nowrap; }
 .sketch-tool-strip .strip-name svg.icon { color: var(--sketch); }
-.sketch-tool-strip .strip-prompt { color: var(--muted); }
-.sketch-tool-strip .strip-option { display: inline-flex; align-items: center; gap: 5px; padding-left: 8px; border-left: 1px solid var(--border); }
+/* One row: a long prompt gives way (its whole text is the tooltip), the options never do. */
+.sketch-tool-strip .strip-prompt { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sketch-tool-strip .strip-option { display: inline-flex; align-items: center; gap: 5px; padding-left: 8px; border-left: 1px solid var(--border); flex: none; white-space: nowrap; }
 .sketch-tool-strip .strip-option > button {
   height: 22px; padding: 0 8px; font-size: 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer;
 }

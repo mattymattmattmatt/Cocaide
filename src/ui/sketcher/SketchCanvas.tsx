@@ -100,6 +100,8 @@ export function SketchCanvas(props: Props) {
   /** A selection box being dragged: left to right selects what is inside it, right to left what it touches. */
   const [box, setBox] = useState<{ a: Vec2; b: Vec2 } | null>(null);
   const lastMiddle = useRef(0);
+  /** Where the chain being drawn started, so clicking there again closes the loop. */
+  const chainStart = useRef<Vec2 | null>(null);
   const gesture = useRef<
     | { kind: "pan"; startClient: Vec2; startView: ViewState }
     | { kind: "zoom"; startClient: Vec2; startView: ViewState }
@@ -299,16 +301,17 @@ export function SketchCanvas(props: Props) {
     if (refused) return props.onMessage?.(refused);
     trail.current = [];
     const next = [...clicks, s];
+    // A chain's first click: where clicking again closes it.
+    if (def.chain && clicks.length === 0) chainStart.current = s.p;
     if (next.length < def.clicks) {
-      if (def.chain && next.length === 1) chainStart.current = s.ref;
       setClicks(next);
       return;
     }
     const made = finishPlacement(next);
     if (def.chain && made?.next) {
-      // Clicking the point the chain started from closes it; otherwise keep drawing from the end.
-      const closes = s.ref !== null && s.ref === chainStart.current;
-      if (!chainStart.current) chainStart.current = made.first;
+      // Clicking the point the chain started from (it snaps there) closes it; otherwise keep drawing from the end.
+      const start = chainStart.current;
+      const closes = !!start && (s.ref !== null || s.on !== undefined) && dist2(s.p, start) < 1e-9;
       setClicks(closes ? [] : [made.next]);
       setArcNext(false);
       if (closes) chainStart.current = null;
@@ -317,8 +320,6 @@ export function SketchCanvas(props: Props) {
     setClicks([]);
     setArcNext(false);
   };
-  /** First point of the line chain being drawn, so clicking it again closes the loop. */
-  const chainStart = useRef<string | null>(null);
 
   const select = (item: SketchItem | null, additive: boolean) => {
     if (!item) return props.onSelect(additive ? selection : []);

@@ -584,7 +584,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
             Weldment profile
           </label>
           <div className={`profile-status ${profile.ok ? "" : "bad"}`} data-testid="profile-status">
-            {draft.entities.filter((e) => !e.construction).length === 0
+            {draft.entities.filter((e) => !e.construction && e.type !== "point").length === 0
               ? "No profile yet"
               : profile.ok
                 ? `Profile: ${profile.regions.length} region${profile.regions.length === 1 ? "" : "s"}, area ${round(profile.area)} mm²`

@@ -19,19 +19,19 @@ async function buildBracket(page: Page) {
   // Sketch a rectangle on the top plane and dimension it.
   await page.getByTestId("tool-sketch").click();
   await page.getByTestId("plane-top").click();
-  await page.getByTestId("tool-rect").click();
-  await sketchClick(page, -30, -15);
+  // A centre rectangle from the origin: four lines, their centre point on the origin.
+  await page.getByTestId("tool-rect-flyout").click();
+  await page.getByTestId("flyout-rect-center").click();
+  await sketchClick(page, 0, 0);
   await sketchClick(page, 30, 15);
   await expect(page.getByTestId("profile-status")).toContainText("1 region");
   await page.getByTestId("tool-select").click();
-  await sketchClick(page, 0, 15);
-  await page.getByTestId("c-width-value").fill("80");
-  await page.getByTestId("c-width").click();
-  await sketchClick(page, 0, 15); // the top edge has not moved yet
-  await page.getByTestId("c-height-value").fill("40");
-  await page.getByTestId("c-height").click();
-  await sketchClick(page, 0, 20);
-  await page.getByTestId("c-center-origin").click();
+  await sketchClick(page, 10, 15); // the top side
+  await page.getByTestId("c-length-value").fill("80");
+  await page.getByTestId("c-length").click();
+  await sketchClick(page, 40, 5); // the right side, now at x = 40
+  await page.getByTestId("c-length-value").fill("40");
+  await page.getByTestId("c-length").click();
   await expect(page.getByTestId("sketch-dof")).toHaveText("Fully defined");
   await page.getByTestId("finish-sketch").click();
 
@@ -55,20 +55,43 @@ test("a human makes the bracket with no JSON editing", async ({ page }) => {
   await buildBracket(page);
   await expect(page.getByTestId("holes")).toHaveText("1 × Ø6.6");
 
-  // The document the clicks produced is the spec's bracket.
+  // The document the clicks produced is the spec's bracket, its rectangle four lines round a centre point on the origin.
   const doc = (await savedDocument(page)) as { features: Record<string, unknown>[] };
-  expect(doc.features).toEqual([
-    {
-      id: "sketch_1",
-      op: "sketch",
-      plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] },
-      entities: [{ id: "r1", type: "rect", center: [0, 0], w: 80, h: 40 }],
-      constraints: [
-        { type: "distanceX", entity: "r1", value: 80 },
-        { type: "distanceY", entity: "r1", value: 40 },
-        { type: "coincident", points: ["r1.center", "origin"] },
-      ],
-    },
+  const r6 = (x: unknown) => JSON.parse(JSON.stringify(x, (_k, v) => (typeof v === "number" ? Math.round(v * 1e6) / 1e6 + 0 : v)));
+  const [a, b, c, d]: [number, number][] = [[-40, -20], [40, -20], [40, 20], [-40, 20]];
+  expect(r6(doc.features[0])).toEqual({
+    id: "sketch_1",
+    op: "sketch",
+    plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] },
+    entities: [
+      { id: "l1", type: "line", start: a, end: b },
+      { id: "l2", type: "line", start: b, end: c },
+      { id: "l3", type: "line", start: c, end: d },
+      { id: "l4", type: "line", start: d, end: a },
+      { id: "l5", type: "line", start: a, end: c, construction: true },
+      { id: "l6", type: "line", start: b, end: d, construction: true },
+      { id: "p1", type: "point", at: [0, 0] },
+    ],
+    constraints: [
+      { type: "coincident", points: ["l1.end", "l2.start"] },
+      { type: "coincident", points: ["l2.end", "l3.start"] },
+      { type: "coincident", points: ["l3.end", "l4.start"] },
+      { type: "coincident", points: ["l4.end", "l1.start"] },
+      { type: "horizontal", entity: "l1" },
+      { type: "vertical", entity: "l2" },
+      { type: "horizontal", entity: "l3" },
+      { type: "vertical", entity: "l4" },
+      { type: "coincident", points: ["l5.start", "l1.start"] },
+      { type: "coincident", points: ["l5.end", "l3.start"] },
+      { type: "coincident", points: ["l6.start", "l2.start"] },
+      { type: "coincident", points: ["l6.end", "l4.start"] },
+      { type: "midpoint", point: "p1.at", entity: "l5" },
+      { type: "coincident", points: ["p1.at", "origin"] },
+      { type: "distance", entity: "l3", value: 80 },
+      { type: "distance", entity: "l2", value: 40 },
+    ],
+  });
+  expect(doc.features.slice(1)).toEqual([
     { id: "extrude_1", op: "extrude", sketch: "sketch_1", distance: 6 },
     {
       id: "hole_1",
