@@ -670,13 +670,13 @@ export function Viewport({
         datums(): string[] {
           return datums.ids();
         },
-        /** A point on a drawn datum to click: a plane's border, an axis, a point, the origin (client pixels). */
+        /** A point on a drawn datum to click: a plane's far border (above the part, for a default plane), an axis, a point, the origin (client pixels). */
         datumPoint(id: string): [number, number] | null {
           if (id === "Origin") return toScreen([0, 0, 0]);
           const s = datumList.find((d) => d.id === id);
           if (!s) return null;
           const part = (a: Vec3, b: Vec3) => a.map((c, i) => c + (b[i] - c) * 0.3) as Vec3;
-          return toScreen(s.kind === "plane" ? part(s.corners[0], s.corners[1]) : s.kind === "axis" ? part(s.ends[0], s.ends[1]) : s.at);
+          return toScreen(s.kind === "plane" ? part(s.corners[2], s.corners[3]) : s.kind === "axis" ? part(s.ends[0], s.ends[1]) : s.at);
         },
         /** A pixel of the pinned photo -> client pixels. */
         photoPoint(px: Vec2): [number, number] | null {

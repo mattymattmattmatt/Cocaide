@@ -61,7 +61,7 @@ test("a human makes the bracket with no JSON editing", async ({ page }) => {
     {
       id: "sketch_1",
       op: "sketch",
-      plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] },
+      plane: { type: "ref", ref: { datum: "Top" } },
       entities: [{ id: "r1", type: "rect", center: [0, 0], w: 80, h: 40 }],
       constraints: [
         { type: "distanceX", entity: "r1", value: 80 },
