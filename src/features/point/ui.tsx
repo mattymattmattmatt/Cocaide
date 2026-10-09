@@ -35,7 +35,7 @@ export const ui: UiOp = {
       label: "Type",
       options: POINT_MODES.map((m): [string, string] => [m, POINT_MODE_LABEL[m]]),
       get: modeOf,
-      set: (v, f, c) => switchMode(f, String(v), POINT_MODE_SPECS, c.before, { at: [0, 0, 0], t: 0.5 }),
+      set: (v, f, c) => switchMode(f, String(v), POINT_MODE_SPECS, c.before, { at: [0, 0, 0], t: 0.5 }, c),
     },
     ...refFields(POINT_MODE_SPECS, REF_LABELS, modeOf),
     { kind: "vec3", key: "at", label: "At", unit: "mm", default: [0, 0, 0], when: (f) => modeOf(f) === "coords" },

@@ -48,7 +48,7 @@ export const ui: UiOp = {
       label: "Type",
       options: PLANE_MODES.map((m): [string, string] => [m, PLANE_MODE_LABEL[m]]),
       get: modeOf,
-      set: (v, f, c) => switchMode(f, String(v), PLANE_MODE_SPECS, c.before, { distance: 10, angle: 45 }),
+      set: (v, f, c) => switchMode(f, String(v), PLANE_MODE_SPECS, c.before, { distance: 10, angle: 45 }, c),
     },
     ...refFields(PLANE_MODE_SPECS, REF_LABELS, modeOf),
     { kind: "number", key: "distance", label: "Distance", unit: "mm", default: 0, hint: "Along the plane's normal; negative goes behind it", when: (f) => modeOf(f) === "offset" },

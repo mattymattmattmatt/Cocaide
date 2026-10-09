@@ -38,7 +38,7 @@ export const ui: UiOp = {
       label: "Type",
       options: AXIS_MODES.map((m): [string, string] => [m, AXIS_MODE_LABEL[m]]),
       get: modeOf,
-      set: (v, f, c) => switchMode(f, String(v), AXIS_MODE_SPECS, c.before),
+      set: (v, f, c) => switchMode(f, String(v), AXIS_MODE_SPECS, c.before, {}, c),
     },
     ...refFields(AXIS_MODE_SPECS, REF_LABELS, modeOf),
     { kind: "bool", key: "flip", label: "Reverse the direction" },

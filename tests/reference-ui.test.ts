@@ -28,6 +28,12 @@ import { contextEntries, toolById } from "../src/ui/model/registry";
 import { extrudeFeature } from "../src/ui/model/tools/extrude";
 import { sketchTarget } from "../src/ui/model/tools/sketch";
 import { refFromSelection } from "../src/ui/props/datumRef";
+import { switchMode } from "../src/ui/props/datumModes";
+import { commitPatch } from "../src/ui/props/spec";
+import { UI_OPS } from "../src/features/uiDefs";
+import { AXIS_MODE_SPECS } from "../src/features/axis/doc";
+import { PLANE_MODE_SPECS } from "../src/features/plane/doc";
+import { POINT_MODE_SPECS } from "../src/features/point/doc";
 import type { RebuildView } from "../src/worker/protocol";
 import { example, faceWhere, harness, viewOf } from "./ui-fixtures";
 
@@ -224,6 +230,46 @@ describe("the Reference tab's tools", () => {
     expect(labels({ kind: "edge", index: rim() })).toEqual(["Plane normal to this edge", "Axis of this circle", "Point at its centre"]);
     expect(labels({ kind: "datum", id: "Top" })).toEqual(["Sketch on this plane", "Offset plane from this"]);
     expect(labels({ kind: "vertex", edge: frontTopEdge(), at: "start" })).toEqual(["Point at this vertex"]);
+  });
+
+  it("a right-click entry acts on what was right-clicked alone, not the rest of the selection", () => {
+    // Top and the edge selected (the toolbar's Plane would make a 45° plane); "Plane normal to this edge" on the edge.
+    const { ctx, out } = harness(doc, view, { selection: sel({ edges: [frontTopEdge()], datums: ["Top"] }) });
+    const run = (t: Parameters<typeof contextEntries>[1], label: string) => contextEntries(ctx, t).find((e) => e.item.label === label)!.item.run(ctx);
+    run({ kind: "edge", index: frontTopEdge() }, "Plane normal to this edge");
+    expect(out.created[0]).toMatchObject({ op: "plane", mode: "normalToEdge", t: 0 });
+    run({ kind: "edge", index: frontTopEdge() }, "Axis along this edge");
+    expect(out.created[1]).toMatchObject({ op: "axis", mode: "edge" });
+    run({ kind: "datum", id: "Top" }, "Offset plane from this");
+    expect(out.created[2]).toMatchObject({ op: "plane", mode: "offset", refs: [{ datum: "Top" }], distance: 10 });
+    expect(out.notices).toEqual([]);
+  });
+});
+
+describe("switching a reference feature's type in its properties", () => {
+  const before = (d: RawDocument) => d.features as Record<string, unknown>[];
+  it("keeps the references that fit, fills the rest with defaults, drops the old mode's fields", () => {
+    const f = { id: "plane_1", op: "plane", mode: "offset", refs: [{ datum: "Front" }], distance: 20 };
+    expect(switchMode(f, "angle", PLANE_MODE_SPECS, before(doc), { distance: 10, angle: 45 })).toEqual({ mode: "angle", refs: [{ datum: "Front" }, { datum: "X" }], distance: null, angle: 45, t: null });
+    expect(switchMode(f, "threePoints", PLANE_MODE_SPECS, before(doc))).toMatchObject({ refs: [{ datum: "Origin" }, { datum: "Origin" }, { datum: "Origin" }] });
+  });
+
+  it("a type that needs picked geometry (a cylinder's face, an edge) takes what is selected, else says what to select", () => {
+    const f = { id: "axis_1", op: "axis", mode: "twoPlanes", refs: [{ datum: "Front" }, { datum: "Right" }] };
+    expect(() => switchMode(f, "cylinder", AXIS_MODE_SPECS, before(doc))).toThrow("This type needs a cylindrical or conical face: select it in the view, then choose the type again.");
+    // A flat face selected does not fit a cylinder's slot: still refused.
+    expect(() => switchMode(f, "cylinder", AXIS_MODE_SPECS, before(doc), {}, { selection: sel({ faces: [topFace()] }), view })).toThrow(/select it in the view/);
+    const patch = switchMode(f, "cylinder", AXIS_MODE_SPECS, before(doc), {}, { selection: sel({ faces: [holeWall()] }), view });
+    expect(patch).toEqual({ mode: "cylinder", refs: [{ face: { type: "cylindrical", radius: 3.3, pick: "largest" } }] });
+    expect(built({ op: "axis", mode: patch.mode, refs: patch.refs })).toMatchObject({ kind: "axis", origin: [30, 0, expect.any(Number)] });
+    const p = { id: "point_1", op: "point", mode: "coords", at: [0, 0, 0] };
+    expect(switchMode(p, "center", POINT_MODE_SPECS, before(doc), {}, { selection: sel({ edges: [rim()] }), view })).toMatchObject({ mode: "center", refs: [{ edge: expect.any(Object) }], at: null });
+  });
+
+  it("the property editor shows the refusal instead of sending a change that can't validate", () => {
+    const mode = UI_OPS.axis.fields!.find((s) => s.key === "mode")!;
+    const ctxOf = { f: {}, resolved: {}, before: before(doc), bodies: [], doc, view, selection: EMPTY_SELECTION };
+    expect(() => commitPatch(mode, "edge", { id: "axis_1", op: "axis", mode: "twoPlanes", refs: [{ datum: "Front" }, { datum: "Right" }] }, ctxOf)).toThrow(/needs an edge/);
   });
 });
 

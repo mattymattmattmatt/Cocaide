@@ -7,7 +7,7 @@
 // was clicked ("Plane from this face", "Axis of this cylinder").
 
 import { axisFromSelection, datumKinds, planeFromSelection, pointFromSelection, type Proposal } from "../referenceFromSelection";
-import { datumKindOf } from "../selection";
+import { datumKindOf, type Selection } from "../selection";
 import type { ContextTarget, ToolCtx, ToolDef, ToolItem } from "../ToolContext";
 
 /** Adds the proposed feature (selected, its properties open), then says what was guessed, if anything. */
@@ -19,12 +19,39 @@ function make(ctx: ToolCtx, p: Proposal, prefix: string): void {
 
 const kinds = (ctx: ToolCtx) => datumKinds(ctx.features, ctx.view);
 
-const plane = (ctx: ToolCtx) => make(ctx, planeFromSelection(ctx.selection, ctx.view, kinds(ctx)), "plane");
-const axis = (ctx: ToolCtx) => make(ctx, axisFromSelection(ctx.selection, ctx.view, kinds(ctx)), "axis");
-const point = (ctx: ToolCtx) => make(ctx, pointFromSelection(ctx.selection, ctx.view, kinds(ctx)), "point");
+type From = (sel: Selection, view: ToolCtx["view"], kindOf: ReturnType<typeof kinds>) => Proposal;
+const tool = (from: From, prefix: string) => (ctx: ToolCtx) => make(ctx, from(ctx.selection, ctx.view, kinds(ctx)), prefix);
+const plane = tool(planeFromSelection, "plane");
+const axis = tool(axisFromSelection, "axis");
+const point = tool(pointFromSelection, "point");
 
-/** A right-click entry that runs `run` on what was right-clicked (the right-click selected it). */
-const entry = (label: string, testId: string, icon: ToolItem["icon"], run: (c: ToolCtx) => void): ToolItem => ({ label, testId, icon, run });
+/** The right-clicked thing alone, as a selection. */
+function targetSelection(t: ContextTarget): Selection {
+  switch (t.kind) {
+    case "face":
+      return { faces: [t.index], edges: [] };
+    case "edge":
+      return { faces: [], edges: [t.index] };
+    case "vertex":
+      return { faces: [], edges: [], vertices: [{ edge: t.edge, at: t.at }] };
+    case "datum":
+      return { faces: [], edges: [], datums: [t.id] };
+    default:
+      return { faces: [], edges: [] };
+  }
+}
+
+/**
+ * A right-click entry: made from what was right-clicked alone, as its label
+ * says ("Plane normal to this edge"), even when it was part of a larger
+ * selection (which the toolbar button reads instead).
+ */
+const entry = (label: string, testId: string, icon: ToolItem["icon"], from: From, prefix: string, t: ContextTarget): ToolItem => ({
+  label,
+  testId,
+  icon,
+  run: (c) => make(c, from(targetSelection(t), c.view, kinds(c)), prefix),
+});
 
 function face(ctx: ToolCtx, t: ContextTarget) {
   return t.kind === "face" ? ctx.view?.faces[t.index] : undefined;
@@ -48,9 +75,9 @@ export const tools: ToolDef[] = [
     testId: "tool-plane",
     run: plane,
     contextItems: (ctx, t) => {
-      if (face(ctx, t)?.type === "plane") return [entry("Plane from this face", "ctx-plane-face", "plane", plane)];
-      if (edge(ctx, t)) return [entry("Plane normal to this edge", "ctx-plane-edge", "plane", plane)];
-      if (datumKind(ctx, t) === "plane") return [entry("Offset plane from this", "ctx-plane-offset", "plane", plane)];
+      if (face(ctx, t)?.type === "plane") return [entry("Plane from this face", "ctx-plane-face", "plane", planeFromSelection, "plane", t)];
+      if (edge(ctx, t)) return [entry("Plane normal to this edge", "ctx-plane-edge", "plane", planeFromSelection, "plane", t)];
+      if (datumKind(ctx, t) === "plane") return [entry("Offset plane from this", "ctx-plane-offset", "plane", planeFromSelection, "plane", t)];
       return [];
     },
   },
@@ -65,10 +92,10 @@ export const tools: ToolDef[] = [
     run: axis,
     contextItems: (ctx, t) => {
       const f = face(ctx, t);
-      if (f?.type === "cylinder" || f?.type === "cone") return [entry("Axis of this cylinder", "ctx-axis-cylinder", "axis", axis)];
+      if (f?.type === "cylinder" || f?.type === "cone") return [entry("Axis of this cylinder", "ctx-axis-cylinder", "axis", axisFromSelection, "axis", t)];
       const e = edge(ctx, t);
-      if (e?.kind === "line") return [entry("Axis along this edge", "ctx-axis-edge", "axis", axis)];
-      if (e?.kind === "circle") return [entry("Axis of this circle", "ctx-axis-edge", "axis", axis)];
+      if (e?.kind === "line") return [entry("Axis along this edge", "ctx-axis-edge", "axis", axisFromSelection, "axis", t)];
+      if (e?.kind === "circle") return [entry("Axis of this circle", "ctx-axis-edge", "axis", axisFromSelection, "axis", t)];
       return [];
     },
   },
@@ -82,8 +109,8 @@ export const tools: ToolDef[] = [
     testId: "tool-point",
     run: point,
     contextItems: (ctx, t) => {
-      if (t.kind === "vertex") return [entry("Point at this vertex", "ctx-point-vertex", "datumPoint", point)];
-      if (edge(ctx, t)?.kind === "circle") return [entry("Point at its centre", "ctx-point-center", "datumPoint", point)];
+      if (t.kind === "vertex") return [entry("Point at this vertex", "ctx-point-vertex", "datumPoint", pointFromSelection, "point", t)];
+      if (edge(ctx, t)?.kind === "circle") return [entry("Point at its centre", "ctx-point-center", "datumPoint", pointFromSelection, "point", t)];
       return [];
     },
   },

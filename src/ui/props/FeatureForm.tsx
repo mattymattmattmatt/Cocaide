@@ -52,7 +52,17 @@ function Choice({ value, options, placeholder, onChange, testId }: { value: stri
 
 function FieldView({ spec, p }: { spec: FieldSpec; p: FieldProps }) {
   const v = fieldValue(spec, p.f, p);
-  const commit = (value: unknown) => p.update(commitPatch(spec, value, p.f, p));
+  // A field's own `set` may refuse a value with an Error that says what to do (a mode that needs something selected first).
+  const commit = (value: unknown) => {
+    let patch: Record<string, unknown>;
+    try {
+      patch = commitPatch(spec, value, p.f, p);
+    } catch (e) {
+      return p.setError(e instanceof Error ? e.message : String(e));
+    }
+    p.setError(null);
+    return p.update(patch);
+  };
   const tid = fieldTestId(spec);
   switch (spec.kind) {
     case "number":

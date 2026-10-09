@@ -134,3 +134,39 @@ test("an axis from the hole's wall; a point at its rim's centre", async ({ page 
   const doc = (await savedDocument(page)) as Doc;
   expect(doc.features.find((f) => f.id === "point_1")).toMatchObject({ op: "point", mode: "center" });
 });
+
+test("right-click entries act on what was right-clicked; a type that needs a face takes the selected one", async ({ page }) => {
+  const project = (p: [number, number, number]) => page.evaluate((p) => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project(p), p);
+  await page.getByRole("button", { name: "Iso" }).click();
+  // Two faces selected, then a right-click on the top one: Sketch on this face sketches on it (not on Top).
+  await viewportClick(page, [-10, 5, 6]);
+  await viewportClick(page, [-10, -20, 3], { shift: true });
+  await expect(page.getByTestId("selection")).toHaveText("Selected: 2 faces");
+  let [x, y] = await project([-10, 5, 6]);
+  await page.mouse.click(x, y, { button: "right" });
+  await page.getByTestId("ctx-sketch-face").click();
+  await expect(page.locator(".sketch-plane-label")).toHaveText("Top (XY) at Z = 6");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  // Top and an edge selected (the toolbar's Plane would turn a plane about the edge); "Plane normal to this edge" is square to it.
+  await page.getByTestId("datum-Top").locator(".feature-row").click();
+  await viewportClick(page, [0, -20, 6], { shift: true });
+  await expect(page.getByTestId("selection")).toHaveText("Selected: 1 edge + 1 plane");
+  [x, y] = await project([0, -20, 6]);
+  await page.mouse.click(x, y, { button: "right" });
+  await page.getByTestId("ctx-plane-edge").click();
+  await expect(page.getByTestId("feature-plane_1")).toBeVisible();
+  await expect(page.getByTestId("prop-datum-where")).toHaveText(/normal [+-]X$/);
+  // Switching an axis to "Axis of a cylinder" uses the round face selected; with none, it says what to select.
+  await page.getByTestId("tab-reference").click();
+  await page.mouse.click(400, 220);
+  await page.getByTestId("tool-axis").click();
+  await expect(page.getByTestId("feature-axis_1")).toBeVisible();
+  await page.getByTestId("prop-mode").selectOption("cylinder");
+  await expect(page.getByTestId("command-error")).toHaveText("This type needs a cylindrical or conical face: select it in the view, then choose the type again.");
+  await expect(page.getByTestId("prop-mode")).toHaveValue("twoPlanes");
+  await viewportClick(page, [30 - 2.33, 2.33, 3]);
+  await page.getByTestId("prop-mode").selectOption("cylinder");
+  await expect(page.getByTestId("prop-datum-where")).toHaveText(/^through 30, 0, -?[\d.]+ · along [+-]Z$/);
+  const doc = (await savedDocument(page)) as Doc;
+  expect(doc.features.find((f) => f.id === "axis_1")).toEqual({ id: "axis_1", op: "axis", mode: "cylinder", refs: [{ face: { type: "cylindrical", radius: 3.3, pick: "largest" } }] });
+});

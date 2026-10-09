@@ -8,7 +8,9 @@
 import type { DatumRef } from "../../doc/types";
 import { DATUM_OPS, DEFAULT_DATUMS, refForm, type Datum, type DatumKind, type ModeSpec, type RefSlot } from "../../features/datum";
 import { formatDirection } from "../../geom/vec";
-import { fmt } from "../model/selection";
+import { fmt, type Selection } from "../model/selection";
+import type { RebuildView } from "../../worker/protocol";
+import { refFromSelection } from "./datumRef";
 import type { FieldSpec } from "./spec";
 
 type Raw = Record<string, unknown>;
@@ -48,22 +50,40 @@ function defaultFor(slot: RefSlot): DatumRef | null {
 /**
  * The patch that switches a reference feature to `mode`: its references
  * re-dealt to the new mode's slots (each one that fits, in order; a default
- * for the rest, or the slot is left for the user to pick when no default can
- * stand in, as a cylinder's face), the fields only other modes use removed
- * and the new mode's `defaults` added where missing.
+ * for the rest), the fields only other modes use removed and the new mode's
+ * `defaults` added where missing. A slot no default can stand in for (a
+ * cylinder's face, an edge) takes what is selected in the view when that
+ * fits; else the switch can't be made, and it throws an Error that says what
+ * to select (the property editor shows it).
  */
-export function switchMode(f: Raw, mode: string, modes: Readonly<Record<string, ModeSpec>>, before: Raw[], defaults: Raw = {}): Raw {
+export function switchMode(
+  f: Raw,
+  mode: string,
+  modes: Readonly<Record<string, ModeSpec>>,
+  before: Raw[],
+  defaults: Raw = {},
+  picked?: { selection: Selection; view: RebuildView | null },
+): Raw {
   const spec = modes[mode];
   const pool = [...refsOf(f)];
   const min = spec.refs.length - (spec.optional ?? 0);
   const refs: DatumRef[] = [];
+  let selectionUsed = false;
   spec.refs.forEach((slot, i) => {
+    if (refs.length < i) return; // an earlier slot is empty: the rest can't move up into it
     const k = pool.findIndex((r) => fits(r, slot, before));
-    if (k >= 0) refs.push(pool.splice(k, 1)[0]);
-    else if (i < min) {
-      const d = defaultFor(slot);
-      if (d) refs.push(d);
+    if (k >= 0) return void refs.push(pool.splice(k, 1)[0]);
+    if (i >= min) return;
+    const d = defaultFor(slot);
+    if (d) return void refs.push(d);
+    // Nothing chosen fits and no default can stand in: what is selected, if it fits.
+    const r = !selectionUsed && picked ? refFromSelection(picked.selection, picked.view, slot.kinds ?? ["plane", "axis", "point"], before) : null;
+    if (r?.ok && fits(r.ref, slot, before)) {
+      selectionUsed = true;
+      refs.push(r.ref);
+      return;
     }
+    throw new Error(`This type needs ${slot.what}: select it in the view, then choose the type again.`);
   });
   const patch: Raw = { mode, refs: spec.refs.length ? refs : null };
   for (const field of new Set(Object.values(modes).flatMap((m) => m.fields))) {

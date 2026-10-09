@@ -736,9 +736,10 @@ export function App() {
   const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
     // Empty space: the menu for the whole part.
     if (!target) return contextMenuRef.current({ kind: "part" }, x, y);
-    // Select what was right-clicked, as SOLIDWORKS does (a selection it is already part of stays): its menu acts on it,
-    // and it stays outlined while an ask is open.
-    setSelection((sel) => (isSelected(sel, target) ? sel : only(target)));
+    // Select what was right-clicked, as SOLIDWORKS does: its menu acts on it, and it stays outlined while an ask is open.
+    // An edge, vertex or plane keeps a selection it is already part of (Fillet the selected edges); a face's entries act
+    // on that one face at the point clicked (Sketch on this face, Hole here), so a face is always selected alone, here.
+    setSelection((sel) => (target.kind !== "face" && isSelected(sel, target) ? sel : only(target)));
     contextMenuRef.current(
       target.kind === "datum" ? { kind: "datum", id: target.id } : target.kind === "vertex" ? { kind: "vertex", edge: target.edge, at: target.at } : { kind: target.kind, index: target.index },
       x,
