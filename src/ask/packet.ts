@@ -257,7 +257,7 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
         parent,
         children,
         measurements: isSketch
-          ? sketchMeasurements(resolved.features.find((x) => x.id === target.id)!)
+          ? sketchMeasurements(resolved.features.find((x) => x.id === target.id)!, check.solvedSketches?.[target.id])
           : { ...featureMeasurements(f, resolved, topo), ...(check.datums?.[target.id] ? { now: datumFrame(check.datums[target.id]) } : {}) },
         // A member or joint: what the frame around it is (Phase K).
         ...(f.op === "member" ? { member: memberDetails(doc, f, check) } : {}),
@@ -280,7 +280,8 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
         ...usedParams(e),
         parent: sketchBrief(sketch as unknown as Raw),
         children: on.map(({ index }) => ({ index, ...(sketch.constraints![index] as unknown as Raw) })),
-        measurements: entityMeasurements(re),
+        // Where the rebuild put it: a sketch tied to the model follows it, and the document's numbers may lag.
+        measurements: entityMeasurements(check.solvedSketches?.[target.sketch]?.find((x) => x.id === target.entity) ?? re),
         // Reference geometry: it is the model, projected into the sketch, and what is related to it follows the model.
         ...(e.ref ? { reference: referenceBrief(e) } : {}),
         error: null,
@@ -527,8 +528,14 @@ function sketchOf(doc: RawDocument, id: string): { entities?: SketchEntity[]; co
   return f && f.op === "sketch" ? (f as { entities?: SketchEntity[]; constraints?: Constraint[] }) : undefined;
 }
 
-function sketchMeasurements(f: Raw): Record<string, unknown> {
-  const entities = (f.entities ?? []) as SketchEntity[];
+/**
+ * `solved`: the sketch's entities as the rebuild solved them, when it
+ * references the model; the measurements are of those, and where they moved
+ * from the document's numbers, `now` says where each entity is.
+ */
+function sketchMeasurements(f: Raw, solved?: SketchEntity[]): Record<string, unknown> {
+  const written = (f.entities ?? []) as SketchEntity[];
+  const entities = solved && solved.length === written.length ? solved : written;
   const constraints = (f.constraints ?? []) as Constraint[];
   const out: Record<string, unknown> = { entities: entities.length, constraints: constraints.length };
   try {
@@ -542,8 +549,25 @@ function sketchMeasurements(f: Raw): Record<string, unknown> {
   // Its references to the model: re-projected on every rebuild, held by the solver, followed by what is related to them.
   const refs = entities.filter((e) => e.ref);
   if (refs.length) out.references = refs.map(referenceBrief);
+  if (entities !== written) {
+    // Its numbers only (the ref is the same either way), field by field in one order.
+    const key = (e: SketchEntity) => JSON.stringify(Object.entries(roundedEntity(e)).filter(([k]) => k !== "ref").sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    const moved = entities.filter((e, i) => key(e) !== key(written[i]));
+    if (moved.length) {
+      out.now = {
+        note: "the model has moved since these numbers were written: the rebuild solved the sketch with its references where the model is now, and this is where its geometry is (the document's numbers are only a starting point)",
+        entities: moved.map(roundedEntity),
+      };
+    }
+  }
   out.axes = 'the sketch axes "X" and "Y" are lines any relation or dimension may name, as "origin" is a point';
   return out;
+}
+
+/** An entity with its numbers to 6 decimals, as the packet gives numbers. */
+function roundedEntity(e: SketchEntity): Record<string, unknown> {
+  const r = (v: unknown): unknown => (typeof v === "number" ? round6(v) : Array.isArray(v) ? v.map(r) : v);
+  return Object.fromEntries(Object.entries(e).map(([k, v]) => [k, k === "ref" ? v : r(v)]));
 }
 
 /** A reference entity, as the packet says it: what it references, and that it follows the model. */
@@ -588,9 +612,9 @@ function entityMeasurements(e: SketchEntity): Record<string, unknown> {
     case "line":
       return { length: round6(dist2(e.start, e.end)), angleDeg: round6((Math.atan2(e.end[1] - e.start[1], e.end[0] - e.start[0]) * 180) / Math.PI) };
     case "circle":
-      return { radius: e.radius, diameter: round6(2 * e.radius) };
+      return { radius: e.radius, diameter: round6(2 * e.radius), center: [round6(e.center[0]), round6(e.center[1])] };
     case "arc":
-      return { radius: round6(dist2(e.start, e.center)) };
+      return { radius: round6(dist2(e.start, e.center)), center: [round6(e.center[0]), round6(e.center[1])] };
     case "rect":
       return { width: e.w, height: e.h };
     case "slot":

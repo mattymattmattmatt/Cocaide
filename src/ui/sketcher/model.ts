@@ -99,7 +99,7 @@ export function modelView(view: { mesh: MeshData | null; edges: EdgeInfo[]; face
       poly,
       entity,
       ...(shape.ok ? {} : { problem: shape.error }),
-      inPlane: Math.abs(height(info.start)) < ON_PLANE && Math.abs(height(info.end)) < ON_PLANE,
+      inPlane: lies(info, frame, height),
       faces: info.faces,
       length: info.length,
     });
@@ -121,6 +121,21 @@ export function modelView(view: { mesh: MeshData | null; edges: EdgeInfo[]; face
     });
   });
   return { edges, faces, source: { edges: view.edges, faces: view.faces }, frame };
+}
+
+/**
+ * Whether the edge lies in the sketch plane. A circle (or arc) does when its
+ * plane is the sketch's: its centre on it, its axis along the normal. Its
+ * ends alone don't say so: a hole's rim seen edge-on from a plane through its
+ * axis starts and ends on that plane. Anything else: its ends and middle.
+ */
+function lies(info: EdgeInfo, frame: Frame, height: (p: [number, number, number]) => number): boolean {
+  if (info.kind === "circle" && info.center && info.axis) {
+    const a = info.axis;
+    const along = Math.abs(a[0] * frame.z[0] + a[1] * frame.z[1] + a[2] * frame.z[2]) / (Math.hypot(a[0], a[1], a[2]) || 1);
+    return along > 1 - 1e-9 && Math.abs(height(info.center)) < ON_PLANE;
+  }
+  return [info.start, info.end, info.mid].every((p) => Math.abs(height(p)) < ON_PLANE);
 }
 
 /**

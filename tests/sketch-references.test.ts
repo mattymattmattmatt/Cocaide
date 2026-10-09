@@ -168,7 +168,10 @@ describe("reference entities in the document", () => {
     expect(bad([{ id: "c1", type: "circle", center: [0, 0], radius: 1, ref: { edge: { type: "edge", kind: "line", pick: "all" } } }])[0]).toMatch(/a circle references a whole circular edge .*, not a straight edge/);
     expect(bad([{ id: "c1", type: "circle", center: [0, 0], radius: 1, ref: { face: TOP } }])[0]).toMatch(/not a face \(pick one of its edges\)/);
     expect(bad([{ id: "p1", type: "point", at: [0, 0], ref: { edge: { type: "edge", kind: "line", pick: "all" } } }])[0]).toMatch(/a point references .*, not a straight edge without "at" \(say which point of it\)/);
-    expect(bad([{ id: "r1", type: "rect", center: [0, 0], w: 1, h: 1, ref: { datum: "X" } }])[0]).toMatch(/unknown field "ref"/);
+    // A rect or a slot takes no ref: one message, saying what can (not a garbled "references undefined").
+    expect(bad([{ id: "r1", type: "rect", center: [0, 0], w: 1, h: 1, ref: { datum: "X" } }])).toEqual([
+      'sk: entities[0] "r1" ref: a rect can\'t reference the model (lines, circles, arcs and points can); remove ref, or reference the edges with lines (Convert Entities)',
+    ]);
     expect(bad([L({ edge: { type: "edge", pick: "most" } })])[0]).toMatch(/l1" ref\.edge\.pick/);
   });
 
@@ -546,6 +549,24 @@ describe("the AI sees references as references", () => {
     const p = await buildPacket(doc, { kind: "entity", sketch: "sk", entity: "l1" }, new LocalKernel(() => oc));
     expect((p as unknown as { reference: { follows: string } }).reference.follows).toMatch(/^the model: projected again on every rebuild/);
     expect((p.parent as { entities: string }).entities).toMatch(/^l1 line \(reference to the model edge .*\), c1 circle$/);
+  });
+
+  it("when the model has moved, the packets say where the rebuild put the sketch, not only the numbers written", async () => {
+    // The plate 100 wide: the edge is at x = 50 now, so the circle 10 from it is at x = 40; the document still says 30.
+    const r = apply(doc, { type: "setDimension", sketch: "sketch_1", index: 0, value: 100 });
+    if (!r.ok) throw new Error(r.error);
+    const kernel = new LocalKernel(() => oc);
+    const p = await buildPacket(r.doc, { kind: "feature", id: "sk" }, kernel);
+    const now = (p.measurements as { now: { note: string; entities: { id: string; center?: number[]; start?: number[] }[] } }).now;
+    expect(now.note).toMatch(/^the model has moved since these numbers were written/);
+    expect(now.entities.map((e) => e.id)).toEqual(["l1", "c1"]);
+    expect(now.entities[0].start).toEqual([50, -20]);
+    expect(now.entities[1].center).toEqual([40, 0]);
+    const e = await buildPacket(r.doc, { kind: "entity", sketch: "sk", entity: "c1" }, kernel);
+    expect(e.measurements).toEqual({ radius: 3, diameter: 6, center: [40, 0] });
+    // Where nothing has moved, there is nothing to say.
+    const same = await buildPacket(doc, { kind: "feature", id: "sk" }, kernel);
+    expect((same.measurements as { now?: unknown }).now).toBeUndefined();
   });
 
   it("the reference documents references, the axes and a worked example", () => {

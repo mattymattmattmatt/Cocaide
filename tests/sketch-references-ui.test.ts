@@ -24,8 +24,12 @@ const PI = Math.PI;
 const bracket: RawDocument = JSON.parse(readFileSync(new URL("../examples/bracket.cocaide.json", import.meta.url), "utf8"));
 const TOP_FRAME = planeFrame([0, 0, 1], [0, 0, 6]);
 
+/** Front (XZ): the plane y = 0, which runs through the hole's axis at x = 30. */
+const FRONT_FRAME = planeFrame([0, -1, 0], [0, 0, 0], [1, 0, 0]);
+
 let oc: OC;
 let model: ModelView;
+let front: ModelView;
 beforeAll(async () => {
   oc = await loadOC();
   // The bracket as the app's worker describes it: mesh, faces and edges.
@@ -37,6 +41,7 @@ beforeAll(async () => {
       return { faces: f.infos, edges: describeEdges(oc, s, r.solid!, f.faces).infos };
     });
     model = modelView({ mesh, ...topo }, TOP_FRAME);
+    front = modelView({ mesh, ...topo }, FRONT_FRAME);
   } finally {
     r.dispose();
   }
@@ -61,6 +66,16 @@ describe("the model as the sketcher sees it", () => {
     const ents = modelEntities(model);
     expect(ents.slice(0, 5).every((e) => modelEdge(model, e.id)!.inPlane)).toBe(true);
     expect(ents.every((e) => isModelId(e.id) && e.ref && e.construction)).toBe(true);
+  });
+
+  it("a hole's rim crossing the sketch plane is not in it: its ends lie on the plane, the circle does not", () => {
+    // Seen from Front, the rims are edge-on lines across the hole (6.6 long); they start and end at [33.3, 0, z], on y = 0.
+    const rims = front.edges.filter((e) => e.kind === "circle");
+    expect(rims).toHaveLength(2);
+    expect(rims.map((e) => e.entity?.type)).toEqual(["line", "line"]);
+    expect(rims.some((e) => e.inPlane)).toBe(false);
+    // Nothing of the plate lies in y = 0 either: it is the plate's middle.
+    expect(front.edges.filter((e) => e.inPlane)).toHaveLength(0);
   });
 
   it("the faces along the sketch: the top one in its plane, the bottom one under it; a click inside picks the top", () => {

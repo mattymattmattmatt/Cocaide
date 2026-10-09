@@ -130,11 +130,21 @@ export function SketchCanvas(props: Props) {
     setSize({ w: el.clientWidth || 800, h: el.clientHeight || 600 });
     return () => ro.disconnect();
   }, []);
+  /** The view the sketcher fitted by itself: while it is still the view (the user hasn't zoomed or panned), it may fit again. */
+  const autoFit = useRef<ViewState | null>(null);
   useEffect(() => {
     if (view) return;
-    setView(fitView(entities, model, size));
+    setView((autoFit.current = fitView(entities, model, size)));
     // fit once, on first layout
   }, [size]); // eslint-disable-line react-hooks/exhaustive-deps
+  // An existing sketch opens before the part as it stood before it has come from the kernel: when its edges
+  // arrive, fit them in too, unless the user has moved the view since.
+  const modelSeen = useRef(model.edges.length > 0);
+  useEffect(() => {
+    if (modelSeen.current || !model.edges.length) return;
+    modelSeen.current = true;
+    if (view && view === autoFit.current) setView((autoFit.current = fitView(entities, model, size)));
+  }, [model]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Leaving a tool or switching tools drops a half-placed entity, or half-picked dimension.
   useEffect(() => {
@@ -759,7 +769,8 @@ function spanOf(e: SketchEntity): Vec2[][] {
 function fitView(entities: SketchEntity[], model: ModelView, size: { w: number; h: number }): ViewState {
   const xs: number[] = [0];
   const ys: number[] = [0];
-  for (const e of entities) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
+  // A reference to an axis is drawn long enough to cross the whole part: it would zoom the view right out.
+  for (const e of entities) if (!(e.ref && "datum" in e.ref && e.type === "line")) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
   for (const m of model.edges) for (const p of m.poly) xs.push(p[0]), ys.push(p[1]);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);

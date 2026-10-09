@@ -496,8 +496,10 @@ function validateEntity(
     c.fail(label, `unknown entity type ${describe(e.type)} (supported: ${Object.keys(ENTITY_FIELDS).join(", ")})`);
     return null;
   }
-  c.keys(e, label, ["id", "type", "construction", ...(REF_KINDS[type] ? ["ref"] : []), ...ENTITY_FIELDS[type]]);
-  const ref = e.ref === undefined ? undefined : referenceOf(e.ref, type, `${label} ref`, c, opts);
+  c.keys(e, label, ["id", "type", "construction", "ref", ...ENTITY_FIELDS[type]]);
+  // A rect or a slot is several curves at once: it takes no ref.
+  if (e.ref !== undefined && !REF_KINDS[type]) c.fail(`${label} ref`, `a ${type} can't reference the model (lines, circles, arcs and points can); remove ref, or reference the edges with lines (Convert Entities)`);
+  const ref = e.ref === undefined || !REF_KINDS[type] ? undefined : referenceOf(e.ref, type, `${label} ref`, c, opts);
   const base = {
     id: e.id as string,
     ...(e.construction === undefined ? {} : { construction: e.construction as boolean }),

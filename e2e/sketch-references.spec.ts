@@ -158,3 +158,26 @@ test("a line drawn from a model corner is tied to it; the right-click menu conve
   await waitForRebuild(page);
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
 });
+
+test("an earlier sketch opens fitted to the part before it, once that has come from the kernel", async ({ page }) => {
+  // A small circle at the origin: on its own it would fit the view to a few millimetres around it.
+  await sketchOnTop(page);
+  await page.getByTestId("tool-circle").click();
+  await sketchClick(page, 0, 0);
+  await sketchClick(page, 3, 0);
+  await page.getByTestId("finish-sketch").click();
+  await waitForRebuild(page);
+  await page.getByTestId("feature-sketch_2").locator(".feature-row").dblclick();
+  await expect(page.locator("[data-testid=model-edges] path")).toHaveCount(14);
+  // The plate's corners are in view: the sketcher fitted again when the part's edges arrived.
+  const box = (await page.getByTestId("sketch-canvas").boundingBox())!;
+  for (const [x, y] of [[40, 20], [-40, -20]] as const) {
+    await expect
+      .poll(async () => {
+        const [sx, sy] = await screenAt(page, x, y);
+        return sx > box.x && sx < box.x + box.width && sy > box.y && sy < box.y + box.height;
+      })
+      .toBe(true);
+  }
+  await page.getByTestId("cancel-sketch").click();
+});
