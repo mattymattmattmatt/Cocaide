@@ -11,6 +11,10 @@ import { ui as circularPattern } from "./circularPattern/ui";
 import { ui as plane } from "./plane/ui";
 import { ui as axis } from "./axis/ui";
 import { ui as point } from "./point/ui";
+import { ui as revolve } from "./revolve/ui";
+import { ui as shell } from "./shell/ui";
+import { ui as draft } from "./draft/ui";
+import { ui as scale } from "./scale/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -20,4 +24,8 @@ export const UI_OP_LIST: UiOp[] = [
   plane,
   axis,
   point,
+  revolve,
+  shell,
+  draft,
+  scale,
 ];

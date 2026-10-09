@@ -7,10 +7,16 @@ import { def as scale } from "./scale/doc";
 import { def as plane } from "./plane/doc";
 import { def as axis } from "./axis/doc";
 import { def as point } from "./point/doc";
+import { def as revolve } from "./revolve/doc";
+import { def as shell } from "./shell/doc";
+import { def as draft } from "./draft/doc";
 
 export const DOC_DEFS = [
   scale,
   plane,
   axis,
   point,
+  revolve,
+  shell,
+  draft,
 ];

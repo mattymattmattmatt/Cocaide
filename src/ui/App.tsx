@@ -64,6 +64,7 @@ import { makeToolCtx } from "./model/context";
 import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
 import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
+import { carrySelection } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
 import { deleteBody } from "./model/tools/bodies";
@@ -154,6 +155,8 @@ export function App() {
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef(0);
+  /** The rebuild shown now: what the selection's face indices refer to. */
+  const shownView = useRef<RebuildView | null>(null);
   const needsFit = useRef(true);
 
   const { parsed, doc } = d;
@@ -256,13 +259,13 @@ export function App() {
       try {
         const { view: v, ms } = await kernel.rebuild(shown);
         if (ticket !== latest.current) return;
+        const before = shownView.current;
+        shownView.current = v;
         setView(v);
         setRebuildMs(ms);
-        // Face, edge and vertex indices belong to the previous solid; planes, axes and points are ids, and stay picked while they exist.
-        setSelection((sel) => {
-          const kept = (sel.datums ?? []).filter((id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id));
-          return kept.length ? { faces: [], edges: [], datums: kept } : EMPTY_SELECTION;
-        });
+        // Face, edge and vertex indices belong to the previous solid; a whole body picked (Bodies panel) stays picked by name;
+        // planes, axes and points are ids, and stay picked while they exist.
+        setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
         if (needsFit.current && v.mesh) {
           needsFit.current = false;
           setFitToken((t) => t + 1);
