@@ -473,7 +473,8 @@ export function Viewport({
       for (const sk of v?.sketches ?? []) {
         for (const pl of sk.polylines) {
           const g = new THREE.BufferGeometry().setFromPoints(pl.points.map((p) => new THREE.Vector3(...p)));
-          const color = !sk.ok ? 0xe5484d : pl.construction ? 0x8b93a1 : 0xf28c28;
+          // A reference to the model is purple, as in the sketcher.
+          const color = !sk.ok ? 0xe5484d : pl.reference ? 0x8e44c9 : pl.construction ? 0x8b93a1 : 0xf28c28;
           const mat = pl.construction
             ? new THREE.LineDashedMaterial({ color, dashSize: radius / 40, gapSize: radius / 60, depthTest: false, transparent: true, opacity: SKETCH_OPACITY })
             : new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: sk.ok ? SKETCH_OPACITY : 1 });
@@ -481,6 +482,17 @@ export function Viewport({
           if (pl.construction) line.computeLineDistances();
           line.renderOrder = 3;
           overlays.add(line);
+        }
+        // The sketch's points (hole centres, pattern positions): small markers, the same size at any zoom.
+        // A point that references the model is purple, as its lines are.
+        for (const reference of [false, true]) {
+          const pts = (sk.points ?? []).filter((p) => !!p.reference === reference);
+          if (!pts.length) continue;
+          const g = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p.at)));
+          const color = !sk.ok ? 0xe5484d : reference ? 0x8e44c9 : 0xf28c28;
+          const dots = new THREE.Points(g, new THREE.PointsMaterial({ color, size: 6, sizeAttenuation: false, depthTest: false, transparent: true, opacity: sk.ok ? SKETCH_OPACITY : 1 }));
+          dots.renderOrder = 3;
+          overlays.add(dots);
         }
       }
       rebuildHelpers();

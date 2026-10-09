@@ -4,13 +4,17 @@
 
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Constraint, DatumPlane, SketchEntity, SketchFeature, Vec2 } from "../../doc/types";
+import { isConstruction } from "../../doc/sketch";
+import { constraintTargets, withAxes } from "../../geom/axes";
 import { measureConstraint } from "../../geom/constraints";
 import { buildProfile } from "../../geom/profile";
 import { sketchStatus, solveSketch, wouldOverDefine } from "../../geom/solver";
 import { evaluate } from "../../doc/parameters";
 import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
-import { constraintEntities, describeConstraint, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type Suggestion } from "./draft";
+import { constraintEntities, constraintSentence, describeConstraint, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type Suggestion } from "./draft";
+import { convertEdges, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, renamed, type ModelView } from "./model";
+import { namer, referenceName, shapeWords } from "./names";
 import { dimensionText, RELATION } from "./annotate";
 import { SketchCanvas, type CanvasTarget, type DefinedState, type DrawProgress, type Tool } from "./SketchCanvas";
 import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
@@ -39,8 +43,13 @@ type Dimension = Constraint & { expr?: string };
 
 interface Props {
   session: SketchSession;
-  /** Model edges projected onto the plane (2D segment pairs). */
-  reference: Float32Array;
+  /**
+   * The model as this sketch sees it: the part before the sketch (when it is
+   * edited; as it is now for a new one), its edges projected into the plane.
+   * They are drawn, snapped to, and related or dimensioned to (which adds a
+   * reference entity), and Convert Entities copies them in.
+   */
+  model: ModelView;
   /** `weldment`: the weldment profile box is ticked; the profile card opens next. */
   onFinish(feature: SketchFeature, weldment: boolean): void;
   onCancel(): void;
@@ -55,13 +64,17 @@ interface DraftState {
   constraints: Constraint[];
 }
 
-/** Select and Smart Dimension, and the commands their keys run (Settings → Keyboard). The drawing tools are the registry's (tools/). */
+/**
+ * Select, Smart Dimension and Convert Entities, and the commands their keys
+ * run (Settings → Keyboard). The drawing tools are the registry's (tools/).
+ */
 const MODES: [Tool, string, string, IconName][] = [
   ["select", "Select", "sketch.select", "select"],
   ["dimension", "Dimension", "sketch.dimension", "smartDimension"],
+  ["convert", "Convert", "sketch.convert", "convertEntities"],
 ];
 
-export function SketchMode({ session, reference, onFinish, onCancel, onAsk, applyRef }: Props) {
+export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef }: Props) {
   const [past, setPast] = useState<DraftState[]>([]);
   const [future, setFuture] = useState<DraftState[]>([]);
   const [draft, setDraft] = useState<DraftState>({ entities: session.entities, constraints: session.constraints });
@@ -81,6 +94,11 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     const def = toolByName(t);
     if (def) keep(remember(memory, def));
     if (t !== tool) setMessage(null);
+    // Convert Entities with model edges or faces picked converts them at once; with none, it picks them first.
+    if (t === "convert" && tool !== "convert" && convertible(selection)) {
+      convert(selection, false);
+      return;
+    }
     setToolState(t);
   };
   const drawing = toolByName(tool);
@@ -151,12 +169,36 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     return true;
   };
 
-  const addConstraint = (k: Constraint): boolean => {
-    if (wouldOverDefine(draft.entities, draft.constraints, k)) {
+  /** The model edges, model vertices and sketch axes the sketch can relate to: the stand-ins and the axes beside its own entities. */
+  const modelEnts = useMemo(() => modelEntities(model), [model]);
+  const pool = useMemo(() => withAxes([...draft.entities, ...modelEnts]), [draft.entities, modelEnts]);
+  const names = useMemo(() => namer(draft.entities, model), [draft.entities, model]);
+
+  /**
+   * The constraints with every model edge they name made a reference entity
+   * of the sketch (a construction entity whose ref finds the edge again when
+   * the part rebuilds; one the sketch has already is reused). A string says why not.
+   */
+  const lift = (ks: Constraint[], entities = draft.entities): { entities: SketchEntity[]; constraints: Constraint[] } | string => {
+    const ids = ks.flatMap(modelIdsOf);
+    if (!ids.length) return { entities, constraints: ks };
+    const made = materialize(ids, model, entities);
+    if (typeof made === "string") return made;
+    return { entities: made.entities, constraints: ks.map((k) => renamed(k, made.ids)) };
+  };
+
+  const addConstraint = (raw: Constraint): boolean => {
+    const lifted = lift([raw]);
+    if (typeof lifted === "string") {
+      setMessage(lifted);
+      return false;
+    }
+    const k = lifted.constraints[0];
+    if (wouldOverDefine(lifted.entities, draft.constraints, k)) {
       setMessage("that would over-define the sketch: other relations or dimensions already fix it");
       return false;
     }
-    return setConstraints([...draft.constraints, k]);
+    return setConstraints([...draft.constraints, k], lifted.entities);
   };
 
   /** Sets dimension `i` to a number or an "=expression" (kept beside its value, written back on Finish). */
@@ -182,15 +224,24 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
    * then none.
    */
   const onCreate = ({ entities: made, relations, inferred }: Placement) => {
-    const entities = [...draft.entities, ...made];
-    const tries = [inferred, inferred.filter((k) => k.type === "coincident"), []];
+    // A click that snapped to the model ties the new geometry to it: the edge becomes a reference, if the relation stays.
+    const lifted = lift([...relations, ...inferred], [...draft.entities, ...made]);
+    const own = typeof lifted === "string" ? null : lifted;
+    if (typeof lifted === "string") setMessage(lifted);
+    const shape = own ? own.constraints.slice(0, relations.length) : relations;
+    const inferredLifted = own ? own.constraints.slice(relations.length) : inferred.filter((k) => !modelIdsOf(k).length);
+    const all = own ? own.entities : [...draft.entities, ...made];
+    const tries = [inferredLifted, inferredLifted.filter((k) => k.type === "coincident"), []];
     let error = "";
     for (const ks of tries) {
-      const constraints = [...draft.constraints, ...relations];
-      for (const k of ks) if (!wouldOverDefine(entities, constraints, k)) constraints.push(k);
+      const constraints = [...draft.constraints, ...shape];
+      for (const k of ks) if (!wouldOverDefine(all, constraints, k)) constraints.push(k);
+      // A reference made for a relation that was dropped is dropped with it.
+      const used = new Set(constraints.flatMap(constraintTargets));
+      const entities = all.filter((e) => draft.entities.includes(e) || made.includes(e) || used.has(e.id));
       const r = solveSketch(entities, constraints);
       if (r.ok) {
-        setMessage(null);
+        if (typeof lifted !== "string") setMessage(null);
         commit({ entities: r.entities, constraints });
         return;
       }
@@ -231,7 +282,11 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     setSelection([]);
   };
 
-  /** Turns the selected (or given) entities to construction geometry and back; with none, the next ones drawn. */
+  /**
+   * Turns the selected (or given) entities to construction geometry and back;
+   * with none, the next ones drawn. A reference is construction unless it says
+   * otherwise, so turning it to profile geometry writes construction: false.
+   */
   const toggleConstruction = (items = selection) => {
     const ids = new Set(lineworkIds(items));
     if (!ids.size) return setConstruction((c) => !c);
@@ -239,10 +294,32 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
       ...draft,
       entities: draft.entities.map((e) => {
         if (!ids.has(e.id)) return e;
-        const { construction: was, ...rest } = e;
-        return (was ? rest : { ...rest, construction: true }) as SketchEntity;
+        const { construction: _was, ...rest } = e;
+        const next = !isConstruction(e);
+        // Whichever way, write only what differs from the entity's default.
+        return (next === !!e.ref ? rest : { ...rest, construction: next }) as SketchEntity;
       }),
     });
+  };
+
+  /** Model edges or faces among the items: what Convert Entities takes. */
+  const convertible = (items: SketchItem[]) => items.some((i) => i.kind === "face" || (i.kind === "entity" && isModelId(i.id)));
+
+  /**
+   * Convert Entities: the picked model edges, and each picked face's
+   * outline, into the sketch as references (profile geometry unless
+   * `construction`) joined where they meet. They follow the model.
+   */
+  const convert = (items: SketchItem[], construction: boolean) => {
+    const edges = items.flatMap((i) => (i.kind === "entity" && isModelId(i.id) ? [i.id] : []));
+    const faces = items.flatMap((i) => (i.kind === "face" ? [i.index] : []));
+    const r = convertEdges(edges, faces, model, draft.entities, draft.constraints, construction);
+    if (typeof r === "string") return setMessage(r);
+    if (setConstraints(r.constraints, r.entities)) {
+      setSelection([]);
+      setToolState("select");
+      setMessage(null);
+    }
   };
 
   const finish = () => {
@@ -262,6 +339,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     undo,
     redo,
     delete: () => deleteSelection(),
+    repeat: () => tool === "convert" && convert(selection, false),
     shortcutBar: () => setBar({ x: pointer.x, y: pointer.y }),
     "sketch.construction": () => toggleConstruction(),
     "sketch.finish": finish,
@@ -307,21 +385,46 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
   }, [draft]);
   const dof = status?.dof ?? null;
   const profile = useMemo(() => buildProfile(draft.entities), [draft.entities]);
-  // Offer only relations and dimensions the sketch does not already have.
+  /** It ties something of the sketch's own: a relation between references and axes alone holds by the model, and adds nothing. */
+  const touchesSketch = (k: Constraint) => constraintTargets(k).some((id) => draft.entities.some((e) => e.id === id && !e.ref));
+  // Offer only relations and dimensions the sketch does not already have, between the sketch and itself, the model or its axes.
   const offers = useMemo(() => {
     const have = new Set(draft.constraints.map((k) => constraintKey(k)));
-    return suggestions(draft.entities, selection).filter((o) => !have.has(constraintKey(o.make(o.value ?? 0))));
-  }, [draft, selection]);
+    return suggestions(pool, selection).filter((o) => {
+      const k = o.make(o.value ?? 0);
+      return touchesSketch(k) && !have.has(constraintKey(k));
+    });
+  }, [draft, selection, pool]); // eslint-disable-line react-hooks/exhaustive-deps
   const relations = offers.filter((o) => o.value === undefined);
   const dimensions = offers.filter((o) => o.value !== undefined);
 
   /** Smart Dimension placed: the Modify box opens with what it measures now. */
   const onDimension = (picks: SketchItem[], at: Vec2, x: number, y: number) => {
     const have = new Set(draft.constraints.map((k) => constraintKey(k)));
-    const options = smartDimension(draft.entities, picks, at).filter((o) => !have.has(constraintKey(o.make(o.value ?? 0))));
-    if (!options.length) return setMessage("those can't be dimensioned together; pick a line, circle, arc, or two points, lines or circles");
+    const options = smartDimension(pool, picks, at).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
+    if (!options.length)
+      return setMessage(
+        picks.every((p) => p.kind !== "face" && !draft.entities.some((e) => !e.ref && e.id === (p.kind === "entity" ? p.id : p.ref.split(".")[0])))
+          ? "dimension the sketch's own geometry: pick one of its points, lines or circles with the model edge or axis"
+          : "those can't be dimensioned together; pick a line, circle, arc, or two points, lines or circles",
+      );
     setMessage(null);
     setModify({ x, y, options, choice: 0 });
+  };
+
+  /** A picked item as the selection list reads it: a reference says what it follows. */
+  const describeItem = (i: SketchItem): string => {
+    if (i.kind === "face") return `Model face: its outline converts (${model.faces.find((f) => f.index === i.index)?.edges.length ?? 0} edges)`;
+    if (i.kind === "point") return `Point: ${names.point(i.ref)}`;
+    if (i.id === "X" || i.id === "Y") return `${i.id} axis of the sketch`;
+    if (isModelId(i.id)) {
+      const m = modelEdge(model, i.id);
+      return m?.entity ? `Model edge: ${shapeWords(m.entity)}` : `Model edge: ${m?.problem ?? "can't be referenced"}`;
+    }
+    const e = draft.entities.find((x) => x.id === i.id);
+    if (!e) return i.id;
+    if (e.ref) return `Reference: ${referenceName(e)} (${e.id}${isConstruction(e) ? ", construction" : ", converted"}): it follows the model`;
+    return `${RELATION_NOUN[e.type]} ${e.id}${e.construction ? " (construction)" : ""}`;
   };
 
   /** The right-click menu for whatever is under the pointer, as SOLIDWORKS's sketch menus have it. */
@@ -378,17 +481,30 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     if (!inSelection) setSelection(items);
     setPicked(null);
     const have = new Set(draft.constraints.map((k) => constraintKey(k)));
-    const offered = suggestions(draft.entities, items).filter((o) => !have.has(constraintKey(o.make(o.value ?? 0))));
+    const offered = suggestions(pool, items).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
     const ids = entityIds(items);
     const linework = lineworkIds(items);
     const owner = target.kind === "entity" ? target.id : target.ref.split(".")[0];
     const e = draft.entities.find((x) => x.id === owner);
-    const name = (id: string) => `${RELATION_NOUN[draft.entities.find((x) => x.id === id)?.type ?? "line"]} ${id}`;
+    const name = (id: string) => {
+      const own = draft.entities.find((x) => x.id === id);
+      if (!own) return names.entity(id).replace(/^model edge/, "Model edge").replace(/^([XY]) axis$/, "$1 axis");
+      return own.ref ? `Reference ${id}: ${referenceName(own)}` : `${RELATION_NOUN[own.type]} ${id}`;
+    };
+    const fromModel = convertible(items);
     setMenu({
       x,
       y,
-      title: items.length > 1 ? `${items.length} items` : target.kind === "point" ? (e?.type === "point" ? name(e.id) : `Point ${target.ref}`) : name(target.id),
+      title: items.length > 1 ? `${items.length} items` : target.kind === "point" ? (e?.type === "point" ? name(e.id) : `Point: ${names.point(target.ref)}`) : name(target.id),
       items: [
+        // A model edge: copy it into the sketch, as profile geometry or as construction.
+        ...(fromModel
+          ? [
+              { label: "Convert entities", icon: "convertEntities", onClick: () => convert(items, false), testId: "ctx-convert" } as MenuEntry,
+              { label: "Convert as construction", icon: "construction", onClick: () => convert(items, true), testId: "ctx-convert-construction" } as MenuEntry,
+              "sep" as const,
+            ]
+          : []),
         ...(offered.some((o) => o.value === undefined) ? [{ heading: "Add relation" } as MenuEntry] : []),
         ...offered
           .filter((o) => o.value === undefined)
@@ -399,7 +515,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
                 label: "Smart Dimension",
                 icon: "smartDimension",
                 onClick: () => {
-                  const options = smartDimension(draft.entities, items).filter((o) => !have.has(constraintKey(o.make(o.value ?? 0))));
+                  const options = smartDimension(pool, items).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
                   if (options.length) setModify({ x, y, options, choice: 0 });
                   else setTool("dimension");
                 },
@@ -526,7 +642,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
         <SketchCanvas
           entities={entities}
           constraints={draft.constraints}
-          reference={reference}
+          model={model}
           tool={tool}
           options={toolOptions}
           construction={construction}
@@ -552,6 +668,28 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
           onDimension={onDimension}
         />
         {drawing && <ToolStrip tool={drawing} placed={progress.placed} arcNext={progress.arcNext} options={toolOptions} onOption={setOption} />}
+        {tool === "convert" && (
+          <div className="sketch-tool-strip convert-strip" data-testid="convert-strip">
+            <span className="strip-name">
+              <Icon name="convertEntities" size={14} />
+              Convert Entities
+            </span>
+            <span className="strip-prompt" data-testid="tool-prompt">
+              {(() => {
+                const n = selection.filter((i) => i.kind === "face" || (i.kind === "entity" && isModelId(i.id))).length;
+                return n ? `${n} picked: Convert copies ${n === 1 ? "it" : "them"} in, linked to the model` : "Click model edges, or a face for its outline";
+              })()}
+            </span>
+            <span className="strip-option">
+              <button disabled={!convertible(selection)} onClick={() => convert(selection, false)} data-testid="convert-ok" title="Into profile geometry: it extrudes (Enter)">
+                Convert
+              </button>
+              <button disabled={!convertible(selection)} onClick={() => convert(selection, true)} data-testid="convert-construction" title="As construction geometry: for relations and dimensions only">
+                As construction
+              </button>
+            </span>
+          </div>
+        )}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {modify && (
           <ModifyBox
@@ -585,7 +723,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
             Weldment profile
           </label>
           <div className={`profile-status ${profile.ok ? "" : "bad"}`} data-testid="profile-status">
-            {draft.entities.filter((e) => !e.construction && e.type !== "point").length === 0
+            {draft.entities.filter((e) => !isConstruction(e) && e.type !== "point").length === 0
               ? "No profile yet"
               : profile.ok
                 ? `Profile: ${profile.regions.length} region${profile.regions.length === 1 ? "" : "s"}, area ${round(profile.area)} mm²`
@@ -629,7 +767,14 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
               {selection.length} selected · Delete removes, Esc clears
             </p>
           )}
-          {selection.some((s) => s.kind === "entity") && (
+          {selection.length > 0 && (
+            <ul className="selection-detail" data-testid="sketch-selection-detail">
+              {selection.map((i, n) => (
+                <li key={n}>{describeItem(i)}</li>
+              ))}
+            </ul>
+          )}
+          {entityIds(selection).length > 0 && (
             <div className="row-buttons">
               <button onClick={() => deleteSelection()}>Delete selected</button>
               <button onClick={() => toggleConstruction()}>Toggle construction</button>
@@ -655,9 +800,9 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
                   openMenu({ kind: "constraint", index: i }, e.clientX, e.clientY);
                 }}
               >
-                <span className="constraint-label">
+                <span className="constraint-label" title={constraintSentence(k, RELATION[k.type].label, names)}>
                   <Icon name={RELATION[k.type].icon} size={14} />
-                  {describeConstraint(k)}
+                  {describeConstraint(k, names)}
                 </span>
                 {"value" in k && (
                   <NumberInput
@@ -853,7 +998,8 @@ function ModifyBox({
 
 /** Longer names for the tooltips. */
 const TOOL_TITLE: Partial<Record<Tool, string>> = {
-  dimension: "Smart Dimension: click a line, circle or arc, or two points, lines or circles, then where the dimension goes",
+  dimension: "Smart Dimension: click a line, circle or arc, or two points, lines or circles (the model's edges and the sketch's axes too), then where the dimension goes",
+  convert: "Convert Entities: copy model edges (or a face's outline) into the sketch, linked so they follow the model",
 };
 
 /** What each entity type is called in a menu title. */

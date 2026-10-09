@@ -124,7 +124,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "sketch.midpointLine", label: "Midpoint line", group: "Sketch", key: null },
   // Sketch tools still to come: ids, labels and keys reserved (each loses `planned` when its tool lands).
 
-  { id: "sketch.convert", label: "Convert entities (model edges into the sketch)", group: "Sketch", key: null, planned: true },
+  { id: "sketch.convert", label: "Convert entities (model edges into the sketch)", group: "Sketch", key: null },
 
   { id: "sketch.trim", label: "Trim", group: "Sketch", key: "T", planned: true },
   { id: "sketch.extend", label: "Extend", group: "Sketch", key: "E", planned: true },

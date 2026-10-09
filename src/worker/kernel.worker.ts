@@ -18,6 +18,8 @@ import {
 import { LocalKernel } from "../ask/kernel";
 import { exportRefusal, photoNote } from "../doc/photo";
 import { labelBodies } from "../kernel/bodies";
+import { rebuild } from "../kernel/rebuild";
+import { beforeKey, documentBefore, Recent } from "./before";
 import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -45,6 +47,35 @@ function rebuildCached(doc: unknown): RebuildResult {
   return local.built(doc);
 }
 
+/** The part before a feature, by document and feature: plain data, so it outlives the rebuild it came from. */
+const beforeViews = new Recent<RebuildView>(4);
+
+/** What the UI gets of a rebuild: plain data, the mesh and the B-rep faces and edges indexed like it. */
+function viewOf(kernel: OC, result: RebuildResult): RebuildView {
+  const mesh = result.solid ? tessellate(kernel, result.solid) : null;
+  const topo = result.solid
+    ? scoped((s) => {
+        const f = describeFaces(kernel, s, result.solid!);
+        return { faces: f.infos, edges: describeEdges(kernel, s, result.solid!, f.faces).infos };
+      })
+    : { faces: [], edges: [] };
+  const bodies = result.bodies.map(({ name, faces, edges }) => ({ name, faces, edges }));
+  if (bodies.length > 1) labelBodies(topo, bodies);
+  return {
+    ok: result.ok,
+    name: result.name,
+    errors: result.errors,
+    features: result.features,
+    sketches: result.sketches,
+    measurements: result.measurements,
+    mesh,
+    faces: topo.faces,
+    edges: topo.edges,
+    bodies,
+    datums: result.datums,
+  };
+}
+
 async function handle(kernel: OC, req: KernelRequest) {
   try {
     if (req.type === "port") {
@@ -54,31 +85,24 @@ async function handle(kernel: OC, req: KernelRequest) {
       post({ id: req.id, type: "port", result }, png ? [png.buffer as ArrayBuffer] : []);
     } else if (req.type === "rebuild") {
       const t0 = performance.now();
-      const result = rebuildCached(req.doc);
-      const mesh = result.solid ? tessellate(kernel, result.solid) : null;
-      const topo = result.solid
-        ? scoped((s) => {
-            const f = describeFaces(kernel, s, result.solid!);
-            return { faces: f.infos, edges: describeEdges(kernel, s, result.solid!, f.faces).infos };
-          })
-        : { faces: [], edges: [] };
-      const bodies = result.bodies.map(({ name, faces, edges }) => ({ name, faces, edges }));
-      if (bodies.length > 1) labelBodies(topo, bodies);
-      const view: RebuildView = {
-        ok: result.ok,
-        name: result.name,
-        errors: result.errors,
-        features: result.features,
-        sketches: result.sketches,
-        measurements: result.measurements,
-        mesh,
-        faces: topo.faces,
-        edges: topo.edges,
-        bodies,
-        datums: result.datums,
-      };
+      const view = viewOf(kernel, rebuildCached(req.doc));
+      const mesh = view.mesh;
       const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
       post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);
+    } else if (req.type === "before") {
+      // Its own rebuild, so the document on screen keeps the shared one; kept as plain data (copied out, never transferred).
+      const key = beforeKey(req.doc, req.feature);
+      let view = beforeViews.get(key);
+      if (!view) {
+        const result = rebuild(documentBefore(req.doc, req.feature), kernel);
+        try {
+          view = viewOf(kernel, result);
+        } finally {
+          result.dispose();
+        }
+        beforeViews.set(key, view);
+      }
+      post({ id: req.id, type: "before", view });
     } else {
       const refused = exportRefusal(req.doc);
       if (refused) {
@@ -116,6 +140,7 @@ async function drainQueue() {
     if (heapBytes(oc) > recycleAt) {
       const before = heapBytes(oc);
       local.reset();
+      beforeViews.clear();
       oc = null;
       const t0 = performance.now();
       oc = await recycleOC();

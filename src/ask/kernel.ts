@@ -3,7 +3,7 @@
 // LocalKernel directly. Both run the same code (LocalKernel).
 
 import { geometryKey } from "../doc/drawing";
-import type { ViewLook } from "../doc/types";
+import type { SketchEntity, ViewLook } from "../doc/types";
 import type { Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel";
 import { projectViews, type ProjectedView } from "../kernel/project";
@@ -20,6 +20,13 @@ export interface CheckResult {
   measurements: Measurements | null;
   /** The plane, axis and point features that built, by id: where each is now. */
   datums?: Record<string, Datum>;
+  /**
+   * The sketches that reference the model, by id: their entities as the
+   * rebuild solved them (references projected where the model is now, and
+   * what is tied to them moved with them). The document keeps the numbers it
+   * was given; these are where the geometry is.
+   */
+  solvedSketches?: Record<string, SketchEntity[]>;
 }
 
 export interface PartTopology {
@@ -87,7 +94,16 @@ export class LocalKernel implements KernelPort {
 
   async check(doc: unknown): Promise<CheckResult> {
     const r = this.built(doc);
-    return { ok: r.ok, name: r.name, errors: r.errors, features: r.features, measurements: r.measurements, datums: r.datums };
+    const solved = r.sketches.filter((k) => k.ok && k.entities.some((e) => e.ref));
+    return {
+      ok: r.ok,
+      name: r.name,
+      errors: r.errors,
+      features: r.features,
+      measurements: r.measurements,
+      datums: r.datums,
+      ...(solved.length ? { solvedSketches: Object.fromEntries(solved.map((k) => [k.id, k.entities])) } : {}),
+    };
   }
 
   async topology(doc: unknown): Promise<PartTopology | null> {

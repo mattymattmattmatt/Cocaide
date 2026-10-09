@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import { DEFAULT_BODY, type FaceSelector, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type FaceSelector, type SketchEntity, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
 import { describeWanted } from "../kernel/selectors";
@@ -18,6 +18,7 @@ import { nextBodyName } from "./model/names";
 import { FeatureForm } from "./props/FeatureForm";
 import type { FieldSpec } from "./props/spec";
 import { sketchFrameIn, sketchNormal } from "./model/sketchPlane";
+import { referenceName } from "./sketcher/names";
 import type { Selection } from "./Viewport";
 
 export const OP_LABEL: Record<string, string> = {
@@ -311,6 +312,16 @@ function SketchProps({ form, onEdit, onProfileCard }: { form: EditorProps; onEdi
           {dof !== null && ` · ${dof === 0 ? "fully defined" : `${dof} DOF free`}`}
         </span>
       </Field>
+      {entities.some((e) => (e as { ref?: unknown }).ref) && (
+        <Field label="References">
+          <span className="readout" data-testid="prop-sketch-references" title="Reference geometry follows the model: projected again on every rebuild">
+            {(entities as SketchEntity[])
+              .filter((e) => e.ref)
+              .map((e) => `${e.id}: ${referenceName(e)}`)
+              .join(" · ")}
+          </span>
+        </Field>
+      )}
       {isProfile(f.profile) && (
         <Field label="Weldment">
           <span className="readout" data-testid="prop-profile">

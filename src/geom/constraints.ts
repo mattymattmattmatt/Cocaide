@@ -4,13 +4,14 @@
 // The solver (solver.ts) is what drives geometry from constraints.
 
 import type { AngleConstraint, Constraint, SketchEntity, Vec2 } from "../doc/types";
+import { withAxes } from "./axes";
 import { dist2, sub2 } from "./vec";
 
 const CONSTRAINT_TOL = 1e-6;
 
 /** Returns one message per unsatisfied constraint. */
 export function checkConstraints(entities: SketchEntity[], constraints: Constraint[]): string[] {
-  const byId = new Map(entities.map((e) => [e.id, e]));
+  const byId = new Map(withAxes(entities).map((e) => [e.id, e]));
   const errors: string[] = [];
   constraints.forEach((k, i) => {
     const r = evaluate(k, byId);
@@ -180,5 +181,5 @@ function fmt(x: number): string {
 
 /** What a constraint measures on the current geometry, and what it asks for. */
 export function measureConstraint(entities: SketchEntity[], k: Constraint): { label: string; actual: number; expected: number } {
-  return evaluate(k, new Map(entities.map((e) => [e.id, e])));
+  return evaluate(k, new Map(withAxes(entities).map((e) => [e.id, e])));
 }

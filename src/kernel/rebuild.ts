@@ -7,7 +7,8 @@
 // every failure is reported as "<feature id>: <reason>".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import { DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type PlaneSpec, type SketchFeature, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
+import { expressionFields, isConstruction, isReference } from "../doc/sketch";
 import { validateDocument } from "../doc/validate";
 import type { Datum } from "../features/datum";
 import { runKernelOp, type RebuildCtx } from "../features/kernelDefs";
@@ -19,6 +20,7 @@ import { frameEnds, type FrameMember } from "../weldment/joints";
 import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
 import { memberCut } from "./cutlist";
 import { planeSpecFrame } from "./datum";
+import { solvedSketch } from "./sketchRefs";
 import { interference, measure, volumeOf, type Measurements } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { getOC, type OC, type Scope, scoped } from "./oc";
@@ -63,7 +65,17 @@ export interface FeatureStatus {
 export interface SketchOverlay {
   id: string;
   ok: boolean;
-  polylines: { construction: boolean; points: Vec3[] }[];
+  /** Each entity's outline. `reference`: it is the model's edge or axis projected into the sketch. */
+  polylines: { construction: boolean; reference?: boolean; points: Vec3[] }[];
+  /** The sketch's points (point entities): hole centres, pattern positions. */
+  points: { at: Vec3; reference?: boolean }[];
+  /**
+   * The entities as the rebuild solved them: a sketch that references the
+   * model has its references projected again and its geometry solved around
+   * them, so these may differ from the document's numbers. The sketcher opens
+   * on these.
+   */
+  entities: SketchEntity[];
   /** The sketch's plane frame as it resolved (a sketch on a face follows the face): its 2D x, y map to frame.x, frame.y. */
   frame: Frame;
   /** Why its curves are no closed profile, when they are not (it still builds; what needs a profile says so). */
@@ -344,7 +356,14 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const frame = planeOf(raw.plane);
           const shown = overlay(raw, frame);
           sketches.push(shown);
-          const profile = buildSketch(raw, frame);
+          // Its references to the model projected as the part stands now, and its geometry solved around them.
+          const rawFeature = (input as { features?: unknown[] }).features?.[vf.index] as { entities?: unknown } | undefined;
+          const sketch = solvedSketch(ctx, raw, frame, expressionFields(rawFeature?.entities));
+          if (sketch !== raw) {
+            Object.assign(shown, overlay(sketch, frame));
+            sketchFeatures.set(raw.id, sketch);
+          }
+          const profile = buildSketch(sketch, frame);
           profiles.set(raw.id, profile);
           shown.ok = true;
           if (profile.open) shown.open = profile.open;
@@ -680,13 +699,16 @@ function buildSketch(f: SketchFeature, frame: Frame): SketchProfile {
 
 /** The sketch drawn in world space, not yet known to be good. */
 function overlay(f: SketchFeature, frame: Frame): SketchOverlay {
+  const mark = (e: SketchEntity) => (isReference(e) ? { reference: true } : {});
   return {
     id: f.id,
     ok: false,
     frame,
     polylines: f.entities.flatMap((e) =>
-      entityPolylines(e).map((pts) => ({ construction: !!e.construction, points: pts.map((p) => to3D(frame, p)) })),
+      entityPolylines(e).map((pts) => ({ construction: isConstruction(e), ...mark(e), points: pts.map((p) => to3D(frame, p)) })),
     ),
+    points: f.entities.flatMap((e) => (e.type === "point" ? [{ at: to3D(frame, e.at), ...mark(e) }] : [])),
+    entities: f.entities,
   };
 }
 

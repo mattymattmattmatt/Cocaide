@@ -164,8 +164,9 @@ test("in a sketch: L, R and C pick tools, a box left to right selects what's ins
   await sketchClick(page, 0, 0);
   await sketchClick(page, 20, 10);
   await page.keyboard.press("c");
-  await sketchClick(page, 40, 5);
-  await sketchClick(page, 44, 5);
+  // Clear of the bracket's right-hand edge (x = 40): a centre clicked on a model edge is tied to it by a reference.
+  await sketchClick(page, 50, 5);
+  await sketchClick(page, 54, 5);
   await page.keyboard.press("v");
   await expect(page.getByTestId("tool-select")).toHaveAttribute("aria-pressed", "true");
   const toScreen = (x: number, y: number) =>
@@ -190,7 +191,7 @@ test("in a sketch: L, R and C pick tools, a box left to right selects what's ins
   await boxDrag([-5, -5], [25, 15]);
   await expect(page.getByTestId("sketch-selection")).toContainText("4 selected");
   // Right to left across both: the rectangle's right side and the circle.
-  await boxDrag([42, 7], [10, 3]);
+  await boxDrag([52, 7], [10, 3]);
   await expect(page.getByTestId("sketch-selection")).toContainText("2 selected");
 });
 

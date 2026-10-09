@@ -105,7 +105,7 @@ describe("the registry", () => {
     for (const id of ["tool.revolve", "tool.sweep", "tool.loft", "tool.shell", "tool.draft", "tool.rib", "tool.scale", "tool.measure", "tool.section", "tool.sketchPattern"]) {
       expect(planned).toContain(id);
     }
-    const sketch = ["ellipse", "spline", "trim", "extend", "split", "fillet", "chamfer", "offset", "mirror", "linearPattern", "circularPattern", "move", "rotate", "scale", "copy", "convert", "fullyDefine"];
+    const sketch = ["ellipse", "spline", "trim", "extend", "split", "fillet", "chamfer", "offset", "mirror", "linearPattern", "circularPattern", "move", "rotate", "scale", "copy", "fullyDefine"];
     expect(planned.filter((id) => id.startsWith("sketch.")).sort()).toEqual(sketch.map((s) => `sketch.${s}`).sort());
   });
 });

@@ -4,6 +4,7 @@
 // sketch millimetres, y up; the canvas draws it.
 
 import type { Constraint, ConstraintType, SketchEntity, Vec2 } from "../../doc/types";
+import { withAxes } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
 import type { IconName } from "../icons";
@@ -56,7 +57,8 @@ export interface DimensionShape {
  * the side away from the middle of the sketch.
  */
 export function dimensionShapes(entities: SketchEntity[], constraints: Constraint[], px: number): DimensionShape[] {
-  const byId = new Map(entities.map((e) => [e.id, e]));
+  // A dimension from the sketch's X or Y axis measures to it as to any line.
+  const byId = new Map(withAxes(entities).map((e) => [e.id, e]));
   const pts = entities.flatMap((e) => Object.values(e).filter((v): v is Vec2 => Array.isArray(v)));
   const middle: Vec2 = pts.length ? [avg(pts.map((p) => p[0])), avg(pts.map((p) => p[1]))] : [0, 0];
   const gap = 22 * px;
@@ -130,6 +132,8 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
     });
   };
 
+  /** The radius and diameter dimensions, laid out last. */
+  const round: number[] = [];
   constraints.forEach((k, index) => {
     if (!("value" in k)) return;
     const text = dimensionText(k);
@@ -160,33 +164,10 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         return;
       }
       case "radius":
-      case "diameter": {
-        const e = byId.get(k.entity);
-        if (!e || (e.type !== "circle" && e.type !== "arc")) return;
-        const r = e.type === "circle" ? e.radius : dist2(e.start, e.center);
-        // A circle's leader at 45°; an arc's through the middle of the arc.
-        let a = Math.PI / 4;
-        if (e.type === "arc") {
-          const a0 = angleOf(sub2(e.start, e.center));
-          const a1 = angleOf(sub2(e.end, e.center));
-          let sweep = e.clockwise ? a0 - a1 : a1 - a0;
-          while (sweep <= 0) sweep += 2 * Math.PI;
-          a = e.clockwise ? a0 - sweep / 2 : a0 + sweep / 2;
-        }
-        const u: Vec2 = [Math.cos(a), Math.sin(a)];
-        const c = e.center;
-        const rim: Vec2 = [c[0] + u[0] * r, c[1] + u[1] * r];
-        const out1: Vec2 = [c[0] + u[0] * (r + gap), c[1] + u[1] * (r + gap)];
-        const from: Vec2 = k.type === "diameter" ? [c[0] - u[0] * r, c[1] - u[1] * r] : c;
-        out.push({
-          index,
-          text,
-          lines: [[from, out1]],
-          arrows: [{ at: rim, dir: u }, ...(k.type === "diameter" ? [{ at: from, dir: [-u[0], -u[1]] as Vec2 }] : [])],
-          at: [out1[0] + u[0] * 10 * px, out1[1] + u[1] * 10 * px],
-        });
+      case "diameter":
+        // Laid out after the rest, so their leaders can keep clear of the other dimensions.
+        round.push(index);
         return;
-      }
       case "angle": {
         const [a, b] = k.entities.map((id) => byId.get(id));
         if (a?.type !== "line" || b?.type !== "line") return;
@@ -215,15 +196,94 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
       }
     }
   });
+  for (const index of round) {
+    const k = constraints[index] as Extract<Constraint, { type: "radius" | "diameter" }>;
+    const e = byId.get(k.entity);
+    if (!e || (e.type !== "circle" && e.type !== "arc")) continue;
+    const r = e.type === "circle" ? e.radius : dist2(e.start, e.center);
+    // A circle's leader at 45°; an arc's through the middle of the arc.
+    let a = Math.PI / 4;
+    if (e.type === "arc") {
+      const a0 = angleOf(sub2(e.start, e.center));
+      const a1 = angleOf(sub2(e.end, e.center));
+      let sweep = e.clockwise ? a0 - a1 : a1 - a0;
+      while (sweep <= 0) sweep += 2 * Math.PI;
+      a = e.clockwise ? a0 - sweep / 2 : a0 + sweep / 2;
+    }
+    const leader = (angle: number): DimensionShape => {
+      const u: Vec2 = [Math.cos(angle), Math.sin(angle)];
+      const c = e.center;
+      const rim: Vec2 = [c[0] + u[0] * r, c[1] + u[1] * r];
+      const out1: Vec2 = [c[0] + u[0] * (r + gap), c[1] + u[1] * (r + gap)];
+      const from: Vec2 = k.type === "diameter" ? [c[0] - u[0] * r, c[1] - u[1] * r] : c;
+      return {
+        index,
+        text: dimensionText(k),
+        lines: [[from, out1]],
+        arrows: [{ at: rim, dir: u }, ...(k.type === "diameter" ? [{ at: from, dir: [-u[0], -u[1]] as Vec2 }] : [])],
+        at: [out1[0] + u[0] * 10 * px, out1[1] + u[1] * 10 * px],
+      };
+    };
+    // A circle's leader turns a quarter at a time until its value clears the other dimensions' values (an arc's stays mid-arc).
+    const tries = (e.type === "circle" ? [0, 1, 3, 2] : [0]).map((q) => leader(a + (q * Math.PI) / 2));
+    out.push(tries.find((t) => out.every((o) => dist2(o.at, t.at) > 28 * px)) ?? tries[0]);
+  }
   return out;
 }
 
 export interface Glyph {
-  /** The constraint it shows. */
+  /** The constraint it shows (the first of a group). */
   index: number;
   icon: IconName;
   /** Where it is drawn, in sketch mm: beside the entity or point, stacked when several share a place. */
   at: Vec2;
+  /**
+   * A group's constraints, when one glyph speaks for several: a polygon's
+   * equal sides, its corners on its circle. Selecting it selects the first.
+   */
+  indices?: number[];
+}
+
+/** Below this many, relations of a kind show one glyph each; from it, one glyph speaks for the set. */
+const GROUP_FROM = 3;
+
+/**
+ * Relations that read as one: equal relations joining three or more entities
+ * (a polygon's sides), and three or more points on one entity (a polygon's
+ * corners on its circle). For each group, its constraint indices, the first
+ * of which is drawn.
+ */
+export function relationGroups(constraints: Constraint[]): number[][] {
+  const groups: number[][] = [];
+  // Equal: entities joined into sets by the relations between them.
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    while (parent.has(x) && parent.get(x) !== x) x = parent.get(x)!;
+    return x;
+  };
+  constraints.forEach((k) => {
+    if (k.type !== "equal") return;
+    const [a, b] = k.entities.map(find);
+    if (a !== b) parent.set(a, b);
+  });
+  const equal = new Map<string, number[]>();
+  const members = new Map<string, Set<string>>();
+  constraints.forEach((k, i) => {
+    if (k.type !== "equal") return;
+    const root = find(k.entities[0]);
+    equal.set(root, [...(equal.get(root) ?? []), i]);
+    const set = members.get(root) ?? new Set<string>();
+    k.entities.forEach((id) => set.add(id));
+    members.set(root, set);
+  });
+  for (const [root, ks] of equal) if (members.get(root)!.size >= GROUP_FROM) groups.push(ks);
+  // Points on one entity.
+  const on = new Map<string, number[]>();
+  constraints.forEach((k, i) => {
+    if (k.type === "pointOn") on.set(k.entity, [...(on.get(k.entity) ?? []), i]);
+  });
+  for (const ks of on.values()) if (ks.length >= GROUP_FROM) groups.push(ks);
+  return groups;
 }
 
 /**
@@ -253,9 +313,28 @@ export function relationGlyphs(entities: SketchEntity[], constraints: Constraint
       // a point of a deleted entity: nothing to show
     }
   };
+  // A group shows one glyph, on what its relations share: the first equal side, the circle the corners are on.
+  const grouped = new Map<number, number[]>();
+  const hidden = new Set<number>();
+  for (const g of relationGroups(constraints)) {
+    grouped.set(g[0], g);
+    g.slice(1).forEach((i) => hidden.add(i));
+  }
   constraints.forEach((k, index) => {
-    if ("value" in k) return;
+    if ("value" in k || hidden.has(index)) return;
     const icon = RELATION[k.type].icon;
+    const group = grouped.get(index);
+    if (group) {
+      const target = k.type === "equal" ? k.entities[0] : k.type === "pointOn" ? k.entity : null;
+      if (target) {
+        const e = byId.get(target);
+        if (e) {
+          place(`e:${target}`, anchorOf(e), index, icon);
+          out[out.length - 1].indices = group;
+        }
+        return;
+      }
+    }
     switch (k.type) {
       case "coincident":
         return onPoint(k.points[0] === "origin" ? k.points[1] : k.points[0], index, icon);

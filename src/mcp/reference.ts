@@ -79,6 +79,40 @@ Relations:
   { "type": "fix", "entity": "l1" }                              (or "point": "l1.end", or a point entity: held where it is)
 A relation that repeats or contradicts what the sketch already fixes is refused.
 
+### The sketch axes, and references to the model (dimension to model edges; they follow the model)
+Every sketch has two axis lines, "X" and "Y" (through its origin along its x and y), usable wherever a line id is, as
+"origin" is a point: { "type": "distance", "point": "c1.center", "line": "Y", "value": 20 }, { "type": "angle",
+"entities": ["l1", "X"], "value": 30 }, parallel, perpendicular, collinear, tangent, pointOn, symmetric "line". Not as an
+entity with a length or ends of its own (no "X.start", no length, equal or fix); no entity may be called X or Y.
+A line, circle, arc or point entity may carry "ref": a reference to the model. Such an entity is reference geometry:
+the model's edge, axis or point projected into the sketch plane as the part stands at the sketch's place in history,
+projected again on every rebuild. Its numbers are the projection's (write any; the rebuild replaces them) and the
+solver holds them, so every relation and dimension to it follows the model: dimension a circle 12 mm from a model edge,
+change the plate's width, and the circle (and the hole cut from it) moves with the edge. A reference is construction
+(never profile) unless it says "construction": false (Convert Entities: the model's outline copied in as profile).
+  line:   "ref": { "edge": <edge selector> }  - a straight edge (or a circular one seen edge-on, as the line it looks like)
+          "ref": { "datum": "Z" }  (or "X", "Y", an axis feature's id) - an axis, drawn long enough to cross the part
+  circle: "ref": { "edge": <selector of a whole circular edge> }  - its plane must face the sketch
+  arc:    "ref": { "edge": <selector of a part-circle edge> }
+  point:  "ref": { "edge": <selector>, "at": "start" | "end" | "mid" | "center" }, { "datum": "Origin" }, a point feature
+A tilted circle (an ellipse in the sketch) or a freeform edge can't be referenced; the rebuild says so. A reference that
+no longer finds its edge fails the sketch, naming the entity: re-pick its selector, or delete it. A reference can't be
+fixed or dragged. Edge selectors are the ones fillet uses; pick them with the measure tool first. The sketch's frame is
+the face's: for a sketch on the top face of a part on Top, sketch x and y are world x and y.
+Worked example: a hole 12 mm in from the right-hand edge of a plate's top face, on the plate's centre line, Ø6 through:
+{ "id": "sk_hole", "op": "sketch", "plane": { "type": "ref", "ref": { "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } } },
+  "entities": [
+    { "id": "e1", "type": "line", "start": [40,-20], "end": [40,20], "ref": { "edge": { "type": "edge", "between": [
+        { "type": "planar", "normal": [0,0,1], "pick": "largest" }, { "type": "planar", "normal": [1,0,0], "pick": "largest" } ], "pick": "all" } } },
+    { "id": "c1", "type": "circle", "center": [28,0], "radius": 3 } ],
+  "constraints": [
+    { "type": "distance", "point": "c1.center", "line": "e1", "value": 12 },
+    { "type": "distance", "point": "c1.center", "line": "X", "value": 0 },
+    { "type": "diameter", "entity": "c1", "value": 6 } ] }
+{ "id": "cut_1", "op": "cut", "sketch": "sk_hole", "extent": "throughAll", "direction": [0,0,-1] }
+The sketch is fully defined: the reference counts no degrees of freedom. The context packet lists a sketch's reference
+entities with what each references ("reference": ...).
+
 ## extrude / cut
 { "id": "ext_1", "op": "extrude", "sketch": "sketch_1", "distance": 6, "direction": [0,0,1] }
 "cut" removes material with the same fields. "extent": "blind" (default) | "midplane" | "throughAll" (no distance).
