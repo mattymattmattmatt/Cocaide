@@ -11,6 +11,7 @@ import { dimensionShapes, RELATION, relationGlyphs } from "./annotate";
 import { constraintTargets } from "../../geom/axes";
 import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem } from "./draft";
 import { faceAt, isModelId, modelEntities, type ModelFace, type ModelView } from "./model";
+import { shapeWords } from "./names";
 import { tangentStart } from "./tools/arcs";
 import { place, previewOf, snapClick, toolByName, type Placement } from "./tools/run";
 import type { Click, SketchToolDef, ToolContext, ToolOptions } from "./tools/types";
@@ -492,7 +493,9 @@ export function SketchCanvas(props: Props) {
               ].join(" ")}
               vectorEffect="non-scaling-stroke"
               data-model-edge={m.index}
-            />
+            >
+              <title>{m.entity ? `Model edge: ${shapeWords(m.entity)}. Dimension or relate to it, or Convert it` : `Model edge: ${m.problem ?? "can't be referenced"}`}</title>
+            </path>
           ))}
         </g>
         {entities.map((e) => {

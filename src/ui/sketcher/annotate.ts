@@ -132,6 +132,8 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
     });
   };
 
+  /** The radius and diameter dimensions, laid out last. */
+  const round: number[] = [];
   constraints.forEach((k, index) => {
     if (!("value" in k)) return;
     const text = dimensionText(k);
@@ -162,33 +164,10 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         return;
       }
       case "radius":
-      case "diameter": {
-        const e = byId.get(k.entity);
-        if (!e || (e.type !== "circle" && e.type !== "arc")) return;
-        const r = e.type === "circle" ? e.radius : dist2(e.start, e.center);
-        // A circle's leader at 45°; an arc's through the middle of the arc.
-        let a = Math.PI / 4;
-        if (e.type === "arc") {
-          const a0 = angleOf(sub2(e.start, e.center));
-          const a1 = angleOf(sub2(e.end, e.center));
-          let sweep = e.clockwise ? a0 - a1 : a1 - a0;
-          while (sweep <= 0) sweep += 2 * Math.PI;
-          a = e.clockwise ? a0 - sweep / 2 : a0 + sweep / 2;
-        }
-        const u: Vec2 = [Math.cos(a), Math.sin(a)];
-        const c = e.center;
-        const rim: Vec2 = [c[0] + u[0] * r, c[1] + u[1] * r];
-        const out1: Vec2 = [c[0] + u[0] * (r + gap), c[1] + u[1] * (r + gap)];
-        const from: Vec2 = k.type === "diameter" ? [c[0] - u[0] * r, c[1] - u[1] * r] : c;
-        out.push({
-          index,
-          text,
-          lines: [[from, out1]],
-          arrows: [{ at: rim, dir: u }, ...(k.type === "diameter" ? [{ at: from, dir: [-u[0], -u[1]] as Vec2 }] : [])],
-          at: [out1[0] + u[0] * 10 * px, out1[1] + u[1] * 10 * px],
-        });
+      case "diameter":
+        // Laid out after the rest, so their leaders can keep clear of the other dimensions.
+        round.push(index);
         return;
-      }
       case "angle": {
         const [a, b] = k.entities.map((id) => byId.get(id));
         if (a?.type !== "line" || b?.type !== "line") return;
@@ -217,6 +196,38 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
       }
     }
   });
+  for (const index of round) {
+    const k = constraints[index] as Extract<Constraint, { type: "radius" | "diameter" }>;
+    const e = byId.get(k.entity);
+    if (!e || (e.type !== "circle" && e.type !== "arc")) continue;
+    const r = e.type === "circle" ? e.radius : dist2(e.start, e.center);
+    // A circle's leader at 45°; an arc's through the middle of the arc.
+    let a = Math.PI / 4;
+    if (e.type === "arc") {
+      const a0 = angleOf(sub2(e.start, e.center));
+      const a1 = angleOf(sub2(e.end, e.center));
+      let sweep = e.clockwise ? a0 - a1 : a1 - a0;
+      while (sweep <= 0) sweep += 2 * Math.PI;
+      a = e.clockwise ? a0 - sweep / 2 : a0 + sweep / 2;
+    }
+    const leader = (angle: number): DimensionShape => {
+      const u: Vec2 = [Math.cos(angle), Math.sin(angle)];
+      const c = e.center;
+      const rim: Vec2 = [c[0] + u[0] * r, c[1] + u[1] * r];
+      const out1: Vec2 = [c[0] + u[0] * (r + gap), c[1] + u[1] * (r + gap)];
+      const from: Vec2 = k.type === "diameter" ? [c[0] - u[0] * r, c[1] - u[1] * r] : c;
+      return {
+        index,
+        text: dimensionText(k),
+        lines: [[from, out1]],
+        arrows: [{ at: rim, dir: u }, ...(k.type === "diameter" ? [{ at: from, dir: [-u[0], -u[1]] as Vec2 }] : [])],
+        at: [out1[0] + u[0] * 10 * px, out1[1] + u[1] * 10 * px],
+      };
+    };
+    // A circle's leader turns a quarter at a time until its value clears the other dimensions' values (an arc's stays mid-arc).
+    const tries = (e.type === "circle" ? [0, 1, 3, 2] : [0]).map((q) => leader(a + (q * Math.PI) / 2));
+    out.push(tries.find((t) => out.every((o) => dist2(o.at, t.at) > 28 * px)) ?? tries[0]);
+  }
   return out;
 }
 

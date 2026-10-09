@@ -774,7 +774,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               ))}
             </ul>
           )}
-          {selection.some((s) => s.kind === "entity") && (
+          {entityIds(selection).length > 0 && (
             <div className="row-buttons">
               <button onClick={() => deleteSelection()}>Delete selected</button>
               <button onClick={() => toggleConstruction()}>Toggle construction</button>

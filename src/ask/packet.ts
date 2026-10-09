@@ -542,6 +542,7 @@ function sketchMeasurements(f: Raw): Record<string, unknown> {
   // Its references to the model: re-projected on every rebuild, held by the solver, followed by what is related to them.
   const refs = entities.filter((e) => e.ref);
   if (refs.length) out.references = refs.map(referenceBrief);
+  out.axes = 'the sketch axes "X" and "Y" are lines any relation or dimension may name, as "origin" is a point';
   return out;
 }
 

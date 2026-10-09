@@ -12,7 +12,7 @@ import { planeFrame } from "../src/geom/frame";
 import { buildProfile } from "../src/geom/profile";
 import { sketchDof, solveSketch } from "../src/geom/solver";
 import { describeEdges, describeFaces, loadOC, rebuild, scoped, tessellate, type OC } from "../src/kernel";
-import { relationGlyphs, relationGroups } from "../src/ui/sketcher/annotate";
+import { dimensionShapes, relationGlyphs, relationGroups } from "../src/ui/sketcher/annotate";
 import { axesAllowed, constraintSentence, describeConstraint, itemEntities, suggestions } from "../src/ui/sketcher/draft";
 import { convertEdges, faceAt, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, modelView, renamed, type ModelView } from "../src/ui/sketcher/model";
 import { directionWord, namer, referenceName } from "../src/ui/sketcher/names";
@@ -272,5 +272,23 @@ describe("the part before a feature", () => {
     expect(r.get("b")).toBeUndefined();
     expect(r.get("a")).toBe(1);
     expect(r.get("c")).toBe(3);
+  });
+});
+
+describe("dimension values keep clear of each other", () => {
+  it("a circle's diameter leader turns away from where a distance to the edge beside it reads", () => {
+    const edge: SketchEntity = { id: "l1", type: "line", start: [40, -20], end: [40, 20], ref: { edge: { type: "edge", pick: "all" } } };
+    const c1: SketchEntity = { id: "c1", type: "circle", center: [28, 10], radius: 3 };
+    const px = 0.13; // mm per pixel, as the sketcher had it
+    const ks: Constraint[] = [
+      { type: "distance", point: "c1.center", line: "l1", value: 12 },
+      { type: "diameter", entity: "c1", value: 6 },
+    ];
+    const dims = dimensionShapes([edge, c1], ks, px);
+    const [d, dia] = [dims.find((x) => x.index === 0)!, dims.find((x) => x.index === 1)!];
+    expect(Math.hypot(d.at[0] - dia.at[0], d.at[1] - dia.at[1])).toBeGreaterThan(28 * px);
+    // On its own, the leader stays at 45° up and to the right.
+    const alone = dimensionShapes([c1], [ks[1]], px)[0];
+    expect(alone.at[0] > 28 && alone.at[1] > 10).toBe(true);
   });
 });

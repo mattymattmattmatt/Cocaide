@@ -17,6 +17,9 @@ import { buildProfile } from "../src/geom/profile";
 import { isFullCircle, projectAxis, projectEdge, withProjection, type EdgeGeometry } from "../src/geom/projection";
 import { sketchDof, sketchStatus, solveSketch, wouldOverDefine } from "../src/geom/solver";
 import { loadOC, rebuild, scoped, type OC } from "../src/kernel";
+import { LocalKernel } from "../src/ask/kernel";
+import { buildPacket } from "../src/ask/packet";
+import { REFERENCE } from "../src/mcp/reference";
 import { describeFaces } from "../src/kernel/topology";
 
 const PI = Math.PI;
@@ -515,5 +518,40 @@ describe("the rebuild projects references and solves the sketch around them", ()
     const b = built(doc);
     expect(b.errors).toEqual([]);
     expect(b.volume).toBeCloseTo((80 * 40 - PI * 3.3 ** 2) * 16, 4);
+  });
+});
+
+describe("the AI sees references as references", () => {
+  const doc = add(bracket, {
+    id: "sk",
+    op: "sketch",
+    plane: onTop,
+    entities: [
+      { id: "l1", type: "line", start: [40, -20], end: [40, 20], ref: { edge: topEdge([1, 0, 0]) } },
+      { id: "c1", type: "circle", center: [30, 0], radius: 3 },
+    ],
+    constraints: [{ type: "distance", point: "c1.center", line: "l1", value: 10 }],
+  });
+
+  it("the sketch's packet lists its references, what each references, and the axes", async () => {
+    const p = await buildPacket(doc, { kind: "feature", id: "sk" }, new LocalKernel(() => oc));
+    const m = p.measurements as { references: Record<string, unknown>[]; axes: string };
+    expect(m.references).toEqual([
+      expect.objectContaining({ entity: "l1", type: "line", construction: true, references: expect.stringMatching(/^the model edge \(edges between the planar face normal \+Z.* and the planar face normal \+X/) }),
+    ]);
+    expect(m.axes).toMatch(/"X" and "Y"/);
+  });
+
+  it("an entity's packet says it is a reference that follows the model", async () => {
+    const p = await buildPacket(doc, { kind: "entity", sketch: "sk", entity: "l1" }, new LocalKernel(() => oc));
+    expect((p as unknown as { reference: { follows: string } }).reference.follows).toMatch(/^the model: projected again on every rebuild/);
+    expect((p.parent as { entities: string }).entities).toMatch(/^l1 line \(reference to the model edge .*\), c1 circle$/);
+  });
+
+  it("the reference documents references, the axes and a worked example", () => {
+    expect(REFERENCE).toContain('"X" and "Y"');
+    expect(REFERENCE).toContain("follows the model");
+    expect(REFERENCE).toContain('"ref": { "edge":');
+    expect(REFERENCE).toContain('"construction": false');
   });
 });
