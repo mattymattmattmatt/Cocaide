@@ -7,10 +7,16 @@ import { kernel as scale } from "./scale/kernel";
 import { kernel as plane } from "./plane/kernel";
 import { kernel as axis } from "./axis/kernel";
 import { kernel as point } from "./point/kernel";
+import { kernel as revolve } from "./revolve/kernel";
+import { kernel as shell } from "./shell/kernel";
+import { kernel as draft } from "./draft/kernel";
 
 export const KERNEL_DEFS = [
   scale,
   plane,
   axis,
   point,
+  revolve,
+  shell,
+  draft,
 ];
