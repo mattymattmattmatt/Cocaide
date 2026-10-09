@@ -27,6 +27,7 @@ import { isObject } from "./validate";
 import { documentParameters, parameterRefs } from "./parameters";
 import { rawConstraintEntities } from "./sketch";
 import { DEFAULT_BODY } from "./types";
+import { defOf } from "../features/defs";
 
 export type WriteScope = string[];
 
@@ -229,6 +230,7 @@ function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteSc
       // Keeping some bodies deletes all the others: that is never one body's to do.
       return Array.isArray(f.bodies) && f.bodies.length > 0 && f.bodies.every(inScope);
     default:
-      return false;
+      // A registry op says for itself; one that doesn't is never one body's.
+      return defOf(f.op)?.onlyBodies?.(f, inScope, doc) ?? false;
   }
 }

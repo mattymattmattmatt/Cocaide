@@ -34,21 +34,31 @@ import { countSubShapes } from "./topology";
 
 export class OpError extends Error {}
 
-/** What a sketch feature leaves behind for the features that consume it. */
+/**
+ * What a sketch feature leaves behind for the features that consume it: its
+ * plane frame (resolved, for a sketch placed by reference) and its closed
+ * regions. A sketch whose curves make no closed profile (an open chain, a
+ * path, crossing lines) still builds: `regions` is empty and `open` says why,
+ * for a feature that needs a closed profile to report.
+ */
 export interface SketchProfile {
   frame: Frame;
   regions: Region[];
   /** Total enclosed area, from exact 2D geometry. */
   area: number;
+  /** Why the curves are no closed profile ("profile is open at [0, 0] (start of "l1")"), when they are not. */
+  open?: string;
 }
 
-const VOLUME_EPS = 1e-9;
+/** Volume (mm³) below which material counts as not added or removed. */
+export const VOLUME_EPS = 1e-9;
 
 // ------------------------------------------------------------ primitives
 
-const pnt = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Pnt(v[0], v[1], v[2]));
-const dir = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Dir(v[0], v[1], v[2]));
-const vec = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Vec(v[0], v[1], v[2]));
+/** gp_Pnt, gp_Dir and gp_Vec from a Vec3, tracked in `s`. */
+export const pnt = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Pnt(v[0], v[1], v[2]));
+export const dir = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Dir(v[0], v[1], v[2]));
+export const vec = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Vec(v[0], v[1], v[2]));
 
 function loopWire(oc: OC, s: Scope, frame: Frame, loop: Loop) {
   const wire = s.track(new oc.BRepBuilderAPI_MakeWire());
@@ -101,7 +111,8 @@ export function profileFaces(oc: OC, s: Scope, profile: SketchProfile): TopoDS_F
   });
 }
 
-function prism(oc: OC, s: Scope, faces: TopoDS_Face[], offset: Vec3, length: Vec3): TopoDS_Shape {
+/** Each face moved by `offset`, then swept along `length` (a vector), as one solid or a compound of them. */
+export function prism(oc: OC, s: Scope, faces: TopoDS_Face[], offset: Vec3, length: Vec3): TopoDS_Shape {
   const solids = faces.map((face) => {
     let base: TopoDS_Shape = face;
     if (len3(offset) > 0) {
@@ -116,7 +127,8 @@ function prism(oc: OC, s: Scope, faces: TopoDS_Face[], offset: Vec3, length: Vec
   return compoundOf(oc, s, solids);
 }
 
-function compoundOf(oc: OC, s: Scope, shapes: TopoDS_Shape[]): TopoDS_Shape {
+/** One shape, or a compound of several (tracked in `s`). */
+export function compoundOf(oc: OC, s: Scope, shapes: TopoDS_Shape[]): TopoDS_Shape {
   if (shapes.length === 1) return shapes[0];
   const builder = s.track(new oc.TopoDS_Builder());
   const compound = s.track(new oc.TopoDS_Compound());
@@ -128,21 +140,21 @@ function compoundOf(oc: OC, s: Scope, shapes: TopoDS_Shape[]): TopoDS_Shape {
 export type BooleanKind = "fuse" | "cut";
 
 /** Boolean, then merge coplanar faces and collinear edges so selectors see whole faces. */
-function boolean(oc: OC, s: Scope, kind: BooleanKind, a: TopoDS_Shape, b: TopoDS_Shape): TopoDS_Shape {
+export function boolean(oc: OC, s: Scope, kind: BooleanKind, a: TopoDS_Shape, b: TopoDS_Shape): TopoDS_Shape {
   const progress = s.track(new oc.Message_ProgressRange());
   const op = s.track(kind === "fuse" ? new oc.BRepAlgoAPI_Fuse(a, b, progress) : new oc.BRepAlgoAPI_Cut(a, b, progress));
   if (!op.IsDone()) throw new OpError(`the ${kind} boolean failed in the kernel`);
   return unify(oc, s, s.track(op.Shape()));
 }
 
-function unify(oc: OC, s: Scope, shape: TopoDS_Shape): TopoDS_Shape {
+export function unify(oc: OC, s: Scope, shape: TopoDS_Shape): TopoDS_Shape {
   const u = s.track(new oc.ShapeUpgrade_UnifySameDomain(shape, true, true, false));
   u.Build();
   return s.track(u.Shape());
 }
 
 /** Length along `d` from `from` to the far side of the shape, plus a margin. */
-function reachAlong(oc: OC, s: Scope, shape: TopoDS_Shape, from: Vec3, d: Vec3): number {
+export function reachAlong(oc: OC, s: Scope, shape: TopoDS_Shape, from: Vec3, d: Vec3): number {
   const bb = boundingBoxOf(oc, s, shape);
   if (!bb) return 0;
   let far = -Infinity;
@@ -161,7 +173,7 @@ function reachAlong(oc: OC, s: Scope, shape: TopoDS_Shape, from: Vec3, d: Vec3):
  * is what throughAll goes through (the bodies the feature works on).
  */
 export function extrudeTool(oc: OC, s: Scope, f: ExtrudeFeature, profile: SketchProfile, reach: TopoDS_Shape | null): TopoDS_Shape {
-  if (profile.regions.length === 0) throw new OpError(`sketch "${f.sketch}" has no closed profile to ${f.op}`);
+  if (profile.regions.length === 0) throw new OpError(noClosedProfile(f.sketch, profile, f.op));
   const { frame } = profile;
   const d = normalize3(f.direction ?? frame.z);
   if (Math.abs(dot3(d, frame.z)) < 1e-6) {
@@ -183,6 +195,11 @@ export function extrudeTool(oc: OC, s: Scope, f: ExtrudeFeature, profile: Sketch
     if (extent === "midplane") offset = scale3(d, -length / 2);
   }
   return prism(oc, s, profileFaces(oc, s, profile), offset, scale3(d, length));
+}
+
+/** `sketch "s1" has no closed profile to extrude: profile is open at ...` */
+export function noClosedProfile(sketch: string, profile: SketchProfile, verb: string): string {
+  return `sketch "${sketch}" has no closed profile to ${verb}${profile.open ? `: ${profile.open}` : ""}`;
 }
 
 /** Why a cut removed nothing, in the cut's own terms. */
@@ -241,6 +258,22 @@ export function removeFrom(
   return changed;
 }
 
+/**
+ * What the body and the tool have in common (an intersect operation). It must
+ * be one valid solid with volume, smaller than the body. In scope `s`.
+ */
+export function commonWith(oc: OC, s: Scope, name: string, body: TopoDS_Shape, tool: TopoDS_Shape, what: string): TopoDS_Shape {
+  const op = s.track(new oc.BRepAlgoAPI_Common(body, tool, s.track(new oc.Message_ProgressRange())));
+  if (!op.IsDone()) throw new OpError(`the ${what}'s intersect with body "${name}" failed in the kernel`);
+  const result = unify(oc, s, s.track(op.Shape()));
+  const before = volumeOf(oc, s, body);
+  const after = volumeOf(oc, s, result);
+  if (after <= VOLUME_EPS * Math.max(1, before)) throw new OpError(`the ${what} does not overlap body "${name}": their common part is empty`);
+  if (!isValidShape(oc, s, result)) throw new OpError(`the ${what}'s intersect with body "${name}" produced an invalid solid`);
+  if (before - after <= VOLUME_EPS * Math.max(1, before)) throw new OpError(`the ${what} holds all of body "${name}": intersecting removes nothing`);
+  return result;
+}
+
 function boxesMeet(a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 } | null): boolean {
   if (!b) return false;
   const tol = 1e-6;
@@ -286,7 +319,7 @@ export function drillTool(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart,
  * The hole as one solid of revolution: a closed (radius, depth) profile spun
  * about the hole axis. depth 0 is the face, positive goes into the material.
  */
-function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Vec3, radial: Vec3, length: number) {
+export function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Vec3, radial: Vec3, length: number) {
   const r = f.diameter / 2;
   const profile: Vec2[] = [[0, 0]];
   if (f.counterbore) {
@@ -425,7 +458,7 @@ function sectionAt3D(placed: PlacedSection, at: Vec3, outerOnly = false): Sketch
 }
 
 /** The shape with everything on the normal's side of the plane cut away. */
-function cutHalfSpace(oc: OC, s: Scope, shape: TopoDS_Shape, plane: CutPlane): TopoDS_Shape {
+export function cutHalfSpace(oc: OC, s: Scope, shape: TopoDS_Shape, plane: CutPlane): TopoDS_Shape {
   const pln = s.track(new oc.gp_Pln(pnt(oc, s, plane.point), dir(oc, s, plane.normal)));
   const face = s.track(s.track(new oc.BRepBuilderAPI_MakeFace(pln)).Face());
   const half = s.track(new oc.BRepPrimAPI_MakeHalfSpace(face, pnt(oc, s, add3(plane.point, plane.normal))));
@@ -532,7 +565,7 @@ export function combineBodies(oc: OC, s: Scope, f: CombineFeature, target: TopoD
 
 // ------------------------------------------------------- multibody tools
 
-type Trsf = ReturnType<typeof identity>;
+export type Trsf = ReturnType<typeof identity>;
 
 /** The mirror about a plane. */
 export function mirrorTrsf(oc: OC, s: Scope, plane: { normal: Vec3; origin: Vec3 }): Trsf {
@@ -601,7 +634,8 @@ export function splitBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, pl
   return [unify(oc, s, behind), unify(oc, s, front)];
 }
 
-function identity(oc: OC, s: Scope) {
+/** A new identity gp_Trsf, tracked in `s`: set it with SetTranslation, SetRotation, SetMirror, SetScale. */
+export function identity(oc: OC, s: Scope) {
   return s.track(new oc.gp_Trsf());
 }
 

@@ -83,6 +83,14 @@ export function volumeOf(oc: OC, s: Scope, shape: TopoDS_Shape): number {
   return props.Mass();
 }
 
+/** The centre of volume of a solid (or of the solids of a compound together). */
+export function centroidOf(oc: OC, s: Scope, shape: TopoDS_Shape): Vec3 {
+  const props = s.track(new oc.GProp_GProps());
+  oc.BRepGProp.VolumeProperties(shape, props, false, false, false);
+  const c = s.track(props.CentreOfMass());
+  return [c.X(), c.Y(), c.Z()];
+}
+
 export function areaOf(oc: OC, s: Scope, shape: TopoDS_Shape): number {
   const props = s.track(new oc.GProp_GProps());
   oc.BRepGProp.SurfaceProperties(shape, props, false, false);

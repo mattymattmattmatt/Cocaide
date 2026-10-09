@@ -388,7 +388,7 @@ export function App() {
   const editSketch = (id: string) => {
     // The sketcher works on numbers; finishSketch puts back the expressions it did not change.
     const f = resolved.find((g) => g.id === id) as Partial<SketchFeature> | undefined;
-    if (!f || f.op !== "sketch" || !f.plane) return;
+    if (!f || f.op !== "sketch" || !f.plane || f.plane.type !== "datum") return;
     // A dimension written as "=b" goes in with its value, and the expression beside it, so the sketcher shows and keeps it.
     const raw = (features.find((g) => g.id === id)?.constraints ?? []) as { value?: unknown }[];
     const constraints = (f.constraints ?? []).map((c, i) => (typeof raw[i]?.value === "string" ? ({ ...c, expr: raw[i].value } as unknown as Constraint) : c));

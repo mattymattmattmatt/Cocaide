@@ -31,6 +31,8 @@ import {
   type Weld,
 } from "./types";
 import { allErrors, isObject, validateDocument } from "./validate";
+import { defOf } from "../features/defs";
+import { datumFeatureIds, featureDatumRefs, mapDatumSelector } from "../features/datum";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
 export type RawDocument = Record<string, unknown> & { features: Record<string, unknown>[] };
@@ -143,7 +145,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       // The drawing names features by id (balloons, member dimensions, hole callouts): it follows.
       if (next.id !== cmd.id && doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", cmd.id, String(next.id));
       // A member, end cap or gusset that names its body by its id renames the body: its welds and material follow.
-      const byId = (f: Record<string, unknown>) => (f.op === "member" || f.op === "endCap" || f.op === "gusset") && f.newBody === undefined;
+      const byId = (f: Record<string, unknown>) => ((f.op === "member" || f.op === "endCap" || f.op === "gusset") && f.newBody === undefined) || !!defOf(f.op)?.bodyFromId?.(f);
       if (next.id !== cmd.id && byId(prev) && byId(next)) renameBodyRefs(doc, new Map([[cmd.id, String(next.id)]]));
       break;
     }
@@ -504,7 +506,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
     // Then everything that names it follows, as below.
   }
   // A pattern of the feature that starts the body makes copies named from_2, from_3: they follow.
-  const seeds = new Set(features.filter((f) => (f.op === "extrude" && f.newBody === from) || (f.op === "member" && (f.newBody ?? f.id) === from)).map((f) => f.id));
+  const seeds = new Set(features.filter((f) => startsBody(f, from)).map((f) => f.id));
   const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
   const derived = new RegExp(`^${from.replace(/[-]/g, "\\-")}_(\\d+)$`);
   const renamed = renamedBodies(features, from, to);
@@ -544,9 +546,31 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
     }
     if (f.face) f.face = selector(f.face);
     if (f.edges) f.edges = Array.isArray(f.edges) ? f.edges.map(selector) : selector(f.edges);
+    if (Array.isArray(f.faces)) f.faces = f.faces.map(selector);
+    // Selectors inside references (a sketch on a face, an axis from an edge), on this feature's own copy.
+    const d = defOf(f.op);
+    if (featureDatumRefs(f, d?.datumRefs).length) {
+      const own = structuredClone(f);
+      for (const r of featureDatumRefs(own, d?.datumRefs)) mapDatumSelector(r.ref, selector);
+      Object.assign(f, own);
+    }
+    // A registry op: "body" and "newBody" (DESIGN §2.5), the body its id names, and any other body fields it has.
+    if (d) {
+      if (typeof f.body === "string") f.body = rename(f.body);
+      if (typeof f.newBody === "string") f.newBody = rename(f.newBody);
+      else if (d.bodyFromId?.(f) && f.id === from) f.newBody = to;
+      if (d.renameBodies) Object.assign(f, d.renameBodies(f, rename));
+    }
     features[i] = f;
   }
   return null;
+}
+
+/** The feature starts this body, and patterns or mirrors of it name their copies after it (from_2, from_mirror). */
+function startsBody(f: Record<string, unknown>, name: string): boolean {
+  if (f.op === "extrude") return f.newBody === name;
+  if (f.op === "member") return (f.newBody ?? f.id) === name;
+  return defOf(f.op)?.bodies?.seedBody?.(f) === name;
 }
 
 /**
@@ -556,7 +580,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
  */
 export function renamedBodies(features: Record<string, unknown>[], from: string, to: string): Map<string, string> {
   const out = new Map([[from, to]]);
-  const seeds = new Set(features.filter((f) => (f.op === "extrude" && f.newBody === from) || (f.op === "member" && (f.newBody ?? f.id) === from)).map((f) => f.id));
+  const seeds = new Set(features.filter((f) => startsBody(f, from)).map((f) => f.id));
   const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
   if (patterned) {
     for (const f of features) {
@@ -751,6 +775,9 @@ export function references(f: Record<string, unknown>): string[] {
   if ((f.op === "joint" || f.op === "gusset") && Array.isArray(f.members)) refs.push(...f.members.filter((m): m is string => typeof m === "string"));
   if (f.op === "joint" && typeof f.through === "string") refs.push(f.through);
   if (f.op === "endCap" && typeof f.member === "string") refs.push(f.member);
+  // A registry op says what it uses; any feature may stand on a plane, axis or point feature ({ "datum": id }).
+  const d = defOf(f.op);
+  for (const id of [...(d?.references?.(f) ?? []), ...datumFeatureIds(featureDatumRefs(f, d?.datumRefs))]) if (!refs.includes(id)) refs.push(id);
   return refs;
 }
 

@@ -46,15 +46,19 @@ import {
   type Vec3,
   type Weld,
   type Drawing,
-  type DatumPlane,
   type MirrorFeature,
   type SplitFeature,
   type MoveFeature,
   type DeleteBodyFeature,
+  type DatumRef,
+  type EdgePoint,
+  type PlaneSpec,
   DERIVED_SUFFIX,
 } from "./types";
 import { validateDrawing } from "./drawing";
 import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
+import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
+import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, type DatumKind } from "../features/datum";
 
 export interface ValidatedFeature {
   index: number;
@@ -93,7 +97,7 @@ export interface ValidationResult {
 }
 
 /** What a feature may refer to: the part's profiles and nodes, and the members before it. */
-interface FeatureContext {
+export interface FeatureContext {
   profiles: Record<string, ProfileDef>;
   /** Every profile the part lists, valid or not. */
   listed: string[];
@@ -230,6 +234,8 @@ export function validateDocument(input: unknown): ValidationResult {
     } else {
       if (typeof raw.id !== "string" || !ID_PATTERN.test(raw.id)) {
         c.fail("id", `must be an identifier like "hole_1" (got ${describe(raw.id)})`);
+      } else if (RESERVED_DATUMS.includes(raw.id)) {
+        c.fail("id", `"${raw.id}" names a default plane, axis or the origin (${RESERVED_DATUMS.join(", ")}); give the feature another id`);
       } else if (seen.has(raw.id)) {
         c.fail("id", `duplicate id "${raw.id}"`);
       }
@@ -286,7 +292,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
   let feature: Feature | null;
   switch (raw.op) {
     case "sketch":
-      feature = validateSketch(raw, c);
+      feature = validateSketch(raw, c, earlier);
       break;
     case "extrude":
     case "cut":
@@ -322,7 +328,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       feature = validateMirror(raw, c, earlier);
       break;
     case "split":
-      feature = validateSplit(raw, c);
+      feature = validateSplit(raw, c, earlier);
       break;
     case "move":
       feature = validateMove(raw, c);
@@ -330,9 +336,16 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
     case "deleteBody":
       feature = validateDeleteBody(raw, c);
       break;
-    default:
-      c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
-      return null;
+    default: {
+      // An op of the registry (src/features/<op>/doc.ts).
+      const d = defOf(raw.op);
+      if (!d) {
+        c.fail("op", `unknown op ${describe(raw.op)} (supported: ${FEATURE_OPS.join(", ")})`);
+        return null;
+      }
+      feature = d.validate(raw, c, validateKit(c, earlier, ctx));
+      if (c.errors.length > 0) feature = null;
+    }
   }
   if (feature && typeof suppressed === "boolean") feature.suppressed = suppressed;
   return feature;
@@ -356,7 +369,7 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   slot: ["center1", "center2"],
 };
 
-function validateSketch(raw: Record<string, unknown>, c: Checker): SketchFeature | null {
+function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>): SketchFeature | null {
   c.keys(raw, "", ["id", "op", "plane", "entities", "constraints", "profile"]);
   let mark: SketchFeature["profile"];
   if (raw.profile !== undefined) {
@@ -368,24 +381,8 @@ function validateSketch(raw: Record<string, unknown>, c: Checker): SketchFeature
       if (typeof raw.profile.name === "string") mark = { name: raw.profile.name, ...(library ? { library } : {}) };
     }
   }
-  let plane: SketchFeature["plane"] | undefined;
-  if (!isObject(raw.plane)) {
-    c.fail("plane", `must be an object (got ${describe(raw.plane)})`);
-  } else {
-    const p = raw.plane;
-    c.keys(p, "plane", ["type", "normal", "origin", "xDir"]);
-    if (p.type !== "datum") c.fail("plane.type", `must be "datum" (got ${describe(p.type)})`);
-    const normal = c.unitVec(p, "normal", "plane");
-    const origin = c.vec3(p, "origin", "plane");
-    const xDir = p.xDir === undefined ? undefined : c.unitVec(p, "xDir", "plane");
-    if (normal && xDir && Math.abs(dot3(normalize3(normal), normalize3(xDir))) > 1 - 1e-9) {
-      c.fail("plane.xDir", "must not be parallel to the plane normal");
-    }
-    if (normal && origin) {
-      plane = { type: "datum", normal, origin };
-      if (xDir) plane.xDir = xDir;
-    }
-  }
+  // On a datum plane written out, or by reference: a face (it follows the face), a default plane, a plane feature.
+  const plane = validatePlane(raw.plane, "plane", c, earlier);
 
   const entities: SketchEntity[] = [];
   const entityTypes = new Map<string, SketchEntity["type"]>();
@@ -815,18 +812,19 @@ function validateEdgeTreatment(raw: Record<string, unknown>, c: Checker): Fillet
   const size = raw.op === "fillet" ? "radius" : "distance";
   c.keys(raw, "", ["id", "op", "edges", size]);
   const value = c.num(raw, size, "", { positive: true });
-  let edges: EdgeSelector | EdgeSelector[] | null = null;
-  if (Array.isArray(raw.edges)) {
-    if (raw.edges.length === 0) c.fail("edges", "must list at least one edge selector");
-    const list = raw.edges.map((e, i) => validateEdgeSelector(e, `edges[${i}]`, c));
-    if (list.every((e) => e !== null)) edges = list as EdgeSelector[];
-  } else {
-    edges = validateEdgeSelector(raw.edges, "edges", c);
-  }
+  const edges = edgeSelectors(raw.edges, "edges", c);
   if (c.errors.length > 0 || !edges || value === undefined) return null;
   return raw.op === "fillet"
     ? { id: raw.id as string, op: "fillet", edges, radius: value }
     : { id: raw.id as string, op: "chamfer", edges, distance: value };
+}
+
+/** One edge selector, or a non-empty list of them whose matches are combined. */
+function edgeSelectors(v: unknown, path: string, c: Checker): EdgeSelector | EdgeSelector[] | null {
+  if (!Array.isArray(v)) return validateEdgeSelector(v, path, c);
+  if (v.length === 0) c.fail(path, "must list at least one edge selector");
+  const list = v.map((e, i) => validateEdgeSelector(e, `${path}[${i}]`, c));
+  return v.length > 0 && list.every((e) => e !== null) ? (list as EdgeSelector[]) : null;
 }
 
 export function validateEdgeSelector(raw: unknown, path: string, c: Checker): EdgeSelector | null {
@@ -897,7 +895,7 @@ function validatePattern(
     c.fail("feature", `must be the id of an earlier extrude, cut or hole (got ${describe(raw.feature)})`);
   } else if (!earlier.has(raw.feature)) {
     c.fail("feature", `"${raw.feature}" is not a feature before this one`);
-  } else if (!PATTERNABLE_OPS.includes(earlier.get(raw.feature) as never)) {
+  } else if (!patternable(earlier.get(raw.feature))) {
     c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a pattern repeats an extrude, cut or hole`);
   }
   const count = instanceCount(raw, "count", c);
@@ -1023,7 +1021,7 @@ export function validateProfile(input: unknown, path: string, c: Checker): Profi
   const sketchRaw = resolveExpressions({ id: "profile", op: "sketch", plane: XY, entities: input.entities, ...(input.constraints !== undefined ? { constraints: input.constraints } : {}) }, parameters, exprErrors) as Record<string, unknown>;
   for (const e of exprErrors) c.fail(path, e);
   const inner = new Checker(path);
-  if (!exprErrors.length) validateSketch(sketchRaw, inner);
+  if (!exprErrors.length) validateSketch(sketchRaw, inner, new Map());
   for (const e of inner.errors) c.errors.push(e);
   const sizes: ProfileDef["sizes"] = [];
   if (!Array.isArray(input.sizes) || input.sizes.length === 0) c.fail(`${path}.sizes`, `must list at least one size (got ${describe(input.sizes)})`);
@@ -1263,17 +1261,177 @@ function checkWelds(input: unknown, bodies: string[], c: Checker): Weld[] {
 
 // ------------------------------------------------------- multibody tools
 
-/** A datum plane: { "type": "datum", "normal", "origin" } (and "xDir" where allowed). */
-function validatePlane(v: unknown, path: string, c: Checker, xDirAllowed = false): DatumPlane | undefined {
+/**
+ * A plane: written out, { "type": "datum", "normal", "origin", "xDir"? }, or
+ * by reference (DESIGN §2.3), { "type": "ref", "ref": <DatumRef>, "offset"?,
+ * "flip"?, "xDir"? }: a face, a default plane or a plane feature, resolved
+ * when the part rebuilds.
+ */
+export function validatePlane(v: unknown, path: string, c: Checker, earlier: ReadonlyMap<string, string>): PlaneSpec | undefined {
   if (!isObject(v)) {
-    c.fail(path, `must be a plane { "type": "datum", "normal": [x, y, z], "origin": [x, y, z] } (got ${describe(v)})`);
+    c.fail(path, `must be a plane: { "type": "datum", "normal": [x, y, z], "origin": [x, y, z] } or { "type": "ref", "ref": { "face": <face selector> } } (got ${describe(v)})`);
     return undefined;
   }
-  c.keys(v, path, xDirAllowed ? ["type", "normal", "origin", "xDir"] : ["type", "normal", "origin"]);
-  if (v.type !== "datum") c.fail(`${path}.type`, `must be "datum" (got ${describe(v.type)})`);
+  const before = c.errors.length;
+  if (v.type === "ref") {
+    c.keys(v, path, ["type", "ref", "offset", "flip", "xDir"]);
+    const ref = validateDatumRef(v.ref, `${path}.ref`, c, earlier, "plane");
+    const offset = v.offset === undefined ? undefined : c.num(v, "offset", path, {});
+    if (v.flip !== undefined && typeof v.flip !== "boolean") c.fail(`${path}.flip`, `must be true or false (got ${describe(v.flip)})`);
+    const xDir = v.xDir === undefined ? undefined : c.unitVec(v, "xDir", path);
+    if (!ref || c.errors.length > before) return undefined;
+    return { type: "ref", ref, ...(offset !== undefined ? { offset } : {}), ...(v.flip !== undefined ? { flip: v.flip as boolean } : {}), ...(xDir ? { xDir } : {}) };
+  }
+  if (v.type !== "datum") {
+    c.fail(`${path}.type`, `must be "datum" (written out) or "ref" (by reference) (got ${describe(v.type)})`);
+    return undefined;
+  }
+  c.keys(v, path, ["type", "normal", "origin", "xDir"]);
   const normal = c.unitVec(v, "normal", path);
   const origin = c.vec3(v, "origin", path);
-  return normal && origin && v.type === "datum" ? { type: "datum", normal, origin } : undefined;
+  const xDir = v.xDir === undefined ? undefined : c.unitVec(v, "xDir", path);
+  if (normal && xDir && Math.abs(dot3(normalize3(normal), normalize3(xDir))) > 1 - 1e-9) {
+    c.fail(`${path}.xDir`, "must not be parallel to the plane normal");
+  }
+  if (!normal || !origin || c.errors.length > before) return undefined;
+  return { type: "datum", normal, origin, ...(xDir ? { xDir } : {}) };
+}
+
+/**
+ * A DatumRef (DESIGN §2.1): { "datum": <default or earlier plane, axis or
+ * point feature> }, { "face": <face selector> }, { "edge": <edge selector>,
+ * "at"? }, or { "point": [x, y, z] }. `want` refuses a reference that cannot
+ * be that kind as far as the document says (a default axis where a plane is
+ * needed); faces and edges are checked again when the part rebuilds.
+ */
+export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: ReadonlyMap<string, string>, want?: DatumKind | readonly DatumKind[]): DatumRef | null {
+  if (!isObject(v)) {
+    c.fail(path, `must be a reference: { "datum": "Top" }, { "face": <face selector> }, { "edge": <edge selector> } or { "point": [x, y, z] } (got ${describe(v)})`);
+    return null;
+  }
+  const forms = ["datum", "face", "edge", "point"].filter((k) => k in v);
+  if (forms.length !== 1) {
+    c.fail(path, forms.length ? `give one of datum, face, edge or point (got ${forms.join(" and ")})` : `needs one of datum, face, edge or point (got ${describe(v)})`);
+    return null;
+  }
+  const before = c.errors.length;
+  let ref: DatumRef | null = null;
+  switch (forms[0]) {
+    case "datum": {
+      c.keys(v, path, ["datum"]);
+      const id = v.datum;
+      if (typeof id !== "string" || id === "") {
+        c.fail(`${path}.datum`, `must name a default (${RESERVED_DATUMS.join(", ")}) or an earlier plane, axis or point (got ${describe(id)})`);
+      } else if (!defaultDatum(id) && !earlier.has(id)) {
+        c.fail(`${path}.datum`, `"${id}" is not a feature before this one (the defaults are ${RESERVED_DATUMS.join(", ")})`);
+      } else if (!defaultDatum(id) && !Object.hasOwn(DATUM_OPS, earlier.get(id)!)) {
+        c.fail(`${path}.datum`, `"${id}" is ${article(earlier.get(id)!)}, not a plane, axis or point`);
+      } else {
+        ref = { datum: id };
+      }
+      break;
+    }
+    case "face": {
+      c.keys(v, path, ["face"]);
+      const face = validateFaceSelector(v.face, `${path}.face`, c);
+      if (face) ref = { face };
+      break;
+    }
+    case "edge": {
+      c.keys(v, path, ["edge", "at"]);
+      const edge = validateEdgeSelector(v.edge, `${path}.edge`, c);
+      if (v.at !== undefined && !EDGE_POINTS.includes(v.at as EdgePoint)) {
+        c.fail(`${path}.at`, `must be ${EDGE_POINTS.map((p) => `"${p}"`).join(", ")} (got ${describe(v.at)})`);
+      }
+      if (edge && c.errors.length === before) ref = v.at === undefined ? { edge } : { edge, at: v.at as EdgePoint };
+      break;
+    }
+    case "point": {
+      c.keys(v, path, ["point"]);
+      const point = c.vec3(v, "point", path);
+      if (point) ref = { point };
+      break;
+    }
+  }
+  if (!ref || c.errors.length > before) return null;
+  const wants = want === undefined ? undefined : typeof want === "string" ? [want as DatumKind] : (want as readonly DatumKind[]);
+  if (wants) {
+    const kinds = possibleKinds(ref, earlier);
+    if (!kinds.some((k) => wants.includes(k))) {
+      c.fail(path, `${refName(ref)} is ${aKinds(kinds)}, but ${aKinds(wants)} is needed here`);
+      return null;
+    }
+  }
+  return ref;
+}
+
+const EDGE_POINTS: readonly EdgePoint[] = ["start", "end", "mid", "center"];
+
+/** A reference as the messages name it: "Top", "plane_1", "a face", "the start of an edge", "[1, 2, 3]". */
+function refName(ref: DatumRef): string {
+  if ("datum" in ref) return ref.datum;
+  if ("face" in ref) return "a face";
+  if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of an edge` : "an edge";
+  return `the point ${describe(ref.point)}`;
+}
+
+/** "an extrude", "a sketch". */
+function article(word: string): string {
+  return `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
+}
+
+/** A pattern or mirror can repeat it: a built-in seed op, or a registry op that says so. */
+function patternable(op: string | undefined): boolean {
+  return PATTERNABLE_OPS.includes(op as never) || !!defOf(op)?.patternable;
+}
+
+/** The registry op's validation helpers, bound to this feature's checker. */
+function validateKit(c: Checker, earlier: ReadonlyMap<string, string>, ctx: FeatureContext): ValidateKit {
+  const where = (path: string, key: string) => (path ? `${path}.${key}` : key);
+  const feature = (v: unknown, path: string, ops: readonly string[], what: string): string | undefined => {
+    if (typeof v !== "string") c.fail(path, `must be the id of ${what} before this one (got ${describe(v)})`);
+    else if (!earlier.has(v)) c.fail(path, `"${v}" is not a feature before this one`);
+    else if (!ops.includes(earlier.get(v)!)) c.fail(path, `"${v}" is ${article(earlier.get(v)!)}, not ${what}`);
+    else return v;
+    return undefined;
+  };
+  return {
+    earlier,
+    ctx,
+    isObject,
+    describe,
+    bool(obj, key, path) {
+      const v = obj[key];
+      if (v === undefined || typeof v === "boolean") return v;
+      c.fail(where(path, key), `must be true or false (got ${describe(v)})`);
+      return undefined;
+    },
+    oneOf(obj, key, path, values) {
+      const v = obj[key];
+      if (values.includes(v as never)) return v as (typeof values)[number];
+      c.fail(where(path, key), `must be ${values.map((x) => `"${x}"`).join(", ")} (got ${describe(v)})`);
+      return undefined;
+    },
+    bodyName: (v, path) => bodyName(v, path, c),
+    bodyList: (v, path) => bodyList(v, path, c),
+    newBody: (raw) => optionalNewBody(raw, c),
+    faceSelector: (v, path) => validateFaceSelector(v, path, c),
+    faceSelectors(v, path, opts = {}) {
+      if (!Array.isArray(v) || (v.length === 0 && !opts.allowEmpty)) {
+        c.fail(path, `must be a list of face selectors${opts.allowEmpty ? "" : " (at least one)"} (got ${describe(v)})`);
+        return null;
+      }
+      const list = v.map((s, i) => validateFaceSelector(s, `${path}[${i}]`, c));
+      return list.every((s) => s !== null) ? (list as FaceSelector[]) : null;
+    },
+    edgeSelector: (v, path) => validateEdgeSelector(v, path, c),
+    edgeSelectors: (v, path) => edgeSelectors(v, path, c),
+    datumRef: (v, path, want) => validateDatumRef(v, path, c, earlier, want),
+    plane: (v, path) => validatePlane(v, path, c, earlier),
+    feature,
+    sketch: (v, path) => feature(v, path, ["sketch"], "a sketch"),
+    direction: (obj, key, path) => c.unitVec(obj, key, path),
+  };
 }
 
 function optionalNewBody(raw: Record<string, unknown>, c: Checker): string | undefined {
@@ -1282,13 +1440,13 @@ function optionalNewBody(raw: Record<string, unknown>, c: Checker): string | und
 
 function validateMirror(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): MirrorFeature | null {
   c.keys(raw, "", ["id", "op", "plane", "feature", "bodies", "merge", "newBody"]);
-  const plane = validatePlane(raw.plane, "plane", c);
+  const plane = validatePlane(raw.plane, "plane", c, earlier);
   const byFeature = raw.feature !== undefined;
   if (byFeature === (raw.bodies !== undefined)) c.fail("", 'mirrors either one "feature" or a list of "bodies"');
   let bodies: string[] | undefined;
   if (byFeature) {
     if (typeof raw.feature !== "string" || !earlier.has(raw.feature)) c.fail("feature", `${describe(raw.feature)} is not a feature before this one`);
-    else if (!PATTERNABLE_OPS.includes(earlier.get(raw.feature) as never)) c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a mirror repeats an extrude, cut, hole or member`);
+    else if (!patternable(earlier.get(raw.feature))) c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a mirror repeats an extrude, cut, hole or member`);
     if (raw.merge !== undefined) c.fail("merge", "merges a mirrored body into itself: it goes with \"bodies\"");
   } else if (raw.bodies !== undefined) {
     bodies = bodyList(raw.bodies, "bodies", c);
@@ -1308,10 +1466,10 @@ function validateMirror(raw: Record<string, unknown>, c: Checker, earlier: Map<s
   };
 }
 
-function validateSplit(raw: Record<string, unknown>, c: Checker): SplitFeature | null {
+function validateSplit(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): SplitFeature | null {
   c.keys(raw, "", ["id", "op", "body", "plane", "newBody"]);
   const body = bodyName(raw.body, "body", c);
-  const plane = validatePlane(raw.plane, "plane", c);
+  const plane = validatePlane(raw.plane, "plane", c, earlier);
   const newBody = optionalNewBody(raw, c);
   if (newBody && newBody === body) c.fail("newBody", "must differ from the body it is split from");
   if (c.errors.length > 0 || !body || !plane) return null;
@@ -1497,12 +1655,31 @@ class BodyNames {
         break;
       }
     }
+    // A registry op says what it needs and makes through its def's body hooks.
+    const d: FeatureDef | undefined = defOf(f.op);
+    let makesPath: string | undefined;
+    if (d?.bodies) {
+      for (const [path, name] of d.bodies.needs?.(f) ?? []) need(name, path);
+      const state = { names: this.names, made: this.made };
+      for (const [path, message] of d.bodies.problems?.(f, state) ?? []) c.fail(path, message);
+      const m = d.bodies.makes?.(f, state);
+      if (m) {
+        makes = m.names;
+        makesPath = m.path;
+      }
+    }
     if (makes.length && c.errors.length === 0) {
       const named = (f.op === "mirror" || f.op === "split" || f.op === "move") && f.newBody !== undefined;
-      this.fresh(makes, named ? "newBody" : f.op === "split" ? "body" : f.op === "mirror" && !f.bodies ? "feature" : "bodies", c);
+      this.fresh(makes, makesPath ?? (named ? "newBody" : f.op === "split" ? "body" : f.op === "mirror" && !f.bodies ? "feature" : "bodies"), c);
     }
     for (const [path, name] of selectorBodies(f)) need(name, path);
     if (c.errors.length > 0) return;
+    if (d?.bodies) {
+      for (const n of d.bodies.consumes?.(f, [...this.names]) ?? []) this.names.delete(n);
+      // A seed that starts a body: its pattern and mirror copies are named after it.
+      const seed = d.bodies.seedBody?.(f as unknown as Record<string, unknown>) ?? (d.patternable && makes.length === 1 ? makes[0] : undefined);
+      if (seed) this.made.set(f.id, seed);
+    }
     for (const n of makes) this.add(n);
     if (f.op === "mirror" && f.feature && makes.length) this.made.set(f.id, makes[0]);
     if (f.op === "deleteBody") for (const n of f.bodies ?? [...this.names].filter((x) => !f.keep!.includes(x))) this.names.delete(n);
@@ -1553,6 +1730,13 @@ export function selectorBodies(f: Feature): [string, string][] {
   if (f.op === "fillet" || f.op === "chamfer") {
     if (Array.isArray(f.edges)) f.edges.forEach((e, i) => edge(e, `edges[${i}]`));
     else edge(f.edges, "edges");
+  }
+  // The selectors of a registry op, and those inside any reference (a sketch on a face, a plane by reference).
+  const d = defOf(f.op);
+  const raw = f as unknown as Record<string, unknown>;
+  for (const s of [...(d?.selectors?.(f) ?? []), ...datumSelectors(featureDatumRefs(raw, d?.datumRefs))]) {
+    if (s.face) face(s.face, s.path);
+    else if (s.edge) edge(s.edge, s.path);
   }
   return out;
 }
