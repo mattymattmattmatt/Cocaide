@@ -3,10 +3,13 @@
 
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import type { IconName } from "../icons";
+import { constraintTargets, isAxisId } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2, wrapAngle } from "../../geom/vec";
+import type { Namer } from "./names";
 
-export type SketchItem = { kind: "entity"; id: string } | { kind: "point"; ref: string };
+/** A pick: an entity (a model edge's stand-in "@e12" or a sketch axis "X" too), a point ref, or a model face (Convert Entities picks faces). */
+export type SketchItem = { kind: "entity"; id: string } | { kind: "point"; ref: string } | { kind: "face"; index: number };
 
 export interface Handle {
   ref: string;
@@ -219,7 +222,9 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
         { label: "Equal", icon: "equal", make: () => ({ type: "equal", entities: pair }), testId: "c-equal" },
       );
       if (parallel) {
-        out.push({ label: "Distance between", icon: "smartDimension", value: round6(offsetFrom(a, b.start)), make: (v) => ({ type: "distance", point: `${b.id}.start`, line: a.id, value: v }), testId: "c-line-distance" });
+        // Measured from a point of the one that has points (a sketch axis has none) to the other, extended.
+        const [from, to] = isAxisId(b.id) ? [b, a] : [a, b];
+        out.push({ label: "Distance between", icon: "smartDimension", value: round6(offsetFrom(from, to.start)), make: (v) => ({ type: "distance", point: `${to.id}.start`, line: from.id, value: v }), testId: "c-line-distance" });
       } else {
         out.push({ label: "Angle", icon: "angle", unit: "°", value: round6(angle), make: (v) => ({ type: "angle", entities: pair, value: v }), testId: "c-angle" });
       }
@@ -289,7 +294,31 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
     const pair: [string, string] = [points[0], points[1]];
     out.push({ label: "Symmetric", icon: "symmetric", make: () => ({ type: "symmetric", points: pair, line: ents[0].id }), testId: "c-symmetric" });
   }
-  return out;
+  // The sketch axes take part where a line may (DESIGN §2.4): never as an entity with a length or ends of its own.
+  return out.filter((o) => axesAllowed(o.make(o.value ?? 0)));
+}
+
+/** The constraint names a sketch axis only where an axis may stand for a line. */
+export function axesAllowed(k: Constraint): boolean {
+  const axes = constraintTargets(k).filter(isAxisId);
+  if (!axes.length) return true;
+  if (axes.length > 1) return false;
+  switch (k.type) {
+    case "parallel":
+    case "perpendicular":
+    case "collinear":
+    case "angle":
+    case "tangent":
+      return true;
+    case "distance":
+      return k.line !== undefined && isAxisId(k.line) && !isAxisId(k.point?.split(".")[0]);
+    case "pointOn":
+      return isAxisId(k.entity);
+    case "symmetric":
+      return isAxisId(k.line);
+    default:
+      return false;
+  }
 }
 
 /** Point entities among the items, as their points ("p1" becomes "p1.at"); everything else as it is. */
@@ -300,12 +329,14 @@ export function asPoints(items: SketchItem[], byId: Map<string, SketchEntity>): 
 /**
  * The entities the items stand for: the entities picked, and each sketch point
  * picked by its point (a point entity is picked by its dot), as deleting or
- * changing them wants.
+ * changing them wants. Only the sketch's own: not a model edge, face or
+ * sketch axis picked beside them.
  */
 export function itemEntities(items: SketchItem[], entities: SketchEntity[]): string[] {
   const byId = new Map(entities.map((e) => [e.id, e]));
   const ids = items.flatMap((i) => {
-    if (i.kind === "entity") return [i.id];
+    if (i.kind === "entity") return byId.has(i.id) ? [i.id] : [];
+    if (i.kind === "face") return [];
     const [owner, name] = i.ref.split(".");
     return byId.get(owner)?.type === "point" && name === "at" ? [owner] : [];
   });
@@ -402,47 +433,64 @@ export function inferOrientation(a: Vec2, b: Vec2, tol: number): { p: Vec2; type
   return null;
 }
 
-/** A short human label for a constraint row. */
-export function describeConstraint(k: Constraint): string {
+/** Names as they are written: entity ids and point refs ("l1", "l1.end"). */
+const RAW: Namer = { entity: (id) => id, point: (ref) => ref };
+
+/**
+ * A short human label for a constraint row, naming things by `names` (the
+ * sketcher's reads "c1 centre ↔ model edge (straight, 40 mm, +Y)").
+ */
+export function describeConstraint(k: Constraint, names: Namer = RAW): string {
+  const e = names.entity;
+  const p = names.point;
   switch (k.type) {
     case "coincident":
-      return `${k.points[0]} ≡ ${k.points[1]}`;
+      return `${p(k.points[0])} ≡ ${p(k.points[1])}`;
     case "horizontal":
     case "vertical":
-      return k.entity ? `${k.entity} ${k.type}` : `${k.points![0]}, ${k.points![1]} ${k.type}`;
+      return k.entity ? `${e(k.entity)} ${k.type}` : `${p(k.points![0])}, ${p(k.points![1])} ${k.type}`;
     case "distance":
-      return k.entity ? `${k.entity} length` : k.points ? `${k.points[0]} ↔ ${k.points[1]}` : `${k.point} ↔ ${k.line}`;
+      return k.entity ? `${e(k.entity)} length` : k.points ? `${p(k.points[0])} ↔ ${p(k.points[1])}` : `${p(k.point!)} ↔ ${e(k.line!)}`;
     case "distanceX":
-      return `${k.entity ? `${k.entity} width` : `${k.points![0]} ↔ ${k.points![1]} (x)`}`;
+      return `${k.entity ? `${e(k.entity)} width` : `${p(k.points![0])} ↔ ${p(k.points![1])} (x)`}`;
     case "distanceY":
-      return `${k.entity ? `${k.entity} height` : `${k.points![0]} ↔ ${k.points![1]} (y)`}`;
+      return `${k.entity ? `${e(k.entity)} height` : `${p(k.points![0])} ↔ ${p(k.points![1])} (y)`}`;
     case "radius":
-      return `${k.entity} radius`;
+      return `${e(k.entity)} radius`;
     case "diameter":
-      return `${k.entity} diameter`;
+      return `${e(k.entity)} diameter`;
     case "angle":
-      return `${k.entities[0]} ∠ ${k.entities[1]}`;
+      return `${e(k.entities[0])} ∠ ${e(k.entities[1])}`;
     case "equal":
-      return `${k.entities[0]} = ${k.entities[1]}`;
+      return `${e(k.entities[0])} = ${e(k.entities[1])}`;
     case "parallel":
-      return `${k.entities[0]} ∥ ${k.entities[1]}`;
+      return `${e(k.entities[0])} ∥ ${e(k.entities[1])}`;
     case "perpendicular":
-      return `${k.entities[0]} ⊥ ${k.entities[1]}`;
+      return `${e(k.entities[0])} ⊥ ${e(k.entities[1])}`;
     case "collinear":
-      return `${k.entities[0]}, ${k.entities[1]} collinear`;
+      return `${e(k.entities[0])}, ${e(k.entities[1])} collinear`;
     case "tangent":
-      return `${k.entities[0]}, ${k.entities[1]} tangent`;
+      return `${e(k.entities[0])}, ${e(k.entities[1])} tangent`;
     case "concentric":
-      return `${k.entities[0]}, ${k.entities[1]} concentric`;
+      return `${e(k.entities[0])}, ${e(k.entities[1])} concentric`;
     case "midpoint":
-      return `${k.point} at the middle of ${k.entity}`;
+      return `${p(k.point)} at the middle of ${e(k.entity)}`;
     case "pointOn":
-      return `${k.point} on ${k.entity}`;
+      return `${p(k.point)} on ${e(k.entity)}`;
     case "symmetric":
-      return `${k.points[0]}, ${k.points[1]} symmetric about ${k.line}`;
+      return `${p(k.points[0])}, ${p(k.points[1])} symmetric about ${e(k.line)}`;
     case "fix":
-      return `${k.entity ?? k.point} fixed`;
+      return `${k.entity ? e(k.entity) : p(k.point!)} fixed`;
   }
+}
+
+/**
+ * The whole sentence for a relation or dimension, as its row's tooltip and
+ * the AI read it: "Distance 12 mm: c1 centre — model edge (straight, +Y)".
+ */
+export function constraintSentence(k: Constraint, label: string, names: Namer = RAW): string {
+  const value = "value" in k ? ` ${Math.round(k.value * 1000) / 1000}${k.type === "angle" ? "°" : " mm"}` : "";
+  return `${label}${value}: ${describeConstraint(k, names).replace(/ (↔|≡|∥|⊥|∠|=) /, " — ")}`;
 }
 
 /** One entity from the clicked points, as the first drawing tools placed them (the registry in tools/ builds the rest). */

@@ -7,10 +7,14 @@
 // pins the dragged handle to the cursor and solves the rest around it; where
 // the constraints don't let it reach the cursor, it goes as near as they allow.
 //
-// The document still stores solved geometry: the rebuild checks constraints,
-// it does not solve them. This module is what keeps the two in step.
+// The document stores solved geometry. The rebuild checks a sketch's
+// constraints, and solves the sketch only when it references the model: a
+// reference entity's numbers (the model's edge projected into the sketch) and
+// the sketch axes X and Y are constants here, not unknowns, so they count no
+// degrees of freedom, never move, and what is related to them follows them.
 
 import type { Constraint, SketchEntity, Vec2 } from "../doc/types";
+import { constraintTargets, isConstant, withAxes } from "./axes";
 
 const TOL = 1e-9;
 /** Accepting tolerance; the rebuild checks constraints to 1e-6. */
@@ -43,7 +47,12 @@ interface Layout {
   x: Float64Array;
   /** "id.field" -> index of its first number. */
   at: Map<string, number>;
+  /** The sketch's entities, then the sketch axes. */
   entities: SketchEntity[];
+  /** How many of `entities` are the sketch's own (the axes follow them). */
+  own: number;
+  /** Per number: 1 when it is a constant (a reference entity's, an axis'), never moved by a solve. */
+  frozen: Uint8Array;
 }
 
 const FIELDS: Record<SketchEntity["type"], [string, 1 | 2][]> = {
@@ -55,22 +64,27 @@ const FIELDS: Record<SketchEntity["type"], [string, 1 | 2][]> = {
   point: [["at", 2]],
 };
 
-function layout(entities: SketchEntity[]): Layout {
+function layout(own: SketchEntity[]): Layout {
   const values: number[] = [];
+  const frozen: number[] = [];
   const at = new Map<string, number>();
+  const entities = withAxes(own);
   for (const e of entities) {
+    const constant = isConstant(e) ? 1 : 0;
     for (const [field, n] of FIELDS[e.type]) {
       at.set(`${e.id}.${field}`, values.length);
       const v = (e as unknown as Record<string, number | Vec2>)[field];
       if (n === 1) values.push(v as number);
       else values.push(...(v as Vec2));
+      for (let k = 0; k < n; k++) frozen.push(constant);
     }
   }
-  return { x: Float64Array.from(values), at, entities };
+  return { x: Float64Array.from(values), at, entities, own: own.length, frozen: Uint8Array.from(frozen) };
 }
 
+/** The sketch's own entities with the solved numbers (constants come back as they went in). */
 function unpack(l: Layout, x: Float64Array): SketchEntity[] {
-  return l.entities.map((e) => {
+  return l.entities.slice(0, l.own).map((e) => {
     const out = structuredClone(e) as unknown as Record<string, unknown>;
     for (const [field, n] of FIELDS[e.type]) {
       const i = l.at.get(`${e.id}.${field}`)!;
@@ -124,7 +138,7 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
   const joined = coincidentGroups(constraints);
 
   for (const e of l.entities) {
-    if (e.type === "arc") {
+    if (e.type === "arc" && !isConstant(e)) {
       const [cx, cy] = pointOf(l, `${e.id}.center`);
       const [sx, sy] = pointOf(l, `${e.id}.start`);
       const [ex, ey] = pointOf(l, `${e.id}.end`);
@@ -135,6 +149,9 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
   }
 
   constraints.forEach((k, i) => {
+    // A relation between references only (converted edges meeting at a corner) holds by the model, not by a
+    // solve: it gives no equation, so model tolerances never fail the sketch. The checks still measure it.
+    if (betweenConstants(l, k)) return;
     switch (k.type) {
       case "coincident": {
         const [px, py] = pointOf(l, k.points[0]);
@@ -312,6 +329,14 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
   return { fns, owners };
 }
 
+/** The constraint names only constants: reference entities, the axes, the origin. */
+function betweenConstants(l: Layout, k: Constraint): boolean {
+  return constraintTargets(k).every((id) => {
+    const e = entityById(l, id);
+    return !!e && isConstant(e);
+  });
+}
+
 /** Point refs joined by coincident relations, each mapped to one ref that stands for its group. */
 function coincidentGroups(constraints: Constraint[]): (a: string, b: string) => boolean {
   const parent = new Map<string, string>();
@@ -395,6 +420,7 @@ function dragEquations(l: Layout, drag: NonNullable<SolveOptions["drag"]>): Fn[]
     const [id, name] = d.handle.split(".");
     const e = entityById(l, id);
     if (!e) throw new Error(`unknown handle ${d.handle}`);
+    if (isConstant(e)) throw new Error(`"${id}" ${e.ref ? "is a reference to the model: it moves when the model does" : "is a sketch axis"}, and can't be dragged`);
     if (name === "body") {
       // Move every defining point by the drag delta.
       const from = d.from ?? d.to;
@@ -496,10 +522,10 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     const solved = unpack(l, x);
     const bad = invalidGeometry(solved);
     if (bad) return { ok: false, error: bad };
-    return { ok: true, entities: solved, dof: freedom(x, base) };
+    return { ok: true, entities: solved, dof: freedom(x, base, l.frozen) };
   };
   for (const fns of attempts) {
-    const x = newton(l.x, fns);
+    const x = newton(l.x, fns, l.frozen);
     if (!x) continue;
     // The drag pins are wishes; the constraints are not. Re-check the constraints alone.
     if (maxAbs(evaluate(base, x)) > ACCEPT) continue;
@@ -508,7 +534,7 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
   if (pins.length) {
     // The pointer is somewhere the constraints don't let the handle reach (a polygon's corner off its
     // centre's line once a side is level): go as near as they allow, as SOLIDWORKS slides it along.
-    const x = slide(l.x, base, pins);
+    const x = slide(l.x, base, pins, l.frozen);
     if (x && maxAbs(evaluate(base, x)) <= ACCEPT && norm(evaluate(pins, x)) < norm(evaluate(pins, l.x)) - 1e-6) return done(x);
   }
   return {
@@ -522,14 +548,14 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
 /** Degrees of freedom left in a sketch: unknowns minus independent equations. */
 export function sketchDof(entities: SketchEntity[], constraints: Constraint[]): number {
   const l = layout(entities);
-  return freedom(l.x, equations(l, constraints).fns);
+  return freedom(l.x, equations(l, constraints).fns, l.frozen);
 }
 
 /** True when adding `extra` takes away no freedom: it repeats or contradicts what the sketch already says. */
 export function wouldOverDefine(entities: SketchEntity[], constraints: Constraint[], extra: Constraint): boolean {
   const l = layout(entities);
-  const before = freedom(l.x, equations(l, constraints).fns);
-  const after = freedom(l.x, equations(l, [...constraints, extra]).fns);
+  const before = freedom(l.x, equations(l, constraints).fns, l.frozen);
+  const after = freedom(l.x, equations(l, [...constraints, extra]).fns, l.frozen);
   return after === before;
 }
 
@@ -550,7 +576,7 @@ export interface SketchStatus {
 export function sketchStatus(entities: SketchEntity[], constraints: Constraint[]): SketchStatus {
   const l = layout(entities);
   const fns = equations(l, constraints).fns;
-  const moves = freeUnknowns(l.x, fns);
+  const moves = freeUnknowns(l.x, fns, l.frozen);
   const free = new Set<string>();
   const freePoints = new Set<string>();
   for (const e of entities) {
@@ -562,7 +588,7 @@ export function sketchStatus(entities: SketchEntity[], constraints: Constraint[]
       if (n === 2) freePoints.add(`${e.id}.${field}`);
     }
   }
-  return { dof: freedom(l.x, fns), free, freePoints };
+  return { dof: freedom(l.x, fns, l.frozen), free, freePoints };
 }
 
 function invalidGeometry(entities: SketchEntity[]): string | null {
@@ -587,11 +613,13 @@ function maxAbs(r: Float64Array): number {
   return m;
 }
 
-function jacobian(fns: Fn[], x: Float64Array): Float64Array[] {
+/** By central differences. A frozen number's column stays zero: nothing it does can move it. */
+function jacobian(fns: Fn[], x: Float64Array, frozen: Uint8Array): Float64Array[] {
   const n = x.length;
   const rows = fns.map(() => new Float64Array(n));
   const probe = Float64Array.from(x);
   for (let j = 0; j < n; j++) {
+    if (frozen[j]) continue;
     const h = 1e-6 * Math.max(1, Math.abs(x[j]));
     probe[j] = x[j] + h;
     const up = fns.map((f) => f(probe));
@@ -604,14 +632,14 @@ function jacobian(fns: Fn[], x: Float64Array): Float64Array[] {
 }
 
 /** Minimum-norm damped Newton. Returns null if it does not converge. */
-function newton(x0: Float64Array, fns: Fn[]): Float64Array | null {
+function newton(x0: Float64Array, fns: Fn[], frozen: Uint8Array): Float64Array | null {
   let x = Float64Array.from(x0);
   if (fns.length === 0) return x;
   let r = evaluate(fns, x);
   for (let iter = 0; iter < 100; iter++) {
     const err = maxAbs(r);
     if (err < TOL) return x;
-    const J = jacobian(fns, x);
+    const J = jacobian(fns, x, frozen);
     const m = fns.length;
     // (J Jᵀ + λI) y = r
     const A = Array.from({ length: m }, (_, i) => {
@@ -657,16 +685,16 @@ function newton(x0: Float64Array, fns: Fn[]): Float64Array | null {
  * exactly by the minimum-norm Newton, and shortened while that brings the
  * pins nearer still. Null when the constraints can't be met to start with.
  */
-function slide(x0: Float64Array, base: Fn[], pins: Fn[]): Float64Array | null {
+function slide(x0: Float64Array, base: Fn[], pins: Fn[], frozen: Uint8Array): Float64Array | null {
   const W2 = 1e6;
   const n = x0.length;
-  const start = newton(x0, base);
+  const start = newton(x0, base, frozen);
   if (!start) return null;
   let x: Float64Array = start;
   let cost = norm(evaluate(pins, x));
   for (let iter = 0; iter < 40 && cost > TOL; iter++) {
-    const Jb = jacobian(base, x);
-    const Jp = jacobian(pins, x);
+    const Jb = jacobian(base, x, frozen);
+    const Jp = jacobian(pins, x, frozen);
     const e = evaluate(pins, x);
     const H = Array.from({ length: n }, () => new Float64Array(n));
     const g = new Float64Array(n);
@@ -695,7 +723,7 @@ function slide(x0: Float64Array, base: Fn[], pins: Fn[]): Float64Array | null {
     let best: { x: Float64Array; cost: number } | null = null;
     for (let t = 1; t > 1e-4; t /= 2) {
       const from = x;
-      const trial = newton(Float64Array.from(from, (v, j) => v + t * dx[j]), base);
+      const trial = newton(Float64Array.from(from, (v, j) => v + t * dx[j]), base, frozen);
       const ct = trial ? norm(evaluate(pins, trial)) : Infinity;
       if (trial && ct < (best?.cost ?? cost)) best = { x: trial, cost: ct };
       else if (best) break;
@@ -743,10 +771,10 @@ function gaussSolve(A: Float64Array[], b: Float64Array): Float64Array | null {
 }
 
 /** Per unknown: can it move while the equations hold (to first order)? Reduced row echelon form of the Jacobian. */
-function freeUnknowns(x: Float64Array, fns: Fn[]): boolean[] {
+function freeUnknowns(x: Float64Array, fns: Fn[], frozen: Uint8Array): boolean[] {
   const n = x.length;
-  if (fns.length === 0) return new Array(n).fill(true);
-  const J = jacobian(fns, x).map((row) => Float64Array.from(row));
+  if (fns.length === 0) return Array.from({ length: n }, (_, c) => !frozen[c]);
+  const J = jacobian(fns, x, frozen).map((row) => Float64Array.from(row));
   const scale = Math.max(1, ...J.map((row) => Math.max(...row.map(Math.abs))));
   const eps = 1e-7 * scale;
   const pivotRow = new Array<number>(n).fill(-1);
@@ -772,15 +800,17 @@ function freeUnknowns(x: Float64Array, fns: Fn[]): boolean[] {
       for (let k = 0; k < n; k++) J[r][k] -= f * J[p][k];
     }
   }
-  const freeCols = [...Array(n).keys()].filter((c) => pivotRow[c] < 0);
+  // A constant never moves; it is no free column either.
+  const freeCols = [...Array(n).keys()].filter((c) => pivotRow[c] < 0 && !frozen[c]);
   // A pivot unknown moves when its row ties it to a free one.
-  return Array.from({ length: n }, (_, c) => pivotRow[c] < 0 || freeCols.some((f) => Math.abs(J[pivotRow[c]][f]) > 1e-7));
+  return Array.from({ length: n }, (_, c) => !frozen[c] && (pivotRow[c] < 0 || freeCols.some((f) => Math.abs(J[pivotRow[c]][f]) > 1e-7)));
 }
 
-/** Unknowns minus the rank of the Jacobian. */
-function freedom(x: Float64Array, fns: Fn[]): number {
-  if (fns.length === 0) return x.length;
-  const J = jacobian(fns, x).map((row) => Float64Array.from(row));
+/** Unknowns (the numbers that are not constants) minus the rank of the Jacobian. */
+function freedom(x: Float64Array, fns: Fn[], frozen: Uint8Array): number {
+  const unknowns = frozen.reduce((s, f) => s + (f ? 0 : 1), 0);
+  if (fns.length === 0) return unknowns;
+  const J = jacobian(fns, x, frozen).map((row) => Float64Array.from(row));
   const n = x.length;
   let rank = 0;
   const scale = Math.max(1, ...J.map((row) => Math.max(...row.map(Math.abs))));
@@ -804,7 +834,7 @@ function freedom(x: Float64Array, fns: Fn[]): number {
       for (let k = c; k < n; k++) J[r][k] -= f * J[p][k];
     }
   }
-  return n - rank;
+  return unknowns - rank;
 }
 
 function round(x: number): number {

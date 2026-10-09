@@ -18,10 +18,10 @@ import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import type { Constraint, DatumPlane, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
+import type { Constraint, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { DATUM_OPS, DEFAULT_DATUMS, frameAsDatumPlane } from "../features/datum";
-import { planeFrame, to2D } from "../geom/frame";
+import { planeFrame } from "../geom/frame";
 import { STEEL_DENSITY } from "../geom/section";
 import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
@@ -50,6 +50,7 @@ import { ProfileCard } from "./ProfileCard";
 import { PropertyPanel } from "./PropertyPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
+import { EMPTY_MODEL, modelView } from "./sketcher/model";
 import { useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
@@ -408,12 +409,15 @@ export function App() {
     // A dimension written as "=b" goes in with its value, and the expression beside it, so the sketcher shows and keeps it.
     const raw = (features.find((g) => g.id === id)?.constraints ?? []) as { value?: unknown }[];
     const constraints = (f.constraints ?? []).map((c, i) => (typeof raw[i]?.value === "string" ? ({ ...c, expr: raw[i].value } as unknown as Constraint) : c));
+    // A sketch that references the model opens as the rebuild solved it: its references where the model is now, and what is tied to them.
+    const rebuilt = view?.sketches.find((s) => s.id === id);
+    const entities = rebuilt?.ok && rebuilt.entities?.some((e) => e.ref) ? rebuilt.entities : ((f.entities ?? []) as SketchEntity[]);
     setSketch({
       id,
       isNew: false,
       plane: frameAsDatumPlane(frame),
       spec: (features.find((g) => g.id === id)?.plane ?? f.plane) as PlaneSpec,
-      entities: (f.entities ?? []) as SketchEntity[],
+      entities,
       constraints,
       suppressed: f.suppressed,
       ...(f.profile ? { profile: f.profile } : {}),
@@ -1058,7 +1062,29 @@ export function App() {
   const saveRef = useRef(save);
   saveRef.current = save;
 
-  const reference = useMemo(() => (sketch && view ? projectEdges(view, sketch.plane) : new Float32Array(0)), [sketch, view]);
+  /**
+   * The part as a sketch being edited sees it: as it stands before the sketch,
+   * not with the features after it or the one made from it (DESIGN §2.4), so
+   * what it shows, snaps to and references is what the rebuild will find. A
+   * new sketch goes at the end: it sees the part as it is.
+   */
+  const [before, setBefore] = useState<{ id: string; view: RebuildView | null } | null>(null);
+  useEffect(() => {
+    if (!sketch || sketch.isNew || !doc) return;
+    let live = true;
+    kernel.rebuildBefore(doc, sketch.id).then(
+      (v) => live && setBefore({ id: sketch.id, view: v }),
+      () => live && setBefore({ id: sketch.id, view: null }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [sketch?.id, sketch?.isNew, kernel]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sketchModel = useMemo(() => {
+    if (!sketch) return EMPTY_MODEL;
+    const frame = planeFrame(sketch.plane.normal, sketch.plane.origin, sketch.plane.xDir);
+    return modelView(sketch.isNew ? view : before?.id === sketch.id ? before.view : null, frame);
+  }, [sketch, view, before]);
 
   const dirty = d.text !== d.savedText;
   const status =
@@ -1334,7 +1360,7 @@ export function App() {
             <SketchMode
               key={sketch.id}
               session={sketch}
-              reference={reference}
+              model={sketchModel}
               onFinish={finishSketch}
               onCancel={() => setSketch(null)}
               applyRef={sketchApply}
@@ -1578,20 +1604,5 @@ function DrawingHelp() {
   );
 }
 
-/** Model edges projected onto a sketch plane, as 2D segment pairs. */
-function projectEdges(view: RebuildView, plane: DatumPlane): Float32Array {
-  if (!view.mesh) return new Float32Array(0);
-  const frame = planeFrame(plane.normal, plane.origin, plane.xDir);
-  const segs = view.mesh.edges;
-  const out: number[] = [];
-  view.mesh.edgeRanges.forEach((r, i) => {
-    if (view.edges[i]?.seam) return;
-    for (let k = r.start; k < r.start + r.count; k++) {
-      const a = to2D(frame, [segs[k * 6], segs[k * 6 + 1], segs[k * 6 + 2]]);
-      const b = to2D(frame, [segs[k * 6 + 3], segs[k * 6 + 4], segs[k * 6 + 5]]);
-      out.push(a[0], a[1], b[0], b[1]);
-    }
-  });
-  return new Float32Array(out);
-}
+
 

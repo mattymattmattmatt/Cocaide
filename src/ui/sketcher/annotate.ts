@@ -4,6 +4,7 @@
 // sketch millimetres, y up; the canvas draws it.
 
 import type { Constraint, ConstraintType, SketchEntity, Vec2 } from "../../doc/types";
+import { withAxes } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
 import type { IconName } from "../icons";
@@ -56,7 +57,8 @@ export interface DimensionShape {
  * the side away from the middle of the sketch.
  */
 export function dimensionShapes(entities: SketchEntity[], constraints: Constraint[], px: number): DimensionShape[] {
-  const byId = new Map(entities.map((e) => [e.id, e]));
+  // A dimension from the sketch's X or Y axis measures to it as to any line.
+  const byId = new Map(withAxes(entities).map((e) => [e.id, e]));
   const pts = entities.flatMap((e) => Object.values(e).filter((v): v is Vec2 => Array.isArray(v)));
   const middle: Vec2 = pts.length ? [avg(pts.map((p) => p[0])), avg(pts.map((p) => p[1]))] : [0, 0];
   const gap = 22 * px;
@@ -219,11 +221,58 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
 }
 
 export interface Glyph {
-  /** The constraint it shows. */
+  /** The constraint it shows (the first of a group). */
   index: number;
   icon: IconName;
   /** Where it is drawn, in sketch mm: beside the entity or point, stacked when several share a place. */
   at: Vec2;
+  /**
+   * A group's constraints, when one glyph speaks for several: a polygon's
+   * equal sides, its corners on its circle. Selecting it selects the first.
+   */
+  indices?: number[];
+}
+
+/** Below this many, relations of a kind show one glyph each; from it, one glyph speaks for the set. */
+const GROUP_FROM = 3;
+
+/**
+ * Relations that read as one: equal relations joining three or more entities
+ * (a polygon's sides), and three or more points on one entity (a polygon's
+ * corners on its circle). For each group, its constraint indices, the first
+ * of which is drawn.
+ */
+export function relationGroups(constraints: Constraint[]): number[][] {
+  const groups: number[][] = [];
+  // Equal: entities joined into sets by the relations between them.
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    while (parent.has(x) && parent.get(x) !== x) x = parent.get(x)!;
+    return x;
+  };
+  constraints.forEach((k) => {
+    if (k.type !== "equal") return;
+    const [a, b] = k.entities.map(find);
+    if (a !== b) parent.set(a, b);
+  });
+  const equal = new Map<string, number[]>();
+  const members = new Map<string, Set<string>>();
+  constraints.forEach((k, i) => {
+    if (k.type !== "equal") return;
+    const root = find(k.entities[0]);
+    equal.set(root, [...(equal.get(root) ?? []), i]);
+    const set = members.get(root) ?? new Set<string>();
+    k.entities.forEach((id) => set.add(id));
+    members.set(root, set);
+  });
+  for (const [root, ks] of equal) if (members.get(root)!.size >= GROUP_FROM) groups.push(ks);
+  // Points on one entity.
+  const on = new Map<string, number[]>();
+  constraints.forEach((k, i) => {
+    if (k.type === "pointOn") on.set(k.entity, [...(on.get(k.entity) ?? []), i]);
+  });
+  for (const ks of on.values()) if (ks.length >= GROUP_FROM) groups.push(ks);
+  return groups;
 }
 
 /**
@@ -253,9 +302,28 @@ export function relationGlyphs(entities: SketchEntity[], constraints: Constraint
       // a point of a deleted entity: nothing to show
     }
   };
+  // A group shows one glyph, on what its relations share: the first equal side, the circle the corners are on.
+  const grouped = new Map<number, number[]>();
+  const hidden = new Set<number>();
+  for (const g of relationGroups(constraints)) {
+    grouped.set(g[0], g);
+    g.slice(1).forEach((i) => hidden.add(i));
+  }
   constraints.forEach((k, index) => {
-    if ("value" in k) return;
+    if ("value" in k || hidden.has(index)) return;
     const icon = RELATION[k.type].icon;
+    const group = grouped.get(index);
+    if (group) {
+      const target = k.type === "equal" ? k.entities[0] : k.type === "pointOn" ? k.entity : null;
+      if (target) {
+        const e = byId.get(target);
+        if (e) {
+          place(`e:${target}`, anchorOf(e), index, icon);
+          out[out.length - 1].indices = group;
+        }
+        return;
+      }
+    }
     switch (k.type) {
       case "coincident":
         return onPoint(k.points[0] === "origin" ? k.points[1] : k.points[0], index, icon);

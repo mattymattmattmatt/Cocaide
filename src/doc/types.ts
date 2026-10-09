@@ -423,9 +423,27 @@ export interface SketchFeature extends FeatureBase {
 
 interface EntityBase {
   id: string;
-  /** Construction geometry is kept for constraints but never becomes a profile. */
+  /**
+   * Construction geometry is kept for constraints but never becomes a profile.
+   * A reference entity (with `ref`) is construction unless this is false.
+   */
   construction?: boolean;
+  /**
+   * Reference geometry (DESIGN §2.4): the entity is the model's edge, axis or
+   * point projected into the sketch plane, again on every rebuild, at the
+   * sketch's place in history. Its numbers are the projection's; the solver
+   * holds them as constants, and relations and dimensions to it follow the
+   * model. Lines, circles, arcs and points only: a line takes a straight edge
+   * (or a circular one seen edge-on) or an axis; a circle a whole circular
+   * edge; an arc part of one; a point an edge's point (`at`), a circle's
+   * centre, a point feature or the Origin.
+   */
+  ref?: DatumRef;
 }
+
+/** The sketch's own axes: lines through its origin along its x and y, usable wherever a line id is (as "origin" is a point). */
+export const SKETCH_AXES = ["X", "Y"] as const;
+export type SketchAxis = (typeof SKETCH_AXES)[number];
 
 export interface LineEntity extends EntityBase {
   type: "line";
@@ -494,7 +512,7 @@ export interface OrientationConstraint {
 /**
  * Exactly one of `entity` (a line, rect or slot), `points` (two point refs),
  * or `point` with `line` (a distance only: the point's perpendicular distance from
- * the line, extended).
+ * the line, extended; `line` may be the sketch axis "X" or "Y").
  */
 export interface DistanceConstraint {
   type: "distance" | "distanceX" | "distanceY";

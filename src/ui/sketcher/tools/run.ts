@@ -74,16 +74,25 @@ export interface SnapContext {
   /** The grid step, or null when the grid is off. */
   grid: number | null;
   options: ToolOptions;
+  /**
+   * The model's edges in the sketch, as stand-in entities ("@e12"): a click
+   * snaps to their ends, middles, centres and onto them too, and the relation
+   * it infers names the stand-in (the sketcher turns it into a reference).
+   */
+  model?: SketchEntity[];
 }
 
 /**
  * Where a click lands, as SOLIDWORKS infers it: on an end, centre, sketch
- * point or the origin; on a line's middle; on a line, circle or arc; the
- * tool's own inference (a polygon side level); level with or plumb above the
- * click it is drawn from; else the grid.
+ * point or the origin; on a model vertex or centre; on a line's middle; on a
+ * line, circle or arc (the sketch's, then the model's); the tool's own
+ * inference (a polygon side level); level with or plumb above the click it is
+ * drawn from; else the grid.
  */
 export function snapClick(def: SketchToolDef, pts: Vec2[], p: Vec2, ctx: SnapContext): Click {
-  const inferred = inferPoint(ctx.entities, p, ctx.tol);
+  const sketch = inferPoint(ctx.entities, p, ctx.tol);
+  const model = ctx.model?.length && !sketch?.ref ? inferPoint(ctx.model, p, ctx.tol) : null;
+  const inferred = sketch?.ref ? sketch : model?.ref && model.ref !== "origin" ? model : (sketch ?? model);
   if (inferred) return inferred;
   const own = def.snap?.(pts, p, ctx.tol, ctx.options);
   if (own) return { p: own.p, ref: null, ...(own.orient ? { orient: own.orient } : {}) };

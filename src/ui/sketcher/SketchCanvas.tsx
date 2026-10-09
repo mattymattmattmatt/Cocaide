@@ -1,21 +1,29 @@
 // The 2D sketch editor: an SVG in sketch-plane millimetres, y up.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { isConstruction } from "../../doc/sketch";
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { entityPolylines } from "../../geom/profile";
 import { dist2 } from "../../geom/vec";
 import { Icon, type IconName } from "../icons";
 import { inputPrefs, keyFor, keyOf, useCommands, wheelZoom } from "../input";
 import { dimensionShapes, RELATION, relationGlyphs } from "./annotate";
-import { constraintEntities, handlesOf, hitEntity, hitHandle, type SketchItem } from "./draft";
+import { constraintTargets } from "../../geom/axes";
+import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem } from "./draft";
+import { faceAt, isModelId, modelEntities, type ModelFace, type ModelView } from "./model";
 import { tangentStart } from "./tools/arcs";
 import { place, previewOf, snapClick, toolByName, type Placement } from "./tools/run";
 import type { Click, SketchToolDef, ToolContext, ToolOptions } from "./tools/types";
 
-/** "select", "dimension", or a drawing tool's name in the registry (src/ui/sketcher/tools). */
+/** "select", "dimension", "convert" (picking model edges and faces to convert), or a drawing tool's name in the registry (src/ui/sketcher/tools). */
 export type Tool = string;
 
-/** What a right-click lands on: an entity, one of its points, a relation's glyph or a dimension, or empty space (null). */
+/**
+ * What a right-click lands on: an entity, one of its points, a relation's
+ * glyph or a dimension, or empty space (null). An entity may be a model
+ * edge's stand-in ("@e12") or a sketch axis ("X"); a point a model vertex
+ * ("@e12.start").
+ */
 export type CanvasTarget = { kind: "entity"; id: string } | { kind: "point"; ref: string } | { kind: "constraint"; index: number };
 
 /** How defined the sketch is, as SOLIDWORKS colours it. */
@@ -42,8 +50,8 @@ const TANGENT_ARC = toolByName("tangent-arc")!;
 interface Props {
   entities: SketchEntity[];
   constraints: Constraint[];
-  /** Model edges projected onto the sketch plane, as 2D segment pairs. */
-  reference: Float32Array;
+  /** The model's edges (and the faces along the sketch) projected into the sketch plane: drawn, hit, snapped to, related to. */
+  model: ModelView;
   tool: Tool;
   /** The drawing tool's options (a polygon's sides). */
   options?: ToolOptions;
@@ -84,7 +92,9 @@ const SNAP_PX = 10;
 const PICK_PX = 7;
 
 export function SketchCanvas(props: Props) {
-  const { entities, constraints, reference, tool, construction, snapToGrid, selection } = props;
+  const { entities, constraints, model, tool, construction, snapToGrid, selection } = props;
+  /** The model edges as stand-in entities ("@e12"): hit, snapped to and related to like the sketch's own. */
+  const modelEnts = useMemo(() => modelEntities(model), [model]);
   const svg = useRef<SVGSVGElement>(null);
   const world = useRef<SVGGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -121,7 +131,7 @@ export function SketchCanvas(props: Props) {
   }, []);
   useEffect(() => {
     if (view) return;
-    setView(fitView(entities, reference, size));
+    setView(fitView(entities, model, size));
     // fit once, on first layout
   }, [size]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -134,7 +144,7 @@ export function SketchCanvas(props: Props) {
   }, [tool]);
   useEffect(() => props.onProgress?.({ placed: clicks.length, arcNext }), [clicks.length, arcNext]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const v = view ?? fitView(entities, reference, size);
+  const v = view ?? fitView(entities, model, size);
   const unit = 1 / v.scale; // world size of one pixel
   const viewBox = `${v.cx - size.w / 2 / v.scale} ${-v.cy - size.h / 2 / v.scale} ${size.w / v.scale} ${size.h / v.scale}`;
   const step = gridStep(v.scale);
@@ -160,14 +170,36 @@ export function SketchCanvas(props: Props) {
    * own inference; level with or plumb above the click before; else the grid.
    */
   const snap = (p: Vec2): Snap =>
-    def ? snapClick(def, clicks.map((c) => c.p), p, { entities, tol: SNAP_PX * unit, grid: snapToGrid ? step : null, options }) : { p, ref: null };
+    def ? snapClick(def, clicks.map((c) => c.p), p, { entities, tol: SNAP_PX * unit, grid: snapToGrid ? step : null, options, model: modelEnts }) : { p, ref: null };
 
+  /**
+   * What is under p: the sketch's points and entities first, then the model's
+   * vertices and edges, then the sketch axes. Converting, only the model:
+   * its edges, else the face under the pointer.
+   */
   const itemAt = (p: Vec2): SketchItem | null => {
-    const h = hitHandle(entities, p, PICK_PX * unit);
-    if (h) return h.constraint ? { kind: "point", ref: h.ref } : { kind: "entity", id: h.ref.split(".")[0] };
-    const e = hitEntity(entities, p, PICK_PX * unit);
-    return e ? { kind: "entity", id: e.id } : null;
+    const tol = PICK_PX * unit;
+    if (tool !== "convert") {
+      const h = hitHandle(entities, p, tol);
+      if (h) return h.constraint ? { kind: "point", ref: h.ref } : { kind: "entity", id: h.ref.split(".")[0] };
+      const e = hitEntity(entities, p, tol);
+      if (e) return { kind: "entity", id: e.id };
+      const mh = hitHandle(modelEnts, p, tol, { constraintOnly: true });
+      if (mh && mh.ref !== "origin") return { kind: "point", ref: mh.ref };
+    }
+    // In-plane edges first (they come first in modelEnts): an edge behind one projects onto the same line.
+    const me = firstHit(modelEnts, p, tol);
+    if (me) return { kind: "entity", id: me.id };
+    if (tool === "convert") {
+      const f = faceAt(model, p);
+      return f ? { kind: "face", index: f.index } : null;
+    }
+    if (Math.abs(p[1]) <= tol) return { kind: "entity", id: "X" };
+    if (Math.abs(p[0]) <= tol) return { kind: "entity", id: "Y" };
+    return null;
   };
+  /** A reference follows the model: picked, never dragged. */
+  const fixedId = (id: string) => !!entities.find((e) => e.id === id)?.ref;
 
   /** The tool's last click is in: build the shape, with what its clicks inferred, and hand it over. */
   const finishPlacement = (pts: Snap[]): Placement | null => {
@@ -187,7 +219,7 @@ export function SketchCanvas(props: Props) {
       const now = performance.now();
       if (now - lastMiddle.current < 350) {
         lastMiddle.current = 0;
-        setView(fitView(entities, reference, size));
+        setView(fitView(entities, model, size));
         return;
       }
       lastMiddle.current = now;
@@ -202,13 +234,13 @@ export function SketchCanvas(props: Props) {
     }
     if (tool !== "select") return;
     const handle = hitHandle(entities, p, PICK_PX * unit);
-    if (handle && handle.ref !== "origin") {
+    if (handle && handle.ref !== "origin" && !fixedId(handle.ref.split(".")[0])) {
       const item: SketchItem = handle.constraint ? { kind: "point", ref: handle.ref } : { kind: "entity", id: handle.ref.split(".")[0] };
       gesture.current = { kind: "drag", handle: handle.ref, from: handle.point, moved: false, item, additive };
       return;
     }
     const ent = hitEntity(entities, p, PICK_PX * unit);
-    if (ent) {
+    if (ent && !ent.ref && !(handle && handle.ref !== "origin")) {
       gesture.current = { kind: "drag", handle: `${ent.id}.body`, from: p, moved: false, item: { kind: "entity", id: ent.id }, additive };
       return;
     }
@@ -275,10 +307,14 @@ export function SketchCanvas(props: Props) {
     if (g?.kind === "zoom") return;
     if (g?.kind === "pan" && e.button === 2 && Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) < 4) {
       const item = itemAt(p);
-      props.onContext?.(item ? (item.kind === "entity" ? item : { kind: "point", ref: item.ref }) : null, e.clientX, e.clientY);
+      props.onContext?.(item?.kind === "entity" ? item : item?.kind === "point" ? { kind: "point", ref: item.ref } : null, e.clientX, e.clientY);
       return;
     }
     if (g?.kind === "pan" || e.button !== 0 || tool === "select") return;
+    if (tool === "convert") {
+      // Converting: each click picks or drops a model edge, or a face for its outline.
+      return select(itemAt(p), true);
+    }
     if (tool === "dimension") {
       // Smart Dimension: pick one or two things; a second pick, or a click in space after one, places it.
       const item = itemAt(p);
@@ -339,7 +375,7 @@ export function SketchCanvas(props: Props) {
   const zoomBy = (k: number) => setView({ ...v, scale: Math.min(1e4, Math.max(1e-3, v.scale * k)) });
   const panBy = (dx: number, dy: number) => setView({ ...v, cx: v.cx - dx / v.scale, cy: v.cy + dy / v.scale });
   useCommands({
-    "view.fit": () => setView(fitView(entities, reference, size)),
+    "view.fit": () => setView(fitView(entities, model, size)),
     "view.zoomIn": () => zoomBy(1.25),
     "view.zoomOut": () => zoomBy(0.8),
     "view.panLeft": () => panBy(-60, 0),
@@ -379,12 +415,14 @@ export function SketchCanvas(props: Props) {
   const chosen = tool === "dimension" ? picks : selection;
   const selectedIds = new Set(chosen.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
   const selectedPoints = new Set(chosen.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
-  const hoverItem = cursor && (tool === "select" || tool === "dimension") && !gesture.current ? itemAt(cursor) : null;
+  const hoverItem = cursor && (tool === "select" || tool === "dimension" || tool === "convert") && !gesture.current ? itemAt(cursor) : null;
+  const selectedFaces = new Set(chosen.flatMap((s) => (s.kind === "face" ? [s.index] : [])));
+  const isHover = (id: string) => hoverItem?.kind === "entity" && hoverItem.id === id;
   const snapMark = cursor && def ? snap(cursor) : null;
   const inferIcon: IconName | null = !snapMark ? null : snapMark.ref ? "coincident" : snapMark.on ? RELATION[snapMark.on.type].icon : snapMark.orient ?? null;
   // A selected relation outlines what it holds.
   const selectedK = props.selectedConstraint !== null && props.selectedConstraint !== undefined ? constraints[props.selectedConstraint] : undefined;
-  const related = new Set(selectedK ? constraintEntities(selectedK) : []);
+  const related = new Set(selectedK ? constraintTargets(selectedK) : []);
   const state = (id: string) => (props.defined?.conflicts.has(id) ? "conflict" : !props.defined ? "" : props.defined.free.has(id) ? "free" : "defined");
   const pointState = (ref: string) => (!props.defined ? "" : props.defined.freePoints.has(ref) ? "free" : "defined");
 
@@ -421,14 +459,48 @@ export function SketchCanvas(props: Props) {
             data-testid="select-box"
           />
         )}
-        <line x1={-1e6} y1={0} x2={1e6} y2={0} className="axis-x" vectorEffect="non-scaling-stroke" />
-        <line x1={0} y1={-1e6} x2={0} y2={1e6} className="axis-y" vectorEffect="non-scaling-stroke" />
-        <ReferenceLines segments={reference} />
+        {/* The sketch's axes: lines any relation or dimension may use ("X", "Y"). */}
+        {(["X", "Y"] as const).map((a) => (
+          <line
+            key={a}
+            x1={a === "X" ? -1e6 : 0}
+            y1={a === "X" ? 0 : -1e6}
+            x2={a === "X" ? 1e6 : 0}
+            y2={a === "X" ? 0 : 1e6}
+            className={`sketch-axis axis-${a.toLowerCase()}${isHover(a) ? " hover" : ""}${selectedIds.has(a) ? " selected" : ""}${related.has(a) ? " related" : ""}`}
+            vectorEffect="non-scaling-stroke"
+            data-axis={a}
+          />
+        ))}
+        {model.faces.map((f) =>
+          selectedFaces.has(f.index) || (hoverItem?.kind === "face" && hoverItem.index === f.index) ? (
+            <FaceTint key={`face:${f.index}`} face={f} className={`model-face${selectedFaces.has(f.index) ? " selected" : " hover"}`} />
+          ) : null,
+        )}
+        <g className="model" data-testid="model-edges">
+          {model.edges.map((m) => (
+            <path
+              key={m.id}
+              d={m.poly.map((q, i) => `${i ? "L" : "M"}${q[0]} ${q[1]}`).join("")}
+              className={[
+                "model-edge",
+                m.entity ? "" : "other",
+                m.inPlane ? "in-plane" : "",
+                isHover(m.id) ? "hover" : "",
+                selectedIds.has(m.id) ? "selected" : "",
+                related.has(m.id) ? "related" : "",
+              ].join(" ")}
+              vectorEffect="non-scaling-stroke"
+              data-model-edge={m.index}
+            />
+          ))}
+        </g>
         {entities.map((e) => {
           const className = [
             "entity",
             state(e.id),
-            e.construction ? "construction" : "",
+            isConstruction(e) ? "construction" : "",
+            e.ref ? "reference" : "",
             related.has(e.id) ? "related" : "",
             selectedIds.has(e.id) || (e.type === "point" && selectedPoints.has(`${e.id}.at`)) ? "selected" : "",
             (hoverItem?.kind === "entity" && hoverItem.id === e.id) || (e.type === "point" && hoverItem?.kind === "point" && hoverItem.ref === `${e.id}.at`) ? "hover" : "",
@@ -442,8 +514,8 @@ export function SketchCanvas(props: Props) {
             <EntityShape key={`preview:${i}`} e={e} className={`entity preview${e.construction ? " construction" : ""}`} />
           ),
         )}
-        {entities.flatMap((e) =>
-          // A sketch point is its own handle: its dot.
+        {[...entities, ...modelHandles(modelEnts, hoverItem, chosen)].flatMap((e) =>
+          // A sketch point is its own handle: its dot. A model edge shows its points only when the pointer is on it, or one is picked.
           (e.type === "point" ? [] : handlesOf(e)).map((h) => (
             <circle
               key={h.ref}
@@ -452,7 +524,7 @@ export function SketchCanvas(props: Props) {
               r={(h.constraint ? 3.5 : 2.5) * unit}
               className={[
                 "handle",
-                h.constraint ? pointState(h.ref) : "corner",
+                isModelId(h.ref) || e.ref ? "reference" : h.constraint ? pointState(h.ref) : "corner",
                 selectedPoints.has(h.ref) ? "selected" : "",
                 hoverItem?.kind === "point" && hoverItem.ref === h.ref ? "hover" : "",
               ].join(" ")}
@@ -499,13 +571,31 @@ function PointDot({ at, r, id, className }: { at: Vec2; r: number; id?: string; 
   return <circle cx={at[0]} cy={at[1]} r={r} className={`${className} point`} vectorEffect="non-scaling-stroke" data-entity={id} />;
 }
 
-function ReferenceLines({ segments }: { segments: Float32Array }) {
-  const d = useMemo(() => {
-    const parts: string[] = [];
-    for (let i = 0; i + 3 < segments.length; i += 4) parts.push(`M${segments[i]} ${segments[i + 1]}L${segments[i + 2]} ${segments[i + 3]}`);
-    return parts.join("");
-  }, [segments]);
-  return <path d={d} className="reference" vectorEffect="non-scaling-stroke" />;
+/** The first entity (in list order) within tol of p, nearest among those as near as it. */
+function firstHit(list: SketchEntity[], p: Vec2, tol: number): SketchEntity | null {
+  let best: SketchEntity | null = null;
+  let bestD = tol;
+  for (const e of list) {
+    const d = distanceTo(e, p);
+    if (d < bestD - 1e-9 || (!best && d <= bestD)) {
+      best = e;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** A model face tinted: hovered or picked for Convert Entities. */
+function FaceTint({ face, className }: { face: ModelFace; className: string }) {
+  const d = face.triangles.map(([a, b, c]) => `M${a[0]} ${a[1]}L${b[0]} ${b[1]}L${c[0]} ${c[1]}Z`).join("");
+  return <path d={d} className={className} data-model-face={face.index} />;
+}
+
+/** The model edges whose points are shown: the one under the pointer, and those picked or with a point picked. */
+function modelHandles(model: SketchEntity[], hover: SketchItem | null, chosen: SketchItem[]): SketchEntity[] {
+  const owner = (i: SketchItem | null) => (i?.kind === "entity" ? i.id : i?.kind === "point" ? i.ref.split(".")[0] : null);
+  const ids = new Set([owner(hover), ...chosen.map(owner)].filter((x): x is string => !!x && isModelId(x)));
+  return model.filter((e) => ids.has(e.id));
 }
 
 function Grid({ view, size, step }: { view: ViewState; size: { w: number; h: number }; step: number }) {
@@ -606,14 +696,20 @@ function Annotations({
         {glyphs.map((g, n) => (
           <g
             key={n}
-            className={`glyph${selected === g.index ? " selected" : ""}`}
+            className={`glyph${selected !== null && (g.indices ?? [g.index]).includes(selected) ? " selected" : ""}`}
             data-testid={`glyph-${g.index}`}
             data-relation={constraints[g.index]?.type}
+            data-count={g.indices?.length}
             {...handlers(g.index, false)}
           >
-            <title>{RELATION[constraints[g.index].type].label}</title>
-            <rect x={g.at[0] - 8 * unit} y={-g.at[1] - 8 * unit} width={16 * unit} height={16 * unit} rx={3 * unit} />
+            <title>{`${RELATION[constraints[g.index].type].label}${g.indices ? ` ×${g.indices.length}` : ""}`}</title>
+            <rect x={g.at[0] - 8 * unit} y={-g.at[1] - 8 * unit} width={(g.indices ? 28 : 16) * unit} height={16 * unit} rx={3 * unit} />
             <Icon name={g.icon} size={12 * unit} x={g.at[0] - 6 * unit} y={-g.at[1] - 6 * unit} />
+            {g.indices && (
+              <text x={g.at[0] + 13 * unit} y={-g.at[1]} fontSize={9 * unit} textAnchor="middle" dominantBaseline="central" className="glyph-count">
+                {g.indices.length}
+              </text>
+            )}
           </g>
         ))}
       </g>
@@ -622,7 +718,10 @@ function Annotations({
 }
 
 function sameItem(a: SketchItem, b: SketchItem): boolean {
-  return a.kind === b.kind && (a.kind === "entity" ? a.id === (b as { id: string }).id : a.ref === (b as { ref: string }).ref);
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "entity") return a.id === (b as { id: string }).id;
+  if (a.kind === "face") return a.index === (b as { index: number }).index;
+  return a.ref === (b as { ref: string }).ref;
 }
 
 /** Grid spacing of 1, 2 or 5 x 10^n mm, at least ~12 px apart. */
@@ -638,11 +737,11 @@ function spanOf(e: SketchEntity): Vec2[][] {
   return e.type === "point" ? [[e.at]] : entityPolylines(e);
 }
 
-function fitView(entities: SketchEntity[], reference: Float32Array, size: { w: number; h: number }): ViewState {
+function fitView(entities: SketchEntity[], model: ModelView, size: { w: number; h: number }): ViewState {
   const xs: number[] = [0];
   const ys: number[] = [0];
   for (const e of entities) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
-  for (let i = 0; i + 1 < reference.length; i += 2) xs.push(reference[i]), ys.push(reference[i + 1]);
+  for (const m of model.edges) for (const p of m.poly) xs.push(p[0]), ys.push(p[1]);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);

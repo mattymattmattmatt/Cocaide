@@ -8,14 +8,15 @@
 import { references, type RawDocument } from "../doc/commands";
 import { documentParameters, parameterRefs, resolveExpressions } from "../doc/parameters";
 import { photoGuesses, photoOf } from "../doc/photo";
-import { constraintEntities } from "../doc/sketch";
-import { DEFAULT_BODY, type Constraint, type MemberFeature, type ProfileDef, type SketchEntity } from "../doc/types";
+import { constraintEntities, isConstruction } from "../doc/sketch";
+import { DEFAULT_BODY, type Constraint, type DatumRef, type MemberFeature, type ProfileDef, type SketchEntity } from "../doc/types";
 import { isObject, memberAtNode, validateDocument } from "../doc/validate";
 import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
 import { sketchDof } from "../geom/solver";
 import { dist2 } from "../geom/vec";
 import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/inspect";
+import { describeEdgeSelector } from "../kernel/selectors";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { fabricationChecks } from "../weldment/fabrication";
 import { defOf } from "../features/defs";
@@ -280,6 +281,8 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
         parent: sketchBrief(sketch as unknown as Raw),
         children: on.map(({ index }) => ({ index, ...(sketch.constraints![index] as unknown as Raw) })),
         measurements: entityMeasurements(re),
+        // Reference geometry: it is the model, projected into the sketch, and what is related to it follows the model.
+        ...(e.ref ? { reference: referenceBrief(e) } : {}),
         error: null,
       };
     }
@@ -512,7 +515,9 @@ function sketchBrief(f: Raw): Raw {
     id: f.id,
     op: "sketch",
     plane: f.plane,
-    entities: entities.map((e) => `${String(e.id)} ${String(e.type)}${e.construction ? " (construction)" : ""}`).join(", "),
+    entities: entities
+      .map((e) => `${String(e.id)} ${String(e.type)}${e.ref ? ` (reference to ${refWords(e.ref as DatumRef)}${isConstruction(e) ? "" : ", converted: profile"})` : e.construction ? " (construction)" : ""}`)
+      .join(", "),
     constraints: Array.isArray(f.constraints) ? f.constraints.length : 0,
   };
 }
@@ -534,7 +539,30 @@ function sketchMeasurements(f: Raw): Record<string, unknown> {
   }
   const p = buildProfile(entities);
   out.profile = p.ok ? { closed: true, regions: p.regions.length, area: round6(p.area) } : { closed: false, problem: p.error };
+  // Its references to the model: re-projected on every rebuild, held by the solver, followed by what is related to them.
+  const refs = entities.filter((e) => e.ref);
+  if (refs.length) out.references = refs.map(referenceBrief);
   return out;
+}
+
+/** A reference entity, as the packet says it: what it references, and that it follows the model. */
+function referenceBrief(e: SketchEntity): Record<string, unknown> {
+  return {
+    entity: e.id,
+    type: e.type,
+    references: refWords(e.ref!),
+    ref: e.ref,
+    construction: isConstruction(e),
+    follows: "the model: projected again on every rebuild; its numbers are not to be edited, and relations and dimensions to it follow the model",
+  };
+}
+
+/** "the model edge (line edges parallel to +Y ...)", "the start of the model edge (...)", "axis Z", "Origin". */
+function refWords(ref: DatumRef): string {
+  if ("edge" in ref) return `${ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of ` : ""}the model edge (${describeEdgeSelector(ref.edge)})`;
+  if ("datum" in ref) return /^[XYZ]$/.test(ref.datum) ? `axis ${ref.datum}` : ref.datum;
+  if ("point" in ref) return `the point [${ref.point.join(", ")}]`;
+  return "a face";
 }
 
 function featureMeasurements(f: Raw, resolved: RawDocument, topo: PartTopology | null): Record<string, unknown> {

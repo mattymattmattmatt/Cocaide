@@ -47,6 +47,17 @@ export class KernelClient {
     return { view: r.view, ms: r.ms };
   }
 
+  /**
+   * The part as it stands before a feature: its faces, edges and mesh, as a
+   * sketch being edited sees the model (not the features after it, nor the
+   * one made from it). The worker keeps the last few.
+   */
+  async rebuildBefore(doc: unknown, feature: string): Promise<RebuildView> {
+    const r = await this.request({ type: "before", doc, feature });
+    if (r.type !== "before") throw new Error("unexpected kernel reply");
+    return r.view;
+  }
+
   async exportStep(doc: unknown): Promise<{ ok: true; name: string; text: string } | { ok: false; errors: string[] }> {
     const r = await this.request({ type: "exportStep", doc });
     if (r.type !== "step") throw new Error("unexpected kernel reply");

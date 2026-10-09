@@ -59,6 +59,8 @@ import { validateDrawing } from "./drawing";
 import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
 import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, type DatumKind } from "../features/datum";
+import { isSketchAxis } from "./sketch";
+import { SKETCH_AXES } from "./types";
 
 export interface ValidatedFeature {
   index: number;
@@ -371,7 +373,51 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   point: ["at"],
 };
 
-function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>): SketchFeature | null {
+/** What each entity type may reference (DESIGN §2.4), as the messages say it. Rects and slots reference nothing. */
+const REF_KINDS: Partial<Record<SketchEntity["type"], string>> = {
+  line: 'a straight edge ({ "edge": <selector> }) or an axis ({ "datum": "Z" } or an axis feature)',
+  circle: 'a whole circular edge ({ "edge": <selector> })',
+  arc: 'part of a circular edge ({ "edge": <selector> })',
+  point: 'a point of an edge ({ "edge": <selector>, "at": "start" | "end" | "mid" | "center" }), a point feature or { "datum": "Origin" }',
+};
+
+/** An entity's `ref`: a DatumRef of a kind the entity can be (the rebuild checks the geometry it finds). */
+function referenceOf(v: unknown, type: SketchEntity["type"], path: string, c: Checker, opts: { earlier: ReadonlyMap<string, string>; profile: boolean }): DatumRef | undefined {
+  const takes = REF_KINDS[type]!;
+  if (opts.profile) {
+    c.fail(path, "a weldment profile is drawn on its own, with no model to reference; remove ref");
+    return undefined;
+  }
+  const before = c.errors.length;
+  const ref = validateDatumRef(v, path, c, opts.earlier);
+  if (!ref || c.errors.length > before) return undefined;
+  const refuse = (what: string) => {
+    c.fail(path, `a ${type} references ${takes}, not ${what}`);
+    return undefined;
+  };
+  if ("face" in ref) return refuse("a face (pick one of its edges)");
+  const kinds = possibleKinds(ref, opts.earlier);
+  if ("edge" in ref) {
+    if (type === "point") {
+      if (!ref.at && ref.edge.kind === "line") return refuse('a straight edge without "at" (say which point of it)');
+      return ref;
+    }
+    if (ref.at) return refuse(`a point of an edge ("at": "${ref.at}"); use a point entity for that`);
+    if ((type === "circle" || type === "arc") && ref.edge.kind === "line") return refuse("a straight edge");
+    return ref;
+  }
+  if ("point" in ref) return type === "point" ? ref : refuse("a point");
+  // A default or a reference feature: a line takes an axis, a point a point.
+  const want = type === "line" ? "axis" : type === "point" ? "point" : null;
+  if (!want || !kinds.includes(want)) return refuse(`${ref.datum}, ${aKinds(kinds)}`);
+  return ref;
+}
+
+/**
+ * A sketch. `profile`: it is a weldment profile's sketch, drawn in a plane of
+ * its own, so it has no model to reference.
+ */
+function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>, opts: { profile?: boolean } = {}): SketchFeature | null {
   c.keys(raw, "", ["id", "op", "plane", "entities", "constraints", "profile"]);
   let mark: SketchFeature["profile"];
   if (raw.profile !== undefined) {
@@ -388,14 +434,17 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
 
   const entities: SketchEntity[] = [];
   const entityTypes = new Map<string, SketchEntity["type"]>();
+  /** The reference entities: their numbers follow the model, so nothing may fix them. */
+  const references = new Set<string>();
   if (!Array.isArray(raw.entities)) {
     c.fail("entities", `must be an array (got ${describe(raw.entities)})`);
   } else {
     raw.entities.forEach((e, i) => {
-      const entity = validateEntity(e, `entities[${i}]`, c, entityTypes);
+      const entity = validateEntity(e, `entities[${i}]`, c, entityTypes, { earlier, profile: !!opts.profile });
       if (entity) {
         entities.push(entity);
         entityTypes.set(entity.id, entity.type);
+        if (entity.ref) references.add(entity.id);
       }
     });
   }
@@ -406,7 +455,7 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
       c.fail("constraints", `must be an array (got ${describe(raw.constraints)})`);
     } else {
       raw.constraints.forEach((k, i) => {
-        const constraint = validateConstraint(k, `constraints[${i}]`, c, entityTypes);
+        const constraint = validateConstraint(k, `constraints[${i}]`, c, entityTypes, references);
         if (constraint) constraints.push(constraint);
       });
     }
@@ -424,6 +473,7 @@ function validateEntity(
   path: string,
   c: Checker,
   known: Map<string, SketchEntity["type"]>,
+  opts: { earlier: ReadonlyMap<string, string>; profile: boolean },
 ): SketchEntity | null {
   if (!isObject(e)) {
     c.fail(path, `must be an object (got ${describe(e)})`);
@@ -433,6 +483,8 @@ function validateEntity(
   const before = c.errors.length;
   if (typeof e.id !== "string" || !ID_PATTERN.test(e.id)) {
     c.fail(label, `id must be an identifier like "r1" (got ${describe(e.id)})`);
+  } else if (isSketchAxis(e.id)) {
+    c.fail(label, `"${e.id}" names the sketch's ${e.id} axis (${SKETCH_AXES.join(" and ")} are taken); give the entity another id`);
   } else if (known.has(e.id)) {
     c.fail(label, `duplicate entity id "${e.id}"`);
   }
@@ -444,8 +496,13 @@ function validateEntity(
     c.fail(label, `unknown entity type ${describe(e.type)} (supported: ${Object.keys(ENTITY_FIELDS).join(", ")})`);
     return null;
   }
-  c.keys(e, label, ["id", "type", "construction", ...ENTITY_FIELDS[type]]);
-  const base = { id: e.id as string, ...(e.construction === undefined ? {} : { construction: e.construction as boolean }) };
+  c.keys(e, label, ["id", "type", "construction", ...(REF_KINDS[type] ? ["ref"] : []), ...ENTITY_FIELDS[type]]);
+  const ref = e.ref === undefined ? undefined : referenceOf(e.ref, type, `${label} ref`, c, opts);
+  const base = {
+    id: e.id as string,
+    ...(e.construction === undefined ? {} : { construction: e.construction as boolean }),
+    ...(ref ? { ref } : {}),
+  };
   let entity: SketchEntity | null = null;
   switch (type) {
     case "line": {
@@ -501,6 +558,7 @@ function validateConstraint(
   path: string,
   c: Checker,
   entities: Map<string, SketchEntity["type"]>,
+  references: ReadonlySet<string> = new Set(),
 ): Constraint | null {
   if (!isObject(k)) {
     c.fail(path, `must be an object (got ${describe(k)})`);
@@ -508,7 +566,13 @@ function validateConstraint(
   }
   const label = typeof k.type === "string" ? `${path} ${k.type}` : path;
   const before = c.errors.length;
-  const entityRef = (key: string, value: unknown, allowed: SketchEntity["type"][]): string | undefined => {
+  /** `axis`: the sketch's X or Y axis may stand for the line. */
+  const entityRef = (key: string, value: unknown, allowed: SketchEntity["type"][], axis = false): string | undefined => {
+    if (isSketchAxis(value)) {
+      if (axis && allowed.includes("line")) return value;
+      c.fail(label, `${key} "${value}" is the sketch's ${value} axis; this constraint needs ${allowed.join(" or ")} of the sketch`);
+      return undefined;
+    }
     if (typeof value !== "string" || !entities.has(value)) {
       c.fail(label, `${key} must name an entity in this sketch (got ${describe(value)})`);
       return undefined;
@@ -547,15 +611,19 @@ function validateConstraint(
     const b = pointRef(value[1]);
     return a && b ? [a, b] : undefined;
   };
-  const entityPair = (allowed: SketchEntity["type"][]): [string, string] | undefined => {
+  const entityPair = (allowed: SketchEntity["type"][], axis = false): [string, string] | undefined => {
     if (!Array.isArray(k.entities) || k.entities.length !== 2) {
       c.fail(label, `entities must be an array of two entity ids (got ${describe(k.entities)})`);
       return undefined;
     }
-    const a = entityRef("entities[0]", k.entities[0], allowed);
-    const b = entityRef("entities[1]", k.entities[1], allowed);
+    const a = entityRef("entities[0]", k.entities[0], allowed, axis);
+    const b = entityRef("entities[1]", k.entities[1], allowed, axis);
     if (a && b && a === b) {
       c.fail(label, `needs two different entities (got "${a}" twice)`);
+      return undefined;
+    }
+    if (a && b && isSketchAxis(a) && isSketchAxis(b)) {
+      c.fail(label, "relates the sketch's two axes to each other; one of the pair must be an entity of the sketch");
       return undefined;
     }
     return a && b ? [a, b] : undefined;
@@ -597,7 +665,7 @@ function validateConstraint(
           return null;
         }
         const point = pointRef(k.point);
-        const line = entityRef("line", k.line, ["line"]);
+        const line = entityRef("line", k.line, ["line"], true);
         if (point && line && point.split(".")[0] === line) c.fail(label, `"${point}" is a point of "${line}" itself`);
         if (value === undefined || !point || !line || c.errors.length > before) return null;
         return { type: "distance", point, line, value };
@@ -633,7 +701,7 @@ function validateConstraint(
     case "concentric":
     case "angle": {
       c.keys(k, label, k.type === "angle" ? ["type", "entities", "value"] : ["type", "entities"]);
-      const pair = entityPair(k.type === "concentric" ? ["circle", "arc"] : ["line"]);
+      const pair = entityPair(k.type === "concentric" ? ["circle", "arc"] : ["line"], k.type !== "concentric");
       if (k.type === "angle") {
         const value = c.num(k, "value", label, {});
         if (value !== undefined && !(value > 0 && value < 180)) c.fail(label, `value must be over 0 and under 180 degrees (got ${value}); for 0 use parallel`);
@@ -643,9 +711,9 @@ function validateConstraint(
     }
     case "tangent": {
       c.keys(k, label, ["type", "entities"]);
-      const pair = entityPair(["line", "circle", "arc"]);
+      const pair = entityPair(["line", "circle", "arc"], true);
       if (!pair) return null;
-      if (pair.every((id) => entities.get(id) === "line")) {
+      if (pair.every((id) => isSketchAxis(id) || entities.get(id) === "line")) {
         c.fail(label, `two lines cannot be tangent ("${pair[0]}", "${pair[1]}"); use collinear or parallel`);
         return null;
       }
@@ -655,14 +723,14 @@ function validateConstraint(
     case "pointOn": {
       c.keys(k, label, ["type", "point", "entity"]);
       const point = pointRef(k.point);
-      const entity = entityRef("entity", k.entity, k.type === "midpoint" ? ["line", "slot"] : ["line", "circle", "arc"]);
+      const entity = entityRef("entity", k.entity, k.type === "midpoint" ? ["line", "slot"] : ["line", "circle", "arc"], k.type === "pointOn");
       if (point && entity && point.split(".")[0] === entity) c.fail(label, `"${point}" is a point of "${entity}" itself`);
       return point && entity && c.errors.length === before ? { type: k.type, point, entity } : null;
     }
     case "symmetric": {
       c.keys(k, label, ["type", "points", "line"]);
       const points = pointPair(k.points);
-      const line = entityRef("line", k.line, ["line"]);
+      const line = entityRef("line", k.line, ["line"], true);
       return points && line && c.errors.length === before ? { type: "symmetric", points, line } : null;
     }
     case "fix": {
@@ -674,9 +742,11 @@ function validateConstraint(
       if (k.point !== undefined) {
         const point = pointRef(k.point);
         if (point === "origin") c.fail(label, "the origin is fixed already");
+        else if (point && references.has(point.split(".")[0])) c.fail(label, `"${point}" is a point of a reference entity: it follows the model already`);
         return point && c.errors.length === before ? { type: "fix", point } : null;
       }
       const entity = entityRef("entity", k.entity, ["line", "circle", "arc", "rect", "slot", "point"]);
+      if (entity && references.has(entity)) c.fail(label, `"${entity}" is a reference entity: it follows the model already`);
       return entity && c.errors.length === before ? { type: "fix", entity } : null;
     }
     default:
@@ -1028,7 +1098,7 @@ export function validateProfile(input: unknown, path: string, c: Checker): Profi
   const sketchRaw = resolveExpressions({ id: "profile", op: "sketch", plane: XY, entities: input.entities, ...(input.constraints !== undefined ? { constraints: input.constraints } : {}) }, parameters, exprErrors) as Record<string, unknown>;
   for (const e of exprErrors) c.fail(path, e);
   const inner = new Checker(path);
-  if (!exprErrors.length) validateSketch(sketchRaw, inner, new Map());
+  if (!exprErrors.length) validateSketch(sketchRaw, inner, new Map(), { profile: true });
   for (const e of inner.errors) c.errors.push(e);
   const sizes: ProfileDef["sizes"] = [];
   if (!Array.isArray(input.sizes) || input.sizes.length === 0) c.fail(`${path}.sizes`, `must list at least one size (got ${describe(input.sizes)})`);

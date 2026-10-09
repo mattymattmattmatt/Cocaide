@@ -32,7 +32,8 @@ export type ProfileResult = { ok: true; regions: Region[]; area: number } | { ok
 
 export function buildProfile(entities: SketchEntity[]): ProfileResult {
   try {
-    const live = entities.filter((e) => !e.construction);
+    // Construction geometry never makes a profile; nor does a reference to the model, unless converted (construction: false).
+    const live = entities.filter((e) => !(e.construction ?? !!e.ref));
     const loops: Loop[] = [];
     const open: Seg[] = [];
     for (const e of live) {

@@ -57,7 +57,7 @@ describe("validation", () => {
   });
 
   it("says what is wrong with a bad one", () => {
-    expect(errorsOf(doc([{ id: "p1", type: "point", at: [1, 2], radius: 3 }]))).toEqual(['s1: entities[0] "p1": unknown field "radius" (allowed: id, type, construction, at)']);
+    expect(errorsOf(doc([{ id: "p1", type: "point", at: [1, 2], radius: 3 }]))).toEqual(['s1: entities[0] "p1": unknown field "radius" (allowed: id, type, construction, ref, at)']);
     expect(errorsOf(doc([{ id: "p1", type: "point" }]))).toEqual(['s1: entities[0] "p1".at: must be an array of 2 numbers (got nothing)']);
     expect(errorsOf(doc([P], [{ type: "coincident", points: ["p1.center", "origin"] }]))).toEqual(['s1: constraints[0] coincident: point ref "p1.center": a point has points at']);
     expect(errorsOf(doc([P], [{ type: "horizontal", entity: "p1" }]))).toEqual(['s1: constraints[0] horizontal: entity "p1" is a point; this constraint applies to line']);
