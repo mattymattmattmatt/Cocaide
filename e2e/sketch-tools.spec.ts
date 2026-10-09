@@ -245,3 +245,43 @@ test("the toolbar stays on one row with a flyout open", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("flyout-tangent-arc")).toHaveCount(0);
 });
+
+test("a corner of a hexagon held on the origin, a side level, drags to resize it; refusals and double-clicks leave nothing behind", async ({ page }) => {
+  const toScreen = (x: number, y: number) =>
+    page.evaluate(([x, y]) => {
+      const m = (document.querySelector("[data-testid=sketch-canvas] > g") as SVGGElement).getScreenCTM()!;
+      return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
+    }, [x, y]);
+  await page.keyboard.press("g");
+  await sketchClick(page, 0, 0);
+  // Typing the sides, Esc belongs to the field: the centre already placed stays.
+  await page.getByTestId("tool-option-sides").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("tool-prompt")).toContainText("Click a corner");
+  await sketchClick(page, 20, 0);
+  await expect(page.getByTestId("sketch-dof")).toHaveText("Under defined: 1 degree of freedom");
+  await page.keyboard.press("Escape");
+  // Dragged off the line it can move along, the corner goes as near the pointer as it can: the size follows.
+  const [x0, y0] = await toScreen(20, 0);
+  const [x1, y1] = await toScreen(30, 8);
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x1, y1, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId("sketch-message")).toHaveCount(0);
+  // A regular hexagon of circumradius 30: (3√3/2) 30² = 2338.27 mm².
+  await expect(page.getByTestId("profile-status")).toContainText(`area ${(((3 * Math.sqrt(3)) / 2) * 900).toFixed(3).slice(0, -2)}`);
+
+  // A tangent arc refuses a click on no end; the note goes with the tool.
+  await page.getByTestId("tool-arc-flyout").click();
+  await page.getByTestId("flyout-tangent-arc").click();
+  await sketchClick(page, -40, 30);
+  await expect(page.getByTestId("sketch-message")).toContainText("A tangent arc starts at the end of a line or arc");
+  await page.keyboard.press("p");
+  await expect(page.getByTestId("sketch-message")).toHaveCount(0);
+  // A double-click with the Point tool makes one point.
+  const [px, py] = await toScreen(-40, 30);
+  await page.mouse.dblclick(px, py);
+  const { entities } = await finished(page);
+  expect(entities.filter((e) => e.type === "point")).toEqual([{ id: "p1", type: "point", at: [-40, 30] }]);
+});

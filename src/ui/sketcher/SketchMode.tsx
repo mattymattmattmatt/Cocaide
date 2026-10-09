@@ -76,10 +76,11 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     setMemory(next);
     saveMemory(next);
   };
-  /** Picks a tool; a drawing tool becomes what its flyout shows. */
+  /** Picks a tool; a drawing tool becomes what its flyout shows. What the last tool said (a click it refused) goes. */
   const setTool = (t: Tool) => {
     const def = toolByName(t);
     if (def) keep(remember(memory, def));
+    if (t !== tool) setMessage(null);
     setToolState(t);
   };
   const drawing = toolByName(tool);

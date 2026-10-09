@@ -350,7 +350,9 @@ export function SketchCanvas(props: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && (clicks.length || picks.length)) {
+      // Typing in a field (the polygon's sides), Esc and A are the field's.
+      const typing = e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+      if (e.key === "Escape" && !typing && (clicks.length || picks.length)) {
         setClicks([]);
         setPicks([]);
         setArcNext(false);
@@ -358,7 +360,6 @@ export function SketchCanvas(props: Props) {
         return;
       }
       // Drawing lines, the Arc key turns the next piece into a tangent arc from the end, and back (SOLIDWORKS's A).
-      const typing = e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
       if (!typing && !e.repeat && active?.chain && active !== TANGENT_ARC && clicks.length === 1 && keyOf(e) === keyFor("sketch.arc") && tangentStart(clicks[0], entities)) {
         setArcNext((a) => !a);
         trail.current = [];

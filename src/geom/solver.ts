@@ -4,7 +4,8 @@
 // or two equations that must be zero. Newton steps with the minimum-norm
 // update (dx = -Jᵀ(JJᵀ + λI)⁻¹ r) move the sketch as little as possible, so
 // typing a dimension changes what it must and leaves the rest alone. Dragging
-// pins the dragged handle to the cursor and solves the rest around it.
+// pins the dragged handle to the cursor and solves the rest around it; where
+// the constraints don't let it reach the cursor, it goes as near as they allow.
 //
 // The document still stores solved geometry: the rebuild checks constraints,
 // it does not solve them. This module is what keeps the two in step.
@@ -477,8 +478,8 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     }
   }
   const attempts: Fn[][] = [];
+  let pins: Fn[] = [];
   if (opts.drag?.length) {
-    let pins: Fn[];
     try {
       pins = dragEquations(l, opts.drag);
     } catch (e) {
@@ -491,15 +492,24 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     attempts.push(base);
   }
 
+  const done = (x: Float64Array): SolveResult => {
+    const solved = unpack(l, x);
+    const bad = invalidGeometry(solved);
+    if (bad) return { ok: false, error: bad };
+    return { ok: true, entities: solved, dof: freedom(x, base) };
+  };
   for (const fns of attempts) {
     const x = newton(l.x, fns);
     if (!x) continue;
     // The drag pins are wishes; the constraints are not. Re-check the constraints alone.
     if (maxAbs(evaluate(base, x)) > ACCEPT) continue;
-    const solved = unpack(l, x);
-    const bad = invalidGeometry(solved);
-    if (bad) return { ok: false, error: bad };
-    return { ok: true, entities: solved, dof: freedom(x, base) };
+    return done(x);
+  }
+  if (pins.length) {
+    // The pointer is somewhere the constraints don't let the handle reach (a polygon's corner off its
+    // centre's line once a side is level): go as near as they allow, as SOLIDWORKS slides it along.
+    const x = slide(l.x, base, pins);
+    if (x && maxAbs(evaluate(base, x)) <= ACCEPT && norm(evaluate(pins, x)) < norm(evaluate(pins, l.x)) - 1e-6) return done(x);
   }
   return {
     ok: false,
@@ -637,6 +647,67 @@ function newton(x0: Float64Array, fns: Fn[]): Float64Array | null {
     if (!accepted) return maxAbs(r) < ACCEPT ? x : null;
   }
   return maxAbs(r) < ACCEPT ? x : null;
+}
+
+/**
+ * The geometry nearest the drag pins that the constraints allow. Each step is
+ * the least-squares move towards the pins among the moves the constraints
+ * allow to first order (their rows weighted far above the pins'; damped, so
+ * numbers nothing asks to move stay put), put back onto the constraints
+ * exactly by the minimum-norm Newton, and shortened while that brings the
+ * pins nearer still. Null when the constraints can't be met to start with.
+ */
+function slide(x0: Float64Array, base: Fn[], pins: Fn[]): Float64Array | null {
+  const W2 = 1e6;
+  const n = x0.length;
+  const start = newton(x0, base);
+  if (!start) return null;
+  let x: Float64Array = start;
+  let cost = norm(evaluate(pins, x));
+  for (let iter = 0; iter < 40 && cost > TOL; iter++) {
+    const Jb = jacobian(base, x);
+    const Jp = jacobian(pins, x);
+    const e = evaluate(pins, x);
+    const H = Array.from({ length: n }, () => new Float64Array(n));
+    const g = new Float64Array(n);
+    const addRows = (J: Float64Array[], w: number, r?: Float64Array) =>
+      J.forEach((a, row) => {
+        for (let i = 0; i < n; i++) {
+          if (a[i] === 0) continue;
+          if (r) g[i] += a[i] * r[row];
+          for (let k = 0; k < n; k++) H[i][k] += w * a[i] * a[k];
+        }
+      });
+    addRows(Jb, W2);
+    addRows(Jp, 1, e);
+    // A regularised least-squares step: unknowns that neither the pins nor the constraints touch stay put.
+    const dx = gaussSolve(
+      H.map((row, i) => {
+        const out = Float64Array.from(row);
+        out[i] += 1e-9;
+        return out;
+      }),
+      g.map((v) => -v),
+    );
+    if (!dx) break;
+    // The step ignores how the constraints curve (a point on a circle), so it can overshoot: take the
+    // best of it, half of it, a quarter, … while that keeps getting better.
+    let best: { x: Float64Array; cost: number } | null = null;
+    for (let t = 1; t > 1e-4; t /= 2) {
+      const from = x;
+      const trial = newton(Float64Array.from(from, (v, j) => v + t * dx[j]), base);
+      const ct = trial ? norm(evaluate(pins, trial)) : Infinity;
+      if (trial && ct < (best?.cost ?? cost)) best = { x: trial, cost: ct };
+      else if (best) break;
+    }
+    const moved = !!best && best.cost < cost - 1e-12 * (1 + cost);
+    if (best) {
+      x = best.x;
+      cost = best.cost;
+    }
+    if (!moved) break;
+  }
+  return x;
 }
 
 function norm(v: Float64Array): number {

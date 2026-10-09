@@ -331,6 +331,19 @@ describe("Polygon", () => {
     for (const l of moved) expect(len(l)).toBeCloseTo(l0, 9);
   });
 
+  it("on the origin with a side level, a corner dragged anywhere resizes it: the corner goes as near the pointer as it can", () => {
+    const made = draw("polygon", [{ p: [0, 0], ref: "origin" }, { p: [20, 0], ref: null }], { sides: 6 });
+    // The corner clicked can only move along the x axis now (the size is all that is left).
+    const relations = [...made.relations, ...made.inferred];
+    expect(sketchStatus(made.entities, relations).dof).toBe(1);
+    const moved = lines(dragged(made, "l1.start", [20, 0], [25, 10], made.inferred));
+    expect(moved[0].start[0]).toBeCloseTo(25, 5);
+    expect(moved[0].start[1]).toBeCloseTo(0, 9);
+    const side = len(moved[0]);
+    expect(side).toBeCloseTo(25, 5);
+    for (const l of moved) expect(len(l)).toBeCloseTo(side, 9);
+  });
+
   it("takes 3 to 40 sides; anything else is pulled back in", () => {
     const def = tool("polygon");
     expect(optionValues(def, {})).toEqual({ sides: 6, mode: "inscribed" });
@@ -479,6 +492,15 @@ describe("Point", () => {
     const base: SketchEntity[] = [{ id: "l1", type: "line", start: [0, 0], end: [10, 0] }];
     const made = draw("point", [{ p: [5, 0], ref: null, on: { type: "midpoint", entity: "l1" } }], {}, base);
     expect(made.inferred).toEqual([{ type: "midpoint", point: "p1.at", entity: "l1" }]);
+  });
+
+  it("adds nothing on a sketch point (a double-click lands twice), but sits on a line's end", () => {
+    const base: SketchEntity[] = [
+      { id: "p1", type: "point", at: [3, 4] },
+      { id: "l1", type: "line", start: [0, 0], end: [10, 0] },
+    ];
+    expect(place(tool("point"), [{ p: [3, 4], ref: "p1.at" }], {}, { entities: base })).toBeNull();
+    expect(draw("point", [{ p: [10, 0], ref: "l1.end" }], {}, base).inferred).toEqual([{ type: "coincident", points: ["p2.at", "l1.end"] }]);
   });
 
   it("never turns construction", () => {

@@ -112,6 +112,28 @@ describe("dragging", () => {
     expect(r).toEqual({ ok: false, error: "the constraints do not let that move" });
   });
 
+  it("slides a dragged point as near the pointer as the constraints let it", () => {
+    // Level from the origin: the end can only go along the x axis, so it goes to the pointer's x.
+    const r = solved(
+      [{ id: "l1", type: "line", start: [0, 0], end: [10, 0] }],
+      [
+        { type: "coincident", points: ["l1.start", "origin"] },
+        { type: "horizontal", entity: "l1" },
+      ],
+      { drag: [{ handle: "l1.end", from: [10, 0], to: [25, 10] }] },
+    );
+    const l = r.entities[0] as Extract<SketchEntity, { type: "line" }>;
+    close([...l.start, ...l.end], [0, 0, 25, 0]);
+    // On a circle about the origin: the nearest point of the circle to the pointer.
+    const p = solved(
+      [{ id: "p1", type: "point", at: [10, 0] }],
+      [{ type: "distance", points: ["p1.at", "origin"], value: 10 }],
+      { drag: [{ handle: "p1.at", from: [10, 0], to: [30, 30] }] },
+    );
+    const at = (p.entities[0] as Extract<SketchEntity, { type: "point" }>).at;
+    at.forEach((v) => expect(v).toBeCloseTo(10 / Math.SQRT2, 5));
+  });
+
   it("drags a rect corner and keeps the opposite corner still", () => {
     const r = solved([{ id: "r1", type: "rect", center: [0, 0], w: 20, h: 10 }], [], {
       drag: [{ handle: "r1.corner2", to: [50, 30] }],
