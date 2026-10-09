@@ -50,8 +50,17 @@ Entities (2D, in the sketch frame; "construction": true keeps one out of the pro
   { "id": "l1", "type": "line", "start": [0,0], "end": [10,0] }
   { "id": "a1", "type": "arc", "center": [0,0], "start": [5,0], "end": [0,5], "clockwise": false }
   { "id": "s1", "type": "slot", "center1": [0,0], "center2": [20,0], "width": 6 }
+  { "id": "p1", "type": "point", "at": [10,5] }     (a sketch point: a hole centre, a pattern place, an anchor; never profile)
 Closed loops become the profile; a loop inside another is a hole in it.
-Constraints are SOLIDWORKS's sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2) or "origin".
+rect and slot are single entities kept for older documents: they can't be trimmed or partly dimensioned. Build new
+outlines from lines and arcs with relations, as the app's tools do:
+  corner rectangle: 4 lines, each corner "coincident" (l1.end with l2.start ...), l1 and l3 "horizontal", l2 and l4 "vertical";
+  centre rectangle: that, plus 2 construction diagonals with their ends coincident with the corners and a point
+    { "type": "midpoint", "point": "p1.at", "entity": "<diagonal>" } at the centre (put it on the origin with coincident);
+  polygon: N equal lines (coincident ends, "equal" to the first) with their corners "pointOn" a construction circle;
+  slot: 2 lines and 2 arcs joined by coincident ends, each line "tangent" to both arcs, the arcs "equal", their centres
+    coincident with the ends of a construction centreline.
+Constraints are SOLIDWORKS's sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2, point at) or "origin".
 Dimensions (mm; angles in degrees):
   { "type": "distanceX" | "distanceY" | "distance", "entity": "r1", "value": 80 }   (or "points": ["l1.start","l1.end"])
   { "type": "distance", "point": "c1.center", "line": "l1", "value": 12 }   (square to the line, extended)
@@ -67,7 +76,7 @@ Relations:
   { "type": "concentric", "entities": ["c1", "a1"] }
   { "type": "equal", "entities": ["c1", "c2"] }                  (two lines' lengths, or two radii)
   { "type": "symmetric", "points": ["l1.start", "l2.start"], "line": "l3" }
-  { "type": "fix", "entity": "l1" }                              (or "point": "l1.end": held where it is)
+  { "type": "fix", "entity": "l1" }                              (or "point": "l1.end", or a point entity: held where it is)
 A relation that repeats or contradicts what the sketch already fixes is refused.
 
 ## extrude / cut

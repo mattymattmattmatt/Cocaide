@@ -10,13 +10,17 @@ import { sketchStatus, solveSketch, wouldOverDefine } from "../../geom/solver";
 import { evaluate } from "../../doc/parameters";
 import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
-import { constraintEntities, describeConstraint, removeEntities, smartDimension, suggestions, type SketchItem, type Suggestion } from "./draft";
+import { constraintEntities, describeConstraint, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type Suggestion } from "./draft";
 import { dimensionText, RELATION } from "./annotate";
-import { SketchCanvas, type CanvasTarget, type DefinedState, type Tool } from "./SketchCanvas";
+import { SketchCanvas, type CanvasTarget, type DefinedState, type DrawProgress, type Tool } from "./SketchCanvas";
 import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "../ContextMenu";
+import { Flyout, IconTool, ToolStrip } from "./DrawTools";
+import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from "./tools/memory";
+import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
+import type { SketchToolDef } from "./tools/types";
 
 export interface SketchSession {
   /** Existing feature id, or the id the new sketch will get. */
@@ -51,15 +55,10 @@ interface DraftState {
   constraints: Constraint[];
 }
 
-/** The sketch tools, and the commands their keys run (Settings → Keyboard). */
-const TOOLS: [Tool, string, string][] = [
-  ["select", "Select", "sketch.select"],
-  ["dimension", "Dimension", "sketch.dimension"],
-  ["line", "Line", "sketch.line"],
-  ["rect", "Rectangle", "sketch.rect"],
-  ["circle", "Circle", "sketch.circle"],
-  ["arc", "Arc", "sketch.arc"],
-  ["slot", "Slot", "sketch.slot"],
+/** Select and Smart Dimension, and the commands their keys run (Settings → Keyboard). The drawing tools are the registry's (tools/). */
+const MODES: [Tool, string, string, IconName][] = [
+  ["select", "Select", "sketch.select", "select"],
+  ["dimension", "Dimension", "sketch.dimension", "smartDimension"],
 ];
 
 export function SketchMode({ session, reference, onFinish, onCancel, onAsk, applyRef }: Props) {
@@ -69,7 +68,25 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
   /** Geometry during a drag, before it becomes a draft state. */
   const [live, setLive] = useState<SketchEntity[] | null>(null);
   const dragBase = useRef<SketchEntity[] | null>(null);
-  const [tool, setTool] = useState<Tool>("select");
+  const [tool, setToolState] = useState<Tool>("select");
+  /** Which tool each flyout shows, and each tool's options: remembered in this browser. */
+  const [memory, setMemory] = useState<ToolMemory>(loadMemory);
+  const [progress, setProgress] = useState<DrawProgress>({ placed: 0, arcNext: false });
+  const keep = (next: ToolMemory) => {
+    setMemory(next);
+    saveMemory(next);
+  };
+  /** Picks a tool; a drawing tool becomes what its flyout shows. */
+  const setTool = (t: Tool) => {
+    const def = toolByName(t);
+    if (def) keep(remember(memory, def));
+    setToolState(t);
+  };
+  const drawing = toolByName(tool);
+  const toolOptions = drawing ? optionValues(drawing, memory.options[drawing.name]) : {};
+  const setOption = (key: string, value: number | string) => {
+    if (drawing) keep({ ...memory, options: { ...memory.options, [drawing.name]: { ...toolOptions, [key]: value } } });
+  };
   const [construction, setConstruction] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [selection, setSelection] = useState<SketchItem[]>([]);
@@ -158,16 +175,17 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
   };
 
   /**
-   * A new entity, with the relations it inferred while drawn: kept when the
-   * sketch can meet them, and each only if it adds something. If they can't
-   * all be met, the snaps alone; then none.
+   * A drawn shape: its entities and the relations that hold its shape, with
+   * the relations its clicks inferred: kept when the sketch can meet them, and
+   * each only if it adds something. If they can't all be met, the snaps alone;
+   * then none.
    */
-  const onCreate = (entity: SketchEntity, inferred: Constraint[]) => {
-    const entities = [...draft.entities, entity];
+  const onCreate = ({ entities: made, relations, inferred }: Placement) => {
+    const entities = [...draft.entities, ...made];
     const tries = [inferred, inferred.filter((k) => k.type === "coincident"), []];
     let error = "";
     for (const ks of tries) {
-      const constraints = [...draft.constraints];
+      const constraints = [...draft.constraints, ...relations];
       for (const k of ks) if (!wouldOverDefine(entities, constraints, k)) constraints.push(k);
       const r = solveSketch(entities, constraints);
       if (r.ok) {
@@ -198,7 +216,10 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     if (final) commit({ entities: final, constraints: draft.constraints });
   };
 
-  const entityIds = (items: SketchItem[]) => items.flatMap((s) => (s.kind === "entity" ? [s.id] : []));
+  /** The entities the items stand for: entities, and sketch points picked by their dots. */
+  const entityIds = (items: SketchItem[]) => itemEntities(items, draft.entities);
+  /** Those that can be construction geometry: a sketch point never is profile anyway. */
+  const lineworkIds = (items: SketchItem[]) => entityIds(items).filter((id) => draft.entities.find((e) => e.id === id)?.type !== "point");
 
   /** Deletes the selected relation, or the selected (or given) entities and their relations. */
   const deleteSelection = (items = selection) => {
@@ -211,7 +232,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
 
   /** Turns the selected (or given) entities to construction geometry and back; with none, the next ones drawn. */
   const toggleConstruction = (items = selection) => {
-    const ids = new Set(entityIds(items));
+    const ids = new Set(lineworkIds(items));
     if (!ids.size) return setConstruction((c) => !c);
     commit({
       ...draft,
@@ -243,7 +264,8 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     shortcutBar: () => setBar({ x: pointer.x, y: pointer.y }),
     "sketch.construction": () => toggleConstruction(),
     "sketch.finish": finish,
-    ...Object.fromEntries(TOOLS.map(([t, , id]) => [id, () => setTool(t)])),
+    ...Object.fromEntries(MODES.map(([t, , id]) => [id, () => setTool(t)])),
+    ...Object.fromEntries(SKETCH_TOOLS.map((t) => [t.id, () => setTool(t.name)])),
   });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -304,7 +326,14 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
   /** The right-click menu for whatever is under the pointer, as SOLIDWORKS's sketch menus have it. */
   const openMenu = (target: CanvasTarget | null, x: number, y: number) => {
     const ask = (t: Parameters<NonNullable<Props["onAsk"]>>[0]) => (onAsk ? [askEntry(() => onAsk(t, asFeature(), x, y))] : []);
-    const tools: MenuEntry[] = TOOLS.map(([t, label, id]) => ({ label: t === "dimension" ? "Smart Dimension" : label, icon: toolIcon(t), shortcut: keyFor(id, prefs) ?? undefined, onClick: () => setTool(t), testId: `ctx-tool-${t}` }));
+    // Select, Smart Dimension, then each toolbar button's tool: a flyout's, the one it shows.
+    const tools: MenuEntry[] = [
+      ...MODES.map(([t, label, id, icon]): MenuEntry => ({ label: t === "dimension" ? "Smart Dimension" : label, icon, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => setTool(t), testId: `ctx-tool-${t}` })),
+      ...toolbarEntries().map((entry): MenuEntry => {
+        const t = entry.kind === "flyout" ? flyoutChoice(memory, entry.flyout.id, SKETCH_TOOLS) : entry.tool;
+        return { label: t.label, icon: t.icon, shortcut: keyFor(t.id, prefs) ?? undefined, onClick: () => setTool(t.name), testId: `ctx-tool-${t.name}` };
+      }),
+    ];
     if (!target) {
       setPicked(null);
       return setMenu({
@@ -350,13 +379,14 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     const have = new Set(draft.constraints.map((k) => constraintKey(k)));
     const offered = suggestions(draft.entities, items).filter((o) => !have.has(constraintKey(o.make(o.value ?? 0))));
     const ids = entityIds(items);
+    const linework = lineworkIds(items);
     const owner = target.kind === "entity" ? target.id : target.ref.split(".")[0];
     const e = draft.entities.find((x) => x.id === owner);
     const name = (id: string) => `${RELATION_NOUN[draft.entities.find((x) => x.id === id)?.type ?? "line"]} ${id}`;
     setMenu({
       x,
       y,
-      title: items.length > 1 ? `${items.length} items` : target.kind === "point" ? `Point ${target.ref}` : name(target.id),
+      title: items.length > 1 ? `${items.length} items` : target.kind === "point" ? (e?.type === "point" ? name(e.id) : `Point ${target.ref}`) : name(target.id),
       items: [
         ...(offered.some((o) => o.value === undefined) ? [{ heading: "Add relation" } as MenuEntry] : []),
         ...offered
@@ -378,16 +408,18 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
           : []),
         "sep",
         // These act on what the menu is for, not on the selection as it was before this right-click.
-        ...(ids.length
+        ...(linework.length
           ? [
               {
-                label: ids.every((id) => draft.entities.find((x) => x.id === id)?.construction) ? "Make normal geometry" : "Construction geometry",
+                label: linework.every((id) => draft.entities.find((x) => x.id === id)?.construction) ? "Make normal geometry" : "Construction geometry",
                 icon: "construction",
                 onClick: () => toggleConstruction(items),
                 testId: "ctx-construction",
               } as MenuEntry,
-              { label: ids.length > 1 ? `Delete ${ids.length} entities` : "Delete", icon: "trash", shortcut: "Delete", onClick: () => deleteSelection(items), testId: "ctx-delete" } as MenuEntry,
             ]
+          : []),
+        ...(ids.length
+          ? [{ label: ids.length > 1 ? `Delete ${ids.length} entities` : "Delete", icon: "trash", shortcut: "Delete", onClick: () => deleteSelection(items), testId: "ctx-delete" } as MenuEntry]
           : []),
         "sep",
         ...(e ? ask({ kind: "entity", entity: e.id }) : []),
@@ -399,43 +431,80 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
     <>
       <section className="center sketch-center">
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
-          {TOOLS.map(([t, label, id]) => (
-            <ToolButton key={t} icon={toolIcon(t)} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${TOOL_TITLE[t] ?? label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
+          {MODES.map(([t, label, id, icon]) => (
+            <ToolButton key={t} icon={icon} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${TOOL_TITLE[t] ?? label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
           ))}
           <span className="sep" />
-          <ToolButton
+          {toolbarEntries().map((entry) =>
+            entry.kind === "flyout" ? (
+              <Flyout
+                key={entry.flyout.id}
+                flyout={entry.flyout}
+                tools={entry.tools}
+                shown={flyoutChoice(memory, entry.flyout.id, SKETCH_TOOLS)}
+                active={tool}
+                onPick={(t: SketchToolDef) => setTool(t.name)}
+              />
+            ) : (
+              <ToolButton
+                key={entry.tool.name}
+                icon={entry.tool.icon}
+                label={entry.tool.label}
+                pressed={tool === entry.tool.name}
+                onClick={() => setTool(entry.tool.name)}
+                title={`${entry.tool.title}${keyHint(entry.tool.id, prefs)}`}
+                testId={`tool-${entry.tool.name}`}
+              />
+            ),
+          )}
+          <span className="sep" />
+          <IconTool
             icon="construction"
             label="Construction"
             pressed={construction}
             onClick={() => toggleConstruction()}
             title={`Construction geometry: guides that are not part of the profile (toggles new or selected entities)${keyHint("sketch.construction", prefs)}`}
+            testId="tool-construction"
           />
-          <ToolButton icon="grid" label="Grid" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Snap new points to the grid" />
-          <ToolButton
+          <IconTool icon="grid" label="Grid" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Grid: snap new points to it" testId="tool-grid" />
+          <IconTool
             icon={showRelations ? "eye" : "eyeOff"}
             label="Relations"
             pressed={showRelations}
             onClick={() => setShowRelations((v) => !v)}
-            title="Show or hide the relation glyphs beside the geometry"
+            title="Relations: show or hide the glyphs beside the geometry"
             testId="tool-relations"
           />
           <span className="sep" />
-          <ToolButton icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} />
-          <ToolButton icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} />
+          <IconTool icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
+          <IconTool icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
           {bar && (
             <Popup x={bar.x} y={bar.y} bar onClose={() => setBar(null)} label="Shortcut bar" testId="shortcut-bar">
               {(close) => (
                 <>
-                  {TOOLS.map(([t, label]) => (
+                  {MODES.map(([t, label, , icon]) => (
                     <ToolButton
                       key={t}
-                      icon={toolIcon(t)}
+                      icon={icon}
                       label={label}
                       pressed={tool === t}
                       testId={`bar-${t}`}
                       onClick={() => {
                         close();
                         setTool(t);
+                      }}
+                    />
+                  ))}
+                  {SKETCH_TOOLS.map((t) => (
+                    <ToolButton
+                      key={t.name}
+                      icon={t.icon}
+                      label={t.label}
+                      pressed={tool === t.name}
+                      testId={`bar-${t.name}`}
+                      onClick={() => {
+                        close();
+                        setTool(t.name);
                       }}
                     />
                   ))}
@@ -458,6 +527,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
           constraints={draft.constraints}
           reference={reference}
           tool={tool}
+          options={toolOptions}
           construction={construction}
           snapToGrid={snapToGrid}
           selection={selection}
@@ -466,6 +536,8 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
             setPicked(null);
           }}
           onCreate={onCreate}
+          onMessage={setMessage}
+          onProgress={setProgress}
           onDrag={onDrag}
           onContext={openMenu}
           defined={status ?? undefined}
@@ -478,6 +550,7 @@ export function SketchMode({ session, reference, onFinish, onCancel, onAsk, appl
           onEditDimension={(index, x, y) => setModify({ x, y, index })}
           onDimension={onDimension}
         />
+        {drawing && <ToolStrip tool={drawing} placed={progress.placed} arcNext={progress.arcNext} options={toolOptions} onOption={setOption} />}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {modify && (
           <ModifyBox
@@ -782,11 +855,8 @@ const TOOL_TITLE: Partial<Record<Tool, string>> = {
   dimension: "Smart Dimension: click a line, circle or arc, or two points, lines or circles, then where the dimension goes",
 };
 
-/** A tool's icon: Smart Dimension has its own; the drawing tools are named for what they draw. */
-const toolIcon = (t: Tool): IconName => (t === "dimension" ? "smartDimension" : t);
-
 /** What each entity type is called in a menu title. */
-const RELATION_NOUN: Record<SketchEntity["type"], string> = { line: "Line", circle: "Circle", arc: "Arc", rect: "Rectangle", slot: "Slot" };
+const RELATION_NOUN: Record<SketchEntity["type"], string> = { line: "Line", circle: "Circle", arc: "Arc", rect: "Rectangle", slot: "Slot", point: "Point" };
 
 function round(x: number): number {
   return Math.round(x * 1000) / 1000;

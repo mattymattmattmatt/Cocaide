@@ -89,7 +89,7 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { sketch: z.string(), index: z.number().int(), value: z.union([z.number(), z.string()]) },
   },
   addEntity: {
-    description: "Add an entity (line, circle, arc, rect, slot) to a sketch; id is optional. The sketch re-solves.",
+    description: "Add an entity (line, circle, arc, point; rect and slot for older documents) to a sketch; id is optional. The sketch re-solves.",
     input: { sketch: z.string(), entity: obj },
   },
   updateEntity: {

@@ -5,11 +5,15 @@ import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { entityPolylines } from "../../geom/profile";
 import { dist2 } from "../../geom/vec";
 import { Icon, type IconName } from "../icons";
-import { inputPrefs, useCommands, wheelZoom } from "../input";
+import { inputPrefs, keyFor, keyOf, useCommands, wheelZoom } from "../input";
 import { dimensionShapes, RELATION, relationGlyphs } from "./annotate";
-import { CLICKS, constraintEntities, entityFromClicks, handlesOf, hitEntity, hitHandle, ID_PREFIX, inferOrientation, inferPoint, nextEntityId, type Inference, type SketchItem } from "./draft";
+import { constraintEntities, handlesOf, hitEntity, hitHandle, type SketchItem } from "./draft";
+import { tangentStart } from "./tools/arcs";
+import { place, previewOf, snapClick, toolByName, type Placement } from "./tools/run";
+import type { Click, SketchToolDef, ToolContext, ToolOptions } from "./tools/types";
 
-export type Tool = "select" | "dimension" | SketchEntity["type"];
+/** "select", "dimension", or a drawing tool's name in the registry (src/ui/sketcher/tools). */
+export type Tool = string;
 
 /** What a right-click lands on: an entity, one of its points, a relation's glyph or a dimension, or empty space (null). */
 export type CanvasTarget = { kind: "entity"; id: string } | { kind: "point"; ref: string } | { kind: "constraint"; index: number };
@@ -24,7 +28,16 @@ export interface DefinedState {
 }
 
 /** A point being placed, and what it inferred: what it lands on, and for a line's end, level or plumb. */
-type Snap = Inference & { orient?: "horizontal" | "vertical" };
+type Snap = Click;
+
+/** How far along the active drawing tool is: clicks placed, and whether a line chain's next piece is a tangent arc. */
+export interface DrawProgress {
+  placed: number;
+  arcNext: boolean;
+}
+
+/** The tool a line chain's A turns its next piece into. */
+const TANGENT_ARC = toolByName("tangent-arc")!;
 
 interface Props {
   entities: SketchEntity[];
@@ -32,12 +45,18 @@ interface Props {
   /** Model edges projected onto the sketch plane, as 2D segment pairs. */
   reference: Float32Array;
   tool: Tool;
+  /** The drawing tool's options (a polygon's sides). */
+  options?: ToolOptions;
   construction: boolean;
   snapToGrid: boolean;
   selection: SketchItem[];
   onSelect(items: SketchItem[]): void;
-  /** A new entity, plus the relations it inferred while being drawn: coincident with what it snapped to, horizontal, on a line. */
-  onCreate(entity: SketchEntity, relations: Constraint[]): void;
+  /** A drawn shape: its entities, the relations that hold its shape, and those its clicks inferred (coincident with what they snapped to, level, on a line). */
+  onCreate(made: Placement): void;
+  /** Why a click was not taken (a tangent arc must start at an end). */
+  onMessage?(text: string): void;
+  /** How far the drawing tool has got, for its prompt. */
+  onProgress?(progress: DrawProgress): void;
   onDrag(phase: "move" | "end", handle: string, from: Vec2, to: Vec2): void;
   /** A right-click in place (not a right-drag pan): what is under the cursor, if anything. */
   onContext?(target: CanvasTarget | null, clientX: number, clientY: number): void;
@@ -72,6 +91,10 @@ export function SketchCanvas(props: Props) {
   const [view, setView] = useState<ViewState | null>(null);
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [clicks, setClicks] = useState<Snap[]>([]);
+  /** A line chain's next piece is a tangent arc (A toggles it, as in SOLIDWORKS). */
+  const [arcNext, setArcNext] = useState(false);
+  /** Where the pointer went since the last click: an arc bends the way it was drawn. */
+  const trail = useRef<Vec2[]>([]);
   /** Smart Dimension's picks so far. */
   const [picks, setPicks] = useState<SketchItem[]>([]);
   /** A selection box being dragged: left to right selects what is inside it, right to left what it touches. */
@@ -104,7 +127,10 @@ export function SketchCanvas(props: Props) {
   useEffect(() => {
     setClicks([]);
     setPicks([]);
+    setArcNext(false);
+    trail.current = [];
   }, [tool]);
+  useEffect(() => props.onProgress?.({ placed: clicks.length, arcNext }), [clicks.length, arcNext]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const v = view ?? fitView(entities, reference, size);
   const unit = 1 / v.scale; // world size of one pixel
@@ -120,21 +146,19 @@ export function SketchCanvas(props: Props) {
     return [w.x, w.y];
   };
 
+  /** The drawing tool, if one is active: a line chain's next piece may be a tangent arc. */
+  const active: SketchToolDef | undefined = toolByName(tool);
+  const def: SketchToolDef | undefined = active && arcNext ? TANGENT_ARC : active;
+  const options = props.options ?? {};
+  const toolContext = (): ToolContext => ({ entities, trail: trail.current, px: unit });
+
   /**
    * Where a placed point lands, as SOLIDWORKS infers it: on an end, centre,
-   * midpoint or the origin, on a line, circle or arc; a line's end level with
-   * or plumb above its start; else the grid.
+   * midpoint, sketch point or the origin, on a line, circle or arc; the tool's
+   * own inference; level with or plumb above the click before; else the grid.
    */
-  const snap = (p: Vec2, from?: Vec2): Snap => {
-    const inferred = inferPoint(entities, p, SNAP_PX * unit);
-    if (inferred) return inferred;
-    const grid = (x: number) => (snapToGrid ? roundTo(x, step) : x);
-    const o = from ? inferOrientation(from, p, SNAP_PX * unit * 0.7) : null;
-    if (o) return { p: o.type === "horizontal" ? [grid(p[0]), from![1]] : [from![0], grid(p[1])], ref: null, orient: o.type };
-    return { p: [grid(p[0]), grid(p[1])], ref: null };
-  };
-  /** A line's end is inferred from its start. */
-  const lineFrom = () => (tool === "line" && clicks.length === 1 ? clicks[0].p : undefined);
+  const snap = (p: Vec2): Snap =>
+    def ? snapClick(def, clicks.map((c) => c.p), p, { entities, tol: SNAP_PX * unit, grid: snapToGrid ? step : null, options }) : { p, ref: null };
 
   const itemAt = (p: Vec2): SketchItem | null => {
     const h = hitHandle(entities, p, PICK_PX * unit);
@@ -143,41 +167,12 @@ export function SketchCanvas(props: Props) {
     return e ? { kind: "entity", id: e.id } : null;
   };
 
-  const finishPlacement = (pts: Snap[]) => {
-    if (tool === "select" || tool === "dimension") return;
-    const id = nextEntityId(entities, ID_PREFIX[tool]);
-    const entity = entityFromClicks(tool, id, pts.map((c) => c.p), construction);
-    if (!entity) return null;
-    // Which clicked point became which point of the entity.
-    const names: Record<SketchEntity["type"], (string | null)[]> = {
-      line: ["start", "end"],
-      rect: [null, null],
-      circle: ["center", null],
-      arc: ["center", "start", "end"],
-      slot: ["center1", "center2", null],
-    };
-    const relations: Constraint[] = [];
-    pts.forEach((c, i) => {
-      const name = names[tool][i];
-      const own = name ? (entity as unknown as Record<string, Vec2>)[name] : undefined;
-      if (name && own && dist2(own, c.p) < 1e-9) {
-        if (c.ref) relations.push({ type: "coincident", points: [`${id}.${name}`, c.ref] });
-        else if (c.on) relations.push({ type: c.on.type, point: `${id}.${name}`, entity: c.on.entity });
-      } else if (tool === "circle" && i === 1 && c.ref) {
-        // A circle dragged out to a point passes through it.
-        relations.push({ type: "pointOn", point: c.ref, entity: id });
-      }
-    });
-    const end = pts[1];
-    if (tool === "line" && entity.type === "line") {
-      // Inferred while drawing, or exactly level or plumb when both ends landed on points.
-      const level = Math.abs(entity.end[1] - entity.start[1]) < 1e-9;
-      const plumb = Math.abs(entity.end[0] - entity.start[0]) < 1e-9;
-      const orient = end?.orient ?? (level ? "horizontal" : plumb ? "vertical" : null);
-      if (orient) relations.push({ type: orient, entity: id });
-    }
-    props.onCreate(entity, relations);
-    return entity;
+  /** The tool's last click is in: build the shape, with what its clicks inferred, and hand it over. */
+  const finishPlacement = (pts: Snap[]): Placement | null => {
+    if (!def) return null;
+    const made = place(def, pts, options, toolContext(), construction);
+    if (made) props.onCreate(made);
+    return made;
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -220,6 +215,11 @@ export function SketchCanvas(props: Props) {
 
   const onPointerMove = (e: React.PointerEvent) => {
     const p = toWorld(e.clientX, e.clientY);
+    if (def && clicks.length) {
+      trail.current.push(p);
+      // A long sweep keeps its shape at half the samples.
+      if (trail.current.length > 600) trail.current = trail.current.filter((_, i) => i % 2 === 0);
+    }
     setCursor(p);
     const g = gesture.current;
     if (!g) return;
@@ -292,24 +292,30 @@ export function SketchCanvas(props: Props) {
       }
       return;
     }
+    if (!def) return;
     // Drawing: one click per point.
-    const s = snap(p, lineFrom());
+    const s = snap(p);
+    const refused = def.accept?.(s, clicks.length, toolContext());
+    if (refused) return props.onMessage?.(refused);
+    trail.current = [];
     const next = [...clicks, s];
-    if (next.length < CLICKS[tool]) {
-      if (tool === "line" && next.length === 1) chainStart.current = s.ref;
+    if (next.length < def.clicks) {
+      if (def.chain && next.length === 1) chainStart.current = s.ref;
       setClicks(next);
       return;
     }
     const made = finishPlacement(next);
-    if (tool === "line" && made?.type === "line") {
+    if (def.chain && made?.next) {
       // Clicking the point the chain started from closes it; otherwise keep drawing from the end.
       const closes = s.ref !== null && s.ref === chainStart.current;
-      if (!chainStart.current) chainStart.current = `${made.id}.start`;
-      setClicks(closes ? [] : [{ p: made.end, ref: `${made.id}.end` }]);
+      if (!chainStart.current) chainStart.current = made.first;
+      setClicks(closes ? [] : [made.next]);
+      setArcNext(false);
       if (closes) chainStart.current = null;
       return;
     }
     setClicks([]);
+    setArcNext(false);
   };
   /** First point of the line chain being drawn, so clicking it again closes the loop. */
   const chainStart = useRef<string | null>(null);
@@ -346,32 +352,33 @@ export function SketchCanvas(props: Props) {
       if (e.key === "Escape" && (clicks.length || picks.length)) {
         setClicks([]);
         setPicks([]);
+        setArcNext(false);
+        e.stopPropagation();
+        return;
+      }
+      // Drawing lines, the Arc key turns the next piece into a tangent arc from the end, and back (SOLIDWORKS's A).
+      const typing = e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+      if (!typing && !e.repeat && active?.chain && active !== TANGENT_ARC && clicks.length === 1 && keyOf(e) === keyFor("sketch.arc") && tangentStart(clicks[0], entities)) {
+        setArcNext((a) => !a);
+        trail.current = [];
+        e.preventDefault();
         e.stopPropagation();
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [clicks.length, picks.length]);
+  });
 
   const preview = useMemo(() => {
-    if (tool === "select" || tool === "dimension" || !cursor || clicks.length === 0) return null;
-    const pts = [...clicks.map((c) => c.p), snap(cursor, lineFrom()).p];
-    if (pts.length < CLICKS[tool]) {
-      if (tool === "arc" || tool === "slot") {
-        // Show the first span while the third point is pending.
-        return pts.length === 2 ? { kind: "line" as const, a: pts[0], b: pts[1] } : null;
-      }
-      return null;
-    }
-    const e = entityFromClicks(tool, "preview", pts, construction);
-    return e ? { kind: "entity" as const, e } : null;
-  }, [tool, cursor, clicks, construction]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!def || !cursor || clicks.length === 0) return [];
+    return previewOf(def, [...clicks, snap(cursor)], options, toolContext(), construction);
+  }, [def, cursor, clicks, construction, options, entities]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chosen = tool === "dimension" ? picks : selection;
   const selectedIds = new Set(chosen.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
   const selectedPoints = new Set(chosen.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
   const hoverItem = cursor && (tool === "select" || tool === "dimension") && !gesture.current ? itemAt(cursor) : null;
-  const snapMark = cursor && tool !== "select" && tool !== "dimension" ? snap(cursor, lineFrom()) : null;
+  const snapMark = cursor && def ? snap(cursor) : null;
   const inferIcon: IconName | null = !snapMark ? null : snapMark.ref ? "coincident" : snapMark.on ? RELATION[snapMark.on.type].icon : snapMark.orient ?? null;
   // A selected relation outlines what it holds.
   const selectedK = props.selectedConstraint !== null && props.selectedConstraint !== undefined ? constraints[props.selectedConstraint] : undefined;
@@ -393,7 +400,10 @@ export function SketchCanvas(props: Props) {
       onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
       onDoubleClick={() => {
-        if (tool === "line") setClicks([]);
+        if (def?.chain) {
+          setClicks([]);
+          setArcNext(false);
+        }
       }}
     >
       <g ref={world} transform="scale(1,-1)">
@@ -412,26 +422,27 @@ export function SketchCanvas(props: Props) {
         <line x1={-1e6} y1={0} x2={1e6} y2={0} className="axis-x" vectorEffect="non-scaling-stroke" />
         <line x1={0} y1={-1e6} x2={0} y2={1e6} className="axis-y" vectorEffect="non-scaling-stroke" />
         <ReferenceLines segments={reference} />
-        {entities.map((e) => (
-          <EntityShape
-            key={e.id}
-            e={e}
-            className={[
-              "entity",
-              state(e.id),
-              e.construction ? "construction" : "",
-              related.has(e.id) ? "related" : "",
-              selectedIds.has(e.id) ? "selected" : "",
-              hoverItem?.kind === "entity" && hoverItem.id === e.id ? "hover" : "",
-            ].join(" ")}
-          />
-        ))}
-        {preview?.kind === "entity" && <EntityShape e={preview.e} className="entity preview" />}
-        {preview?.kind === "line" && (
-          <line x1={preview.a[0]} y1={preview.a[1]} x2={preview.b[0]} y2={preview.b[1]} className="entity preview" vectorEffect="non-scaling-stroke" />
+        {entities.map((e) => {
+          const className = [
+            "entity",
+            state(e.id),
+            e.construction ? "construction" : "",
+            related.has(e.id) ? "related" : "",
+            selectedIds.has(e.id) || (e.type === "point" && selectedPoints.has(`${e.id}.at`)) ? "selected" : "",
+            (hoverItem?.kind === "entity" && hoverItem.id === e.id) || (e.type === "point" && hoverItem?.kind === "point" && hoverItem.ref === `${e.id}.at`) ? "hover" : "",
+          ].join(" ");
+          return e.type === "point" ? <PointDot key={e.id} at={e.at} r={3.5 * unit} id={e.id} className={className} /> : <EntityShape key={e.id} e={e} className={className} />;
+        })}
+        {preview.map((e, i) =>
+          e.type === "point" ? (
+            <PointDot key={`preview:${i}`} at={e.at} r={3.5 * unit} className="entity preview" />
+          ) : (
+            <EntityShape key={`preview:${i}`} e={e} className={`entity preview${e.construction ? " construction" : ""}`} />
+          ),
         )}
         {entities.flatMap((e) =>
-          handlesOf(e).map((h) => (
+          // A sketch point is its own handle: its dot.
+          (e.type === "point" ? [] : handlesOf(e)).map((h) => (
             <circle
               key={h.ref}
               cx={h.point[0]}
@@ -472,11 +483,18 @@ export function SketchCanvas(props: Props) {
   );
 }
 
+/** An entity's outline. A preview's carries no data-entity: the rubber band is not the sketch. */
 function EntityShape({ e, className }: { e: SketchEntity; className: string }) {
   const d = entityPolylines(e, Math.PI / 64)
     .map((pts) => pts.map((p, i) => `${i ? "L" : "M"}${p[0]} ${p[1]}`).join(""))
     .join("");
-  return <path d={d} className={className} vectorEffect="non-scaling-stroke" data-entity={e.id} />;
+  const preview = className.includes("preview");
+  return <path d={d} className={className} vectorEffect="non-scaling-stroke" data-entity={preview ? undefined : e.id} />;
+}
+
+/** A sketch point: a dot, the same size at any zoom. */
+function PointDot({ at, r, id, className }: { at: Vec2; r: number; id?: string; className: string }) {
+  return <circle cx={at[0]} cy={at[1]} r={r} className={`${className} point`} vectorEffect="non-scaling-stroke" data-entity={id} />;
 }
 
 function ReferenceLines({ segments }: { segments: Float32Array }) {
@@ -613,15 +631,15 @@ export function gridStep(scale: number): number {
   return 10 * pow;
 }
 
-function roundTo(x: number, step: number): number {
-  const r = Math.round(x / step) * step;
-  return Math.round(r * 1e9) / 1e9;
+/** What an entity spans: its outline, or a sketch point's dot. */
+function spanOf(e: SketchEntity): Vec2[][] {
+  return e.type === "point" ? [[e.at]] : entityPolylines(e);
 }
 
 function fitView(entities: SketchEntity[], reference: Float32Array, size: { w: number; h: number }): ViewState {
   const xs: number[] = [0];
   const ys: number[] = [0];
-  for (const e of entities) for (const pl of entityPolylines(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
+  for (const e of entities) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
   for (let i = 0; i + 1 < reference.length; i += 2) xs.push(reference[i]), ys.push(reference[i + 1]);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
@@ -646,7 +664,7 @@ export function boxPick(entities: SketchEntity[], a: Vec2, b: Vec2): SketchItem[
   const windowed = b[0] >= a[0];
   return entities
     .filter((e) => {
-      const lines = entityPolylines(e);
+      const lines = spanOf(e);
       const pts = lines.flat();
       if (!pts.length) return false;
       if (windowed) return pts.every(inside);

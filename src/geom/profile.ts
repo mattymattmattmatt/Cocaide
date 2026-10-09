@@ -53,6 +53,8 @@ export function buildProfile(entities: SketchEntity[]): ProfileResult {
         case "arc":
           open.push(arcSeg(e.id, e.center, e.start, e.end, e.clockwise ?? false));
           break;
+        case "point":
+          break; // a sketch point marks a place; it bounds nothing
       }
     }
     loops.push(...chain(open));
@@ -383,6 +385,8 @@ export function entityPolylines(e: SketchEntity, maxAngleStep = Math.PI / 32): V
       case "slot":
         segs = slotSegs(e.id, e.center1, e.center2, e.width);
         break;
+      case "point":
+        return []; // drawn as a dot by whoever draws it
     }
     return segs.map((s) => sampleSeg(s, maxAngleStep));
   } catch {

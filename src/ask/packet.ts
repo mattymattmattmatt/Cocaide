@@ -533,5 +533,7 @@ function entityMeasurements(e: SketchEntity): Record<string, unknown> {
       return { width: e.w, height: e.h };
     case "slot":
       return { length: round6(dist2(e.center1, e.center2) + e.width), width: e.width };
+    case "point":
+      return { at: [round6(e.at[0]), round6(e.at[1])], fromOrigin: round6(Math.hypot(e.at[0], e.at[1])) };
   }
 }

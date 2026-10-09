@@ -37,6 +37,8 @@ export function handlesOf(e: SketchEntity): Handle[] {
     }
     case "slot":
       return [h("center1", e.center1), h("center2", e.center2)];
+    case "point":
+      return [h("at", e.at)];
   }
 }
 
@@ -69,6 +71,8 @@ export function distanceTo(e: SketchEntity, p: Vec2): number {
       const r = e.width / 2;
       return Math.abs(segDist(p, e.center1, e.center2) - r);
     }
+    case "point":
+      return dist2(p, e.at);
   }
 }
 
@@ -155,8 +159,10 @@ export function angleBetween(a: Line, b: Line): number {
  * SOLIDWORKS's Add Relations list: relations first (no value), then the
  * dimensions, each valued at what it measures now so adding it moves nothing.
  */
-export function suggestions(entities: SketchEntity[], items: SketchItem[]): Suggestion[] {
+export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Suggestion[] {
   const byId = new Map(entities.map((e) => [e.id, e]));
+  // A sketch point picked as an entity (a box takes entities) is related as the point it is.
+  const items = asPoints(itemsIn, byId);
   const ents = items.flatMap((i) => (i.kind === "entity" && byId.has(i.id) ? [byId.get(i.id)!] : []));
   const points = items.flatMap((i) => (i.kind === "point" ? [i.ref] : []));
   const ownerOf = (ref: string) => ref.split(".")[0];
@@ -286,6 +292,26 @@ export function suggestions(entities: SketchEntity[], items: SketchItem[]): Sugg
   return out;
 }
 
+/** Point entities among the items, as their points ("p1" becomes "p1.at"); everything else as it is. */
+export function asPoints(items: SketchItem[], byId: Map<string, SketchEntity>): SketchItem[] {
+  return items.map((i) => (i.kind === "entity" && byId.get(i.id)?.type === "point" ? { kind: "point", ref: `${i.id}.at` } : i));
+}
+
+/**
+ * The entities the items stand for: the entities picked, and each sketch point
+ * picked by its point (a point entity is picked by its dot), as deleting or
+ * changing them wants.
+ */
+export function itemEntities(items: SketchItem[], entities: SketchEntity[]): string[] {
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const ids = items.flatMap((i) => {
+    if (i.kind === "entity") return [i.id];
+    const [owner, name] = i.ref.split(".");
+    return byId.get(owner)?.type === "point" && name === "at" ? [owner] : [];
+  });
+  return [...new Set(ids)];
+}
+
 /**
  * SOLIDWORKS's Smart Dimension: the dimension the picks call for. One line
  * is its length, a circle its diameter, an arc its radius, a rectangle its
@@ -293,7 +319,8 @@ export function suggestions(entities: SketchEntity[], items: SketchItem[]): Sugg
  * between them. Alternatives follow the first (two points: aligned,
  * horizontal, vertical). None when the picks can't be dimensioned.
  */
-export function smartDimension(entities: SketchEntity[], picks: SketchItem[], at?: Vec2): Suggestion[] {
+export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], at?: Vec2): Suggestion[] {
+  const picks = asPoints(picksIn, new Map(entities.map((e) => [e.id, e])));
   const valued = suggestions(entities, picks).filter((s) => s.value !== undefined);
   if (picks.length === 1 && picks[0].kind === "entity") {
     const e = entities.find((x) => x.id === (picks[0] as { id: string }).id);
@@ -418,7 +445,7 @@ export function describeConstraint(k: Constraint): string {
   }
 }
 
-/** Builds entity parameters from the clicked points of a drawing tool. */
+/** One entity from the clicked points, as the first drawing tools placed them (the registry in tools/ builds the rest). */
 export function entityFromClicks(type: SketchEntity["type"], id: string, pts: Vec2[], construction: boolean): SketchEntity | null {
   const extra = construction ? { construction: true } : {};
   const [a, b, c] = pts;
@@ -451,8 +478,10 @@ export function entityFromClicks(type: SketchEntity["type"], id: string, pts: Ve
       const width = 2 * segDist(c, a, b);
       return width > 1e-9 ? { id, type, center1: a, center2: b, width, ...extra } : null;
     }
+    case "point":
+      return a ? { id, type, at: a } : null;
   }
 }
 
-/** How many clicks a tool needs. */
-export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3 };
+/** How many clicks each entity takes when placed on its own (the drawing tools are in tools/). */
+export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1 };

@@ -16,7 +16,7 @@ const TOL = 1e-9;
 const ACCEPT = 1e-7;
 
 /**
- * A draggable handle: any point ref ("l1.end", "r1.center"), or
+ * A draggable handle: any point ref ("l1.end", "r1.center", "p1.at"), or
  * "<rect>.corner0".."corner3", "<circle>.edge" (sets the radius) and
  * "<entity>.body" (moves the whole entity).
  */
@@ -51,6 +51,7 @@ const FIELDS: Record<SketchEntity["type"], [string, 1 | 2][]> = {
   arc: [["center", 2], ["start", 2], ["end", 2]],
   rect: [["center", 2], ["w", 1], ["h", 1]],
   slot: [["center1", 2], ["center2", 2], ["width", 1]],
+  point: [["at", 2]],
 };
 
 function layout(entities: SketchEntity[]): Layout {
@@ -119,6 +120,7 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
   };
   const x0 = l.x;
   const sign = (f: Fn) => (f(x0) < 0 ? -1 : 1);
+  const joined = coincidentGroups(constraints);
 
   for (const e of l.entities) {
     if (e.type === "arc") {
@@ -228,6 +230,14 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
       }
       case "tangent": {
         const [a, b] = k.entities.map((id) => entityById(l, id));
+        // Joined end to end (a slot's sides, a tangent arc off a line), the touching point is that end: the
+        // radius there is square to the line, or in line with the other arc's. Distance-equals-radius would
+        // only hold there to second order, and the solver could neither count it nor converge on it.
+        const shared = sharedEnd(a, b, joined);
+        if (shared) {
+          push(i, shared.round2 ? radiiInLine(l, shared.round, shared.at, shared.round2, shared.at2!) : radiusSquareTo(l, shared.round, shared.at, shared.line!));
+          break;
+        }
         if (a.type === "line" || b.type === "line") {
           const [line, round] = a.type === "line" ? [a, b] : [b, a];
           const d = offsetFrom(l, line.id, pointOf(l, `${round.id}.center`));
@@ -299,6 +309,66 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
     }
   });
   return { fns, owners };
+}
+
+/** Point refs joined by coincident relations, each mapped to one ref that stands for its group. */
+function coincidentGroups(constraints: Constraint[]): (a: string, b: string) => boolean {
+  const parent = new Map<string, string>();
+  const find = (r: string): string => {
+    let p = parent.get(r) ?? r;
+    while (p !== (parent.get(p) ?? p)) p = parent.get(p)!;
+    return p;
+  };
+  for (const k of constraints) if (k.type === "coincident") parent.set(find(k.points[0]), find(k.points[1]));
+  return (a, b) => a === b || find(a) === find(b);
+}
+
+/**
+ * Where a line and an arc, or two arcs, are joined end to end by coincident
+ * relations: the arc end (and the line, or the other arc and its end) that
+ * meet. Null when they aren't (a circle has no ends).
+ */
+function sharedEnd(
+  a: SketchEntity,
+  b: SketchEntity,
+  joined: (p: string, q: string) => boolean,
+): { round: string; at: string; line?: string; round2?: string; at2?: string } | null {
+  const ends = (e: SketchEntity) => (e.type === "line" || e.type === "arc" ? [`${e.id}.start`, `${e.id}.end`] : []);
+  if (a.type === "arc" && b.type === "arc") {
+    for (const p of ends(a)) for (const q of ends(b)) if (joined(p, q)) return { round: a.id, at: p, round2: b.id, at2: q };
+    return null;
+  }
+  const [line, round] = a.type === "line" ? [a, b] : [b, a];
+  if (line.type !== "line" || round.type !== "arc") return null;
+  for (const p of ends(round)) for (const q of ends(line)) if (joined(p, q)) return { round: round.id, at: p, line: line.id };
+  return null;
+}
+
+/** The cosine between an arc's radius at one of its ends and a line: zero when the line touches the arc there. */
+function radiusSquareTo(l: Layout, arc: string, end: string, line: string): Fn {
+  const [cx, cy] = pointOf(l, `${arc}.center`);
+  const [px, py] = pointOf(l, end);
+  const [ux, uy] = direction(l, line);
+  return (x) => {
+    const rx = px(x) - cx(x);
+    const ry = py(x) - cy(x);
+    return (rx * ux(x) + ry * uy(x)) / (Math.hypot(rx, ry) * Math.hypot(ux(x), uy(x)));
+  };
+}
+
+/** The sine between two arcs' radii at the ends where they meet: zero when their centres and that point are in line (they touch). */
+function radiiInLine(l: Layout, a: string, endA: string, b: string, endB: string): Fn {
+  const [ax, ay] = pointOf(l, `${a}.center`);
+  const [px, py] = pointOf(l, endA);
+  const [bx, by] = pointOf(l, `${b}.center`);
+  const [qx, qy] = pointOf(l, endB);
+  return (x) => {
+    const r1x = px(x) - ax(x);
+    const r1y = py(x) - ay(x);
+    const r2x = qx(x) - bx(x);
+    const r2y = qy(x) - by(x);
+    return (r1x * r2y - r1y * r2x) / (Math.hypot(r1x, r1y) * Math.hypot(r2x, r2y));
+  };
 }
 
 /** A line's direction, end minus start. */

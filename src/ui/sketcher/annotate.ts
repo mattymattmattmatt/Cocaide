@@ -282,7 +282,7 @@ export function relationGlyphs(entities: SketchEntity[], constraints: Constraint
   return out;
 }
 
-/** Where an entity's glyphs sit: a line's middle, a circle's rim, an arc's middle, a slot's or rectangle's top. */
+/** Where an entity's glyphs sit: a line's middle, a circle's rim, an arc's middle, a slot's or rectangle's top, a point itself. */
 function anchorOf(e: SketchEntity): Vec2 {
   switch (e.type) {
     case "line":
@@ -302,6 +302,8 @@ function anchorOf(e: SketchEntity): Vec2 {
       return [e.center[0], e.center[1] + e.h / 2];
     case "slot":
       return [(e.center1[0] + e.center2[0]) / 2, (e.center1[1] + e.center2[1]) / 2 + e.width / 2];
+    case "point":
+      return e.at;
   }
 }
 
