@@ -102,6 +102,10 @@ describe("Shell and Draft: from the selection", () => {
     const withBase = draftFeature(harness(doc, view, { selection: { faces: [side([1, 0, 0]), side([0, 0, 1])], edges: [] } }).ctx) as Raw;
     expect(withBase.neutral).toEqual({ face: { type: "planar", normal: [0, 0, 1], pick: "largest" } });
     expect(withBase.faces).toEqual([{ type: "planar", normal: [1, 0, 0], pick: "largest" }]);
+    // Two adjacent sides are square to each other, yet neither is a base: both are drafted, about the bottom.
+    const adjacent = draftFeature(harness(doc, view, { selection: { faces: [side([1, 0, 0]), side([0, -1, 0])], edges: [] } }).ctx) as Raw;
+    expect(adjacent.neutral).toEqual({ face: { type: "planar", normal: [0, 0, -1], pick: "largest" } });
+    expect(adjacent.faces).toHaveLength(2);
     expect(draftFeature(harness(doc, view).ctx)).toBe("Click the faces to taper (Ctrl-click for more; add the base face to draft about it), then Draft.");
   });
 

@@ -187,6 +187,15 @@ describe("draft", () => {
     expect(b.volume).toBeCloseTo(4000 - ((10 * 10 * Math.tan((5 * Math.PI) / 180)) / 2) * 20, 6);
   });
 
+  it("drafts two adjacent outer sides of a shelled box about its bottom: the cross-section is (20 - z tan 3°)²", () => {
+    const t = Math.tan((3 * Math.PI) / 180);
+    const doc = box(20, { id: "sh", op: "shell", faces: [TOP], thickness: 2 }, { id: "d", op: "draft", faces: [face([1, 0, 0]), face([0, -1, 0])], neutral: { face: face([0, 0, -1]) }, angle: 3 });
+    const b = built(doc);
+    expect(b.errors).toEqual([]);
+    // ∫0^20 (20 - z t)² dz = 8000 - 8000 t + 8000 t² / 3, less the 16 x 16 x 18 cavity.
+    expect(b.volume).toBeCloseTo(8000 - 8000 * t + (8000 * t * t) / 3 - 16 * 16 * 18, 6);
+  });
+
   it("refuses a face parallel to the neutral plane: there is nothing to taper", () => {
     expect(built(box(10, { id: "d", op: "draft", faces: [TOP], neutral: { datum: "Top" }, angle: 5 })).errors).toEqual([
       "d: faces[0]: the flat face with normal +Z at [0, 0, 10] is parallel to the neutral plane: there is nothing to taper (draft the faces that run along the pull direction)",

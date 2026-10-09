@@ -46,15 +46,18 @@ function squareTo(face: FaceInfo, pull: Vec3): boolean {
 
 /**
  * The neutral plane for drafting these faces, and the faces left to draft:
- * a selected flat face square to all the others (the base; of two, the one
- * picked last), else a selected plane, else the lowest flat face of the part
+ * a selected flat face square to all the others (the base: of several, the
+ * one facing up or down), else a selected plane, else the lowest flat face of the part
  * facing against the pull (its bottom), else the default plane square to
  * every face; or why none fits.
  */
 export function draftNeutral(faces: FaceInfo[], all: FaceInfo[], datums: { id: string; kind?: string }[] = []): { neutral: Raw; faces: FaceInfo[] } | string {
   const flat = faces.filter((f) => f.type === "plane" && f.normal);
-  // Two faces square to each other could each be the base: the one picked last is (pick the faces, then the base).
-  const base = faces.length > 1 ? flat.filter((b) => faces.every((f) => f === b || squareTo(f, b.normal!))).at(-1) : undefined;
+  // Faces square to each other could each be the base (two adjacent sides): of those, one facing up or down
+  // (parts stand on Top) is clearly it; else only a single candidate is. Else the default planes decide.
+  const candidates = faces.length > 1 ? flat.filter((b) => faces.every((f) => f === b || squareTo(f, b.normal!))) : [];
+  const level = candidates.filter((b) => Math.abs(b.normal![2]) > 1 - SQUARE);
+  const base = level.length === 1 ? level[0] : candidates.length === 1 ? candidates[0] : undefined;
   if (base) {
     const s = faceSelectorFor(all, base.index);
     if (s.ok) return { neutral: { face: s.selector }, faces: faces.filter((f) => f !== base) };
