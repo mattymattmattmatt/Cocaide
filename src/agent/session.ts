@@ -398,6 +398,14 @@ export class AgentSession {
       } else {
         const { id: _id, op: _op, suppressed: _s, ...fields } = f;
         row.fields = fields;
+        // A plane, axis or point: where it is now, for sketches and other features to stand on by { "datum": id }.
+        const d = this.built.datums[id];
+        if (d) row.now = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, Array.isArray(v) ? v.map((x: number) => round6(x) + 0) : v]));
+      }
+      if (f.op === "sketch") {
+        // Where the sketch sits now (a sketch placed by reference follows what it stands on).
+        const placed = this.built.sketches.find((x) => x.id === id)?.frame;
+        if (placed && isObject(f.plane) && f.plane.type === "ref") row.frame = { origin: placed.origin.map((x) => round6(x) + 0), normal: placed.z.map((x) => round6(x) + 0), xDir: placed.x.map((x) => round6(x) + 0) };
       }
       return row;
     });

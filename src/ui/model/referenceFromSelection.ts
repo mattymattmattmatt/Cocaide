@@ -17,7 +17,7 @@
 // the new feature follows the model. Pure: Vitest covers it in node.
 
 import type { DatumRef } from "../../doc/types";
-import type { DatumKind } from "../../features/datum";
+import { defaultDatum, type DatumKind } from "../../features/datum";
 import { dot3 } from "../../geom/vec";
 import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
 import type { RebuildView } from "../../worker/protocol";
@@ -70,7 +70,7 @@ function itemsOf(sel: Selection, view: RebuildView | null, kindOf: (id: string) 
   for (const id of sel.datums ?? []) {
     const kind = kindOf(id);
     if (!kind) continue;
-    const d = view?.datums?.[id];
+    const d = defaultDatum(id) ?? view?.datums?.[id];
     items.push({ ref: { datum: id }, what: kind, dir: d?.kind === "plane" ? d.normal : d?.kind === "axis" ? d.direction : undefined });
   }
   return items;

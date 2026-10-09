@@ -179,7 +179,14 @@ Wherever a plane, an axis or a point is needed by reference (a sketch's or a mir
                                            a straight edge is an axis (start to end), a circular edge its axis (or its
                                            centre where a point is needed); with "at", that point of it
   { "point": [x, y, z] }                   a fixed point
-Faces and edges are found again on every rebuild, so what stands on them follows the model. A reference of the
+Faces and edges are found again on every rebuild, so what stands on them follows the model. A part's packet lists
+its reference geometry (part.referenceGeometry: the defaults, and each plane, axis and point feature with its frame
+now); listFeatures gives each one's "now" too.
+Sketch placement by reference (prefer it to a written-out plane: the sketch then follows what it stands on):
+  { "id": "plane_1", "op": "plane", "mode": "offset", "refs": [{ "datum": "Top" }], "distance": 25 }
+  { "id": "sketch_2", "op": "sketch", "plane": { "type": "ref", "ref": { "datum": "plane_1" } }, "entities": [...] }
+  { "id": "sketch_3", "op": "sketch", "plane": { "type": "ref", "ref": { "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } } }, "entities": [...] }
+sketch_2 sits 25 mm above Top; sketch_3 on the part's top face, wherever an earlier extrude puts it. A reference of the
 wrong kind is an error that says so ("Top is a plane, but an axis is needed here"). Feature ids may not be Front,
 Top, Right, Origin, X, Y or Z.
 
