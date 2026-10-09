@@ -1155,3 +1155,6 @@ svg.icon { flex: none; display: block; }
 .selection-detail li { margin: 1px 0; }
 .sketch-tool-strip.convert-strip .strip-option > button:disabled { opacity: 0.45; cursor: default; }
 .sketch-canvas .glyph .glyph-count { fill: currentColor; stroke: none; font-weight: 600; }
+/* The sketch toolbar gained Convert: its buttons sit a little closer, so it stays on one row. */
+.sketch-toolbar .tool { padding: 0 5px; min-width: 48px; }
+.sketch-toolbar .sep { margin: 0 3px; }

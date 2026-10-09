@@ -149,6 +149,8 @@ export function SketchCanvas(props: Props) {
   const unit = 1 / v.scale; // world size of one pixel
   const viewBox = `${v.cx - size.w / 2 / v.scale} ${-v.cy - size.h / 2 / v.scale} ${size.w / v.scale} ${size.h / v.scale}`;
   const step = gridStep(v.scale);
+  /** Half the view's larger side and a margin, in mm: how far the sketch axes are drawn each way from the view's centre. */
+  const reach = Math.max(size.w, size.h) / v.scale;
 
   const toWorld = (clientX: number, clientY: number): Vec2 => {
     const g = world.current!;
@@ -198,6 +200,16 @@ export function SketchCanvas(props: Props) {
     if (Math.abs(p[1]) <= tol) return { kind: "entity", id: "X" };
     if (Math.abs(p[0]) <= tol) return { kind: "entity", id: "Y" };
     return null;
+  };
+  /** The click on `hit`, a sketch axis, places the dimension of `first` rather than picking the axis: `first` is a line across it. */
+  const placesOn = (hit: SketchItem, first: SketchItem): boolean => {
+    if (hit.kind !== "entity" || (hit.id !== "X" && hit.id !== "Y") || first.kind !== "entity") return false;
+    if (first.id === "X" || first.id === "Y") return true;
+    const line = [...entities, ...modelEnts].find((e) => e.id === first.id);
+    if (line?.type !== "line") return false;
+    const d = [line.end[0] - line.start[0], line.end[1] - line.start[1]];
+    const along = hit.id === "X" ? Math.abs(d[1]) : Math.abs(d[0]);
+    return along > 1e-9 * Math.hypot(d[0], d[1]);
   };
   /** A reference follows the model: picked, never dragged. */
   const fixedId = (id: string) => !!entities.find((e) => e.id === id)?.ref;
@@ -318,7 +330,10 @@ export function SketchCanvas(props: Props) {
     }
     if (tool === "dimension") {
       // Smart Dimension: pick one or two things; a second pick, or a click in space after one, places it.
-      const item = itemAt(p);
+      const hit = itemAt(p);
+      // A click on a sketch axis after a line across it places that line's dimension (the axes run through
+      // where dimensions go); after a point, a circle or a line along the axis, it dimensions to the axis.
+      const item = hit && picks.length === 1 && placesOn(hit, picks[0]) ? null : hit;
       if (item && !picks.some((x) => sameItem(x, item))) {
         const next = [...picks, item];
         if (next.length < 2) return setPicks(next);
@@ -461,13 +476,14 @@ export function SketchCanvas(props: Props) {
           />
         )}
         {/* The sketch's axes: lines any relation or dimension may use ("X", "Y"). */}
+        {/* Drawn across the view only: a line a million mm long would have too many dashes, and draws solid. */}
         {(["X", "Y"] as const).map((a) => (
           <line
             key={a}
-            x1={a === "X" ? -1e6 : 0}
-            y1={a === "X" ? 0 : -1e6}
-            x2={a === "X" ? 1e6 : 0}
-            y2={a === "X" ? 0 : 1e6}
+            x1={a === "X" ? v.cx - reach : 0}
+            y1={a === "X" ? 0 : v.cy - reach}
+            x2={a === "X" ? v.cx + reach : 0}
+            y2={a === "X" ? 0 : v.cy + reach}
             className={`sketch-axis axis-${a.toLowerCase()}${isHover(a) ? " hover" : ""}${selectedIds.has(a) ? " selected" : ""}${related.has(a) ? " related" : ""}`}
             vectorEffect="non-scaling-stroke"
             data-axis={a}

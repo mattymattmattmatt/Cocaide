@@ -554,4 +554,19 @@ describe("the AI sees references as references", () => {
     expect(REFERENCE).toContain('"ref": { "edge":');
     expect(REFERENCE).toContain('"construction": false');
   });
+
+  it("the worked example builds as written: the hole 12 in from the right-hand edge, and it follows the edge", () => {
+    const text = REFERENCE.slice(REFERENCE.indexOf("Worked example: a hole 12 mm"));
+    const sketch = JSON.parse(text.slice(text.indexOf('{ "id": "sk_hole"'), text.indexOf('{ "id": "cut_1"')).trim());
+    const cut = JSON.parse(text.slice(text.indexOf('{ "id": "cut_1"'), text.indexOf("}\n", text.indexOf('{ "id": "cut_1"')) + 1));
+    const doc = add(bracket, sketch, cut);
+    const b = built(doc);
+    expect(b.errors).toEqual([]);
+    expect(b.cylinders.filter((c) => Math.abs(c.radius - 3) < 1e-9).map((c) => Math.round(c.origin[0] * 1e6) / 1e6)).toEqual([28]);
+    expect(sketchDof(b.sketches.find((s) => s.id === "sk_hole")!.entities, sketch.constraints)).toBe(0);
+    const wider = apply(doc, { type: "setDimension", sketch: "sketch_1", index: 0, value: 100 });
+    expect(wider.ok).toBe(true);
+    if (!wider.ok) return;
+    expect(built(wider.doc).cylinders.filter((c) => Math.abs(c.radius - 3) < 1e-9).map((c) => Math.round(c.origin[0] * 1e6) / 1e6)).toEqual([38]);
+  });
 });

@@ -484,9 +484,12 @@ export function Viewport({
           overlays.add(line);
         }
         // The sketch's points (hole centres, pattern positions): small markers, the same size at any zoom.
-        if (sk.points?.length) {
-          const g = new THREE.BufferGeometry().setFromPoints(sk.points.map((p) => new THREE.Vector3(...p.at)));
-          const color = !sk.ok ? 0xe5484d : 0xf28c28;
+        // A point that references the model is purple, as its lines are.
+        for (const reference of [false, true]) {
+          const pts = (sk.points ?? []).filter((p) => !!p.reference === reference);
+          if (!pts.length) continue;
+          const g = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p.at)));
+          const color = !sk.ok ? 0xe5484d : reference ? 0x8e44c9 : 0xf28c28;
           const dots = new THREE.Points(g, new THREE.PointsMaterial({ color, size: 6, sizeAttenuation: false, depthTest: false, transparent: true, opacity: sk.ok ? SKETCH_OPACITY : 1 }));
           dots.renderOrder = 3;
           overlays.add(dots);
