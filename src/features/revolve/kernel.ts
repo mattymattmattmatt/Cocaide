@@ -94,20 +94,26 @@ function revolveAxis(ctx: RebuildCtx, f: RevolveFeature, frame: Frame): Axis {
 
 /** The regions that turn: the profile's, or the thin wall's band. */
 function profileRegions(f: RevolveFeature, base: SketchProfile, entities: Parameters<typeof buildProfile>[0], axis: Axis): Region[] {
+  const closed = closedRegions(base, entities, axis);
   if (f.thin) {
     const side = f.thin.side ?? "outside";
-    if (base.regions.length > 0) return closedBands(base.regions, f.thin.thickness, side);
+    if (closed.length > 0) return closedBands(closed, f.thin.thickness, side);
     const chain = openChain(entities, axis.line);
     const [d1, d2] = wallOffsets(f.thin.thickness, side, awayFromAxis(chain, axis.in2D));
     return [openBand(chain, d1, d2)];
   }
+  if (closed.length > 0) return closed;
+  throw new OpError(`${noClosedProfile(f.sketch, base, "revolve")}; for an open profile, make it a thin revolve ("thin": { "thickness": 2 })`);
+}
+
+/** The profile's closed regions; a line of the sketch drawn as the axis (not construction) is no part of the profile: without it, the rest may close. */
+function closedRegions(base: SketchProfile, entities: Parameters<typeof buildProfile>[0], axis: Axis): Region[] {
   if (base.regions.length > 0) return base.regions;
-  // A line of the sketch drawn as the axis (not construction) is no part of the profile: without it, the rest may close.
   if (axis.line) {
     const without = buildProfile(entities.filter((e) => e.id !== axis.line));
     if (without.ok && without.regions.length > 0) return without.regions;
   }
-  throw new OpError(`${noClosedProfile(f.sketch, base, "revolve")}; for an open profile, make it a thin revolve ("thin": { "thickness": 2 })`);
+  return [];
 }
 
 /** Runs band geometry, its errors as OpErrors. */

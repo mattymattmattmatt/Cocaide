@@ -6,7 +6,7 @@
 // the axis, angle and the rest can be changed.
 
 import type { SketchEntity } from "../../../doc/types";
-import { axisCrossing, regionSegs, type Line2 } from "../../../features/revolve/band";
+import { axisCrossing, openChain, regionSegs, type Line2 } from "../../../features/revolve/band";
 import { buildProfile } from "../../../geom/profile";
 import { refFromSelection } from "../../props/datumRef";
 import { nextBodyName } from "../names";
@@ -72,16 +72,36 @@ export function revolveFeature(ctx: ToolCtx, cut: boolean): Raw | string {
     axis = found;
   }
   const feature: Raw = { id: ctx.nextId(cut ? "revolve_cut" : "revolve"), op: "revolve", sketch: sk.id, axis };
+  // An open chain cannot turn into a solid: as SOLIDWORKS offers, it becomes a thin revolve (a 2 mm wall).
+  if (openProfile((Array.isArray(sk.entities) ? sk.entities : []) as SketchEntity[], axis)) feature.thin = { thickness: 2 };
   if (cut) feature.operation = "remove";
   // In a part of several bodies, new material starts a body of its own (choose another in Properties).
   else if (bodies.length > 1) feature.newBody = nextBodyName(bodies);
   return feature;
 }
 
+/**
+ * Is the sketch's profile one open chain of lines and arcs (no closed region,
+ * once a line of the sketch used as the axis is left out)? Then only a thin
+ * revolve can turn it.
+ */
+export function openProfile(entities: readonly SketchEntity[], axis: Raw): boolean {
+  const skip = typeof axis.line === "string" && !entities.find((e) => e.id === axis.line)?.construction ? axis.line : undefined;
+  const rest = entities.filter((e) => e.id !== skip) as SketchEntity[];
+  const profile = buildProfile(rest);
+  if (profile.ok && profile.regions.length > 0) return false;
+  try {
+    return openChain(rest).length > 0;
+  } catch {
+    return false; // not one open chain either: the revolve says what is wrong
+  }
+}
+
 const run = (cut: boolean) => (ctx: ToolCtx) => {
   const f = revolveFeature(ctx, cut);
-  if (typeof f === "string") ctx.notice(f);
-  else ctx.create(f);
+  if (typeof f === "string") return ctx.notice(f);
+  ctx.create(f);
+  if (f.thin) ctx.notice("The profile is open, so it turns as a thin wall (2 mm): change the wall in Properties.", "info");
 };
 
 export const tools: ToolDef[] = [

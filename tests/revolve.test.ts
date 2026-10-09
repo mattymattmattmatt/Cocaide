@@ -193,6 +193,13 @@ describe("revolve: thin", () => {
     expect(b.volume).toBeCloseTo(PI * (21 ** 2 - 9 ** 2) * 22 - PI * (20 ** 2 - 10 ** 2) * 20, 6);
   });
 
+  it("a closed profile beside a (non-construction) axis line is thickened as a loop too", () => {
+    // The axis drawn as an ordinary line keeps the sketch from closing as a whole; without it the rectangle is the profile.
+    const b = built(part([RECT, { ...CENTERLINE, construction: undefined }], revolve({ thin: { thickness: 1 } })));
+    expect(b.errors).toEqual([]);
+    expect(b.volume).toBeCloseTo(PI * (21 ** 2 - 9 ** 2) * 22 - PI * (20 ** 2 - 10 ** 2) * 20, 6);
+  });
+
   it("says what to do with an open profile that is not thin, or a wall thicker than an arc's radius", () => {
     expect(built(part([wall, CENTERLINE], revolve())).errors[0]).toMatch(/^rev_1: sketch "s1" has no closed profile to revolve: .*; for an open profile, make it a thin revolve \("thin": \{ "thickness": 2 \}\)$/);
     const arc = { id: "a", type: "arc", center: [20, 0], start: [21, 0], end: [20, 1] };
@@ -220,6 +227,32 @@ describe("revolve: the axis", () => {
     expect(built(doc).errors).toEqual(["rev_1: axis: ax is parallel to the sketch's plane but 5 mm off it: a revolve axis must lie in the plane of the profile"]);
     expect(built(part([RECT, CENTERLINE], revolve({ axis: { line: "nope" } }))).errors).toEqual(['rev_1: axis.line: sketch "s1" has no line "nope"; its lines: "c1" (construction)']);
     expect(built(part([RECT, CENTERLINE], revolve({ axis: { line: "r1" } }))).errors).toEqual(['rev_1: axis.line: "r1" is a rect, not a line; its lines: "c1" (construction)']);
+  });
+});
+
+describe("revolve: about a model edge", () => {
+  it("turns a profile on a plane off the origin about a straight edge of the part lying in it (Pappus about the edge)", () => {
+    // A 20 mm cube on Top; a sketch on the plane of its front face (y = -10, normal -Y: sketch x = X, sketch y = Z);
+    // a 10 x 6 rectangle at x -5..5, z 22..28; turned a full turn about the cube's top front edge (y = -10, z = 20, along X):
+    // centroid 5 from that edge, area 60 -> 2π x 5 x 60, as a new body beside the cube.
+    const doc: RawDocument = {
+      version: 1,
+      units: "mm",
+      name: "edge axis",
+      features: [
+        { id: "s0", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r0", type: "rect", center: [0, 0], w: 20, h: 20 }], constraints: [] },
+        { id: "e0", op: "extrude", sketch: "s0", distance: 20 },
+        { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, -1, 0], origin: [0, -10, 0] }, entities: [{ id: "r1", type: "rect", center: [0, 25], w: 10, h: 6 }], constraints: [] },
+        revolve({ sketch: "s1", axis: { edge: { type: "edge", between: [{ type: "planar", normal: [0, 0, 1], pick: "largest" }, { type: "planar", normal: [0, -1, 0], pick: "largest" }], pick: "all" } }, operation: "new" }),
+      ],
+    };
+    expect(errorsOf(doc)).toEqual([]);
+    const b = built(doc);
+    expect(b.errors).toEqual([]);
+    expect(b.bodies).toEqual(["main", "rev_1"]);
+    expect(b.volume).toBeCloseTo(8000 + 2 * PI * 5 * 60, 6);
+    // The ring (2 to 8 from the edge) reaches y = -18 in front of the cube and z = 28 above it.
+    expect(b.box).toEqual({ min: [-10, -18, 0], max: [10, 10, 28] });
   });
 });
 

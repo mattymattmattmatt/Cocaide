@@ -7,7 +7,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import type { Vec3 } from "../src/doc/types";
-import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
+import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick, waitForRebuild } from "./helpers";
 
 const SHOTS = process.env.SHOTS_DIR;
 const PI = Math.PI;
@@ -87,6 +87,44 @@ test("sketches a profile with a centreline and revolves it (Pappus), changes its
   await expectVolume(page, shown((PI / 2) * 15 * 100));
   await expect(page.getByTestId("prop-operation")).toHaveValue("remove");
   await expect(page.getByTestId("feature-revolve_cut_1")).toContainText("360° cut");
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+});
+
+/** Opens a document as if it had been worked on before (the app keeps it in local storage). */
+async function openDocument(page: Page, features: unknown[]) {
+  const text = JSON.stringify({ version: 1, units: "mm", name: "part", features }, null, 2);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+}
+
+test("an open chain on Front revolves as a thin wall; a default axis in the sketch's plane serves as well", async ({ page }) => {
+  // Up x = 10 then out along y = 20 (sketch coordinates; Front's sketch y is the model's Z), and a centreline up the axis.
+  await openDocument(page, [
+    {
+      id: "sketch_1",
+      op: "sketch",
+      plane: { type: "datum", normal: [0, -1, 0], origin: [0, 0, 0] },
+      entities: [
+        { id: "l1", type: "line", start: [10, 0], end: [10, 20] },
+        { id: "l2", type: "line", start: [10, 20], end: [20, 20] },
+        { id: "c1", type: "line", start: [0, 0], end: [0, 30], construction: true },
+      ],
+      constraints: [],
+    },
+  ]);
+  await page.getByTestId("tool-revolve-menu").click();
+  await page.getByTestId("tool-revolve").click();
+  await expect(page.getByTestId("notice")).toContainText("The profile is open, so it turns as a thin wall (2 mm)");
+  await expect(page.getByTestId("prop-thin")).toBeChecked();
+  // The 2 mm wall outside the chain (away from the axis): x 10..12 for y 0..18 (r̄ 11) and y 18..20 for x 10..20 (r̄ 15).
+  const wall = 2 * PI * (36 * 11 + 20 * 15);
+  await expectVolume(page, shown(wall));
+  // A reference axis instead: Z, the default axis lying in Front's plane, on the centreline.
+  await page.getByTestId("prop-axis-from").selectOption("ref");
+  await expect(page.getByTestId("prop-feature-error")).toHaveCount(0);
+  expect(((await savedDocument(page)) as { features: Record<string, unknown>[] }).features.at(-1)!.axis).toEqual({ datum: "Z" });
+  await expectVolume(page, shown(wall));
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
 });
 

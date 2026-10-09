@@ -6,11 +6,15 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { RawDocument } from "../src/doc/commands";
 import { allErrors, validateDocument } from "../src/doc/validate";
-import { REVOLVE_FIELDS, preferredLine } from "../src/features/revolve/ui";
+import { REVOLVE_FIELDS, defaultAxisIn, preferredLine } from "../src/features/revolve/ui";
 import { UI_OPS } from "../src/features/uiDefs";
 import { loadOC, type OC } from "../src/kernel";
 import { draftFeature, draftNeutral, shellFeature } from "../src/ui/model/tools/dress";
-import { revolveFeature, sketchAxisLine } from "../src/ui/model/tools/revolve";
+import { openProfile, revolveFeature, sketchAxisLine } from "../src/ui/model/tools/revolve";
+import { mirrorFeature } from "../src/ui/model/tools/mirror";
+import { PATTERNABLE } from "../src/ui/model/tools/pattern";
+import { toolById } from "../src/ui/model/registry";
+import { sketchFrameIn } from "../src/ui/model/sketchPlane";
 import { scaleFeature } from "../src/ui/model/tools/scale";
 import { commitPatch, visibleFields, type FieldSpec, type FormContext } from "../src/ui/props/spec";
 import { EMPTY_SELECTION } from "../src/ui/model/selection";
@@ -180,5 +184,69 @@ describe("the revolve editor's rules", () => {
     expect(UI_OPS.draft.summary!({ angle: 3 })).toBe("3°");
     expect(UI_OPS.scale.summary!({ factor: 2 })).toBe("×2");
     expect(UI_OPS.revolve.sketchOf!(f)).toBe("sketch_1");
+  });
+});
+
+describe("review fixes", () => {
+  it("an open chain revolves as a thin wall from the tool (SOLIDWORKS offers the thin feature)", () => {
+    const chain = [
+      { id: "l1", type: "line", start: [10, 0], end: [10, 20] },
+      { id: "l2", type: "line", start: [10, 20], end: [20, 20] },
+    ];
+    const doc = sketchDoc([...chain, CENTERLINE]);
+    const { ctx, out } = harness(doc, viewOf(oc, doc));
+    const f = revolveFeature(ctx, false) as Raw;
+    expect(f).toEqual({ id: "revolve_1", op: "revolve", sketch: "sketch_1", axis: { line: "c1" }, thin: { thickness: 2 } });
+    toolById("tool.revolve")!.run(ctx);
+    expect(out.created).toEqual([f]);
+    expect(out.notices).toEqual([["info", "The profile is open, so it turns as a thin wall (2 mm): change the wall in Properties."]]);
+    expect(allErrors(validateDocument({ ...doc, features: [...doc.features, f] }))).toEqual([]);
+    // A closed profile stays solid; a closed profile whose axis is a profile line drawn apart from it too.
+    expect(openProfile([RECT, CENTERLINE] as never, { line: "c1" })).toBe(false);
+    expect(openProfile([RECT, { ...CENTERLINE, construction: undefined }] as never, { line: "c1" })).toBe(false);
+    expect(openProfile([...chain, CENTERLINE] as never, { line: "c1" })).toBe(true);
+    expect(openProfile([...chain, { ...CENTERLINE, construction: undefined }] as never, { line: "c1" })).toBe(true);
+    // Not one chain (a branch) is left to the revolve's own message.
+    expect(openProfile([...chain, { id: "l3", type: "line", start: [10, 20], end: [10, 30] }] as never, { datum: "Y" })).toBe(false);
+  });
+
+  it("a reference axis starts from a default axis in the sketch's plane, the sketch's vertical first", () => {
+    const sketch = (normal: number[], origin = [0, 0, 0]) => ({ id: "s", op: "sketch", plane: { type: "datum", normal, origin }, entities: [] });
+    expect(defaultAxisIn(sketchFrameIn(sketch([0, 0, 1]), null))).toBe("Y");
+    expect(defaultAxisIn(sketchFrameIn(sketch([0, -1, 0]), null))).toBe("Z");
+    expect(defaultAxisIn(sketchFrameIn(sketch([1, 0, 0]), null))).toBe("Z");
+    // Off the origin no default axis lies in the plane: Y, and the revolve says why.
+    expect(defaultAxisIn(sketchFrameIn(sketch([0, 0, 1], [0, 0, 5]), null))).toBe("Y");
+    const front = [{ ...sketch([0, -1, 0]), id: "sketch_1" }];
+    const g = { id: "revolve_1", op: "revolve", sketch: "sketch_1", axis: { line: "c1" } };
+    const from = REVOLVE_FIELDS.find((s) => s.testId === "prop-axis-from") as FieldSpec;
+    expect(commitPatch(from, "ref", g, { f: g, resolved: g, before: front, bodies: [], doc: { features: [] } as never, view: null, selection: EMPTY_SELECTION })).toEqual({ axis: { datum: "Z" } });
+  });
+
+  it("Shell on a body picked whole (Bodies panel) hollows it closed; with several bodies and nothing picked, it asks which", () => {
+    const stand = example("stand");
+    const view = viewOf(oc, stand);
+    const upright = view.bodies.find((b) => b.name === "upright")!;
+    const faces = Array.from({ length: upright.faces[1] - upright.faces[0] }, (_, i) => upright.faces[0] + i);
+    expect(shellFeature(harness(stand, view, { selection: { faces, edges: [] } }).ctx)).toEqual({ id: "shell_1", op: "shell", faces: [], thickness: 2, body: "upright" });
+    expect(shellFeature(harness(stand, view).ctx)).toBe(
+      `The part has ${view.bodies.length} bodies: click the faces to remove, or a body in the Bodies panel for a closed hollow one, then Shell.`,
+    );
+    // One body picked whole in a one-body part: the closed hollow, no body named.
+    const doc = boxDoc();
+    const box = viewOf(oc, doc);
+    expect(shellFeature(harness(doc, box, { selection: { faces: [0, 1, 2, 3, 4, 5], edges: [] } }).ctx)).toEqual({ id: "shell_1", op: "shell", faces: [], thickness: 2 });
+  });
+
+  it("Pattern and Mirror take a revolve selected in the tree", () => {
+    expect(PATTERNABLE).toContain("revolve");
+    const ball = sketchDoc([{ id: "a", type: "arc", center: [0, 0], start: [0, -5], end: [0, 5] }, { id: "c1", type: "line", start: [0, -5], end: [0, 5] }], { id: "rev_1", op: "revolve", sketch: "sketch_1", axis: { line: "c1" } });
+    const view = viewOf(oc, ball);
+    const selected = harness(ball, view).ctx.resolved.find((f) => f.id === "rev_1");
+    const { ctx, out } = harness(ball, view, { selected });
+    expect(mirrorFeature(ctx)).toMatchObject({ op: "mirror", feature: "rev_1" });
+    toolById("tool.linearPattern")!.run(ctx);
+    expect(out.notices).toEqual([]);
+    expect(out.created).toEqual([{ id: "pattern_1", op: "linearPattern", feature: "rev_1", direction: [1, 0, 0], spacing: 10, count: 3 }]);
   });
 });

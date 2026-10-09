@@ -260,7 +260,7 @@ describe("Pattern and Mirror", () => {
     ]);
     const none = harness(doc, view);
     run("tool.linearPattern", none.ctx);
-    expect(none.out.notices).toEqual([["error", "Select an extrude, cut, hole or member in the feature tree, then Pattern."]]);
+    expect(none.out.notices).toEqual([["error", "Select an extrude, cut, hole, member or revolve in the feature tree, then Pattern."]]);
   });
 
   it("mirror the selected feature about the part's middle, or the clicked body beside itself", () => {

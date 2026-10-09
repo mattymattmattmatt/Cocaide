@@ -3,6 +3,8 @@
 // the part (add, cut, new body, intersect), how far it turns and which way
 // (one direction, two, or split about the sketch plane), and a thin wall.
 
+import type { Vec3 } from "../../doc/types";
+import { sketchFrameIn } from "../../ui/model/sketchPlane";
 import type { FieldSpec } from "../../ui/props/spec";
 import type { UiOp } from "../uiDefs";
 import { isLineAxis } from "./doc";
@@ -21,6 +23,27 @@ export function preferredLine(sketch: Raw | undefined): string | undefined {
   return (lines.find((e) => e.type === "line" && e.construction) ?? lines.find((e) => e.type === "line"))?.id;
 }
 
+const DEFAULT_AXES: [string, Vec3][] = [
+  ["X", [1, 0, 0]],
+  ["Y", [0, 1, 0]],
+  ["Z", [0, 0, 1]],
+];
+
+/**
+ * The default axis to start a reference axis from: one lying in the sketch's
+ * plane (through the origin, square to its normal), the one nearest the
+ * sketch's own vertical first (where a centreline usually runs); Y when
+ * none does (the revolve then says why, until one is picked).
+ */
+export function defaultAxisIn(frame: { origin: Vec3; x: Vec3; y: Vec3; z: Vec3 } | string): string {
+  if (typeof frame === "string") return "Y";
+  const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  if (Math.abs(dot(frame.origin, frame.z)) > 1e-6) return "Y";
+  const inPlane = DEFAULT_AXES.filter(([, d]) => Math.abs(dot(d, frame.z)) < 1e-6);
+  const best = inPlane.sort((a, b) => Math.abs(dot(b[1], frame.y)) - Math.abs(dot(a[1], frame.y)))[0];
+  return best ? best[0] : "Y";
+}
+
 export const REVOLVE_FIELDS: FieldSpec[] = [
   { kind: "sketch", key: "sketch", label: "Sketch", testId: "prop-sketch" },
   {
@@ -34,7 +57,7 @@ export const REVOLVE_FIELDS: FieldSpec[] = [
     ],
     get: (f) => (lineAxis(f) ? "line" : "ref"),
     set: (v, f, c) => {
-      if (v === "ref") return { axis: { datum: "Y" } };
+      if (v === "ref") return { axis: { datum: defaultAxisIn(sketchFrameIn(c.before.find((g) => g.id === f.sketch), c.view)) } };
       const line = preferredLine(c.before.find((g) => g.id === f.sketch));
       if (!line) throw new Error("The sketch has no lines: draw a centreline in it to turn about, or pick an axis or a straight edge instead.");
       return { axis: { line } };

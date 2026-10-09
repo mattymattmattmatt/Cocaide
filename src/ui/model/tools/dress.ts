@@ -9,6 +9,7 @@ import type { FaceSelector, Vec3 } from "../../../doc/types";
 import { dot3 } from "../../../geom/vec";
 import { faceSelectorFor, facesSelectorFor } from "../../../kernel/synthesize";
 import type { FaceInfo } from "../../../kernel/topology";
+import { wholeBodySelected } from "../carrySelection";
 import { datumKindOf } from "../selection";
 import type { ContextTarget, Raw, ToolCtx, ToolDef } from "../ToolContext";
 
@@ -19,13 +20,16 @@ export function shellFeature(ctx: ToolCtx): Raw | string {
   const { view, selection } = ctx;
   if (!ctx.doc || !view || view.bodies.length === 0) return "Shell needs a solid: make one first.";
   const feature: Raw = { id: ctx.nextId("shell"), op: "shell", faces: [], thickness: 2 };
-  if (selection.faces.length) {
+  // A body picked whole (in the Bodies panel) is the body to hollow, closed: not every one of its faces removed.
+  const whole = wholeBodySelected(selection, view.bodies);
+  if (whole !== null) {
+    if (view.bodies.length > 1) feature.body = whole;
+  } else if (selection.faces.length) {
     const s = facesSelectorFor(view.faces, selection.faces);
     if (!s.ok) return s.error;
     feature.faces = s.selector;
   } else if (view.bodies.length > 1) {
-    const body = ctx.pickedBody();
-    if (body) feature.body = body;
+    return `The part has ${view.bodies.length} bodies: click the faces to remove, or a body in the Bodies panel for a closed hollow one, then Shell.`;
   }
   return feature;
 }
