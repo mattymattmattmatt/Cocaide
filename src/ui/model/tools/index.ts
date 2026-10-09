@@ -12,6 +12,7 @@ import { tools as pattern } from "./pattern";
 import { tools as mirror } from "./mirror";
 import { tools as bodies } from "./bodies";
 import { tools as member } from "./member";
+import { tools as reference } from "./reference";
 
 const LISTS: ToolDef[][] = [
   sketch,
@@ -22,6 +23,7 @@ const LISTS: ToolDef[][] = [
   mirror,
   bodies,
   member,
+  reference,
 ];
 
 export const MODEL_TOOLS: ToolDef[] = LISTS.flat();

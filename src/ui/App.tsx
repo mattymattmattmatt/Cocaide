@@ -18,8 +18,9 @@ import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import type { Constraint, DatumPlane, Material, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
+import type { Constraint, DatumPlane, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
+import { DATUM_OPS, DEFAULT_DATUMS, frameAsDatumPlane } from "../features/datum";
 import { planeFrame, to2D } from "../geom/frame";
 import { STEEL_DENSITY } from "../geom/section";
 import { KernelClient } from "../worker/client";
@@ -59,11 +60,13 @@ import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Select
 import { UI_OPS } from "../features/uiDefs";
 import { CommandManager } from "./model/CommandManager";
 import { makeToolCtx } from "./model/context";
-import { contextTools, MODEL_TOOLS, toolById } from "./model/registry";
-import { pickInto } from "./model/selection";
+import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay";
+import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
+import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
+import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
 import { deleteBody } from "./model/tools/bodies";
-import { PLANES } from "./model/tools/sketch";
+import { onPlane, PLANES } from "./model/tools/sketch";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -79,6 +82,17 @@ const BLANK = formatDocument({ version: 1, units: "mm", name: "part", features: 
 
 type KernelState = { phase: "loading" } | { phase: "ready"; loadMs: number } | { phase: "failed"; message: string };
 type Notice = { kind: "info" | "error"; text: string };
+
+/**
+ * A sketch being edited: the sketcher draws on `plane` (the frame written
+ * out, as the last rebuild has it), and finishing writes back `spec`, the
+ * document's own plane: a reference ({ "datum": "Top" }, a plane feature, a
+ * face) stays a reference, never numbers.
+ */
+type OpenSketch = SketchSession & { spec: PlaneSpec };
+
+/** What a right-click menu can be about: what the ask knows, a vertex, or reference geometry (a default plane, the origin, a plane, axis or point feature). */
+type MenuTarget = AskTarget | ({ kind: "vertex" } & VertexPick) | { kind: "datum"; id: string };
 
 function readStored(): { text: string; savedText: string } | null {
   try {
@@ -121,7 +135,9 @@ export function App() {
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [selectedFeature, setSelectedFeature] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"properties" | "sections" | "cutlist" | "document">("properties");
-  const [sketch, setSketch] = useState<SketchSession | null>(null);
+  const [sketch, setSketch] = useState<OpenSketch | null>(null);
+  /** What is shown of the planes, axes, points and the origin: view state, remembered in this browser. */
+  const [datumView, setDatumView] = useDatumView();
   const [hiddenBodies, setHiddenBodies] = useState<ReadonlySet<string>>(new Set());
   /** The section library in this browser (Phase I). */
   const [library, setLibrary] = useState<LibraryEntry[]>([]);
@@ -241,7 +257,11 @@ export function App() {
         if (ticket !== latest.current) return;
         setView(v);
         setRebuildMs(ms);
-        setSelection(EMPTY_SELECTION); // face and edge indices belong to the previous solid
+        // Face, edge and vertex indices belong to the previous solid; planes, axes and points are ids, and stay picked while they exist.
+        setSelection((sel) => {
+          const kept = (sel.datums ?? []).filter((id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id));
+          return kept.length ? { faces: [], edges: [], datums: kept } : EMPTY_SELECTION;
+        });
         if (needsFit.current && v.mesh) {
           needsFit.current = false;
           setFitToken((t) => t + 1);
@@ -369,9 +389,12 @@ export function App() {
   const resolved = useMemo(() => (doc ? (resolvedDocument(doc).features as Record<string, unknown>[]) : []), [doc]);
   const selected = resolved.find((f) => f.id === selectedFeature);
 
-  const startSketch = (plane: DatumPlane) => {
+  /** A new sketch on a plane: written out, or by reference (a default plane, a plane feature, a face), which it keeps. */
+  const startSketch = (spec: PlaneSpec) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
-    setSketch({ id: nextId(doc, "sketch"), isNew: true, plane, entities: [], constraints: [] });
+    const frame = planeSpecFrameIn(spec, view);
+    if (typeof frame === "string") return setNotice({ kind: "error", text: `Can't sketch there: ${frame}.` });
+    setSketch({ id: nextId(doc, "sketch"), isNew: true, plane: frameAsDatumPlane(frame), spec, entities: [], constraints: [] });
     setSelection(EMPTY_SELECTION);
   };
 
@@ -379,15 +402,17 @@ export function App() {
     // The sketcher works on numbers; finishSketch puts back the expressions it did not change.
     const f = resolved.find((g) => g.id === id) as Partial<SketchFeature> | undefined;
     if (!f || f.op !== "sketch" || !f.plane) return;
-    // A sketch placed on a reference (a face, a plane feature) has its plane worked out by the rebuild, which the sketcher can't read yet.
-    if (f.plane.type !== "datum") return setNotice({ kind: "error", text: `${id} sits on a reference plane, which the sketcher can't open yet: edit it in the Document tab.` });
+    // Drawn where the rebuild placed it (a sketch on a face or a plane feature is where that is now); its plane stays as written.
+    const frame = sketchFrameIn(f as Record<string, unknown>, view);
+    if (typeof frame === "string") return setNotice({ kind: "error", text: `${id} can't be opened: ${frame}. Fix its plane in Properties first.` });
     // A dimension written as "=b" goes in with its value, and the expression beside it, so the sketcher shows and keeps it.
     const raw = (features.find((g) => g.id === id)?.constraints ?? []) as { value?: unknown }[];
     const constraints = (f.constraints ?? []).map((c, i) => (typeof raw[i]?.value === "string" ? ({ ...c, expr: raw[i].value } as unknown as Constraint) : c));
     setSketch({
       id,
       isNew: false,
-      plane: f.plane as DatumPlane,
+      plane: frameAsDatumPlane(frame),
+      spec: (features.find((g) => g.id === id)?.plane ?? f.plane) as PlaneSpec,
       entities: (f.entities ?? []) as SketchEntity[],
       constraints,
       suppressed: f.suppressed,
@@ -397,8 +422,10 @@ export function App() {
   };
 
   /** `weldment`: the sketch's "Weldment profile" box is ticked; the profile card opens. */
-  const finishSketch = (feature: SketchFeature, weldment = false) => {
+  const finishSketch = (drawn: SketchFeature, weldment = false) => {
     if (!sketch) return;
+    // The plane as the document had it (a reference stays one), not the frame the sketcher drew on.
+    const feature: SketchFeature = { ...drawn, plane: sketch.spec };
     const original = features.find((g) => g.id === sketch.id);
     const problem = sketch.isNew
       ? run({ type: "addFeature", feature })
@@ -709,9 +736,14 @@ export function App() {
   const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
     // Empty space: the menu for the whole part.
     if (!target) return contextMenuRef.current({ kind: "part" }, x, y);
-    // Select what was right-clicked, as SOLIDWORKS does: its menu acts on it, and it stays outlined while an ask is open.
-    setSelection(target.kind === "face" ? { faces: [target.index], edges: [], point: target.point } : { faces: [], edges: [target.index] });
-    contextMenuRef.current({ kind: target.kind, index: target.index }, x, y);
+    // Select what was right-clicked, as SOLIDWORKS does (a selection it is already part of stays): its menu acts on it,
+    // and it stays outlined while an ask is open.
+    setSelection((sel) => (isSelected(sel, target) ? sel : only(target)));
+    contextMenuRef.current(
+      target.kind === "datum" ? { kind: "datum", id: target.id } : target.kind === "vertex" ? { kind: "vertex", edge: target.edge, at: target.at } : { kind: target.kind, index: target.index },
+      x,
+      y,
+    );
   }, []);
 
   // A plain click selects one face or edge; Ctrl- or Shift-click adds one, or takes it out again.
@@ -761,6 +793,9 @@ export function App() {
       setRightTab,
     },
   );
+  /** The newest ToolCtx, for menu entries run at the click (after the right-click's selection has landed). */
+  const toolCtxRef = useRef(toolCtx);
+  toolCtxRef.current = toolCtx;
   /** The last tool run, for Enter. */
   const lastTool = useRef<string | null>(null);
   /** Runs a model tool by command id: the toolbar, the shortcut bar, its key, Enter and right-click menus all come here. */
@@ -802,14 +837,23 @@ export function App() {
    * done to the thing under the pointer, then "Ask AI…", which opens the ask
    * panel about it.
    */
-  const contextMenu = (target: AskTarget, x: number, y: number) => {
+  const contextMenu = (target: MenuTarget, x: number, y: number) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
-    const ask = askEntry(() => openAskRef.current(target, x, y));
-    /** The registry's tools for what was right-clicked (contextOn), each run at the click. */
-    const toolsFor = (on: ContextTarget): MenuEntry[] =>
-      contextTools(on.kind)
+    // Ask AI… about it: a reference feature as the feature it is, a default plane or the origin as part of the whole part, a vertex as its edge.
+    const askTarget: AskTarget =
+      target.kind === "datum"
+        ? doc.features.some((g) => g.id === target.id)
+          ? { kind: "feature", id: target.id }
+          : { kind: "part" }
+        : target.kind === "vertex"
+          ? { kind: "edge", index: target.edge }
+          : target;
+    const ask = askEntry(() => openAskRef.current(askTarget, x, y));
+    /** The registry's tools for what was right-clicked (contextOn, and each tool's own entries), each run at the click. */
+    const toolsFor = (on: ContextTarget): MenuEntry[] => [
+      ...(on.kind === "face" || on.kind === "edge" || on.kind === "part" ? contextTools(on.kind) : [])
         .filter((t) => !t.contextWhen || t.contextWhen(toolCtx, on))
-        .map((t) => {
+        .map((t): MenuEntry => {
           const why = t.disabled?.(toolCtx);
           return {
             label: t.contextLabel ?? t.label,
@@ -820,7 +864,31 @@ export function App() {
             onClick: () => runToolRef.current(t.id),
             testId: t.contextTestId ?? `ctx-${t.id}`,
           };
-        });
+        }),
+      ...contextEntries(toolCtx, on).map(
+        ({ tool, item }): MenuEntry => ({
+          label: item.label,
+          icon: item.icon ?? tool.icon,
+          hint: item.hint,
+          disabled: item.disabled,
+          onClick: () => {
+            lastTool.current = tool.id;
+            item.run(toolCtxRef.current);
+          },
+          testId: item.testId,
+        }),
+      ),
+    ];
+    /** Show or hide a reference (its eye), and the planes' own entries. */
+    const datumItems = (id: string): MenuEntry[] => {
+      const open = eyeOpen(id, datumView);
+      const kind = Object.hasOwn(DEFAULT_DATUMS, id) ? DEFAULT_DATUMS[id].kind : DATUM_OPS[String(features.find((g) => g.id === id)?.op)];
+      return [
+        ...toolsFor({ kind: "datum", id }),
+        { label: open ? "Hide" : "Show", icon: open ? "eyeOff" : "eye", onClick: () => setDatumView(setShown(datumView, id, !open)), testId: "ctx-datum-toggle" },
+        ...(kind === "plane" ? [viewCmd("view.normal", "Normal to", "front")] : []),
+      ];
+    };
     const viewCmd = (id: string, label: string, icon: IconName): MenuEntry => ({ label, icon, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => viewCommands.current?.(id), testId: `ctx-${id}` });
     const featureItems = (id: string): MenuEntry[] => {
       const f = features.find((g) => g.id === id);
@@ -853,14 +921,29 @@ export function App() {
       ];
     };
     const topo = view ? { faces: view.faces, edges: view.edges, faceOrigins: [] } : null;
-    let title = targetLabel(doc, target, topo);
+    let title = targetLabel(doc, askTarget, topo);
     let items: MenuEntry[] = [];
     switch (target.kind) {
+      case "datum":
+        title = describeDatum(target.id, view?.datums ?? {});
+        items = [...datumItems(target.id), ...(doc.features.some((g) => g.id === target.id) ? ["sep" as const, ...featureItems(target.id)] : [])];
+        break;
+      case "vertex":
+        title = "Vertex";
+        items = [...toolsFor(target), "sep", viewCmd("view.fit", "Zoom to fit", "fit")];
+        break;
       case "feature":
-      case "failed":
+      case "failed": {
         items = featureItems(target.id);
         if (target.kind === "failed") title = `${target.id} failed`;
+        // A plane, axis or point feature: as on the view, with its eye; picked, so its entries act on it.
+        const op = String(features.find((g) => g.id === target.id)?.op);
+        if (target.kind === "feature" && Object.hasOwn(DATUM_OPS, op)) {
+          setSelection({ faces: [], edges: [], datums: [target.id] });
+          items = [...datumItems(target.id), "sep", ...items];
+        }
         break;
+      }
       case "face": {
         const f = view?.faces[target.index];
         const flat = f?.type === "plane";
@@ -881,6 +964,9 @@ export function App() {
         items = [
           { heading: "Sketch on" },
           ...PLANES.map(([name, plane]): MenuEntry => ({ label: name, icon: "sketch", onClick: () => startSketch(plane), testId: `ctx-sketch-${name.split(" ")[0].toLowerCase()}` })),
+          ...features
+            .filter((g) => g.op === "plane")
+            .map((g): MenuEntry => ({ label: String(g.id), icon: "plane", onClick: () => startSketch(onPlane(String(g.id))), testId: `ctx-sketch-${String(g.id)}` })),
           "sep",
           ...toolsFor({ kind: "part" }),
           "sep",
@@ -923,6 +1009,11 @@ export function App() {
         break;
     }
     setMenu({ x, y, title, items: [...items, "sep", ask] });
+  };
+  /** A default plane or the origin right-clicked in the tree: picked (so its entries act on it), then its menu. */
+  const datumMenu = (id: string, x: number, y: number) => {
+    setSelection((sel) => ((sel.datums ?? []).includes(id) ? sel : { faces: [], edges: [], datums: [id] }));
+    contextMenuRef.current({ kind: "datum", id }, x, y);
   };
   const contextMenuRef = useRef(contextMenu);
   contextMenuRef.current = contextMenu;
@@ -1198,11 +1289,18 @@ export function App() {
               onSelect={(id) => {
                 setSelectedFeature(id);
                 if (id) setRightTab("properties");
+                // A plane, axis or point picked in the tree is picked in the view too: shown, and what Sketch or Plane works on.
+                if (id && Object.hasOwn(DATUM_OPS, String(features.find((g) => g.id === id)?.op))) setSelection({ faces: [], edges: [], datums: [id] });
               }}
               onEditSketch={editSketch}
               dispatch={d.dispatch}
               onError={(text) => setNotice({ kind: "error", text })}
               onAsk={sketch ? undefined : contextMenu}
+              pickedDatums={selection.datums ?? []}
+              datumView={datumView}
+              onPickDatum={(id, additive) => setSelection((sel) => pickInto(sel, { kind: "datum", id, point: [0, 0, 0] }, additive))}
+              onToggleEye={(id) => setDatumView(toggleEye(datumView, id))}
+              onDatumMenu={sketch ? undefined : datumMenu}
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} />
             <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
@@ -1248,7 +1346,7 @@ export function App() {
                       : { kind: "feature", id: draft.id },
                   x,
                   y,
-                  draft,
+                  { ...draft, plane: sketch.spec },
                 )
               }
             />
@@ -1267,6 +1365,8 @@ export function App() {
                   nodes={shownNodes}
                   onMessage={(text) => setNotice({ kind: "info", text })}
                   commandsRef={viewCommands}
+                  datumView={datumView}
+                  onDatumView={setDatumView}
                 />
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
@@ -1434,6 +1534,7 @@ function Help() {
         {step("extrude", "Extrude or Cut", "the selected (or latest) sketch into a solid, or out of one.")}
         {step("hole", "Hole, Fillet, Chamfer", "on what you click: a flat face for a hole, edges (Ctrl- or Shift-click for more) for a fillet or chamfer.")}
         {step("pattern", "Pattern or Mirror", "the feature selected in the tree; Mirror, and Split and Move on the Bodies tab, work on the clicked body too.")}
+        {step("plane", "Plane, Axis, Point", "on the Reference tab: select faces, edges, vertices or planes first, and it makes the reference they mean (a face: an offset plane; three vertices: a plane through them; a round face: its axis).")}
         {step("member", "Member", "on the Weldments tab: tick Weldment profile on a sketch to add a section, then add members from Sections.")}
         {step("ask", "Right-click", "anything (a feature, face, edge, body, or empty space) for its menu; Ask AI… at the bottom asks about it or describes a change.")}
         {step(

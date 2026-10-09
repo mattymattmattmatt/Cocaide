@@ -55,6 +55,9 @@ export function CommandManager({ ctx, prefs, runTool, runItem, undo, redo, canUn
   const button = (t: ToolDef) => {
     const why = t.disabled?.(ctx);
     const title = why ?? `${t.title}${keyHint(t.id, prefs)}`;
+    // With what to work on selected, a tool's dropdown gives way to running it (Sketch on the selected plane).
+    const direct = !why && t.items ? t.direct?.(ctx) : undefined;
+    if (direct) return <ToolButton key={t.id} icon={t.icon} label={t.label} onClick={() => runTool(t.id)} title={`${direct}${keyHint(t.id, prefs)}`} testId={t.testId} />;
     if (!t.items) return <ToolButton key={t.id} icon={t.icon} label={t.label} onClick={() => runTool(t.id)} disabled={!!why} title={title} testId={t.testId} />;
     return (
       <ToolMenu key={t.id} icon={t.icon} label={t.label} title={title} testId={t.testId} disabled={!!why}>

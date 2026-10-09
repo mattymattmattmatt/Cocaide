@@ -1038,3 +1038,36 @@ svg.icon { flex: none; display: block; }
   background: none; color: var(--muted); font-size: 14px; line-height: 1;
 }
 .properties button.selector-remove:hover { background: var(--panel-2); color: var(--bad); }
+
+/* ======================================================= Phase O W1: reference geometry (planes, axes, points, the origin) */
+:root {
+  --datum: #3a6aa6;
+  --datum-label-bg: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --datum: #8db4e8;
+  }
+}
+/* Names of the planes, axes and points in the view, as SOLIDWORKS labels them: small, at a corner, never in the way of a pick. */
+.datum-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.datum-label {
+  position: absolute; left: 0; top: 0; padding: 0 4px; border-radius: 3px;
+  font: 600 11px var(--mono); color: var(--datum); background: var(--datum-label-bg); white-space: nowrap;
+}
+.datum-label.selected { color: #fff; background: var(--accent-2); }
+.datum-label.hovered { color: #fff; background: #2f7bff; }
+.datum-label.triad { background: none; padding: 0; font-size: 10px; }
+.datum-label.triad.x { color: #e5484d; }
+.datum-label.triad.y { color: #30a46c; }
+.datum-label.triad.z { color: #3e63dd; }
+/* The tree's default planes and origin, above the features, with a rule under them. */
+.feature-list.datum-list { border-bottom: 1px solid var(--border); margin-bottom: 4px; padding-bottom: 4px; }
+.datum-list .feature-op { font-weight: 500; }
+.datum-list .feature-icon.datum-icon, .feature-list li .feature-icon.datum-icon { color: var(--datum); }
+/* The eye: shown on hover like the other row actions, and always while closed (so a hidden one says so). */
+.feature-list li.hidden-datum .row-actions { display: flex; }
+.feature-list li.hidden-datum .row-actions button:not(.eye) { display: none; }
+.feature-list li.hidden-datum:hover .row-actions button:not(.eye) { display: grid; }
+.row-actions button.eye.closed { color: var(--muted); opacity: 0.8; }
+.feature-list li.hidden-datum .feature-op { opacity: 0.6; }

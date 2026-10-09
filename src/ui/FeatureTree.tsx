@@ -1,12 +1,20 @@
 // The feature tree: select, reorder (drag or arrows), suppress, delete.
-// Every change is a document command; rejected moves say why.
+// Every change is a document command; rejected moves say why. As in
+// SOLIDWORKS, the default planes and the origin head it: a click selects one
+// (and shows it while selected), the eye shows or hides it for good, a
+// right-click offers Sketch on this plane, an offset plane, Ask AI. Plane,
+// axis and point features carry an eye too. Showing is view state, never
+// the document.
 
 import { useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
+import { DATUM_OPS } from "../features/datum";
 import { UI_OPS } from "../features/uiDefs";
 import type { RebuildView } from "../worker/protocol";
 import { Icon, type IconName } from "./icons";
+import { eyeOpen, TREE_DATUMS, type DatumView } from "./model/datumDisplay";
+import { DEFAULT_DATUM_LABEL } from "./model/selection";
 import { OP_LABEL } from "./PropertyPanel";
 
 /** The picture of each kind of feature: the same one its tool has. */
@@ -42,9 +50,22 @@ interface Props {
   onError(message: string): void;
   /** Right-click: the menu for a feature, or for its failed rebuild (its last entry asks the AI about it). */
   onAsk?(target: AskTarget, x: number, y: number): void;
+  /** The reference geometry selected in the view (default planes, plane features...): their rows are marked. */
+  pickedDatums?: readonly string[];
+  /** What is shown of the reference geometry (each one's eye). */
+  datumView?: DatumView;
+  /** A click on a default plane or the origin: select it (Ctrl or Shift: add it). */
+  onPickDatum?(id: string, additive: boolean): void;
+  /** The eye of a default plane, the origin, or a plane, axis or point feature. */
+  onToggleEye?(id: string): void;
+  /** Right-click on a default plane or the origin: its menu. */
+  onDatumMenu?(id: string, x: number, y: number): void;
 }
 
-export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dispatch, onError, onAsk }: Props) {
+/** The icon of a default plane or the origin. */
+const DATUM_ICON: Record<string, IconName> = { Front: "plane", Top: "plane", Right: "plane", Origin: "datumPoint" };
+
+export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dispatch, onError, onAsk, pickedDatums = [], datumView, onPickDatum, onToggleEye, onDatumMenu }: Props) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
   const features = (doc?.features ?? []) as Record<string, unknown>[];
@@ -57,9 +78,55 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
     return problem;
   };
 
+  /** The eye of a reference: open (shown) or closed, with its button. */
+  const eye = (id: string, name: string) => {
+    if (!datumView || !onToggleEye) return null;
+    const open = eyeOpen(id, datumView);
+    return (
+      <button
+        className={`eye${open ? "" : " closed"}`}
+        title={open ? `Hide ${name}` : `Show ${name}`}
+        aria-label={`${open ? "Hide" : "Show"} ${name}`}
+        aria-pressed={open}
+        onClick={() => onToggleEye(id)}
+        data-testid={`datum-eye-${id}`}
+      >
+        <Icon name={open ? "eye" : "eyeOff"} />
+      </button>
+    );
+  };
+
   return (
     <section className="panel features" aria-label="Feature tree">
       <h2>Features</h2>
+      <ol className="feature-list datum-list" aria-label="Default planes and the origin">
+        {TREE_DATUMS.map((id) => {
+          const name = DEFAULT_DATUM_LABEL[id];
+          const picked = pickedDatums.includes(id);
+          return (
+            <li key={id} className={`datum-row${picked ? " selected" : ""}${datumView && !eyeOpen(id, datumView) ? " hidden-datum" : ""}`} data-testid={`datum-${id}`}>
+              <div className="feature-row-wrap">
+                <button
+                  className="feature-row"
+                  onClick={(e) => onPickDatum?.(id, e.shiftKey || e.ctrlKey || e.metaKey)}
+                  onContextMenu={(e) => {
+                    if (!onDatumMenu) return;
+                    e.preventDefault();
+                    onDatumMenu(id, e.clientX, e.clientY);
+                  }}
+                  title={id === "Origin" ? "The origin: right-click for more" : `${name}: click to show and select it, right-click to sketch on it`}
+                >
+                  <span className="feature-icon ok datum-icon" aria-hidden>
+                    <Icon name={DATUM_ICON[id]} />
+                  </span>
+                  <span className="feature-op">{name}</span>
+                </button>
+                <span className="row-actions">{eye(id, name)}</span>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
       {features.length === 0 && <p className="muted empty-hint">Empty part. Start with <strong>Sketch</strong> in the toolbar, or right-click the view to describe a part.</p>}
       <ol className="feature-list" onDragLeave={() => setDropAt(null)}>
         {features.map((f, i) => {
@@ -67,10 +134,17 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
           const s = status.get(id);
           const suppressed = f.suppressed === true;
           const failed = s && !s.ok;
+          const isDatum = Object.hasOwn(DATUM_OPS, String(f.op));
           return (
             <li
               key={`${id}-${i}`}
-              className={[failed ? "failed" : "ok", suppressed ? "suppressed" : "", selectedId === id ? "selected" : "", dropAt === i ? "drop-target" : ""].join(" ")}
+              className={[
+                failed ? "failed" : "ok",
+                suppressed ? "suppressed" : "",
+                selectedId === id || pickedDatums.includes(id) ? "selected" : "",
+                dropAt === i ? "drop-target" : "",
+                isDatum && datumView && !eyeOpen(id, datumView) ? "hidden-datum" : "",
+              ].join(" ")}
               data-testid={`feature-${id}`}
               draggable
               onDragStart={(e) => {
@@ -144,6 +218,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   )}
                 </button>
                 <span className="row-actions">
+                  {isDatum && eye(id, id)}
                   <button
                     title={suppressed ? "Unsuppress" : "Suppress"}
                     aria-label={`${suppressed ? "Unsuppress" : "Suppress"} ${id}`}

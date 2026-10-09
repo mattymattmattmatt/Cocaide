@@ -75,6 +75,7 @@ async function handle(kernel: OC, req: KernelRequest) {
         faces: topo.faces,
         edges: topo.edges,
         bodies,
+        datums: result.datums,
       };
       const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
       post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);

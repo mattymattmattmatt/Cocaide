@@ -7,7 +7,7 @@
 
 import type { LibraryEntry } from "../../weldment/library";
 import type { Command, RawDocument } from "../../doc/commands";
-import type { DatumPlane } from "../../doc/types";
+import type { PlaneSpec } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
 import type { IconName } from "../icons";
 import type { Selection } from "./selection";
@@ -54,8 +54,12 @@ export interface ToolCtx {
   pickedBody(): string | undefined;
   /** The sketch a sketch-based tool uses: the selected one, else the latest. */
   sketchFor(): Raw | undefined;
-  /** Opens the sketcher with a new sketch on a plane. */
-  startSketch(plane: DatumPlane): void;
+  /**
+   * Opens the sketcher with a new sketch on a plane: written out, or by
+   * reference ({ "type": "ref", "ref": { "datum": "Top" } }, a plane feature,
+   * a face), which the new sketch keeps, so it follows what it stands on.
+   */
+  startSketch(plane: PlaneSpec): void;
   /** Opens the sketcher on the one selected flat face, or says to pick one. */
   sketchOnFace(): void;
   setSelection(sel: Selection): void;
@@ -69,7 +73,13 @@ export type ToolTab = "features" | "reference" | "bodies" | "weldments" | "evalu
 
 /** What a right-click can be on, for a tool's entry in that menu. */
 export type ContextKind = "face" | "edge" | "part";
-export type ContextTarget = { kind: "face" | "edge"; index: number } | { kind: "part" };
+export type ContextTarget =
+  | { kind: "face" | "edge"; index: number }
+  | { kind: "part" }
+  /** A vertex: an end of an edge. */
+  | { kind: "vertex"; edge: number; at: "start" | "end" }
+  /** Reference geometry: a default plane, the origin, a plane, axis or point feature (in the view or the tree). */
+  | { kind: "datum"; id: string };
 
 /** A dropdown that groups several tools under one button (Pattern ▾: Linear, Circular). */
 export interface ToolMenuDef {
@@ -121,4 +131,16 @@ export interface ToolDef {
   contextTestId?: string;
   /** Only on some targets: a flat face, say. */
   contextWhen?(ctx: ToolCtx, target: ContextTarget): boolean;
+  /**
+   * Its own right-click entries, worded for what was right-clicked ("Plane
+   * from this face", "Axis of this cylinder"); the right-click has selected
+   * the target by the time an entry runs.
+   */
+  contextItems?(ctx: ToolCtx, target: ContextTarget): ToolItem[];
+  /**
+   * A tool with its own dropdown runs straight away when the selection says
+   * what to do (Sketch on the selected plane or face, as SOLIDWORKS does):
+   * the button's tooltip then, or undefined to open the dropdown.
+   */
+  direct?(ctx: ToolCtx): string | undefined;
 }

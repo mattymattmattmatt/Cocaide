@@ -66,6 +66,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "view.panDown", label: "Pan down", group: "View", key: "Ctrl+ArrowDown" },
   { id: "view.rollLeft", label: "Roll anticlockwise 15°", group: "View", key: "Alt+ArrowLeft" },
   { id: "view.rollRight", label: "Roll clockwise 15°", group: "View", key: "Alt+ArrowRight" },
+  { id: "view.planes", label: "Show or hide planes, axes and points", group: "View", key: null },
 
   { id: "tool.sketch", label: "Sketch (on the selected face, or Top)", group: "Model tools", key: null },
   { id: "tool.extrude", label: "Extrude", group: "Model tools", key: null },
@@ -82,9 +83,9 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.deleteBody", label: "Delete body", group: "Model tools", key: null },
   { id: "tool.member", label: "Member", group: "Model tools", key: null },
   // Model tools still to come: ids, labels and keys reserved (each loses `planned` when its tool lands).
-  { id: "tool.plane", label: "Reference plane", group: "Model tools", key: null, planned: true },
-  { id: "tool.axis", label: "Reference axis", group: "Model tools", key: null, planned: true },
-  { id: "tool.point", label: "Reference point", group: "Model tools", key: null, planned: true },
+  { id: "tool.plane", label: "Reference plane", group: "Model tools", key: null },
+  { id: "tool.axis", label: "Reference axis", group: "Model tools", key: null },
+  { id: "tool.point", label: "Reference point", group: "Model tools", key: null },
 
   { id: "tool.revolve", label: "Revolve", group: "Model tools", key: null, planned: true },
   { id: "tool.shell", label: "Shell", group: "Model tools", key: null, planned: true },

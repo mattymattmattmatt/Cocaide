@@ -4,6 +4,7 @@
 
 import { geometryKey } from "../doc/drawing";
 import type { ViewLook } from "../doc/types";
+import type { Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel";
 import { projectViews, type ProjectedView } from "../kernel/project";
 import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
@@ -17,6 +18,8 @@ export interface CheckResult {
   errors: string[];
   features: FeatureStatus[];
   measurements: Measurements | null;
+  /** The plane, axis and point features that built, by id: where each is now. */
+  datums?: Record<string, Datum>;
 }
 
 export interface PartTopology {
@@ -84,7 +87,7 @@ export class LocalKernel implements KernelPort {
 
   async check(doc: unknown): Promise<CheckResult> {
     const r = this.built(doc);
-    return { ok: r.ok, name: r.name, errors: r.errors, features: r.features, measurements: r.measurements };
+    return { ok: r.ok, name: r.name, errors: r.errors, features: r.features, measurements: r.measurements, datums: r.datums };
   }
 
   async topology(doc: unknown): Promise<PartTopology | null> {

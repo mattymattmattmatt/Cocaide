@@ -2,7 +2,7 @@
 // tab, and the tools a right-click offers. Pure, so its rules are tested in node.
 
 import { TABS, type TabDef } from "./tabs";
-import type { ContextKind, ToolDef, ToolMenuDef, ToolTab } from "./ToolContext";
+import type { ContextKind, ContextTarget, ToolCtx, ToolDef, ToolItem, ToolMenuDef, ToolTab } from "./ToolContext";
 import { MODEL_TOOLS } from "./tools";
 
 export { MODEL_TOOLS };
@@ -45,4 +45,9 @@ export function visibleTabs(tools: ToolDef[] = MODEL_TOOLS): TabDef[] {
 /** The tools a right-click on this kind of thing offers, in registry order. */
 export function contextTools(kind: ContextKind, tools: ToolDef[] = MODEL_TOOLS): ToolDef[] {
   return tools.filter((t) => (Array.isArray(t.contextOn) ? t.contextOn.includes(kind) : t.contextOn === kind));
+}
+
+/** Every tool's own right-click entries for this target (contextItems), in registry order, each with its tool. */
+export function contextEntries(ctx: ToolCtx, target: ContextTarget, tools: ToolDef[] = MODEL_TOOLS): { tool: ToolDef; item: ToolItem }[] {
+  return tools.flatMap((tool) => (tool.contextItems?.(ctx, target) ?? []).map((item) => ({ tool, item })));
 }

@@ -4,12 +4,17 @@
 // feature follows the geometry through later edits.
 
 import type { ReactNode } from "react";
-import type { DatumPlane, EdgeSelector, FaceSelector, Vec3 } from "../../doc/types";
+import type { DatumPlane, EdgeSelector, FaceSelector, RefPlane, Vec3 } from "../../doc/types";
+import { frameAsDatumPlane } from "../../features/datum";
+import { round9 } from "../model/names";
+import { planeSpecFrameIn } from "../model/sketchPlane";
 import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor, facesSelectorFor } from "../../kernel/synthesize";
 import { DirectionInput, Field, NumberInput, Select, Vec3Input, type NumberValue } from "../fields";
+import { selectionSize } from "../model/selection";
 import { datumChoices, describeRef, isDatum, refFromSelection, type DatumKind, type DatumRef } from "./datumRef";
 import {
+  acceptsOf,
   asList,
   commitPatch,
   featureChoices,
@@ -170,6 +175,12 @@ function Checks({ label, hint, tid, choices, list, allowEmpty, emptyHint, onChan
   );
 }
 
+/** A written-out plane with its numbers as the document keeps them (9 decimals, no -0). */
+function roundPlane(p: DatumPlane): DatumPlane {
+  const r = (v: Vec3) => v.map(round9) as Vec3;
+  return { type: "datum", normal: r(p.normal), origin: r(p.origin), ...(p.xDir ? { xDir: r(p.xDir) } : {}) };
+}
+
 /** A plane referred to, as a plane field with `refs` holds it (DESIGN §2.3). */
 type PlaneRef = { type: "ref"; ref: DatumRef; offset?: NumberValue; flip?: boolean; xDir?: Vec3 };
 
@@ -200,17 +211,20 @@ function PlaneField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpec, 
               placeholder="Choose a plane…"
               onChange={(id) => {
                 if (id === PICKED) return;
-                commit(id === CUSTOM ? plane : { type: "ref", ref: { datum: id } });
+                if (id !== CUSTOM) return commit({ type: "ref", ref: { datum: id } });
+                // Written out where the reference is now, so the plane does not jump.
+                const now = asRef ? planeSpecFrameIn(asRef as RefPlane, p.view) : null;
+                commit(now && typeof now !== "string" ? roundPlane(frameAsDatumPlane(now)) : plane);
               }}
               testId={tid}
             />
             <button
               type="button"
               className="use-selected"
-              disabled={p.selection.faces.length + p.selection.edges.length === 0 || !p.view}
-              title="Use the flat face selected in the view: the plane follows it when the part changes"
+              disabled={selectionSize(p.selection) === 0 || !p.view}
+              title="Use the flat face or the plane selected: the plane follows it when the part changes"
               onClick={() => {
-                const r = refFromSelection(p.selection, p.view, ["plane"]);
+                const r = refFromSelection(p.selection, p.view, ["plane"], p.before);
                 if (!r.ok) return p.setError(r.error);
                 p.setError(null);
                 commit({ type: "ref", ref: r.ref });
@@ -260,12 +274,14 @@ const AT_OPTIONS: [string, string][] = [
 /** A plane, axis or point: a default one or a reference feature from the list, or what is picked in the view. */
 function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpec, { kind: "datumRef" }>; value: unknown; commit(v: unknown): void; tid: string; p: FieldProps }) {
   const ref = value as DatumRef | undefined;
-  const choices = datumChoices(p.before, spec.accepts);
+  const accepts = acceptsOf(spec, p.f, p);
+  // A field that takes only picked geometry (a cylinder's face) offers no planes, axes or points to choose.
+  const choices = spec.forms && !spec.forms.includes("datum") ? [] : datumChoices(p.before, accepts);
   const picked = ref !== undefined && ref !== null && !isDatum(ref);
   const current = ref === undefined || ref === null ? "" : isDatum(ref) ? ref.datum : PICKED;
   const options: [string, string][] = [...(spec.optional ? [["", "None"] as [string, string]] : []), ...choices.map((c): [string, string] => [c.id, c.label]), ...(picked ? [[PICKED, "Picked in the view"] as [string, string]] : [])];
   const edge = ref && "edge" in ref ? ref : null;
-  const someSelected = p.selection.faces.length + p.selection.edges.length > 0;
+  const someSelected = selectionSize(p.selection) > 0;
   return (
     <>
       <Field label={spec.label} hint={spec.hint} block>
@@ -273,7 +289,7 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
           <Choice
             value={current}
             options={options}
-            placeholder={`Choose ${spec.accepts.join(" or ")}…`}
+            placeholder={`Choose ${accepts.join(" or ")}…`}
             onChange={(id) => {
               if (id === PICKED) return;
               if (id === "") return spec.optional && commit(null);
@@ -285,9 +301,9 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
             type="button"
             className="use-selected"
             disabled={!someSelected || !p.view}
-            title={`Use the face or edge selected in the view as ${spec.accepts.join(" or ")}`}
+            title={`Use the face, edge, vertex or plane selected as ${accepts.join(" or ")}`}
             onClick={() => {
-              const r = refFromSelection(p.selection, p.view, spec.accepts);
+              const r = refFromSelection(p.selection, p.view, accepts, p.before);
               if (!r.ok) return p.setError(r.error);
               p.setError(null);
               commit(r.ref);
@@ -303,7 +319,7 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
           {describeRef(ref, p.before)}
         </span>
       )}
-      {edge && spec.accepts.includes("point") && (
+      {edge && accepts.includes("point") && (
         <Field label="Point on it">
           <Select
             value={edge.at ?? ""}

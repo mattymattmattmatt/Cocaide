@@ -4,7 +4,13 @@
 // or rewrite existing ones. See kernelDefs.ts for what an op's kernel.ts exports.
 
 import { kernel as scale } from "./scale/kernel";
+import { kernel as plane } from "./plane/kernel";
+import { kernel as axis } from "./axis/kernel";
+import { kernel as point } from "./point/kernel";
 
 export const KERNEL_DEFS = [
   scale,
+  plane,
+  axis,
+  point,
 ];
