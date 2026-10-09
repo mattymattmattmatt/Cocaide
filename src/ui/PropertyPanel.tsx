@@ -15,8 +15,9 @@ import { Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } fr
 import { DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import { nextBodyName } from "./model/names";
-import { describeRef } from "./props/datumRef";
 import { FeatureForm } from "./props/FeatureForm";
+import type { FieldSpec } from "./props/spec";
+import { sketchFrameIn, sketchNormal } from "./model/sketchPlane";
 import type { Selection } from "./Viewport";
 
 export const OP_LABEL: Record<string, string> = {
@@ -123,13 +124,13 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
           ui.Editor ? <ui.Editor {...editorProps} /> : <FeatureForm fields={ui.fields ?? []} {...editorProps} />
         ) : (
           <>
-        {op === "sketch" && <SketchProps f={resolved} before={before} onEdit={() => onEditSketch(featureId)} onProfileCard={onProfileCard && (() => onProfileCard(featureId))} />}
+        {op === "sketch" && <SketchProps form={editorProps} onEdit={() => onEditSketch(featureId)} onProfileCard={onProfileCard && (() => onProfileCard(featureId))} />}
         {op === "member" && <MemberProps f={f} resolved={resolved} doc={doc} view={view} update={update} rename={rename} actions={frame && batched(frame)} />}
         {op === "joint" && <JointProps f={f} doc={doc} view={view} update={update} actions={frame && batched(frame)} />}
         {op === "endCap" && <EndCapProps f={f} doc={doc} update={update} />}
         {op === "gusset" && <GussetProps f={f} doc={doc} update={update} />}
         {(op === "endCap" || op === "gusset") && <BodyNameField f={f} rename={rename} />}
-        {(op === "extrude" || op === "cut") && <ExtrudeProps f={f} before={before} update={update} />}
+        {(op === "extrude" || op === "cut") && <ExtrudeProps f={f} before={before} view={view} update={update} />}
         {op === "extrude" && <BodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
         {(op === "cut" || op === "hole") && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
@@ -143,9 +144,10 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
             seeds={before
               .filter((g) => ["extrude", "cut", "hole", "member"].includes(String(g.op)))
               .map((g) => ({ id: String(g.id), body: g.op === "member" ? String(g.newBody ?? g.id) : typeof g.newBody === "string" ? g.newBody : undefined }))}
+            form={editorProps}
           />
         )}
-        {op === "split" && <SplitProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
+        {op === "split" && <SplitProps f={f} bodies={bodiesBefore} update={update} rename={rename} form={editorProps} />}
         {op === "move" && <MoveProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "deleteBody" && <DeleteBodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
           </>
@@ -281,8 +283,12 @@ function CombineProps({ f, bodies, update }: { f: Raw; bodies: string[]; update(
   );
 }
 
-function SketchProps({ f, before, onEdit, onProfileCard }: { f: Raw; before: Raw[]; onEdit(): void; onProfileCard?(): void }) {
-  const plane = f.plane as { type?: string; normal?: Vec3; origin?: Vec3; ref?: unknown; offset?: number };
+/** The fields of a sketch's plane: a default plane, a plane feature, a flat face (by reference), with offset and flip; or written out. */
+const SKETCH_PLANE: FieldSpec[] = [{ kind: "plane", key: "plane", label: "Plane", refs: true, testId: "prop-sketch-plane", hint: "Where the sketch is: it moves with what it stands on" }];
+
+function SketchProps({ form, onEdit, onProfileCard }: { form: EditorProps; onEdit(): void; onProfileCard?(): void }) {
+  const f = form.resolved;
+  const frame = sketchFrameIn(f, form.view);
   const entities = (f.entities as unknown[]) ?? [];
   const constraints = (f.constraints as unknown[]) ?? [];
   let dof: number | null = null;
@@ -293,13 +299,10 @@ function SketchProps({ f, before, onEdit, onProfileCard }: { f: Raw; before: Raw
   }
   return (
     <>
-      <Field label="Plane">
-        <span className="readout">
-          {plane.type === "ref"
-            ? `${describeRef(plane.ref, before)}${plane.offset ? `, offset ${plane.offset}` : ""}`
-            : plane.normal && plane.origin
-              ? planeName(plane.normal, plane.origin)
-              : "—"}
+      <FeatureForm fields={SKETCH_PLANE} {...form} />
+      <Field label="Now">
+        <span className="readout" data-testid="prop-sketch-where">
+          {typeof frame === "string" ? frame : `${planeName(frame.z, frame.origin)}`}
         </span>
       </Field>
       <Field label="Geometry">
@@ -342,10 +345,11 @@ export function planeName(normal: Vec3, origin: Vec3): string {
   return `normal [${n.join(", ")}] through [${origin.map((v) => Math.round(v * 1e4) / 1e4).join(", ")}]`;
 }
 
-function ExtrudeProps({ f, before, update }: { f: Raw; before: Raw[]; update(p: Raw): void }) {
+function ExtrudeProps({ f, before, view, update }: { f: Raw; before: Raw[]; view: RebuildView | null; update(p: Raw): void }) {
   const sketches = before.filter((g) => g.op === "sketch").map((g) => String(g.id));
   const sketch = before.find((g) => g.id === f.sketch);
-  const normal = ((sketch?.plane as { normal?: Vec3 })?.normal ?? [0, 0, 1]) as Vec3;
+  // The sketch's normal where the rebuild placed it (a sketch on a face or a plane feature has none written out).
+  const normal = sketchNormal(sketch, view) ?? ([0, 0, 1] as Vec3);
   const extent = (f.extent as string) ?? "blind";
   const dir = f.direction as Vec3 | undefined;
   const reversed = dir && dir.every((c, i) => Math.abs(c + normal[i]) < 1e-9);

@@ -5,12 +5,12 @@
 // kind, or to nothing, is an OpError that names it.
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import type { DatumRef, EdgePoint, EdgeSelector, FaceSelector, PlaneSpec } from "../doc/types";
+import type { DatumRef, EdgePoint, EdgeSelector, FaceSelector, PlaneSpec, Vec3 } from "../doc/types";
 import type { ValidationResult } from "../doc/validate";
 import { aKind, DATUM_OPS, defaultDatum, facePlane, refPlaneFrame, xDirProblem, type Datum, type DatumKind, type DatumOf } from "../features/datum";
 import { planeFrame, type Frame } from "../geom/frame";
-import { formatDirection, normalize3, roundTo, sub3 } from "../geom/vec";
-import { describePart } from "./bodies";
+import { dist3, formatDirection, normalize3, roundTo, sub3 } from "../geom/vec";
+import { describePart, type DescribedPart } from "./bodies";
 import { scoped, type OC } from "./oc";
 import { OpError } from "./ops";
 import { describeEdgeSelector, describeWanted, edgeSelectionError, selectEdges, selectFaces, selectionError } from "./selectors";
@@ -65,6 +65,96 @@ function byId(ctx: DatumContext, id: string): Datum {
   throw new OpError(`${ctx.missing(id, op)}, so there is no ${kind} to use`);
 }
 
+/** The one face a selector picks on the part as it stands, or OpError (path: the selector's field, "refs[0].face"). */
+export function findFace(ctx: DatumContext, sel: FaceSelector, path: string): FaceInfo {
+  if (ctx.bodies.size === 0) throw new OpError(`${path}: there is no solid before this feature to take a face from`);
+  return scoped((s) => {
+    const part = describePart(ctx.oc, s, ctx.bodies as Map<string, TopoDS_Shape>, false);
+    const found = selectFaces(part.faceInfos, sel);
+    const problem = selectionError(sel, found, 1);
+    if (problem) throw new OpError(`${path}: ${problem}`);
+    return found.matches[0];
+  });
+}
+
+/** The one edge a selector picks: its index in `part`, after describePart with edges. */
+function pickEdge(part: DescribedPart, sel: EdgeSelector, path: string): number {
+  const found = selectEdges(part.edgeInfos, part.faceInfos, sel, path);
+  const problem = edgeSelectionError(sel, found, path);
+  if (problem) throw new OpError(problem);
+  if (found.matches.length > 1) {
+    throw new OpError(`${path}: selector matched ${found.matches.length} edges (wanted 1 of ${describeEdgeSelector(sel)}); add "near", or pick "longest" or "shortest"`);
+  }
+  return found.matches[0].index;
+}
+
+/** The one edge a selector picks on the part as it stands, or OpError (path: the selector's field, "refs[0].edge"). */
+export function findEdge(ctx: DatumContext, sel: EdgeSelector, path: string): EdgeInfo {
+  if (ctx.bodies.size === 0) throw new OpError(`${path}: there is no solid before this feature to take an edge from`);
+  return scoped((s) => {
+    const part = describePart(ctx.oc, s, ctx.bodies as Map<string, TopoDS_Shape>, true);
+    return part.edgeInfos[pickEdge(part, sel, path)];
+  });
+}
+
+/** A point of an edge and the edge's direction there (unit, the way the edge runs from its start to its end). */
+export interface EdgePlace {
+  at: Vec3;
+  tangent: Vec3;
+  /** Where along the edge, 0 (start) to 1 (end), as a share of its parameter range. */
+  t: number;
+  edge: EdgeInfo;
+}
+
+/**
+ * Along the edge a selector picks: at `t` (0 its start, 1 its end, a share of
+ * its parameter, so of its length for lines and arcs), or at the point of it
+ * nearest `near`. Works on any edge (straight, round or curved).
+ */
+export function edgePlace(ctx: DatumContext, sel: EdgeSelector, path: string, where: { t: number } | { near: Vec3 }): EdgePlace {
+  if (ctx.bodies.size === 0) throw new OpError(`${path}: there is no solid before this feature to take an edge from`);
+  const { oc } = ctx;
+  return scoped((s) => {
+    const part = describePart(oc, s, ctx.bodies as Map<string, TopoDS_Shape>, true);
+    const index = pickEdge(part, sel, path);
+    const curve = s.track(new oc.BRepAdaptor_Curve(part.edges[index]));
+    const u0 = curve.FirstParameter();
+    const u1 = curve.LastParameter();
+    const point = (u: number): Vec3 => {
+      const p = curve.EvalD0(u);
+      const v: Vec3 = [p.X(), p.Y(), p.Z()];
+      p.delete();
+      return v;
+    };
+    let t: number;
+    if ("t" in where) t = where.t;
+    else {
+      // The nearest point: the best of a fine sampling, then narrowed down by golden sections.
+      const d = (k: number) => dist3(point(u0 + k * (u1 - u0)), where.near);
+      const N = 64;
+      let best = 0;
+      for (let k = 1; k <= N; k++) if (d(k / N) < d(best / N)) best = k;
+      let a = Math.max(0, (best - 1) / N);
+      let b = Math.min(1, (best + 1) / N);
+      const g = (Math.sqrt(5) - 1) / 2;
+      for (let i = 0; i < 60; i++) {
+        const m1 = b - g * (b - a);
+        const m2 = a + g * (b - a);
+        if (d(m1) <= d(m2)) b = m2;
+        else a = m1;
+      }
+      t = (a + b) / 2;
+    }
+    const r = curve.EvalD1(u0 + t * (u1 - u0));
+    const at: Vec3 = [r.Point.X(), r.Point.Y(), r.Point.Z()];
+    const d1: Vec3 = [r.D1.X(), r.D1.Y(), r.D1.Z()];
+    r.Point.delete();
+    r.D1.delete();
+    if (Math.hypot(...d1) < 1e-12) throw new OpError(`${path}: the edge has no direction at t = ${roundTo(t, 6)} (it is degenerate there); pick another point along it`);
+    return { at, tangent: normalize3(d1), t, edge: part.edgeInfos[index] };
+  });
+}
+
 function fromFace(ctx: DatumContext, sel: FaceSelector, path: string): Datum {
   return scoped((s) => {
     const part = describePart(ctx.oc, s, ctx.bodies as Map<string, TopoDS_Shape>, false);
@@ -86,16 +176,7 @@ function fromFace(ctx: DatumContext, sel: FaceSelector, path: string): Datum {
 }
 
 function fromEdge(ctx: DatumContext, sel: EdgeSelector, at: EdgePoint | undefined, want: DatumKind | "any", path: string): Datum {
-  const edge: EdgeInfo = scoped((s) => {
-    const part = describePart(ctx.oc, s, ctx.bodies as Map<string, TopoDS_Shape>, true);
-    const found = selectEdges(part.edgeInfos, part.faceInfos, sel, `${path}.edge`);
-    const problem = edgeSelectionError(sel, found, `${path}.edge`);
-    if (problem) throw new OpError(problem);
-    if (found.matches.length > 1) {
-      throw new OpError(`${path}.edge: selector matched ${found.matches.length} edges (wanted 1 of ${describeEdgeSelector(sel)}); add "near", or pick "longest" or "shortest"`);
-    }
-    return found.matches[0];
-  });
+  const edge = findEdge(ctx, sel, `${path}.edge`);
   const what = edge.kind === "line" ? "straight edge" : edge.kind === "circle" ? "circular edge" : "curved edge";
   switch (at) {
     case "start":

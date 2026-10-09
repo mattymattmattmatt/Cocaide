@@ -4,6 +4,8 @@
 
 import { DERIVED_SUFFIX, type Vec3 } from "../doc/types";
 import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input } from "./fields";
+import { FeatureForm } from "./props/FeatureForm";
+import type { FieldProps } from "./props/spec";
 
 type Raw = Record<string, unknown>;
 
@@ -15,18 +17,13 @@ interface ToolProps {
   rename(from: string, to: string): unknown;
 }
 
-function PlaneFields({ f, update, testId }: { f: Raw; update(p: Raw): unknown; testId: string }) {
-  const plane = (f.plane ?? { type: "datum", normal: [1, 0, 0], origin: [0, 0, 0] }) as { normal: Vec3; origin: Vec3 };
-  return (
-    <>
-      <Field label="Plane through" unit="mm">
-        <Vec3Input value={plane.origin} onCommit={(origin) => update({ plane: { ...plane, type: "datum", origin } })} testId={`${testId}-origin`} />
-      </Field>
-      <Field label="Plane normal">
-        <DirectionInput value={plane.normal} onCommit={(normal) => update({ plane: { ...plane, type: "datum", normal } })} testId={`${testId}-normal`} />
-      </Field>
-    </>
-  );
+/**
+ * A mirror's or split's plane: a default plane, a plane feature or a flat
+ * face picked (by reference, so it follows the model), or written out
+ * through a point with a normal.
+ */
+function PlaneFields({ form, testId }: { form: FieldProps; testId: string }) {
+  return <FeatureForm fields={[{ kind: "plane", key: "plane", label: "Plane", refs: true, testId }]} {...form} />;
 }
 
 function BodyChecks({ list, bodies, onChange, testId, hint }: { list: string[]; bodies: string[]; onChange(next: string[]): void; testId: string; hint?: string }) {
@@ -60,7 +57,7 @@ function NewBodyName({ name, rename, testId }: { name: string; rename(from: stri
   );
 }
 
-export function MirrorProps({ f, bodies, update, rename, seeds }: ToolProps & { seeds: { id: string; body?: string }[] }) {
+export function MirrorProps({ f, bodies, update, rename, seeds, form }: ToolProps & { seeds: { id: string; body?: string }[]; form: FieldProps }) {
   const byBodies = Array.isArray(f.bodies);
   const listed = byBodies ? (f.bodies as string[]) : [];
   const seed = seeds.find((s) => s.id === f.feature);
@@ -93,14 +90,14 @@ export function MirrorProps({ f, bodies, update, rename, seeds }: ToolProps & { 
           <Select value={String(f.feature)} options={seeds.map((s): [string, string] => [s.id, s.id])} onChange={(v) => update({ feature: v, newBody: null })} testId="prop-mirror-feature" />
         </Field>
       )}
-      <PlaneFields f={f} update={update} testId="prop-mirror-plane" />
+      <PlaneFields form={form} testId="prop-mirror-plane" />
       {made && <NewBodyName name={made} rename={rename} testId="prop-mirror-name" />}
       {byBodies && listed.length > 1 && !f.merge && <p className="muted small">Each makes a new body: {listed.map((b) => `${b}${DERIVED_SUFFIX.mirror}`).join(", ")}.</p>}
     </>
   );
 }
 
-export function SplitProps({ f, bodies, update, rename }: ToolProps) {
+export function SplitProps({ f, bodies, update, rename, form }: ToolProps & { form: FieldProps }) {
   const body = String(f.body);
   const piece = typeof f.newBody === "string" ? f.newBody : `${body}${DERIVED_SUFFIX.split}`;
   return (
@@ -108,7 +105,7 @@ export function SplitProps({ f, bodies, update, rename }: ToolProps) {
       <Field label="Body">
         <Select value={body} options={bodies.map((b): [string, string] => [b, b])} onChange={(v) => update({ body: v, newBody: null })} testId="prop-split-body" />
       </Field>
-      <PlaneFields f={f} update={update} testId="prop-split-plane" />
+      <PlaneFields form={form} testId="prop-split-plane" />
       <NewBodyName name={piece} rename={rename} testId="prop-split-name" />
       <p className="muted small">The piece the normal points to becomes {piece}; the other stays {body}.</p>
     </>

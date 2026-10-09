@@ -19,6 +19,7 @@ import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { fabricationChecks } from "../weldment/fabrication";
 import { defOf } from "../features/defs";
+import { DATUM_OPS, type Datum } from "../features/datum";
 import { drawingPacket } from "./drawingPacket";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
@@ -254,7 +255,9 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
         ...usedParams(f),
         parent,
         children,
-        measurements: isSketch ? sketchMeasurements(resolved.features.find((x) => x.id === target.id)!) : featureMeasurements(f, resolved, topo),
+        measurements: isSketch
+          ? sketchMeasurements(resolved.features.find((x) => x.id === target.id)!)
+          : { ...featureMeasurements(f, resolved, topo), ...(check.datums?.[target.id] ? { now: datumFrame(check.datums[target.id]) } : {}) },
         // A member or joint: what the frame around it is (Phase K).
         ...(f.op === "member" ? { member: memberDetails(doc, f, check) } : {}),
         ...(f.op === "joint" ? { joint: jointDetails(doc, f, check) } : {}),
@@ -370,7 +373,37 @@ export function partOutline(doc: RawDocument, check: CheckResult): Record<string
       const s = status.get(String(f.id));
       return { ...brief(f), ok: s?.ok ?? false, ...(s?.error ? { error: s.error } : {}), ...(s?.suppressed ? { suppressed: true } : {}) };
     }),
+    referenceGeometry: referenceGeometry(doc, check),
     ...(isObject(doc.drawing) ? { drawing: { views: Array.isArray(doc.drawing.views) ? doc.drawing.views.length : 0, annotations: Array.isArray(doc.drawing.annotations) ? doc.drawing.annotations.length : 0 } } : {}),
+  };
+}
+
+/** A resolved plane, axis or point, rounded for the agent to read. */
+function datumFrame(d: Datum): Record<string, unknown> {
+  const r = (v: readonly number[]) => v.map((x) => round6(x) + 0);
+  if (d.kind === "plane") return { kind: "plane", origin: r(d.origin), normal: r(d.normal), xDir: r(d.xDir) };
+  if (d.kind === "axis") return { kind: "axis", origin: r(d.origin), direction: r(d.direction) };
+  return { kind: "point", at: r(d.at) };
+}
+
+/**
+ * The reference geometry the agent can stand things on by { "datum": "<id>" }
+ * (a sketch's plane { "type": "ref", "ref": { "datum": "plane_1" } }, a plane
+ * offset from another, an axis): the default planes, axes and origin, then
+ * each plane, axis and point feature with where it is now (or why it isn't).
+ */
+export function referenceGeometry(doc: RawDocument, check: CheckResult): Record<string, unknown> {
+  const status = new Map(check.features.map((s) => [s.id, s]));
+  return {
+    defaults: "planes Top (XY, normal +Z), Front (XZ, normal -Y), Right (YZ, normal +X); point Origin; axes X, Y, Z (all through the origin)",
+    features: doc.features
+      .filter((f) => Object.hasOwn(DATUM_OPS, String(f.op)))
+      .map((f) => {
+        const id = String(f.id);
+        const d = check.datums?.[id];
+        const s = status.get(id);
+        return { id, op: f.op, mode: f.mode ?? (f.op === "plane" ? "offset" : undefined), ...(d ? datumFrame(d) : { built: false, ...(s?.suppressed ? { suppressed: true } : s?.error ? { error: s.error } : {}) }) };
+      }),
   };
 }
 

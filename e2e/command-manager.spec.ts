@@ -31,8 +31,8 @@ async function ctrlClick(page: Page, p: Vec3) {
 
 test("the toolbar is a CommandManager: Sketch always there, the tools on tabs, the tab remembered", async ({ page }) => {
   const bar = page.getByRole("toolbar", { name: "Modelling" });
-  // Reference and Evaluate have no tools yet, so they don't show.
-  await expect(bar.getByRole("tab")).toHaveText(["Features", "Bodies", "Weldments"]);
+  // Evaluate has no tools yet, so it doesn't show.
+  await expect(bar.getByRole("tab")).toHaveText(["Features", "Reference", "Bodies", "Weldments"]);
   await expect(page.getByTestId("tab-features")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("tool-extrude")).toBeVisible();
   await expect(page.getByTestId("tool-combine")).toHaveCount(0);

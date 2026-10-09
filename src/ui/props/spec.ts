@@ -13,6 +13,7 @@ import type { DatumPlane, EdgeSelector, FaceSelector, Vec3 } from "../../doc/typ
 import type { RebuildView } from "../../worker/protocol";
 import type { NumberValue } from "../fields";
 import type { Selection } from "../model/selection";
+import type { RefForm } from "../../features/datum";
 import type { DatumKind, DatumRef } from "./datumRef";
 
 export type Raw = Record<string, unknown>;
@@ -75,8 +76,8 @@ export type FieldSpec =
    * (DESIGN §2.3): a default plane, a plane feature, or a flat face picked.
    */
   | (Base & { kind: "plane"; default?: DatumPlane; refs?: boolean })
-  /** A plane, axis or point: a default one, a reference feature, or picked geometry (DESIGN §2.1). */
-  | (Base & { kind: "datumRef"; accepts: DatumKind[]; optional?: boolean })
+  /** A plane, axis or point: a default one, a reference feature, or picked geometry (DESIGN §2.1). What it takes may depend on the feature (a mode). */
+  | (Base & { kind: "datumRef"; accepts: DatumKind[] | ((f: Raw, c: FormContext) => DatumKind[]); optional?: boolean; forms?: RefForm[] })
   /** Several faces, picked in the view ("Use selected faces"). */
   | (Base & { kind: "faces"; optional?: boolean })
   /** One or more edges, picked in the view ("Use selected edges"). */
@@ -156,6 +157,11 @@ export function visibleFields(specs: FieldSpec[], f: Raw, c: FormContext): Field
 /** A field's data-testid: its own, else prop-<key> with dots as dashes. */
 export function fieldTestId(spec: FieldSpec): string {
   return spec.testId ?? `prop-${spec.key.replace(/\./g, "-")}`;
+}
+
+/** The kinds a datumRef field takes for this feature. */
+export function acceptsOf(spec: Extract<FieldSpec, { kind: "datumRef" }>, f: Raw, c: FormContext): DatumKind[] {
+  return typeof spec.accepts === "function" ? spec.accepts(f, c) : spec.accepts;
 }
 
 /** A select's choices for this feature. */

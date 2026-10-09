@@ -4,7 +4,13 @@
 // or rewrite existing ones. See defs.ts for what an op's doc.ts exports.
 
 import { def as scale } from "./scale/doc";
+import { def as plane } from "./plane/doc";
+import { def as axis } from "./axis/doc";
+import { def as point } from "./point/doc";
 
 export const DOC_DEFS = [
   scale,
+  plane,
+  axis,
+  point,
 ];

@@ -185,7 +185,7 @@ describe("references to planes, axes and points", () => {
     expect(asPoint.ok && "edge" in asPoint.ref && asPoint.ref.at).toBe("mid");
     const centre = refFromSelection(sel([], [circle]), view, ["point"]);
     expect(centre.ok && "edge" in centre.ref && centre.ref.at).toBe("center");
-    expect(refFromSelection(sel([top, wall]), view, ["plane"])).toEqual({ ok: false, error: "Click one face or one edge in the view (a plane is needed here), then Use selected." });
+    expect(refFromSelection(sel([top, wall]), view, ["plane"])).toEqual({ ok: false, error: "Click one face, edge, vertex or plane in the view (a plane is needed here), then Use selected." });
     expect(refFromSelection(sel([top]), null, ["plane"]).ok).toBe(false);
   });
 });
@@ -221,7 +221,7 @@ describe("the feature ops' UI registry", () => {
       expect(ICON_NAMES, u.op).toContain(u.icon);
       expect(u.fields || u.Editor, u.op).toBeTruthy();
     }
-    expect(Object.keys(UI_OPS)).toEqual(["fillet", "chamfer", "linearPattern", "circularPattern"]);
+    expect(Object.keys(UI_OPS)).toEqual(["fillet", "chamfer", "linearPattern", "circularPattern", "plane", "axis", "point"]);
   });
 
   it("keeps the old editors' test ids", () => {

@@ -4,6 +4,7 @@
 import type { KernelMethod } from "../ask/kernel";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
 import type { BodyRange } from "../kernel/bodies";
+import type { Datum } from "../features/datum";
 
 export type KernelRequest =
   | { id: number; type: "rebuild"; doc: unknown }
@@ -24,6 +25,8 @@ export interface RebuildView {
   edges: EdgeInfo[];
   /** The bodies, in order, with their face and edge index ranges. With more than one, faces and edges carry their body's name. */
   bodies: BodyRange[];
+  /** The plane, axis and point features that built, by id, in order: where each is now (the viewport draws and picks them). */
+  datums: Record<string, Datum>;
 }
 
 export type KernelResponse =

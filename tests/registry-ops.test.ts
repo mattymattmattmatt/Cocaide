@@ -55,7 +55,8 @@ function built(doc: unknown) {
 
 describe("a registry op is an op like any other", () => {
   it("is listed among the ops, documented for the agent, and validated by its def", () => {
-    expect(FEATURE_OPS.slice(-4)).toEqual(["scale", "block", "probe", "ghost"]);
+    expect(FEATURE_OPS.slice(-3)).toEqual(["block", "probe", "ghost"]);
+    expect(FEATURE_OPS).toEqual(expect.arrayContaining(["scale", "plane", "axis", "point"]));
     expect(REFERENCE).toContain("## block");
     expect(errorsOf(add(bracket, block("b", [0, 0, 0], [1, 1, -1])))).toEqual(["b: size: must be three lengths over 0"]);
     expect(errorsOf(add(bracket, { id: "x", op: "teleport" }))).toEqual([`x: op: unknown op "teleport" (supported: ${FEATURE_OPS.join(", ")})`]);

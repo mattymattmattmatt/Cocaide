@@ -55,6 +55,9 @@ describe("the registry", () => {
       "tool-move",
       "tool-delete-body",
       "tool-member",
+      "tool-plane",
+      "tool-axis",
+      "tool-point",
     ]);
   });
 
@@ -67,12 +70,12 @@ describe("the registry", () => {
     ]);
     expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody"]]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
-    expect(toolbarGroups("reference")).toEqual([]);
+    expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point"]]);
   });
 
   it("shows only the tabs that have tools, in SOLIDWORKS's order", () => {
     expect(TABS.map((t) => t.label)).toEqual(["Features", "Reference", "Bodies", "Weldments", "Evaluate"]);
-    expect(visibleTabs().map((t) => t.id)).toEqual(["features", "bodies", "weldments"]);
+    expect(visibleTabs().map((t) => t.id)).toEqual(["features", "reference", "bodies", "weldments"]);
   });
 
   it("orders groups by the tab, puts unknown groups last, and gathers a menu's tools where the first of them is", () => {
@@ -99,7 +102,7 @@ describe("the registry", () => {
 
   it("reserves a command for each tool still to come, out of Settings until it lands", () => {
     const planned = COMMANDS.filter((c) => c.planned).map((c) => c.id);
-    for (const id of ["tool.revolve", "tool.sweep", "tool.loft", "tool.shell", "tool.draft", "tool.rib", "tool.scale", "tool.plane", "tool.axis", "tool.point", "tool.measure", "tool.section", "tool.sketchPattern"]) {
+    for (const id of ["tool.revolve", "tool.sweep", "tool.loft", "tool.shell", "tool.draft", "tool.rib", "tool.scale", "tool.measure", "tool.section", "tool.sketchPattern"]) {
       expect(planned).toContain(id);
     }
     const sketch = ["centerline", "point", "rectCenter", "rect3", "parallelogram", "polygon", "arc3", "tangentArc", "circle3", "slotCenter", "ellipse", "spline", "trim", "extend", "split", "fillet", "chamfer", "offset", "mirror", "linearPattern", "circularPattern", "move", "rotate", "scale", "copy", "convert", "fullyDefine"];
@@ -108,19 +111,19 @@ describe("the registry", () => {
 });
 
 describe("Sketch", () => {
-  it("starts on the one flat face selected, through it; else on Top", () => {
+  it("starts on the one flat face selected, by reference to it (so it follows the face); else on Top", () => {
     const doc = example("bracket");
     const view = viewOf(oc, doc);
     const top = faceWhere(view, (f) => f.type === "plane" && f.normal![2] > 0.99);
     const onFace = harness(doc, view, { selection: { faces: [top], edges: [], point: [0, 0, 6] } });
     run("tool.sketch", onFace.ctx);
-    expect(onFace.out.sketches).toEqual([{ type: "datum", normal: [0, 0, 1], origin: [0, 0, 6] }]);
+    expect(onFace.out.sketches).toEqual([{ type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest" } } }]);
     const none = harness(doc, view);
     run("tool.sketch", none.ctx);
-    expect(none.out.sketches).toEqual([{ type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }]);
+    expect(none.out.sketches).toEqual([{ type: "ref", ref: { datum: "Top" } }]);
   });
 
-  it("its menu offers the three planes and the selected face; a round face says to click a flat one", () => {
+  it("its menu offers the three planes and the selected face; greyed out on a round face", () => {
     const doc = example("bracket");
     const view = viewOf(oc, doc);
     const wall = faceWhere(view, (f) => f.type === "cylinder");
@@ -130,12 +133,12 @@ describe("Sketch", () => {
       ["Top (XY)", "plane-top", false],
       ["Front (XZ)", "plane-front", false],
       ["Right (YZ)", "plane-right", false],
-      ["On selected face", undefined, false],
+      ["On the selected face", "plane-selected-face", true],
     ]);
     items[1].run(ctx);
-    expect(out.sketches).toEqual([{ type: "datum", normal: [0, -1, 0], origin: [0, 0, 0] }]);
+    expect(out.sketches).toEqual([{ type: "ref", ref: { datum: "Front" } }]);
     items[3].run(ctx);
-    expect(out.notices).toEqual([["error", "Click a flat face first, then Sketch → On selected face."]]);
+    expect(out.notices).toEqual([["error", "Click a flat face first, then Sketch → On the selected face."]]);
     // With no face selected, "On selected face" is greyed out.
     expect(toolById("tool.sketch")!.items!(harness(doc, view).ctx)[3].disabled).toBe(true);
   });

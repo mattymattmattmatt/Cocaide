@@ -34,8 +34,7 @@ test("cancelling a sketch leaves the document alone", async ({ page }) => {
 
 test("draws a closed line profile, constrains it, cuts it", async ({ page }) => {
   await viewportClick(page, [-10, 5, 6]);
-  await page.getByTestId("tool-sketch").click();
-  await page.getByRole("menuitem", { name: "On selected face" }).click();
+  await page.getByTestId("tool-sketch").click(); // a face selected: Sketch sketches on it straight away
   await page.getByTestId("tool-line").click();
   for (const [x, y] of [[-30, -10], [-10, -10], [-10, 10], [-30, 10], [-30, -10]]) await sketchClick(page, x, y);
   await expect(page.getByTestId("profile-status")).toContainText("1 region, area 400");
@@ -104,7 +103,7 @@ test("fillets picked corners: shift-click adds an edge, again removes it", async
   await viewportClick(page, [40, -20, 3]);
   await viewportClick(page, [40, 20, 3], { shift: true });
   await viewportClick(page, [-40, -20, 3], { shift: true });
-  await page.getByRole("button", { name: "Front" }).click();
+  await page.getByRole("button", { name: "Front", exact: true }).click();
   await viewportClick(page, [-40, -20, 3], { shift: true });
   await viewportClick(page, [-40, -20, 3], { shift: true }); // toggles off again
   await expect(page.getByTestId("selection")).toContainText("3 edges");

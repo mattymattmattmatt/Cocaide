@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import type { RawDocument } from "../src/doc/commands";
 import { resolvedDocument } from "../src/doc/parameters";
-import type { DatumPlane } from "../src/doc/types";
+import type { PlaneSpec } from "../src/doc/types";
 import { rebuild, scoped, type OC } from "../src/kernel";
 import { labelBodies } from "../src/kernel/bodies";
 import { describeEdges, describeFaces } from "../src/kernel/topology";
@@ -28,7 +28,7 @@ export function viewOf(oc: OC, doc: RawDocument): RebuildView {
       : { faces: [], edges: [] };
     const bodies = r.bodies.map(({ name, faces, edges }) => ({ name, faces, edges }));
     if (bodies.length > 1) labelBodies(topo, bodies);
-    return { ok: r.ok, name: r.name, errors: r.errors, features: r.features, sketches: r.sketches, measurements: r.measurements, mesh: null, faces: topo.faces, edges: topo.edges, bodies };
+    return { ok: r.ok, name: r.name, errors: r.errors, features: r.features, sketches: r.sketches, measurements: r.measurements, mesh: null, faces: topo.faces, edges: topo.edges, bodies, datums: r.datums };
   } finally {
     r.dispose();
   }
@@ -37,7 +37,7 @@ export function viewOf(oc: OC, doc: RawDocument): RebuildView {
 export interface Recorded {
   created: Raw[];
   notices: [kind: string, text: string][];
-  sketches: DatumPlane[];
+  sketches: PlaneSpec[];
   tabs: RightTab[];
   replaced: [doc: RawDocument, select: string | undefined][];
 }
