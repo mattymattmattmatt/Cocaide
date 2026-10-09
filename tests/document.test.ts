@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { formatDocument, parseDocumentText } from "../src/doc/format";
+import { FEATURE_OPS } from "../src/doc/types";
 import { allErrors, toDocument, validateDocument } from "../src/doc/validate";
 
 const bracketText = readFileSync(new URL("../examples/bracket.cocaide.json", import.meta.url), "utf8");
@@ -50,11 +51,13 @@ describe("validation", () => {
   });
 
   it("rejects ops it does not have", () => {
+    // An op no CAD will ever have: the registry keeps adding real ones (loft, revolve, ...).
     const doc = base();
-    doc.features.push({ id: "loft_1", op: "loft", sections: [] });
-    expect(allErrors(validateDocument(doc))).toEqual([
-      'loft_1: op: unknown op "loft" (supported: sketch, extrude, cut, hole, fillet, chamfer, linearPattern, circularPattern, combine, member, joint, endCap, gusset, mirror, split, move, deleteBody)',
-    ]);
+    doc.features.push({ id: "teleport_1", op: "teleport", sections: [] });
+    expect(allErrors(validateDocument(doc))).toEqual([`teleport_1: op: unknown op "teleport" (supported: ${FEATURE_OPS.join(", ")})`]);
+    // The built-in ops, then the registry's (src/features/docIndex.ts) after them.
+    expect(FEATURE_OPS.slice(0, 17)).toEqual(["sketch", "extrude", "cut", "hole", "fillet", "chamfer", "linearPattern", "circularPattern", "combine", "member", "joint", "endCap", "gusset", "mirror", "split", "move", "deleteBody"]);
+    expect(FEATURE_OPS).toContain("scale");
   });
 
   it("catches duplicate ids and forward references", () => {

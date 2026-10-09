@@ -5,6 +5,8 @@
 
 import type { EdgeSelector, FaceSelector } from "../doc/types";
 import { validateDocument } from "../doc/validate";
+import { datumSelectors, featureDatumRefs } from "../features/datum";
+import { defOf } from "../features/defs";
 import { describeEdges, describeFaces, rebuild, scoped, selectEdges, selectFaces, type OC } from "../kernel";
 
 export interface SelectorHealth {
@@ -28,13 +30,16 @@ export function selectorHealth(doc: unknown, oc: OC): SelectorHealth[] {
   v.features.forEach((vf, i) => {
     const f = vf.feature;
     if (!f || f.suppressed) return;
-    let selectors: { path: string; face?: FaceSelector; edge?: EdgeSelector }[] = [];
+    let selectors: { path: string; face?: FaceSelector; edge?: EdgeSelector; many?: boolean }[] = [];
     if (f.op === "hole") selectors = [{ path: "face", face: f.face }];
     else if (f.op === "fillet" || f.op === "chamfer") {
       selectors = Array.isArray(f.edges)
-        ? f.edges.map((edge, k) => ({ path: `edges[${k}]`, edge }))
-        : [{ path: "edges", edge: f.edges }];
+        ? f.edges.map((edge, k) => ({ path: `edges[${k}]`, edge, many: true }))
+        : [{ path: "edges", edge: f.edges, many: true }];
     }
+    // A registry op's own selectors, and those inside any reference (a sketch on a face: one face).
+    const d = defOf(f.op);
+    selectors.push(...(d?.selectors?.(f) ?? []), ...datumSelectors(featureDatumRefs(f as unknown as Record<string, unknown>, d?.datumRefs)));
     if (selectors.length === 0) return;
     const before = rebuild({ ...(doc as object), features: raw.slice(0, i) }, oc);
     try {
@@ -49,9 +54,10 @@ export function selectorHealth(doc: unknown, oc: OC): SelectorHealth[] {
         for (const s of selectors) {
           if (s.face) {
             const sel = selectFaces(faces.infos, s.face);
-            const h: SelectorHealth = { feature: f.id, path: s.path, matched: sel.matches.length, ok: sel.matches.length === 1 && !sel.tie };
+            const h: SelectorHealth = { feature: f.id, path: s.path, matched: sel.matches.length, ok: (s.many ? sel.matches.length > 0 : sel.matches.length === 1) && !sel.tie };
             if (sel.tie) h.note = `${sel.matches.length} faces tie for ${sel.tie}`;
             else if (sel.matches.length === 0) h.note = "matches no face";
+            else if (!s.many && sel.matches.length > 1) h.note = `matches ${sel.matches.length} faces; it must pick one`;
             else if (s.face.near) h.note = "picks by position (near); moving geometry can change the face it picks";
             else if (s.face.pick !== "all") {
               const candidates = selectFaces(faces.infos, { ...s.face, pick: "all" }).matches.map((m) => m.area).sort((a, b) => b - a);
@@ -63,10 +69,11 @@ export function selectorHealth(doc: unknown, oc: OC): SelectorHealth[] {
             out.push(h);
           } else if (s.edge) {
             const sel = selectEdges(edges, faces.infos, s.edge, s.path);
-            const h: SelectorHealth = { feature: f.id, path: s.path, matched: sel.matches.length, ok: !sel.error && !sel.tie && sel.matches.length > 0 };
+            const h: SelectorHealth = { feature: f.id, path: s.path, matched: sel.matches.length, ok: !sel.error && !sel.tie && (s.many ? sel.matches.length > 0 : sel.matches.length === 1) };
             if (sel.error) h.note = sel.error;
             else if (sel.tie) h.note = `${sel.matches.length} edges tie for ${sel.tie}`;
             else if (sel.matches.length === 0) h.note = "matches no edge";
+            else if (!s.many && sel.matches.length > 1) h.note = `matches ${sel.matches.length} edges; it must pick one`;
             else if (s.edge.near) h.note = "picks by position (near); moving geometry can change the edge it picks";
             out.push(h);
           }

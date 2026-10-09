@@ -18,6 +18,7 @@ import { dist2 } from "../geom/vec";
 import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/inspect";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { fabricationChecks } from "../weldment/fabrication";
+import { defOf } from "../features/defs";
 import { drawingPacket } from "./drawingPacket";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
@@ -133,6 +134,7 @@ export function bodyFeatures(doc: RawDocument, name: string): string[] {
     else if (f.op === "combine" && f.target === name) ids.add(id);
     else if ((f.op === "member" || f.op === "endCap" || f.op === "gusset") && (f.newBody ?? f.id) === name) ids.add(id);
     else if ((f.op === "linearPattern" || f.op === "circularPattern") && ids.has(String(f.feature))) ids.add(id);
+    else if (defOf(f.op)?.onlyBodies?.(f, (n) => n === name, doc)) ids.add(id);
   }
   return [...ids];
 }
@@ -409,12 +411,14 @@ async function parentsOf(doc: RawDocument, check: CheckResult, topo: PartTopolog
   for (const f of doc.features) {
     const id = String(f.id);
     const refs = references(f);
+    // A sketch placed on a face stands on it the way a hole does.
+    const onFace = f.op === "sketch" && isObject(f.plane) && f.plane.type === "ref" && isObject(f.plane.ref) && isObject(f.plane.ref.face) ? f.plane.ref.face : undefined;
     if (refs.length) out.set(id, refs[0]);
-    else if (f.op === "hole" && topo && isObject(f.face)) {
-      const r = await kernel.select(doc, resolveExpressions(f.face, documentParameters(doc), []));
-      const origin = r.ok && r.kind === "faces" && r.indices.length === 1 ? topo.faceOrigins[r.indices[0]] : null;
+    else if ((f.op === "hole" && isObject(f.face)) || onFace) {
+      const r = topo ? await kernel.select(doc, resolveExpressions(onFace ?? f.face, documentParameters(doc), [])) : null;
+      const origin = r && r.ok && r.kind === "faces" && r.indices.length === 1 ? topo!.faceOrigins[r.indices[0]] : null;
       if (origin && origin !== id) out.set(id, origin);
-      else if (lastSolid) out.set(id, lastSolid);
+      else if (f.op === "hole" && lastSolid) out.set(id, lastSolid);
     } else if (f.op !== "sketch" && lastSolid) out.set(id, lastSolid);
     if (f.op !== "sketch" && ok.has(id)) lastSolid = id;
   }
@@ -503,7 +507,8 @@ function sketchMeasurements(f: Raw): Record<string, unknown> {
 function featureMeasurements(f: Raw, resolved: RawDocument, topo: PartTopology | null): Record<string, unknown> {
   const rf = resolved.features.find((x) => x.id === f.id) ?? f;
   const out: Record<string, unknown> = {};
-  for (const k of ["distance", "diameter", "depth", "radius", "count", "spacing", "angle"]) if (typeof rf[k] === "number" || rf[k] === "through") out[k] = rf[k];
+  const keys = new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "angle", ...(defOf(f.op)?.measurementKeys ?? [])]);
+  for (const k of keys) if (typeof rf[k] === "number" || rf[k] === "through") out[k] = rf[k];
   if (topo) {
     const mine = topo.faces.filter((_, i) => topo.faceOrigins[i] === f.id);
     out.faces = mine.length;

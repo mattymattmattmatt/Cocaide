@@ -11,6 +11,7 @@ import { rawDrawing } from "../doc/drawing";
 import type { Vec3 } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
 import { isObject } from "../doc/validate";
+import { defOf } from "../features/defs";
 import { dot3, normalize3 } from "../geom/vec";
 import { edgeSummary, faceSummary, measurementSummary, newFailures, round6 } from "../kernel/inspect";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
@@ -383,6 +384,13 @@ class Sandbox {
     if (f.op === "sketch") {
       if (t.kind !== "face") return "from an edge, the ask adds a fillet or chamfer of that edge";
       if (this.addedSketch) return "from a face, the ask adds one feature (one sketch and the cut or extrude of it)";
+      // On the face by reference: { "type": "ref", "ref": { "face": <selector> } }, its selector picking that face.
+      if (isObject(rf.plane) && rf.plane.type === "ref") {
+        const ref = isObject(rf.plane.ref) ? rf.plane.ref : {};
+        const r = ref.face !== undefined ? await this.kernel.select(this.base, ref.face) : null;
+        const onIt = !!r && r.ok && r.kind === "faces" && r.indices.length === 1 && r.indices[0] === t.index;
+        return onIt && !rf.plane.offset ? null : `the sketch must lie on ${where}: plane { "type": "ref", "ref": { "face": <the packet's face selector> } }, no offset`;
+      }
       const face = (await this.topology())?.faces[t.index];
       const plane = rf.plane as { normal?: Vec3; origin?: Vec3 } | undefined;
       if (!face?.normal || !plane?.normal || !plane.origin) return `the sketch must lie on ${where}`;
@@ -416,6 +424,9 @@ class Sandbox {
       const ok = t.kind === "edge" ? picked.has(t.index) : [...picked].every((i) => topo?.edges[i]?.faces.includes(t.index));
       return ok && picked.size > 0 ? null : `the ${String(f.op)}'s edges must be ${t.kind === "edge" ? `${where} (and may include others along it)` : `edges of ${where}`}`;
     }
+    // A registry op that can start from a face or an edge says how it must use it.
+    const d = defOf(f.op);
+    if (d?.askFrom) return d.askFrom(rf, t, { select: (sel) => this.kernel.select(this.base, sel), topology: () => this.topology() });
     return `from a ${t.kind}, the ask adds a hole, fillet, chamfer, or a sketch on the face with its cut or extrude`;
   }
 
@@ -507,7 +518,7 @@ function localMeasurements(doc: RawDocument, id: string, topo: PartTopology | nu
   if (!f) return { removed: true };
   const rf = resolveExpressions(f, documentParameters(doc), []) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const k of ["distance", "diameter", "depth", "radius", "count", "spacing", "center"]) if (rf[k] !== undefined) out[k] = rf[k];
+  for (const k of new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "center", ...(defOf(f.op)?.measurementKeys ?? [])])) if (rf[k] !== undefined) out[k] = rf[k];
   if (topo) {
     const walls = topo.faces.filter((x, i) => topo.faceOrigins[i] === id && x.cylinder?.concave);
     if (walls.length) out.measuredDiameters = [...new Set(walls.map((x) => round6(2 * x.cylinder!.radius)))].sort((a, b) => a - b);

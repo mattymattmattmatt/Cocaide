@@ -7,15 +7,18 @@
 // every failure is reported as "<feature id>: <reason>".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import { DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type SketchFeature, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type PlaneSpec, type SketchFeature, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
+import type { Datum } from "../features/datum";
+import { runKernelOp, type RebuildCtx } from "../features/kernelDefs";
 import { checkConstraints } from "../geom/constraints";
-import { planeFrame, to3D } from "../geom/frame";
+import { to3D, type Frame } from "../geom/frame";
 import { placeSection } from "../geom/member";
 import { buildProfile, entityPolylines } from "../geom/profile";
 import { frameEnds, type FrameMember } from "../weldment/joints";
 import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
 import { memberCut } from "./cutlist";
+import { planeSpecFrame } from "./datum";
 import { interference, measure, volumeOf, type Measurements } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { getOC, type OC, type Scope, scoped } from "./oc";
@@ -33,6 +36,7 @@ import {
   mergeMirror,
   mirrorTrsf,
   moveTrsfs,
+  noClosedProfile,
   OpError,
   patternInstances,
   removeFrom,
@@ -42,6 +46,7 @@ import {
   transformed,
   treatEdges,
   type SketchProfile,
+  type Trsf,
 } from "./ops";
 
 export interface FeatureStatus {
@@ -59,6 +64,10 @@ export interface SketchOverlay {
   id: string;
   ok: boolean;
   polylines: { construction: boolean; points: Vec3[] }[];
+  /** The sketch's plane frame as it resolved (a sketch on a face follows the face): its 2D x, y map to frame.x, frame.y. */
+  frame: Frame;
+  /** Why its curves are no closed profile, when they are not (it still builds; what needs a profile says so). */
+  open?: string;
 }
 
 export interface RebuildResult {
@@ -76,6 +85,8 @@ export interface RebuildResult {
   holes: HoleRecord[];
   /** With `provenance`: for each face of `solid` (FaceInfo.index order), the feature that first made it. */
   faceOrigins?: (string | null)[];
+  /** The reference geometry the plane, axis and point features made, by feature id, in order. */
+  datums: Record<string, Datum>;
   dispose(): void;
 }
 
@@ -108,6 +119,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   const sketches: SketchOverlay[] = [];
   /** The part's bodies, in the order they were first made. */
   const bodies = new Map<string, TopoDS_Shape>();
+  /** Reference geometry made by plane, axis and point features, by id. */
+  const datums = new Map<string, Datum>();
 
   /** Face signature -> the feature that first made a face like it. */
   const origins = new Map<string, string>();
@@ -128,6 +141,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       sketches,
       name: v.name || "untitled",
       ...(faceOrigins ? { faceOrigins } : {}),
+      datums: Object.fromEntries(datums),
       dispose: () => {
         for (const b of bodies.values()) b.delete();
         if (bodies.size > 1) solid?.delete();
@@ -214,7 +228,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     return b;
   };
   /** The bodies a cut or hole works on: the ones it lists, or every body. */
-  const targets = (listed: string[] | undefined | null): [string, TopoDS_Shape][] => (listed ? listed.map((n) => [n, need(n)] as [string, TopoDS_Shape]) : [...bodies]);
+  const targets = (listed: readonly string[] | undefined | null): [string, TopoDS_Shape][] => (listed ? listed.map((n) => [n, need(n)] as [string, TopoDS_Shape]) : [...bodies]);
 
   /**
    * Commits a feature's changes to the bodies, all or none. Each changed body
@@ -251,6 +265,61 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   };
   let current = "";
 
+  /** The validated sketches, by id, for the ops that read their curves. */
+  const sketchFeatures = new Map(v.features.flatMap((vf) => (vf.feature?.op === "sketch" ? [[vf.id, vf.feature] as const] : [])));
+  /** What a registry op (src/features/<op>/kernel.ts) gets: the state above and the tools that keep it whole. */
+  const ctx: RebuildCtx = {
+    oc,
+    v,
+    opts,
+    bodies,
+    need,
+    targets,
+    commit,
+    part: (s, withEdges = true) => describePart(oc, s, bodies, withEdges),
+    shapeOf: (s, names) => partShape(oc, s, names ? names.map(need) : bodies),
+    profiles,
+    profile(sketch, verb) {
+      const p = profiles.get(sketch);
+      if (!p) throw new OpError(`${missing(sketch, "sketch")}, so there is no profile to ${verb}`);
+      if (p.regions.length === 0) throw new OpError(noClosedProfile(sketch, p, verb));
+      return p;
+    },
+    sketch: (id) => sketchFeatures.get(id),
+    missing,
+    seed: (id) => tools.get(id),
+    setSeed: (id, seed) => {
+      tools.get(id)?.tool.delete();
+      tools.set(id, { ...seed, tool: copyOut(seed.tool) });
+    },
+    repeat: (s, instances, seed, nameOf, what) => repeat(s, instances, seed, nameOf, what),
+    holes: {
+      record(h, names) {
+        drilled.push(h);
+        holeBodies.set(h, new Set(names));
+      },
+      inBodies: (names) => holesIn([...names]),
+      bodiesOf: (h) => holeBodies.get(h) ?? new Set(),
+      ofFeature: (id) => drilled.filter((h) => h.feature === id),
+      copied: (map) => copyHoles(map),
+      alsoIn(from, to) {
+        for (const h of holesIn([...from])) holeBodies.get(h)!.add(to);
+      },
+      gone(names) {
+        for (const h of holesIn([...names])) for (const n of names) holeBodies.get(h)!.delete(n);
+      },
+    },
+    members: {
+      get: (body) => memberBodies.get(body),
+      set: (body, line) => void memberBodies.set(body, line),
+      copy: (s, from, to, steps, id) => copyMember(s, from, to, steps, id),
+      drop: (body) => void memberBodies.delete(body),
+    },
+    datums,
+  };
+  /** A plane as a frame: written out, or resolved by reference on the part as it is now. */
+  const planeOf = (spec: PlaneSpec, path = "plane"): Frame => planeSpecFrame(ctx, spec, path);
+
   for (const vf of v.features) {
     const raw = vf.feature;
     const op = vf.op;
@@ -269,12 +338,18 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     try {
       current = raw.id;
       switch (raw.op) {
-        case "sketch":
+        case "sketch": {
           profiles.set(raw.id, null);
-          sketches.push(overlay(raw, false));
-          profiles.set(raw.id, buildSketch(raw));
-          sketches[sketches.length - 1].ok = true;
+          // On a face or a reference plane, the sketch is where that is now.
+          const frame = planeOf(raw.plane);
+          const shown = overlay(raw, frame);
+          sketches.push(shown);
+          const profile = buildSketch(raw, frame);
+          profiles.set(raw.id, profile);
+          shown.ok = true;
+          if (profile.open) shown.open = profile.open;
           break;
+        }
         case "extrude": {
           const profile = profiles.get(raw.sketch);
           if (!profile) throw new OpError(`${missing(raw.sketch, "sketch")}, so there is no profile to ${raw.op}`);
@@ -403,10 +478,12 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           break;
         }
         case "mirror": {
+          const at = planeOf(raw.plane);
+          const plane = { normal: at.z, origin: at.origin };
           if (raw.bodies) {
             const listed = raw.bodies.map((n) => [n, need(n)] as const);
             scoped((s) => {
-              const t = mirrorTrsf(oc, s, raw.plane);
+              const t = mirrorTrsf(oc, s, plane);
               const changed = new Map<string, TopoDS_Shape>();
               const copies = new Map<string, string>();
               for (const [name, body] of listed) {
@@ -427,7 +504,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
             const seed = tools.get(raw.feature!);
             if (!seed) throw new OpError(`${missing(raw.feature!, "feature")}, so there is nothing to mirror`);
             if (bodies.size === 0) throw new OpError("nothing to mirror onto: there is no solid before this feature");
-            scoped((s) => commit(...repeat(s, [{ label: "the mirror", trsf: mirrorTrsf(oc, s, raw.plane) }], seed, () => raw.newBody ?? `${seed.newBody}${DERIVED_SUFFIX.mirror}`, "mirror")));
+            scoped((s) => commit(...repeat(s, [{ label: "the mirror", trsf: mirrorTrsf(oc, s, plane) }], seed, () => raw.newBody ?? `${seed.newBody}${DERIVED_SUFFIX.mirror}`, "mirror")));
             // A mirrored hole is one more of it.
             for (const h of drilled.filter((x) => x.feature === raw.feature)) h.copies += 1;
           }
@@ -437,8 +514,9 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const body = need(raw.body);
           const other = raw.newBody ?? `${raw.body}${DERIVED_SUFFIX.split}`;
           if (bodies.has(other)) throw new OpError(`a body "${other}" already exists; name the new piece with newBody`);
+          const at = planeOf(raw.plane);
           scoped((s) => {
-            const [behind, front] = splitBody(oc, s, raw.body, body, raw.plane);
+            const [behind, front] = splitBody(oc, s, raw.body, body, { normal: at.z, origin: at.origin });
             commit(new Map([[raw.body, behind], [other, front]]));
           });
           // Both pieces of a member are lengths of it, along its line.
@@ -488,6 +566,9 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           for (const h of holesIn(gone)) for (const n of gone) holeBodies.get(h)!.delete(n);
           break;
         }
+        default:
+          // An op of the registry (src/features/<op>/kernel.ts); one that validates but has no kernel fails here, never silently.
+          runKernelOp(ctx, raw);
       }
       features.push({ id: raw.id, op, ok: true });
     } catch (e) {
@@ -528,7 +609,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
    * body, as new bodies (seed_2, seed_3, ...), or cut from the same bodies.
    * Every copy must add or remove material.
    */
-  function repeat(s: Scope, instances: { label: string; trsf: ReturnType<typeof mirrorTrsf> }[], seed: Seed, nameOf: (k: number) => string, what = "pattern"): [Map<string, TopoDS_Shape>] {
+  function repeat(s: Scope, instances: { label: string; trsf: Trsf }[], seed: Seed, nameOf: (k: number) => string, what = "pattern"): [Map<string, TopoDS_Shape>] {
     const changed = new Map<string, TopoDS_Shape>();
     const now = (name: string) => changed.get(name) ?? need(name);
     instances.forEach((inst, k) => {
@@ -562,7 +643,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
 }
 
 /** What a pattern repeats: a feature's tool, and where it went. */
-interface Seed {
+export interface Seed {
   tool: TopoDS_Shape;
   kind: "fuse" | "cut";
   /** fuse: the body it was added to. */
@@ -576,7 +657,7 @@ interface Seed {
 }
 
 /** A body that is a length of stock: the member it is, and the line it is measured along. */
-interface MemberLine {
+export interface MemberLine {
   id: string;
   profile: string;
   designation: string;
@@ -584,20 +665,25 @@ interface MemberLine {
   dir: Vec3;
 }
 
-function buildSketch(f: SketchFeature): SketchProfile {
+/**
+ * A sketch's profile on its frame. Constraints that do not hold fail the
+ * sketch; curves that make no closed profile do not: the sketch keeps them
+ * (a path, a rib line) with the reason, for what needs a profile to report.
+ */
+function buildSketch(f: SketchFeature, frame: Frame): SketchProfile {
   const problems = checkConstraints(f.entities, f.constraints ?? []);
   if (problems.length > 0) throw new OpError(problems.join("\n"));
   const profile = buildProfile(f.entities);
-  if (!profile.ok) throw new OpError(profile.error);
-  const frame = planeFrame(f.plane.normal, f.plane.origin, f.plane.xDir);
+  if (!profile.ok) return { frame, regions: [], area: 0, open: profile.error };
   return { frame, regions: profile.regions, area: profile.area };
 }
 
-function overlay(f: SketchFeature, ok: boolean): SketchOverlay {
-  const frame = planeFrame(f.plane.normal, f.plane.origin, f.plane.xDir);
+/** The sketch drawn in world space, not yet known to be good. */
+function overlay(f: SketchFeature, frame: Frame): SketchOverlay {
   return {
     id: f.id,
-    ok,
+    ok: false,
+    frame,
     polylines: f.entities.flatMap((e) =>
       entityPolylines(e).map((pts) => ({ construction: !!e.construction, points: pts.map((p) => to3D(frame, p)) })),
     ),

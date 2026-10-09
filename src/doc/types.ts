@@ -1,6 +1,8 @@
 // The Cocaide feature document (.cocaide.json). This is the single source of
 // truth: the B-rep, the mesh and every measurement are derived from it.
 
+import { PLUGIN_OPS, type PluginFeature } from "../features/types";
+
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
 
@@ -313,7 +315,9 @@ export type Feature =
   | MirrorFeature
   | SplitFeature
   | MoveFeature
-  | DeleteBodyFeature;
+  | DeleteBodyFeature
+  /** The ops in the registry (src/features/<op>/doc.ts, listed in src/features/docIndex.ts). */
+  | PluginFeature;
 export type FeatureOp = Feature["op"];
 export const FEATURE_OPS: readonly FeatureOp[] = [
   "sketch",
@@ -333,6 +337,7 @@ export const FEATURE_OPS: readonly FeatureOp[] = [
   "split",
   "move",
   "deleteBody",
+  ...PLUGIN_OPS,
 ];
 
 // ----------------------------------------------------------------- bodies
@@ -366,9 +371,50 @@ export interface DatumPlane {
   xDir?: Vec3;
 }
 
+/**
+ * Anything that can serve as a plane, an axis or a point (reference
+ * geometry). Resolved by the kernel at rebuild time, so a reference to a face
+ * or an edge follows the model when earlier features change.
+ * - { datum: "Front" | "Top" | "Right" }: a default plane (Z up: Top = XY,
+ *   normal +Z; Front = XZ, normal -Y; Right = YZ, normal +X), through the origin.
+ * - { datum: "Origin" }: the origin, a point. { datum: "X" | "Y" | "Z" }: an axis through it.
+ * - { datum: "<id>" }: an earlier plane, axis or point feature.
+ * - { face }: a planar face is a plane (its outward normal); a cylindrical or
+ *   conical face is its axis.
+ * - { edge }: a straight edge is an axis (start to end); a circular edge is its
+ *   axis, or its centre where a point is needed. With `at`, that point of it.
+ * - { point }: a fixed point.
+ */
+export type DatumRef =
+  | { datum: string }
+  | { face: FaceSelector }
+  | { edge: EdgeSelector; at?: EdgePoint }
+  | { point: Vec3 };
+/** A point of an edge: its ends, the middle of its length, or a circle's centre. */
+export type EdgePoint = "start" | "end" | "mid" | "center";
+
+/**
+ * A plane given by reference: a face, a default plane or a plane feature,
+ * moved `offset` mm along its normal (before any flip). `flip` turns the plane
+ * over (its normal reversed, its x kept). `xDir` sets the plane's x axis
+ * (projected onto it); without it, a default or plane feature keeps its own x,
+ * and a face uses the datum-plane rule.
+ */
+export interface RefPlane {
+  type: "ref";
+  ref: DatumRef;
+  offset?: number;
+  flip?: boolean;
+  xDir?: Vec3;
+}
+
+/** Where a sketch, a mirror or a split plane is: written out, or by reference. */
+export type PlaneSpec = DatumPlane | RefPlane;
+
 export interface SketchFeature extends FeatureBase {
   op: "sketch";
-  plane: DatumPlane;
+  /** A sketch on a face is { "type": "ref", "ref": { "face": <selector> } }: it follows the face. */
+  plane: PlaneSpec;
   entities: SketchEntity[];
   constraints?: Constraint[];
   /** Drawn as a weldment profile: saved to the section library under this name. */
@@ -688,7 +734,7 @@ export interface GussetFeature extends FeatureBase {
  */
 export interface MirrorFeature extends FeatureBase {
   op: "mirror";
-  plane: DatumPlane;
+  plane: PlaneSpec;
   feature?: string;
   bodies?: string[];
   merge?: boolean;
@@ -700,7 +746,7 @@ export interface MirrorFeature extends FeatureBase {
 export interface SplitFeature extends FeatureBase {
   op: "split";
   body: string;
-  plane: DatumPlane;
+  plane: PlaneSpec;
   newBody?: string;
 }
 

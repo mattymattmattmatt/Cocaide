@@ -1,5 +1,8 @@
 // What the agent is told about Cocaide: short server instructions, and the
-// full document reference as a resource.
+// full document reference as a resource. Each registry op (src/features)
+// documents itself: its def's `reference` text is part of REFERENCE.
+
+import { DOC_DEFS } from "../features/docIndex";
 
 export const INSTRUCTIONS = `Cocaide is parametric CAD. The part is one JSON feature document (.cocaide.json); every tool reads or edits it.
 
@@ -33,6 +36,14 @@ exact. exportSTEP and exportSTL refuse until the user confirms the scale and set
   "plane": { "type": "datum", "normal": [0,0,1], "origin": [0,0,0], "xDir": [1,0,0] (optional) },
   "entities": [ ... ], "constraints": [ ... ] (optional) }
 Sketch x axis: xDir if given, else global X projected onto the plane (global Y when the normal is along X); y = normal x xDir.
+Or place it by reference, so it follows the model: "plane": { "type": "ref", "ref": <reference>, "offset": 5 (optional,
+mm along the plane's normal), "flip": true (optional: turned over), "xDir": [1,0,0] (optional) }.
+  On a face: { "type": "ref", "ref": { "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } } } - the
+  plane of the face as it is when the sketch rebuilds (change an earlier extrude and the sketch moves with the face);
+  its origin is the global origin projected onto the face, its x by the rule above, its normal the face's outward one.
+  On a default plane: { "type": "ref", "ref": { "datum": "Top" } } (or "Front", "Right"), or a plane feature's id.
+A sketch whose curves make no closed profile (an open chain, a path) still builds; a feature that needs a closed
+profile (extrude, cut) then fails with the reason ("profile is open at [0, 0] (start of "l1")").
 Entities (2D, in the sketch frame; "construction": true keeps one out of the profile):
   { "id": "r1", "type": "rect", "center": [0,0], "w": 80, "h": 40 }
   { "id": "c1", "type": "circle", "center": [0,0], "radius": 5 }
@@ -153,6 +164,24 @@ A dimension point is a node ("A"), a member end ("leg_a.start" / ".end"), a hole
 view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertical). Dimensions are never in an iso
 view. What every annotation reads is measured; none takes a value. The drawing never blocks the part: an annotation
 whose member, node, hole or weld is gone is a drawing problem (see the drawing tool's checks), not an error.
+
+${DOC_DEFS.map((d) => d.reference.trim()).join("\n\n")}
+
+## References (reference geometry: planes, axes, points)
+Wherever a plane, an axis or a point is needed by reference (a sketch's or a mirror's or split's "plane": { "type":
+"ref", "ref": ... }, and newer features' fields), a reference is one of:
+  { "datum": "Top" | "Front" | "Right" }   default planes through the origin (Z up): Top = XY (normal +Z), Front = XZ
+                                           (normal -Y), Right = YZ (normal +X)
+  { "datum": "Origin" }                    the origin, a point;  { "datum": "X" | "Y" | "Z" }  the axes through it
+  { "datum": "<id>" }                      an earlier plane, axis or point feature
+  { "face": <face selector> }              a planar face is a plane (outward normal); a cylindrical face is its axis
+  { "edge": <edge selector>, "at": "start" | "end" | "mid" | "center" (optional) }
+                                           a straight edge is an axis (start to end), a circular edge its axis (or its
+                                           centre where a point is needed); with "at", that point of it
+  { "point": [x, y, z] }                   a fixed point
+Faces and edges are found again on every rebuild, so what stands on them follows the model. A reference of the
+wrong kind is an error that says so ("Top is a plane, but an axis is needed here"). Feature ids may not be Front,
+Top, Right, Origin, X, Y or Z.
 
 ## Face selectors
 { "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "near": [x,y,z] (optional) }
