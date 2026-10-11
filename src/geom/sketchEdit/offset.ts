@@ -16,7 +16,7 @@ import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { add2, angleOf, cross2, dist2, dot2, scale2, sub2, wrapAngle } from "../vec";
 import { carrierMeet, curveOf, distanceTo, footOn, paramOf, pointAt, tangentAt, TOL, type Curve } from "./curve";
 import { explodeAll } from "./explode";
-import { freshIds, replaced, settle, type Edit, type SketchState } from "./relations";
+import { freshIds, pointAtRef, replaced, settle, type Edit, type SketchState } from "./relations";
 
 /** One entity of a chain, and whether the chain runs along it end to start. */
 export interface Link {
@@ -174,7 +174,13 @@ export function offsetEntities(stateIn: SketchState, ids: string[], opts: Offset
   const bases: string[] = [];
   const offsets: string[] = [];
   const hard: Constraint[] = [];
-  const join = (p: string, q: string) => hard.push({ type: "coincident", points: [p, q] });
+  // Joined ends; where an arc meets its neighbour smoothly, tangent too: the solver needs that to fix where on the
+  // arc the joint is (a point on a line and on a circle it touches is only pinned to second order).
+  const join = (p: string, q: string) => {
+    hard.push({ type: "coincident", points: [p, q] });
+    const [a, b] = [p, q].map((r) => made.find((e) => e.id === r.split(".")[0]));
+    if (a && b && smooth(a, b, pointAtRef([a], p))) hard.push({ type: "tangent", entities: [a.id, b.id] });
+  };
   for (const chain of chains) {
     const sides: (1 | -1)[] = opts.both ? [1, -1] : [opts.side];
     const built: Piece[][] = [];
@@ -182,10 +188,12 @@ export function offsetEntities(stateIn: SketchState, ids: string[], opts: Offset
       const pieces = offsetChain(state.entities, chain, s, d, opts.corners ?? "sharp", ids2);
       if (typeof pieces === "string") return pieces;
       built.push(pieces);
+      for (const piece of pieces) {
+        made.push(piece.entity);
+        bases.push(piece.base);
+        offsets.push(piece.entity.id);
+      }
       for (let i = 0; i < pieces.length; i++) {
-        made.push(pieces[i].entity);
-        bases.push(pieces[i].base);
-        offsets.push(pieces[i].entity.id);
         // A circle's offset is a circle: there is nothing to join.
         const next = pieces[i + 1] ?? (chain.closed && pieces.length > 1 ? pieces[0] : null);
         if (next) join(pieces[i].out, next.in);
@@ -233,6 +241,15 @@ export function offsetEntities(stateIn: SketchState, ids: string[], opts: Offset
   const entities = [...state.entities, ...made];
   const all = [group, ...hard];
   return { entities, constraints: settle(entities, [...state.constraints, ...all], made.map((e) => e.id), new Set(all)), made: made.map((e) => e.id) };
+}
+
+/** Do an arc and its neighbour run on smoothly at p (their directions in line there)? */
+function smooth(a: SketchEntity, b: SketchEntity, p: Vec2 | null): boolean {
+  if (!p || (a.type !== "arc" && b.type !== "arc")) return false;
+  const ca = curveOf(a);
+  const cb = curveOf(b);
+  if (!ca || !cb) return false;
+  return Math.abs(cross2(tangentAt(ca, paramOf(ca, p)), tangentAt(cb, paramOf(cb, p)))) < 1e-6;
 }
 
 /** The offset pieces of one chain to one side, corners joined. */

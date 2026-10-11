@@ -18,7 +18,7 @@
 // longer hold on what is left go. A rectangle or slot entity is exploded
 // into lines and arcs first.
 
-import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
+import type { Constraint, PairConstraint, SketchEntity, Vec2 } from "../../doc/types";
 import { constraintTargets } from "../axes";
 import { dist2 } from "../vec";
 import { arcPiece, carrierMeet, curveOf, curvesOf, distanceTo, lengthOf, meet, paramOf, pointAt, sameCarrier, TOL, within, type Curve } from "./curve";
@@ -139,7 +139,7 @@ function cutInto(state: SketchState, id: string, spans: Span[], extra: (pieces: 
 }
 
 /** A tangent relation moved from `id` to whichever of its pieces the other entity is joined to by a coincident relation. */
-function retarget(k: Extract<Constraint, { type: "tangent" }>, id: string, pieces: string[], constraints: Constraint[]): Constraint {
+function retarget(k: PairConstraint, id: string, pieces: string[], constraints: Constraint[]): Constraint {
   const other = k.entities[0] === id ? k.entities[1] : k.entities[0];
   const piece = pieces.find((p) =>
     constraints.some((j) => j.type === "coincident" && j.points.some((r) => r.startsWith(`${p}.`) && !r.endsWith(".center")) && j.points.some((r) => r.startsWith(`${other}.`))),
@@ -284,7 +284,7 @@ export function extension(state: SketchState, id: string, near: Vec2): { end: "s
     if (c.kind === "line") {
       how = end === "end" ? t - 1 : -t;
     } else {
-      const full = (2 * Math.PI) / Math.abs(c.sweep);
+      const full = (2 * Math.PI) / Math.abs((c as { sweep: number }).sweep);
       if (t <= 1 + eps || t >= full - eps) continue;
       how = end === "end" ? t - 1 : full - t;
       if (end === "start") t = t - full;
