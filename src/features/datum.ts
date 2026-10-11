@@ -169,7 +169,7 @@ export function featureDatumRefs(raw: Record<string, unknown>, registry?: (raw: 
       return datumRefsAt(raw, "plane");
     case "extrude":
     case "cut":
-      return [...datumRefsAt(raw, "upTo"), ...inside("direction2", "upTo")];
+      return [...datumRefsAt(raw, "upTo"), ...inside("direction2", "upTo"), ...datumRefsAt(raw, "from")];
     case "linearPattern":
       return datumRefsAt(raw, "along");
     case "circularPattern":

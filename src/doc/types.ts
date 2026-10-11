@@ -587,7 +587,45 @@ export type ConstraintType = Constraint["type"];
 
 // ------------------------------------------------------- extrude and cut
 
-export type ExtrudeExtent = "blind" | "midplane" | "throughAll";
+/**
+ * Where an extrude or cut ends (SOLIDWORKS "end conditions"):
+ * - blind: `distance` along the direction; midplane: `distance` in all, half each way;
+ * - throughAll: through every body it works on; throughAllBoth: that, both ways;
+ * - upToNext: to the next face of the part it meets (a boss stops where it
+ *   meets material, a cut where the material ends);
+ * - upToFace: to `upTo`, a face (a flat face is taken as its whole plane), a
+ *   plane feature or a default plane;
+ * - upToVertex: to the plane through `upTo` (a point) parallel to the sketch;
+ * - offsetFromFace: to `upTo` (flat) moved `offset` mm back toward the sketch
+ *   (negative: past it).
+ */
+export type ExtrudeExtent = "blind" | "midplane" | "throughAll" | "throughAllBoth" | "upToNext" | "upToFace" | "upToVertex" | "offsetFromFace";
+export const EXTRUDE_EXTENTS: readonly ExtrudeExtent[] = ["blind", "midplane", "throughAll", "throughAllBoth", "upToNext", "upToFace", "upToVertex", "offsetFromFace"];
+/** The end conditions a second direction can have (midplane and throughAllBoth are both directions already). */
+export type Direction2Extent = Exclude<ExtrudeExtent, "midplane" | "throughAllBoth">;
+export const DIRECTION2_EXTENTS: readonly Direction2Extent[] = ["blind", "throughAll", "upToNext", "upToFace", "upToVertex", "offsetFromFace"];
+
+/** Tapered sides: `angle` degrees (over 0, under 90) inward as the extrude goes out, or outward. */
+export interface ExtrudeDraft {
+  angle: number;
+  outward?: boolean;
+}
+
+/** The second direction: the other way from the start, with its own end condition. */
+export interface ExtrudeDirection2 {
+  extent: Direction2Extent;
+  distance?: number;
+  upTo?: DatumRef;
+  offset?: number;
+  draft?: ExtrudeDraft;
+}
+
+/** A thin feature: the profile (an open chain, or closed loops) thickened into a wall first. */
+export interface ExtrudeThin {
+  thickness: number;
+  /** Default "outside": away from what a loop encloses (an open chain: its outer, convex side). */
+  side?: "outside" | "inside" | "mid";
+}
 
 export interface ExtrudeFeature extends FeatureBase {
   /** extrude adds material, cut removes it. Same parameters. */
@@ -597,8 +635,28 @@ export interface ExtrudeFeature extends FeatureBase {
   extent?: ExtrudeExtent;
   /** Required for blind and midplane (midplane: total length, split evenly). */
   distance?: number;
+  /** upToFace, offsetFromFace: the face or plane it ends at; upToVertex: the point. */
+  upTo?: DatumRef;
+  /** offsetFromFace: mm short of `upTo`, back toward the start (negative: past it). */
+  offset?: number;
   /** Default: the sketch plane normal. Must not lie in the sketch plane. */
   direction?: Vec3;
+  /** The other way too, with its own end condition. */
+  direction2?: ExtrudeDirection2;
+  /** Start this many mm from the sketch plane (along its normal; negative: behind it). */
+  startOffset?: number;
+  /** Start at this plane, flat face or point (a point: the plane through it parallel to the sketch). */
+  from?: DatumRef;
+  /** Tapered sides (direction 1; midplane: both halves). */
+  draft?: ExtrudeDraft;
+  /** A thin wall from the profile (an open sketch may be used). */
+  thin?: ExtrudeThin;
+  /** Only the closed regions of the sketch these points (sketch coordinates) lie in. Default: every region. */
+  regions?: Vec2[];
+  /** extrude: keep only where the extrusion and the body overlap (an intersect). */
+  intersect?: boolean;
+  /** cut: remove what lies outside the profile instead (SOLIDWORKS "flip side to cut"). */
+  flipSide?: boolean;
   /** extrude: the body to add to (default "main"). */
   body?: string;
   /** extrude: start a new body with this name instead. */
@@ -628,18 +686,51 @@ export interface HoleFeature extends FeatureBase {
 
 // ---------------------------------------------------- fillet and chamfer
 
-/** Rounds the selected edges. `edges` is one selector or a list whose matches are combined. */
-export interface FilletFeature extends FeatureBase {
-  op: "fillet";
-  edges: EdgeSelector | EdgeSelector[];
-  radius: number;
+/**
+ * Which edges a fillet or chamfer (or one of a fillet's sets) treats: the
+ * edges its selectors match, every edge of the faces it names, and every edge
+ * of the faces the features it names made. At least one is given.
+ */
+export interface EdgeChoice {
+  /** One selector or a list whose matches are combined. */
+  edges?: EdgeSelector | EdgeSelector[];
+  /** Every edge bounding these faces. */
+  faces?: FaceSelector[];
+  /** Every edge of the faces these earlier features made (an extrude's sides and top, where it meets the part). */
+  features?: string[];
 }
 
-/** Bevels the selected edges by `distance` on both adjacent faces. */
-export interface ChamferFeature extends FeatureBase {
+/** One radius over some edges of a fillet. */
+export interface FilletSet extends EdgeChoice {
+  radius: number;
+  radius2?: number;
+}
+
+/**
+ * Rounds the selected edges. `radius2` makes the radius vary linearly from
+ * `radius` at each edge's start to `radius2` at its end. `sets` gives other
+ * edges radii of their own in the same feature.
+ */
+export interface FilletFeature extends FeatureBase, EdgeChoice {
+  op: "fillet";
+  /** Needed unless `sets` gives every radius. */
+  radius?: number;
+  radius2?: number;
+  sets?: FilletSet[];
+}
+
+/**
+ * Bevels the selected edges: `distance` on both faces (equal), or `distance`
+ * on one face and `distance2` on the other, or `distance` on one face at
+ * `angle` degrees from it. Which face takes `distance`: the one facing most
+ * up (+Z, then +Y, then +X); `flip` swaps the faces.
+ */
+export interface ChamferFeature extends FeatureBase, EdgeChoice {
   op: "chamfer";
-  edges: EdgeSelector | EdgeSelector[];
   distance: number;
+  distance2?: number;
+  angle?: number;
+  flip?: boolean;
 }
 
 // -------------------------------------------------------------- patterns

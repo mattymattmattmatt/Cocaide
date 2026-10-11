@@ -197,8 +197,12 @@ function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteSc
       return Array.isArray(f.bodies) && f.bodies.length > 0 && f.bodies.every(inScope);
     case "fillet":
     case "chamfer": {
-      const list = Array.isArray(f.edges) ? f.edges : [f.edges];
-      return list.length > 0 && list.every((e) => isObject(e) && inScope(e.body));
+      // Every selector of it (its edges and faces, and its other radius sets') names a body in the scope; edges made by a feature name none.
+      const sets = Array.isArray(f.sets) ? f.sets.filter(isObject) : [];
+      const choices = [...(f.edges !== undefined || f.faces !== undefined || f.features !== undefined ? [f] : []), ...sets];
+      const selectors = choices.flatMap((ch) => [...(ch.edges === undefined ? [] : Array.isArray(ch.edges) ? ch.edges : [ch.edges]), ...(Array.isArray(ch.faces) ? ch.faces : [])]);
+      if (choices.some((ch) => ch.features !== undefined)) return false;
+      return selectors.length > 0 && selectors.every((e) => isObject(e) && inScope(e.body));
     }
     case "combine":
       return inScope(f.target) && Array.isArray(f.tools) && f.tools.every(inScope);

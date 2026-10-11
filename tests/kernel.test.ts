@@ -344,7 +344,7 @@ describe("errors the agent can read", () => {
     (doc.features[0] as Extract<Feature, { op: "sketch" }>).constraints = [];
     const r = build(doc);
     // An open sketch is a good sketch (a path, a rib line); the extrude that needs a closed profile says why it has none.
-    expect(r.errors).toEqual(['ext_1: sketch "sketch_1" has no closed profile to extrude: profile is open at [0, 0] (start of "l1")']);
+    expect(r.errors).toEqual(['ext_1: sketch "sketch_1" has no closed profile to extrude: profile is open at [0, 0] (start of "l1"); for an open sketch, make it a thin feature ("thin": { "thickness": 2 })']);
     expect(r.features.map((f) => f.ok)).toEqual([true, false]);
     expect(r.solid).toBeNull();
   });

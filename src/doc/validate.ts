@@ -54,6 +54,13 @@ import {
   type EdgePoint,
   type PlaneSpec,
   DERIVED_SUFFIX,
+  DIRECTION2_EXTENTS,
+  EXTRUDE_EXTENTS,
+  type EdgeChoice,
+  type ExtrudeDirection2,
+  type ExtrudeDraft,
+  type ExtrudeExtent,
+  type FilletSet,
 } from "./types";
 import { validateDrawing } from "./drawing";
 import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
@@ -305,7 +312,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       break;
     case "fillet":
     case "chamfer":
-      feature = validateEdgeTreatment(raw, c);
+      feature = validateEdgeTreatment(raw, c, earlier);
       break;
     case "linearPattern":
     case "circularPattern":
@@ -781,12 +788,17 @@ export const CONSTRAINT_TYPES = [
 
 // ------------------------------------------------------- extrude and cut
 
+/** The fields an extrude or a cut may have (the old ones first, as messages have always listed them). */
+const EXTRUDE_KEYS = ["id", "op", "sketch", "extent", "distance", "direction", "body", "newBody", "upTo", "offset", "direction2", "startOffset", "from", "draft", "thin", "regions", "intersect"];
+const CUT_KEYS = ["id", "op", "sketch", "extent", "distance", "direction", "bodies", "upTo", "offset", "direction2", "startOffset", "from", "draft", "thin", "regions", "flipSide"];
+export const THIN_SIDES = ["outside", "inside", "mid"] as const;
+
 function validateExtrude(
   raw: Record<string, unknown>,
   c: Checker,
   earlier: Map<string, string>,
 ): ExtrudeFeature | null {
-  c.keys(raw, "", raw.op === "extrude" ? ["id", "op", "sketch", "extent", "distance", "direction", "body", "newBody"] : ["id", "op", "sketch", "extent", "distance", "direction", "bodies"]);
+  c.keys(raw, "", raw.op === "extrude" ? EXTRUDE_KEYS : CUT_KEYS);
   if (typeof raw.sketch !== "string") {
     c.fail("sketch", `must be the id of a sketch feature (got ${describe(raw.sketch)})`);
   } else if (!earlier.has(raw.sketch)) {
@@ -794,32 +806,146 @@ function validateExtrude(
   } else if (earlier.get(raw.sketch) !== "sketch") {
     c.fail("sketch", `"${raw.sketch}" is a ${earlier.get(raw.sketch)}, not a sketch`);
   }
-  const extent = raw.extent ?? "blind";
-  if (extent !== "blind" && extent !== "midplane" && extent !== "throughAll") {
-    c.fail("extent", `must be "blind", "midplane" or "throughAll" (got ${describe(raw.extent)})`);
-  }
-  let distance: number | undefined;
-  if (extent === "throughAll") {
-    if (raw.distance !== undefined) c.fail("distance", "must be omitted when extent is throughAll");
-  } else {
-    distance = c.num(raw, "distance", "", { positive: true });
-  }
+  const extent = (raw.extent ?? "blind") as ExtrudeExtent;
+  const end = EXTRUDE_EXTENTS.includes(extent) ? endCondition(raw, "", extent, c, earlier) : null;
+  if (!EXTRUDE_EXTENTS.includes(extent)) c.fail("extent", `must be ${quoted(EXTRUDE_EXTENTS)} (got ${describe(raw.extent)})`);
   const direction = raw.direction === undefined ? undefined : c.unitVec(raw, "direction", "");
+
+  // The second direction, with its own end condition.
+  let direction2: ExtrudeDirection2 | undefined;
+  if (raw.direction2 !== undefined) {
+    const d2 = raw.direction2;
+    if (extent === "midplane" || extent === "throughAllBoth") {
+      c.fail("direction2", `extent ${extent} already goes both ways from the sketch: leave direction2 out`);
+    } else if (!isObject(d2)) {
+      c.fail("direction2", `must be { "extent": ${quoted(DIRECTION2_EXTENTS)}, "distance"?, "upTo"?, "offset"?, "draft"? } (got ${describe(d2)})`);
+    } else {
+      c.keys(d2, "direction2", ["extent", "distance", "upTo", "offset", "draft"]);
+      const e2 = d2.extent as ExtrudeExtent;
+      if (!DIRECTION2_EXTENTS.includes(e2 as never)) {
+        c.fail("direction2.extent", `must be ${quoted(DIRECTION2_EXTENTS)} (got ${describe(d2.extent)})`);
+      } else {
+        const end2 = endCondition(d2, "direction2", e2, c, earlier);
+        const draft2 = d2.draft === undefined ? undefined : extrudeDraft(d2.draft, "direction2.draft", c);
+        if (end2) direction2 = { extent: e2 as ExtrudeDirection2["extent"], ...end2, ...(draft2 ? { draft: draft2 } : {}) };
+      }
+    }
+  }
+
+  // Where it starts: the sketch plane, moved along its normal, or another plane or point.
+  const startOffset = raw.startOffset === undefined ? undefined : c.num(raw, "startOffset", "", {});
+  const from = raw.from === undefined ? undefined : validateDatumRef(raw.from, "from", c, earlier, ["plane", "point"]);
+  if (raw.startOffset !== undefined && raw.from !== undefined) c.fail("from", "give startOffset (from the sketch plane) or from (a plane, flat face or point), not both");
+
+  const draft = raw.draft === undefined ? undefined : extrudeDraft(raw.draft, "draft", c);
+  let thin: ExtrudeFeature["thin"];
+  if (raw.thin !== undefined) {
+    if (!isObject(raw.thin)) c.fail("thin", `must be { "thickness": <mm>, "side": "outside" | "inside" | "mid" } (got ${describe(raw.thin)})`);
+    else {
+      c.keys(raw.thin, "thin", ["thickness", "side"]);
+      const thickness = c.num(raw.thin, "thickness", "thin", { positive: true });
+      const side = raw.thin.side;
+      if (side !== undefined && !THIN_SIDES.includes(side as never)) c.fail("thin.side", `must be ${quoted(THIN_SIDES)} (got ${describe(side)})`);
+      if (thickness !== undefined) thin = { thickness, ...(side !== undefined ? { side: side as (typeof THIN_SIDES)[number] } : {}) };
+    }
+  }
+  if (raw.thin !== undefined && (raw.draft !== undefined || (isObject(raw.direction2) && raw.direction2.draft !== undefined))) {
+    c.fail("draft", "a thin feature has no draft here: leave draft out, or make it a solid extrude");
+  }
+  let regions: Vec2[] | undefined;
+  if (raw.regions !== undefined) {
+    if (!Array.isArray(raw.regions) || raw.regions.length === 0) c.fail("regions", `must be a list of points [x, y] in the sketch, one inside each region to use (got ${describe(raw.regions)})`);
+    else {
+      const pts = raw.regions.map((p, i) => {
+        if (Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === "number" && Number.isFinite(x))) return [p[0], p[1]] as Vec2;
+        c.fail(`regions[${i}]`, `must be a point [x, y] in the sketch (got ${describe(p)})`);
+        return undefined;
+      });
+      if (pts.every((p) => p !== undefined)) regions = pts as Vec2[];
+    }
+  }
+
   // Where the material goes: an extrude names a body; a cut, the bodies it cuts. (keys() reports the other fields.)
   const extrude = raw.op === "extrude";
   const body = extrude && raw.body !== undefined ? bodyName(raw.body, "body", c) : undefined;
   const newBody = extrude && raw.newBody !== undefined ? bodyName(raw.newBody, "newBody", c) : undefined;
   if (extrude && raw.body !== undefined && raw.newBody !== undefined) c.fail("", "give body (add to it) or newBody (start one), not both");
+  const intersect = extrude ? flag(raw, "intersect", c) : undefined;
+  if (intersect && raw.newBody !== undefined) c.fail("intersect", "keeps the overlap with an existing body: name it with body (or leave it out for the part's body), not newBody");
+  const flipSide = extrude ? undefined : flag(raw, "flipSide", c);
   const bodies = !extrude && raw.bodies !== undefined ? bodyList(raw.bodies, "bodies", c) : undefined;
-  if (c.errors.length > 0) return null;
+  if (c.errors.length > 0 || !end) return null;
   const feature: ExtrudeFeature = { id: raw.id as string, op: raw.op as "extrude" | "cut", sketch: raw.sketch as string };
-  if (raw.extent !== undefined) feature.extent = extent as ExtrudeFeature["extent"];
-  if (distance !== undefined) feature.distance = distance;
+  if (raw.extent !== undefined) feature.extent = extent;
+  Object.assign(feature, end);
   if (direction) feature.direction = direction;
+  if (direction2) feature.direction2 = direction2;
+  if (startOffset !== undefined) feature.startOffset = startOffset;
+  if (from) feature.from = from;
+  if (draft) feature.draft = draft;
+  if (thin) feature.thin = thin;
+  if (regions) feature.regions = regions;
+  if (intersect) feature.intersect = true;
+  if (flipSide) feature.flipSide = true;
   if (body) feature.body = body;
   if (newBody) feature.newBody = newBody;
   if (bodies) feature.bodies = bodies;
   return feature;
+}
+
+/**
+ * The fields an end condition needs, and none it does not: a distance for
+ * blind and midplane; a face, plane or point (upTo) for the up-to ones; and
+ * an offset from it for offsetFromFace. `path` is "" or "direction2".
+ */
+function endCondition(obj: Record<string, unknown>, path: string, extent: ExtrudeExtent, c: Checker, earlier: ReadonlyMap<string, string>): Pick<ExtrudeFeature, "distance" | "upTo" | "offset"> | null {
+  const at = (k: string) => (path ? `${path}.${k}` : k);
+  const before = c.errors.length;
+  const out: Pick<ExtrudeFeature, "distance" | "upTo" | "offset"> = {};
+  if (extent === "blind" || extent === "midplane") {
+    const d = c.num(obj, "distance", path, { positive: true });
+    if (d !== undefined) out.distance = d;
+  } else if (obj.distance !== undefined) c.fail(at("distance"), `must be omitted when extent is ${extent}`);
+  if (extent === "upToFace" || extent === "upToVertex" || extent === "offsetFromFace") {
+    if (obj.upTo === undefined) {
+      c.fail(at("upTo"), extent === "upToVertex" ? 'needed: the point to go up to ({ "edge": <selector>, "at": "end" }, { "datum": "<point feature>" }, { "point": [x, y, z] })' : 'needed: the face or plane to go up to ({ "face": <selector> }, { "datum": "Top" or a plane feature })');
+    } else {
+      const ref = validateDatumRef(obj.upTo, at("upTo"), c, earlier, extent === "upToVertex" ? "point" : "plane");
+      if (ref) out.upTo = ref;
+    }
+  } else if (obj.upTo !== undefined) c.fail(at("upTo"), `must be omitted when extent is ${extent}`);
+  if (extent === "offsetFromFace") {
+    const o = c.num(obj, "offset", path, {});
+    if (o !== undefined) out.offset = o;
+  } else if (obj.offset !== undefined) c.fail(at("offset"), `goes with extent offsetFromFace (got extent ${extent})`);
+  return c.errors.length > before ? null : out;
+}
+
+/** { "angle": degrees, "outward"?: true }. */
+function extrudeDraft(v: unknown, path: string, c: Checker): ExtrudeDraft | undefined {
+  if (!isObject(v)) {
+    c.fail(path, `must be { "angle": <degrees>, "outward"?: true } (got ${describe(v)})`);
+    return undefined;
+  }
+  c.keys(v, path, ["angle", "outward"]);
+  const angle = c.num(v, "angle", path, { positive: true });
+  if (angle !== undefined && angle >= 90) c.fail(`${path}.angle`, `must be under 90 degrees (got ${angle})`);
+  const outward = flag(v, "outward", c, path);
+  return angle !== undefined && angle < 90 ? { angle, ...(outward ? { outward: true } : {}) } : undefined;
+}
+
+/** An optional true/false field. */
+function flag(obj: Record<string, unknown>, key: string, c: Checker, path = ""): boolean | undefined {
+  const v = obj[key];
+  if (v === undefined || typeof v === "boolean") return v;
+  c.fail(path ? `${path}.${key}` : key, `must be true or false (got ${describe(v)})`);
+  return undefined;
+}
+
+/** "a", "b" or "c". */
+function quoted(values: readonly string[]): string {
+  const q = values.map((v) => `"${v}"`);
+  return q.length <= 1 ? q.join("") : `${q.slice(0, -1).join(", ")} or ${q[q.length - 1]}`;
 }
 
 // ------------------------------------------------------------------ hole
@@ -887,15 +1013,101 @@ function validateHole(raw: Record<string, unknown>, c: Checker): HoleFeature | n
 
 // ---------------------------------------------------- fillet and chamfer
 
-function validateEdgeTreatment(raw: Record<string, unknown>, c: Checker): FilletFeature | ChamferFeature | null {
-  const size = raw.op === "fillet" ? "radius" : "distance";
-  c.keys(raw, "", ["id", "op", "edges", size]);
-  const value = c.num(raw, size, "", { positive: true });
-  const edges = edgeSelectors(raw.edges, "edges", c);
-  if (c.errors.length > 0 || !edges || value === undefined) return null;
-  return raw.op === "fillet"
-    ? { id: raw.id as string, op: "fillet", edges, radius: value }
-    : { id: raw.id as string, op: "chamfer", edges, distance: value };
+function validateEdgeTreatment(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>): FilletFeature | ChamferFeature | null {
+  const id = raw.id as string;
+  if (raw.op === "chamfer") {
+    c.keys(raw, "", ["id", "op", "edges", "distance", "faces", "features", "distance2", "angle", "flip"]);
+    const choice = edgeChoice(raw, "", c, earlier, true);
+    const distance = c.num(raw, "distance", "", { positive: true });
+    const distance2 = raw.distance2 === undefined ? undefined : c.num(raw, "distance2", "", { positive: true });
+    const angle = raw.angle === undefined ? undefined : c.num(raw, "angle", "", { positive: true });
+    if (angle !== undefined && angle >= 90) c.fail("angle", `must be under 90 degrees (got ${angle}); 45 is the same as equal distances`);
+    if (raw.distance2 !== undefined && raw.angle !== undefined) c.fail("", "give distance2 (two distances) or angle (a distance and an angle), not both");
+    const flip = flag(raw, "flip", c);
+    if (flip && raw.distance2 === undefined && raw.angle === undefined) c.fail("flip", "swaps which face takes the distance: it goes with distance2 or angle (an equal chamfer is the same either way)");
+    if (c.errors.length > 0 || !choice || distance === undefined) return null;
+    return {
+      id,
+      op: "chamfer",
+      ...choice,
+      distance,
+      ...(distance2 !== undefined ? { distance2 } : {}),
+      ...(angle !== undefined ? { angle } : {}),
+      ...(flip ? { flip } : {}),
+    };
+  }
+  c.keys(raw, "", ["id", "op", "edges", "radius", "faces", "features", "radius2", "sets"]);
+  // Without sets the feature is one set: it needs edges and a radius. With sets, its own edges and radius are one more set, or left out.
+  const own = raw.sets === undefined || raw.edges !== undefined || raw.faces !== undefined || raw.features !== undefined || raw.radius !== undefined;
+  const choice = own ? edgeChoice(raw, "", c, earlier, true) : {};
+  const radius = own ? c.num(raw, "radius", "", { positive: true }) : undefined;
+  const radius2 = raw.radius2 === undefined ? undefined : c.num(raw, "radius2", "", { positive: true });
+  if (!own && raw.radius2 !== undefined) c.fail("radius2", "goes with radius: give both, or put them in sets");
+  let sets: FilletSet[] | undefined;
+  if (raw.sets !== undefined) {
+    if (!Array.isArray(raw.sets) || raw.sets.length === 0) c.fail("sets", `must be a list of { "edges", "radius", "radius2"? } (got ${describe(raw.sets)})`);
+    else {
+      const list = raw.sets.map((s, i): FilletSet | null => {
+        const path = `sets[${i}]`;
+        if (!isObject(s)) {
+          c.fail(path, `must be { "edges", "radius", "radius2"? } (got ${describe(s)})`);
+          return null;
+        }
+        c.keys(s, path, ["edges", "faces", "features", "radius", "radius2"]);
+        const ch = edgeChoice(s, path, c, earlier, true);
+        const r = c.num(s, "radius", path, { positive: true });
+        const r2 = s.radius2 === undefined ? undefined : c.num(s, "radius2", path, { positive: true });
+        return ch && r !== undefined ? { ...ch, radius: r, ...(r2 !== undefined ? { radius2: r2 } : {}) } : null;
+      });
+      if (list.every((s) => s !== null)) sets = list as FilletSet[];
+    }
+  }
+  if (c.errors.length > 0 || !choice) return null;
+  return {
+    id,
+    op: "fillet",
+    ...choice,
+    ...(radius !== undefined ? { radius } : {}),
+    ...(radius2 !== undefined ? { radius2 } : {}),
+    ...(sets ? { sets } : {}),
+  };
+}
+
+/**
+ * Which edges: "edges" (selectors), "faces" (every edge of these faces),
+ * "features" (every edge of the faces these earlier features made); at
+ * least one when `needed`.
+ */
+function edgeChoice(raw: Record<string, unknown>, path: string, c: Checker, earlier: ReadonlyMap<string, string>, needed: boolean): EdgeChoice | null {
+  const at = (k: string) => (path ? `${path}.${k}` : k);
+  const before = c.errors.length;
+  const out: EdgeChoice = {};
+  if (raw.edges !== undefined) {
+    const e = edgeSelectors(raw.edges, at("edges"), c);
+    if (e) out.edges = e;
+  }
+  if (raw.faces !== undefined) {
+    if (!Array.isArray(raw.faces) || raw.faces.length === 0) c.fail(at("faces"), `must be a list of face selectors, every edge of each is treated (got ${describe(raw.faces)})`);
+    else {
+      const list = raw.faces.map((s, i) => validateFaceSelector(s, `${at("faces")}[${i}]`, c));
+      if (list.every((s) => s !== null)) out.faces = list as FaceSelector[];
+    }
+  }
+  if (raw.features !== undefined) {
+    if (!Array.isArray(raw.features) || raw.features.length === 0) c.fail(at("features"), `must be a list of earlier feature ids: every edge of the faces each made is treated (got ${describe(raw.features)})`);
+    else
+      raw.features.forEach((id, i) => {
+        const where = `${at("features")}[${i}]`;
+        if (typeof id !== "string") c.fail(where, `must be the id of an earlier feature (got ${describe(id)})`);
+        else if (!earlier.has(id)) c.fail(where, `"${id}" is not a feature before this one`);
+        else if (earlier.get(id) === "sketch" || Object.hasOwn(DATUM_OPS, earlier.get(id)!)) c.fail(where, `"${id}" is ${article(earlier.get(id)!)}: it makes no faces (name the feature that made the edges)`);
+      });
+    if (c.errors.length === before && Array.isArray(raw.features)) out.features = [...(raw.features as string[])];
+  }
+  if (needed && raw.edges === undefined && raw.faces === undefined && raw.features === undefined) {
+    c.fail(at("edges"), 'needed: the edges to treat (an edge selector or a list), or "faces" (every edge of them), or "features" (the edges they made)');
+  }
+  return c.errors.length > before ? null : out;
 }
 
 /** One edge selector, or a non-empty list of them whose matches are combined. */
@@ -1689,6 +1901,8 @@ class BodyNames {
     switch (f.op) {
       case "extrude":
         if (f.body) need(f.body, "body");
+        // An intersect keeps the overlap with a body there is: it never starts one.
+        else if (f.intersect && !f.newBody) need(DEFAULT_BODY, "intersect");
         if (f.newBody && this.names.has(f.newBody)) c.fail("newBody", `a body "${f.newBody}" already exists; use "body" to add to it`);
         break;
       case "cut":
@@ -1763,7 +1977,7 @@ class BodyNames {
     if (f.op === "mirror" && f.feature && makes.length) this.made.set(f.id, makes[0]);
     if (f.op === "deleteBody") for (const n of f.bodies ?? [...this.names].filter((x) => !f.keep!.includes(x))) this.names.delete(n);
     // What this feature makes, for the features after it.
-    if (f.op === "extrude") {
+    if (f.op === "extrude" && !f.intersect) {
       const name = f.newBody ?? f.body ?? DEFAULT_BODY;
       this.add(name);
       if (f.newBody) this.made.set(f.id, f.newBody);
@@ -1807,8 +2021,14 @@ export function selectorBodies(f: Feature): [string, string][] {
   };
   if (f.op === "hole") face(f.face, "face");
   if (f.op === "fillet" || f.op === "chamfer") {
-    if (Array.isArray(f.edges)) f.edges.forEach((e, i) => edge(e, `edges[${i}]`));
-    else edge(f.edges, "edges");
+    const choice = (ch: EdgeChoice, path: string) => {
+      const at = (k: string) => (path ? `${path}.${k}` : k);
+      if (Array.isArray(ch.edges)) ch.edges.forEach((e, i) => edge(e, `${at("edges")}[${i}]`));
+      else if (ch.edges) edge(ch.edges, at("edges"));
+      ch.faces?.forEach((s, i) => face(s, `${at("faces")}[${i}]`));
+    };
+    choice(f, "");
+    if (f.op === "fillet") f.sets?.forEach((s, i) => choice(s, `sets[${i}]`));
   }
   // The selectors of a registry op, and those inside any reference (a sketch on a face, a plane by reference).
   const d = defOf(f.op);
