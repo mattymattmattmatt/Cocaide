@@ -1158,3 +1158,5 @@ svg.icon { flex: none; display: block; }
 /* The sketch toolbar gained Convert: its buttons sit a little closer, so it stays on one row. */
 .sketch-toolbar .tool { padding: 0 5px; min-width: 48px; }
 .sketch-toolbar .sep { margin: 0 3px; }
+/* Wave 3B: the extrude, cut, fillet and chamfer panels group their fields under small headings (From, Direction 1, ...). */
+.prop-section { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }

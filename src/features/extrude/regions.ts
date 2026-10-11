@@ -151,3 +151,85 @@ function onSeg(s: Seg, p: Vec2): boolean {
 function fmt(p: Vec2): string {
   return p.map((x) => Math.round(x * 1e4) / 1e4).join(", ");
 }
+
+/** One region a feature can pick (Selected contours): a point inside it, its area, and the entities that bound it. */
+export interface Contour {
+  /** A point well inside the region, away from its lines: the seed `regions` holds for it. */
+  seed: Vec2;
+  area: number;
+  /** The entities of its outer loop, and of the loops cut out of it. */
+  outer: string[];
+  holes: string[];
+}
+
+/**
+ * Every region of the sketch one point can pick: one per loop, the area it
+ * bounds less the loops directly inside it, each with a seed point inside.
+ * In the order the loops come (outer loops before the loops they hold).
+ */
+export function contours(regions: readonly Region[]): Contour[] {
+  const nest = nestedLoops(regions);
+  return nest.map((_, i) => {
+    const region = regionOfLoop(nest, i);
+    const ids = (l: Loop) => [...new Set(l.segs.map((s) => s.entity))];
+    return { seed: interiorPoint(region), area: areaOf([region]), outer: ids(region.outer), holes: region.holes.flatMap(ids) };
+  });
+}
+
+/** Which of `contours(regions)` the point picks (the innermost loop around it), or -1 when none. */
+export function contourAt(regions: readonly Region[], p: Vec2): number {
+  try {
+    const nest = nestedLoops(regions);
+    if (nest.some((n) => n.loop.segs.some((s) => onSeg(s, p)))) return -1;
+    const around = nest.map((n, i) => ({ i, depth: n.depth, wn: windingNumber(n.loop, p) })).filter((x) => x.wn !== 0);
+    return around.length ? around.sort((a, b) => b.depth - a.depth)[0].i : -1;
+  } catch {
+    return -1;
+  }
+}
+
+/**
+ * A point inside the region (inside its outer loop, outside its holes),
+ * as far from its lines as a grid search finds, rounded to 0.001 mm.
+ */
+export function interiorPoint(region: Region): Vec2 {
+  const loops = [region.outer, ...region.holes];
+  const edge = loops.flatMap((l) => l.segs.flatMap((s) => sampleSeg(s, Math.PI / 36)));
+  const xs = edge.map((p) => p[0]);
+  const ys = edge.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const inside = (p: Vec2) => windingNumber(region.outer, p) !== 0 && region.holes.every((h) => windingNumber(h, p) === 0);
+  // Points along the lines too, so a narrow region's middle is found by distance to its sides.
+  const clearance = (p: Vec2) => {
+    let d = Infinity;
+    for (let k = 1; k < edge.length; k++) d = Math.min(d, dist2(edge[k], p));
+    for (const l of loops) for (const s of l.segs) if (s.kind === "line") d = Math.min(d, segDistance(s.a, s.b, p));
+    return d;
+  };
+  let best: Vec2 | null = null;
+  let bestD = -1;
+  const N = 40;
+  for (let i = 1; i < N; i++) {
+    for (let j = 1; j < N; j++) {
+      const p: Vec2 = [x0 + ((x1 - x0) * i) / N, y0 + ((y1 - y0) * j) / N];
+      if (!inside(p)) continue;
+      const d = clearance(p);
+      if (d > bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+  }
+  const r = (v: number) => Math.round(v * 1000) / 1000 + 0;
+  const out: Vec2 = best ? [r(best[0]), r(best[1])] : [r((x0 + x1) / 2), r((y0 + y1) / 2)];
+  // Rounding must not leave it outside (a sliver narrower than the grid).
+  return inside(out) ? out : (best ?? out);
+}
+
+/** The distance from p to the segment a–b. */
+function segDistance(a: Vec2, b: Vec2, p: Vec2): number {
+  const d = sub2(b, a);
+  const l2 = dot2(d, d);
+  const t = l2 > 0 ? Math.max(0, Math.min(1, dot2(sub2(p, a), d) / l2)) : 0;
+  return dist2(add2(a, scale2(d, t)), p);
+}

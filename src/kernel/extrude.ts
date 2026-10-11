@@ -104,7 +104,11 @@ export function toolRegions(f: ExtrudeFeature, profile: SketchProfile, entities:
       if (f.regions && profile.regions.length === 0) throw new RegionError("regions: the sketch is an open chain, with no closed regions to pick");
       return thinRegions(picked, entities.filter((e) => !isConstruction(e)), f.thin.thickness, f.thin.side ?? "outside");
     }
-    if (picked.length === 0) throw new OpError(`${noClosedProfile(f.sketch, profile, f.op)}; for an open sketch, make it a thin feature ("thin": { "thickness": 2 })`);
+    if (picked.length === 0) {
+      // An open chain can be a thin feature; curves that cross cannot be helped that way.
+      const crossing = /cross|touch|intersect/.test(profile.open ?? "");
+      throw new OpError(`${noClosedProfile(f.sketch, profile, f.op)}${crossing ? "" : '; for an open sketch, make it a thin feature ("thin": { "thickness": 2 })'}`);
+    }
     return picked;
   } catch (e) {
     if (e instanceof RegionError) throw new OpError(e.message);
