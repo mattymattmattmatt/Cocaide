@@ -6,7 +6,7 @@
 import { edgesSelectorFor } from "../../kernel/synthesize";
 import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
 import type { EdgeSelector, FaceSelector } from "../../doc/types";
-import { Field } from "../fields";
+import { Field, NumberInput, type NumberValue } from "../fields";
 import { asList, type FieldProps, type FieldSpec, type FormContext, type Raw } from "./spec";
 
 /** The ops whose faces a fillet or chamfer may take "the edges it made" from. */
@@ -52,6 +52,20 @@ export function removeSetPatch(f: Raw, i: number): Raw {
   return { sets: sets.length ? sets : null };
 }
 
+/** The fillet with radius set `i`'s radius (or end radius) changed. */
+export function setRadiusPatch(f: Raw, i: number, key: "radius" | "radius2", value: unknown): Raw {
+  const sets = Array.isArray(f.sets) ? (f.sets as Raw[]) : [];
+  return {
+    sets: sets.map((set, k) => {
+      if (k !== i) return set;
+      const out: Raw = { ...set };
+      if (value === null || value === undefined || value === "") delete out[key];
+      else out[key] = value;
+      return out;
+    }),
+  };
+}
+
 /** A radius set in words: "R 2 → 4 on line edges parallel to +Y …". */
 export function describeSet(set: Raw): string {
   const r = set.radius2 !== undefined ? `R ${set.radius} → ${set.radius2}` : `R ${set.radius}`;
@@ -65,7 +79,7 @@ export function describeSet(set: Raw): string {
 /** Edges, faces and features: which edges the feature treats (`prefix` "prop-fillet" or "prop-chamfer" for the new ones' test ids). */
 export function edgeChoiceFields(prefix: string): FieldSpec[] {
   return [
-    { kind: "edges", key: "edges", label: "Edges" },
+    { kind: "edges", key: "edges", label: "Edges", optional: true },
     { kind: "faces", key: "faces", label: "Faces", optional: true, testId: `${prefix}-faces`, hint: "Every edge of these faces" },
     { kind: "features", key: "features", label: "Edges made by", ops: SHAPE_OPS, testId: `${prefix}-features`, hint: "Every edge of the faces these features made" },
   ];
@@ -75,30 +89,35 @@ export function edgeChoiceFields(prefix: string): FieldSpec[] {
 export function RadiusSets(p: FieldProps) {
   const sets = Array.isArray(p.f.sets) ? (p.f.sets as Raw[]) : [];
   return (
-    <Field label="Radius sets" block hint="Other edges with radii of their own, in this one fillet">
-      <span className="readout" data-testid="prop-fillet-sets">
-        {sets.map((s, i) => (
-          <span key={i} className="selector-line">
-            {describeSet(s)}
-            <button type="button" className="selector-remove" aria-label={`Remove radius set ${i + 1}`} title="Remove this set" onClick={() => p.update(removeSetPatch(p.f, i))} data-testid={`prop-fillet-sets-remove-${i}`}>
-              ×
-            </button>
-          </span>
-        ))}
-        {!sets.length && <span className="muted">none: every edge takes the radius above</span>}
-        <button
-          type="button"
-          onClick={() => {
-            const patch = addSetPatch(p.f, p.resolved, p);
-            if (typeof patch === "string") return p.setError(patch);
-            p.setError(null);
-            p.update(patch);
-          }}
-          data-testid="prop-fillet-sets-add"
-        >
-          Add the selected edges as a radius set
-        </button>
-      </span>
-    </Field>
+    <>
+      <Field label="Radius sets" block hint="Other edges with radii of their own, in this one fillet">
+        <span className="readout" data-testid="prop-fillet-sets">
+          {sets.map((s, i) => (
+            <span key={i} className="selector-line">
+              <span className="set-text">{describeSet(s)}</span>
+              <span className="set-radius">
+                <NumberInput value={(s.radius ?? "") as NumberValue} min={0} onCommit={(v) => p.update(setRadiusPatch(p.f, i, "radius", v))} ariaLabel={`Radius of set ${i + 1}`} testId={`prop-fillet-sets-radius-${i}`} />
+              </span>
+              <button type="button" className="selector-remove" aria-label={`Remove radius set ${i + 1}`} title="Remove this set" onClick={() => p.update(removeSetPatch(p.f, i))} data-testid={`prop-fillet-sets-remove-${i}`}>
+                ×
+              </button>
+            </span>
+          ))}
+          {!sets.length && <span className="muted">none: every edge takes the radius above</span>}
+        </span>
+      </Field>
+      <button
+        type="button"
+        onClick={() => {
+          const patch = addSetPatch(p.f, p.resolved, p);
+          if (typeof patch === "string") return p.setError(patch);
+          p.setError(null);
+          p.update(patch);
+        }}
+        data-testid="prop-fillet-sets-add"
+      >
+        Add the selected edges as a radius set
+      </button>
+    </>
   );
 }

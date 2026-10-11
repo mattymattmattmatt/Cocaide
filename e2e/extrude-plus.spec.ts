@@ -160,3 +160,64 @@ test("a chamfer of two distances, flipped, then a distance and an angle", async 
   expect((await feature(page, "chamfer_1"))!.distance2).toBeUndefined();
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
 });
+
+test("up to a curved face by Use selected", async ({ page }) => {
+  // A radius 10 cylinder along X (x -20..20) at z = 30, and a 10 x 4 boss on Top up to its underside:
+  // under the cylinder the boss reaches z = 30 - sqrt(100 - y²), so it is 10 · (30·4 - (2·sqrt(96) + 100·asin(0.2))).
+  const RIGHT = { type: "datum", normal: [1, 0, 0], origin: [0, 0, 0] };
+  const cylinder = Math.PI * 100 * 40;
+  const boss = 10 * (120 - (2 * Math.sqrt(96) + 100 * Math.asin(0.2)));
+  await openDocument(page, [
+    sketch("s_cyl", [{ id: "c", type: "circle", center: [0, 30], radius: 10 }], RIGHT),
+    { id: "cyl", op: "extrude", sketch: "s_cyl", extent: "midplane", distance: 40 },
+    sketch("s1", [rect("r1", [0, 0], 10, 4)]),
+    { id: "boss", op: "extrude", sketch: "s1", extent: "upToFace", upTo: { datum: "Top" } },
+  ]);
+  await open(page, "boss");
+  // The round face (not its axis: a curved face is a surface to go up to).
+  await viewportClick(page, [0, -7.07, 37.07]);
+  await expect(page.getByTestId("selection")).toContainText("cylindrical face");
+  await page.getByTestId("prop-up-to-use").click();
+  await expect.poll(() => volumeOf(page)).toBeCloseTo(cylinder + boss, 2);
+  expect((await feature(page, "boss"))!.upTo).toMatchObject({ face: { type: "cylindrical", radius: 10 } });
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+});
+
+test("fillet: the edges of a picked face, and a radius set whose radius is edited in place", async ({ page }) => {
+  // A 20 mm cube. Its top face picked, then Fillet: R1 on the four top edges, (1 - π/4)·1²·20 each, less a little
+  // where they meet at the corners (each corner's blend overlaps the two edges' runs).
+  await openDocument(page, [sketch("sk", [rect("r1", [0, 0], 20, 20)]), { id: "cube", op: "extrude", sketch: "sk", distance: 20 }]);
+  const corner = 1 - Math.PI / 4;
+  await viewportClick(page, [3, 2, 20]);
+  await expect(page.getByTestId("selection")).toContainText("normal +Z");
+  await page.getByTestId("tool-fillet").click();
+  await expect.poll(async () => 8000 - (await volumeOf(page))).toBeGreaterThan(4 * corner * 20 - 1);
+  expect(8000 - (await volumeOf(page))).toBeLessThan(4 * corner * 20);
+  expect(await feature(page, "fillet_1")).toMatchObject({ faces: [{ type: "planar", normal: [0, 0, 1] }], radius: 1 });
+
+  // An edge picked and used as well, then left out again (×): back to the face's edges alone.
+  const faceOnly = await volumeOf(page);
+  await viewportClick(page, [10, -10, 10]);
+  await page.getByTestId("prop-edges-use").click();
+  await expect.poll(() => volumeOf(page)).toBeLessThan(faceOnly - 0.1);
+  expect(await feature(page, "fillet_1")).toMatchObject({ edges: { type: "edge" }, faces: [{ type: "planar" }] });
+  await page.getByTestId("prop-edges-remove-0").click();
+  await expect.poll(() => volumeOf(page)).toBeCloseTo(faceOnly, 2);
+  expect((await feature(page, "fillet_1"))!.edges).toBeUndefined();
+
+  // A vertical edge as a radius set of its own (it starts at R1), then R3. The set's fillet meets the top's at a corner,
+  // so the volume is only bounded: more removed than with the set at R1.
+  await page.getByTestId("prop-fillet-sets-add").click();
+  await expect(page.getByTestId("command-error")).toContainText("Click the edges for the new radius");
+  await viewportClick(page, [10, -10, 10]);
+  await expect(page.getByTestId("selection")).toContainText("edge");
+  await page.getByTestId("prop-fillet-sets-add").click();
+  await expect(page.getByTestId("prop-fillet-sets-radius-0")).toHaveValue("1");
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+  const atOne = await volumeOf(page);
+  await commit(page, "prop-fillet-sets-radius-0", "3");
+  await expect.poll(async () => ((await feature(page, "fillet_1"))!.sets as { radius: number }[])[0].radius).toBe(3);
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+  await expect.poll(() => volumeOf(page)).toBeLessThan(atOne - 1);
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/fillet-radius-sets.png` });
+});

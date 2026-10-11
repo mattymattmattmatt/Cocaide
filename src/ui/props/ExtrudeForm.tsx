@@ -22,6 +22,7 @@ import {
   startKind,
   startPatch,
   thinPatch,
+  upToFromSelection,
   type StartKind,
 } from "./extrude";
 import type { FieldProps, FieldSpec, FormContext, Raw } from "./spec";
@@ -129,6 +130,8 @@ export function extrudeFields(op: "extrude" | "cut"): FieldSpec[] {
       testId: "prop-up-to",
       accepts: (f) => (f.extent === "upToVertex" ? ["point"] : ["plane"]),
       when: (f) => needsUpTo(f.extent),
+      // A curved face will do for up to surface, so not the plain plane-or-point rule.
+      pick: (f, c) => upToFromSelection(String(f.extent), c, "Use selected"),
       hint: "Click the face, plane or vertex in the view, then Use selected",
     },
     { kind: "number", key: "offset", label: "Offset", unit: "mm", testId: "prop-offset", when: (f) => f.extent === "offsetFromFace", hint: "Short of the surface, toward the sketch; negative: past it" },
@@ -189,6 +192,7 @@ export function extrudeFields(op: "extrude" | "cut"): FieldSpec[] {
       testId: "prop-direction2-up-to",
       accepts: (f) => (d2(f)?.extent === "upToVertex" ? ["point"] : ["plane"]),
       when: (f) => !!d2(f) && needsUpTo(d2(f)!.extent),
+      pick: (f, c) => upToFromSelection(String(d2(f)!.extent), c, "Use selected"),
     },
     { kind: "number", key: "direction2.offset", label: "Offset", unit: "mm", testId: "prop-direction2-offset", when: (f) => d2(f)?.extent === "offsetFromFace" },
     {

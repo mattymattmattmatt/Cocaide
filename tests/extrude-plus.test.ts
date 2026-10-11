@@ -160,6 +160,18 @@ describe("extrude end conditions: volumes", () => {
     { id: "tunnel", op: "cut", sketch: "s_tunnel", extent: "throughAllBoth" },
   ];
 
+  it("a slanted cut through all reaches a part off to the side of the sketch origin", () => {
+    // A 10 x 10 x 10 block at x -50..-40; a 5 x 4 profile at x -60..-55 cut along (1, 0, 1)/√2.
+    // At height z the tool spans x -60+z..-55+z, inside the block for z 5..10: ∫(z - 5) dz = 12.5, times 4 wide = 50.
+    const d = doc(
+      sketch("s0", [rect("r0", 10, 10, [-45, 0])]),
+      { id: "block", op: "extrude", sketch: "s0", distance: 10 },
+      sketch("s1", [rect("r1", 5, 4, [-57.5, 0])]),
+      { id: "cut_1", op: "cut", sketch: "s1", direction: [Math.SQRT1_2, 0, Math.SQRT1_2], extent: "throughAll" },
+    );
+    expect(volume(d)).toBeCloseTo(1000 - 50, 6);
+  });
+
   it("through all, both ways: the tunnel goes right through, 40000 left", () => {
     expect(volume(doc(...BLOCK))).toBeCloseTo(40000, 6);
   });

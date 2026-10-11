@@ -255,6 +255,18 @@ describe("Hole, Fillet, Chamfer", () => {
     run("tool.chamfer", ctx);
     expect(out.created).toEqual([{ id: "chamfer_1", op: "chamfer", faces: (s as { selector: unknown }).selector, distance: 1 }]);
   });
+
+  it("with edges and faces picked, treats both (the edges, and every edge of the faces)", () => {
+    const doc = example("bracket");
+    const view = viewOf(oc, doc);
+    const top = view.faces.findIndex((f) => f.type === "plane" && f.normal![2] > 0.99);
+    const edge = view.edges.findIndex((e) => e.kind === "line" && Math.abs(e.direction![2]) > 0.99);
+    const faces = facesSelectorFor(view.faces, [top]);
+    const edges = edgesSelectorFor(view.edges, view.faces, [edge]);
+    const { ctx, out } = harness(doc, view, { selection: { faces: [top], edges: [edge] } });
+    run("tool.fillet", ctx);
+    expect(out.created).toEqual([{ id: "fillet_1", op: "fillet", edges: (edges as { selector: unknown }).selector, faces: (faces as { selector: unknown }).selector, radius: 1 }]);
+  });
 });
 
 describe("Pattern and Mirror", () => {

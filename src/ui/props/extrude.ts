@@ -57,7 +57,7 @@ export function refKind(ref: unknown, before: Raw[]): DatumKind | "face" | null 
  * point for up to vertex; a face (flat or curved) or a plane for the others.
  * Throws an Error that says what to select.
  */
-export function upToFromSelection(extent: string, c: Pick<FormContext, "selection" | "view" | "before">): DatumRef {
+export function upToFromSelection(extent: string, c: Pick<FormContext, "selection" | "view" | "before">, then = `choose ${END_LABELS[extent]} again`): DatumRef {
   if (extent !== "upToVertex" && c.selection.faces.length === 1 && c.view && !(c.selection.edges.length || c.selection.vertices?.length || c.selection.datums?.length)) {
     // Any face will do for up to surface (a curved one too); offset from surface needs a flat one, which the kernel says.
     const s = faceSelectorFor(c.view.faces, c.selection.faces[0]);
@@ -67,7 +67,7 @@ export function upToFromSelection(extent: string, c: Pick<FormContext, "selectio
   const r = refFromSelection(c.selection, c.view, [extent === "upToVertex" ? "point" : "plane"], c.before);
   if (r.ok) return r.ref;
   const what = extent === "upToVertex" ? "a vertex or a point" : "a face or a plane";
-  throw new Error(`${END_LABELS[extent]} needs ${what} to go up to: click it in the view first, then choose ${END_LABELS[extent]} again. (${r.error})`);
+  throw new Error(`${END_LABELS[extent]} needs ${what} to go up to: click it in the view first, then ${then}. (${r.error})`);
 }
 
 /**

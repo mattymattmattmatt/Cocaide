@@ -77,11 +77,18 @@ export type FieldSpec =
    */
   | (Base & { kind: "plane"; default?: DatumPlane; refs?: boolean })
   /** A plane, axis or point: a default one, a reference feature, or picked geometry (DESIGN §2.1). What it takes may depend on the feature (a mode). */
-  | (Base & { kind: "datumRef"; accepts: DatumKind[] | ((f: Raw, c: FormContext) => DatumKind[]); optional?: boolean; forms?: RefForm[] })
+  | (Base & {
+      kind: "datumRef";
+      accepts: DatumKind[] | ((f: Raw, c: FormContext) => DatumKind[]);
+      optional?: boolean;
+      forms?: RefForm[];
+      /** "Use selected" made by the field itself (throws an Error saying what to select); default: the selection as one of `accepts`. */
+      pick?: (f: Raw, c: FormContext) => DatumRef;
+    })
   /** Several faces, picked in the view ("Use selected faces"). */
   | (Base & { kind: "faces"; optional?: boolean })
   /** One or more edges, picked in the view ("Use selected edges"). */
-  | (Base & { kind: "edges" })
+  | (Base & { kind: "edges"; optional?: boolean })
   /** One face, picked in the view ("Use selected face"). */
   | (Base & { kind: "face" })
   /** One earlier feature, of these ops if given. */

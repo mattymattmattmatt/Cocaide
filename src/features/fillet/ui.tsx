@@ -7,7 +7,8 @@ import type { UiOp } from "../uiDefs";
 
 type Raw = Record<string, unknown>;
 const variable = (f: Raw) => f.radius2 !== undefined && f.radius2 !== null;
-const own = (f: Raw) => f.radius !== undefined || !f.sets;
+/** Does the feature have edges of its own (not only radius sets)? Then it needs its own radius. */
+const own = (f: Raw) => f.radius !== undefined || !f.sets || f.edges !== undefined || f.faces !== undefined || f.features !== undefined;
 
 export const ui: UiOp = {
   op: "fillet",

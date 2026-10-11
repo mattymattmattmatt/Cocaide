@@ -176,6 +176,31 @@ describe("right-click ask", () => {
     expect(r.outcome).toBe("proposal");
   });
 
+  it("a fillet by faces: from a face, that face's edges; from an edge, faces and features are refused with what to use", async () => {
+    const top = { type: "planar", normal: [0, 0, 1], pick: "largest" };
+    const fromFace = await runAsk({
+      doc: bracket,
+      target: { kind: "face", index: topFace },
+      text: "round every edge of this face",
+      model: new ScriptedModel([
+        () => [use("addFeature", { feature: { op: "fillet", features: ["ext_1"], radius: 0.5 } })],
+        () => [use("addFeature", { feature: { op: "fillet", faces: [top], radius: 0.5 } })],
+        () => [say("Rounded the top face's edges.")],
+      ]),
+      kernel,
+    });
+    expect(fromFace.calls.map((c) => c.ok)).toEqual([false, true]);
+    expect(fromFace.calls[0].error).toBe('from a face, name the fillet\'s edges with "edges" or "faces", not "features"');
+    const fromEdge = await runAsk({
+      doc: bracket,
+      target: { kind: "edge", index: sideEdge },
+      text: "round this edge",
+      model: new ScriptedModel([() => [use("addFeature", { feature: { op: "fillet", faces: [top], radius: 0.5 } })], () => [say("No.")]]),
+      kernel,
+    });
+    expect(fromEdge.calls[0].error).toBe('from an edge, name the fillet\'s edges with "edges", not "faces"');
+  });
+
   it("reads only what the packet names", async () => {
     const model = new ScriptedModel([() => [use("getFeature", { id: "sketch_1" }), use("getFeature", { id: "ext_1" })], () => [say("ok")]]);
     const r = await runAsk({ doc: bracket, target: { kind: "feature", id: "hole_1" }, text: "explain the parent", model, kernel });

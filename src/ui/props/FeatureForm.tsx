@@ -313,6 +313,16 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
             disabled={!someSelected || !p.view}
             title={`Use the face, edge, vertex or plane selected as ${accepts.join(" or ")}`}
             onClick={() => {
+              if (spec.pick) {
+                let picked: DatumRef;
+                try {
+                  picked = spec.pick(p.f, p);
+                } catch (e) {
+                  return p.setError(e instanceof Error ? e.message : String(e));
+                }
+                p.setError(null);
+                return commit(picked);
+              }
               const r = refFromSelection(p.selection, p.view, accepts, p.before);
               if (!r.ok) return p.setError(r.error);
               p.setError(null);
@@ -350,7 +360,30 @@ function SelectorField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
   let use: { label: string; disabled: boolean; run(): void };
   if (spec.kind === "edges") {
     const list = asList<EdgeSelector>(value);
-    list.forEach((e, i) => lines.push(<span key={i} className="selector-line">{describeEdgeSelector(e)}</span>));
+    // An optional list (a fillet that may name faces instead) can be emptied one selector at a time.
+    const removable = spec.optional === true;
+    list.forEach((e, i) =>
+      lines.push(
+        <span key={i} className="selector-line">
+          {describeEdgeSelector(e)}
+          {removable && (
+            <button
+              type="button"
+              className="selector-remove"
+              aria-label={`Leave out edges ${i + 1}`}
+              title="Leave these edges out"
+              onClick={() => {
+                const rest = list.filter((_, k) => k !== i);
+                commit(rest.length === 0 ? null : rest.length === 1 ? rest[0] : rest);
+              }}
+              data-testid={`${tid}-remove-${i}`}
+            >
+              ×
+            </button>
+          )}
+        </span>,
+      ),
+    );
     use = {
       label: "Use selected edges",
       disabled: selection.edges.length === 0 || !view,

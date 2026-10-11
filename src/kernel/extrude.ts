@@ -199,9 +199,12 @@ class Builder {
     const dd = scale3(this.d, sign);
     const back = this.extremeStart(start, sign > 0 ? -1 : 1);
     const from = add3(this.frame.origin, scale3(this.d, back));
-    const length = reachAlong(this.oc, this.s, this.reach, from, dd);
+    // How far the part reaches along the sketch normal, the way this direction climbs: a slanted
+    // direction from a profile off to one side still reaches a part that is not ahead of the sketch origin.
+    const up = scale3(this.frame.z, Math.sign(dot3(dd, this.frame.z)));
+    const length = reachAlong(this.oc, this.s, this.reach, from, up);
     if (length <= 1e-6) throw new OpError(`the solid is entirely behind the ${this.parallel(start) ? "sketch plane" : "start"} in direction ${formatDirection(dd)}`);
-    return { kind: "plane", plane: { point: add3(from, scale3(dd, length)), normal: this.frame.z }, what: "the far side of the part" };
+    return { kind: "plane", plane: { point: add3(from, scale3(up, length)), normal: this.frame.z }, what: "the far side of the part" };
   }
 
   /** The end the document gives for direction `sign` (1: direction 1, -1: direction 2). */

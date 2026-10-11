@@ -427,7 +427,7 @@ class Sandbox {
       }
       for (const sel of faceSelectors) {
         const r = await this.kernel.select(this.base, sel);
-        if (!r.ok || r.kind !== "faces" || r.indices.some((i) => t.kind !== "face" || i !== t.index)) return `the ${String(f.op)}'s faces must be ${t.kind === "face" ? where : `faces beside ${where}`}; use "edges" for single edges`;
+        if (!r.ok || r.kind !== "faces" || r.indices.some((i) => t.kind !== "face" || i !== t.index)) return t.kind === "face" ? `the ${String(f.op)}'s faces must be ${where} itself; use "edges" for single edges` : `from an edge, name the ${String(f.op)}'s edges with "edges", not "faces"`;
         topo?.edges.forEach((e, i) => r.indices.some((fi) => e.faces.includes(fi)) && picked.add(i));
       }
       const ok = t.kind === "edge" ? picked.has(t.index) : [...picked].every((i) => topo?.edges[i]?.faces.includes(t.index));

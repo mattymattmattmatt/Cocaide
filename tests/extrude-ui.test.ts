@@ -25,7 +25,7 @@ import {
   startPatch,
   thinPatch,
 } from "../src/ui/props/extrude";
-import { addSetPatch, chamferType, chamferTypePatch, describeSet, removeSetPatch, variablePatch } from "../src/ui/props/edgeTreat";
+import { addSetPatch, chamferType, chamferTypePatch, describeSet, removeSetPatch, setRadiusPatch, variablePatch } from "../src/ui/props/edgeTreat";
 import { commitPatch, fieldTestId, visibleFields, type FormContext } from "../src/ui/props/spec";
 import { UI_OPS } from "../src/features/uiDefs";
 import type { RebuildView } from "../src/worker/protocol";
@@ -95,6 +95,20 @@ describe("end conditions in the editor", () => {
     // A plane picked in the tree serves too; a vertex is for up to vertex.
     expect(endPatch(f, 1, "offsetFromFace", ctx(sel({ datums: ["Top"] })))).toEqual({ extent: "offsetFromFace", distance: null, upTo: { datum: "Top" }, offset: 5 });
     expect(() => endPatch(f, 1, "upToVertex", ctx(sel({ faces: [top] })))).toThrow(/Up to vertex needs a vertex or a point/);
+  });
+
+  it("Up to's Use selected takes a round face too (a curved face is a surface to go up to, not an axis)", () => {
+    const wall = faceWhere(view, (x) => x.type === "cylinder");
+    const top = faceWhere(view, (x) => x.type === "plane" && x.normal![2] > 0.99);
+    const f: Raw = { id: "e", op: "extrude", sketch: "sketch_1", extent: "upToFace", upTo: { datum: "Top" } };
+    const upTo = EXTRUDE_FIELDS.find((x) => x.key === "upTo" && x.kind === "datumRef") as Extract<(typeof EXTRUDE_FIELDS)[number], { kind: "datumRef" }>;
+    expect(upTo.pick!(f, form(f, sel({ faces: [wall] })))).toMatchObject({ face: { type: "cylindrical" } });
+    expect(upTo.pick!(f, form(f, sel({ faces: [top] })))).toEqual({ face: { type: "planar", normal: [0, 0, 1], pick: "largest" } });
+    expect(() => upTo.pick!(f, form(f))).toThrow(/click it in the view first, then Use selected/);
+    // Direction 2's too.
+    const g: Raw = { ...f, extent: "blind", distance: 5, upTo: undefined, direction2: { extent: "upToFace", upTo: { datum: "Top" } } };
+    const upTo2 = EXTRUDE_FIELDS.find((x) => x.key === "direction2.upTo") as typeof upTo;
+    expect(upTo2.pick!(g, form(g, sel({ faces: [wall] })))).toMatchObject({ face: { type: "cylindrical" } });
   });
 
   it("keeps what it goes up to when the new end condition can use it", () => {
@@ -259,6 +273,10 @@ describe("fillet and chamfer editors", () => {
     expect(addSetPatch(f, f, { selection: EMPTY_SELECTION, view })).toMatch(/Click the edges for the new radius/);
     expect(removeSetPatch({ ...f, ...patch }, 0)).toEqual({ sets: null });
     expect(describeSet({ radius: 1, radius2: 3, features: ["ext_1"] })).toBe("R 1 → 3 on the edges ext_1 made");
+    // A set's radius is changed in place, the other sets kept.
+    const two = { ...f, sets: [{ edges: f.edges, radius: 2 }, { faces: [{ type: "planar", normal: [0, 0, 1], pick: "largest" }], radius: 1 }] };
+    expect(setRadiusPatch(two, 1, "radius", 4)).toEqual({ sets: [two.sets[0], { ...two.sets[1], radius: 4 }] });
+    expect(setRadiusPatch(two, 0, "radius", "=r")).toEqual({ sets: [{ ...two.sets[0], radius: "=r" }, two.sets[1]] });
   });
 
   it("the chamfer type sets its fields: equal, distance–distance, angle–distance", () => {
