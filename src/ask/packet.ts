@@ -593,8 +593,9 @@ function refWords(ref: DatumRef): string {
 function featureMeasurements(f: Raw, resolved: RawDocument, topo: PartTopology | null): Record<string, unknown> {
   const rf = resolved.features.find((x) => x.id === f.id) ?? f;
   const out: Record<string, unknown> = {};
-  const keys = new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "angle", ...(defOf(f.op)?.measurementKeys ?? [])]);
+  const keys = new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "angle", "radius2", "distance2", "offset", "startOffset", ...(defOf(f.op)?.measurementKeys ?? [])]);
   for (const k of keys) if (typeof rf[k] === "number" || rf[k] === "through") out[k] = rf[k];
+  Object.assign(out, extrudeMeasurements(rf));
   if (topo) {
     const mine = topo.faces.filter((_, i) => topo.faceOrigins[i] === f.id);
     out.faces = mine.length;
@@ -604,6 +605,29 @@ function featureMeasurements(f: Raw, resolved: RawDocument, topo: PartTopology |
       out.measuredDepth = round6(Math.max(...walls.map((x) => x.cylinder!.axial[1] - x.cylinder!.axial[0])));
     }
   }
+  return out;
+}
+
+/** An extrude's or cut's end conditions, draft and wall, as numbers and words (none for other ops). */
+export function extrudeMeasurements(rf: Raw): Record<string, unknown> {
+  if (rf.op !== "extrude" && rf.op !== "cut") return {};
+  const out: Record<string, unknown> = { extent: rf.extent ?? "blind" };
+  const draft = rf.draft as { angle?: unknown } | undefined;
+  if (typeof draft?.angle === "number") out.draftAngle = draft.angle;
+  const thin = rf.thin as { thickness?: unknown; side?: unknown } | undefined;
+  if (typeof thin?.thickness === "number") {
+    out.thickness = thin.thickness;
+    out.wallSide = thin.side ?? "outside";
+  }
+  const d2 = rf.direction2 as Raw | undefined;
+  if (d2 && typeof d2 === "object") {
+    const two: Record<string, unknown> = { extent: d2.extent };
+    for (const k of ["distance", "offset"]) if (typeof d2[k] === "number") two[k] = d2[k];
+    const a = (d2.draft as { angle?: unknown } | undefined)?.angle;
+    if (typeof a === "number") two.draftAngle = a;
+    out.direction2 = two;
+  }
+  if (Array.isArray(rf.regions)) out.regions = rf.regions.length;
   return out;
 }
 

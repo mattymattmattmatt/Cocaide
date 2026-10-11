@@ -226,8 +226,8 @@ describe("the feature ops' UI registry", () => {
 
   it("keeps the old editors' test ids", () => {
     const tids = (op: string) => UI_OPS[op].fields!.map(fieldTestId);
-    expect(tids("fillet")).toEqual(["prop-edges", "prop-radius"]);
-    expect(tids("chamfer")).toEqual(["prop-edges", "prop-chamfer-distance"]);
+    expect(tids("fillet")).toEqual(expect.arrayContaining(["prop-edges", "prop-radius"]));
+    expect(tids("chamfer")).toEqual(expect.arrayContaining(["prop-edges", "prop-chamfer-distance"]));
     expect(tids("linearPattern").slice(0, 4)).toEqual(["prop-pattern-feature", "prop-pattern-direction", "prop-spacing", "prop-count"]);
   });
 

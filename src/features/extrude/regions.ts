@@ -160,6 +160,8 @@ export interface Contour {
   /** The entities of its outer loop, and of the loops cut out of it. */
   outer: string[];
   holes: string[];
+  /** Is it one of the sketch's regions as they stand (an outer loop, or an island in a hole), the ones used when none is picked? A hole's area is not, but can be picked. */
+  inDefault: boolean;
 }
 
 /**
@@ -169,10 +171,10 @@ export interface Contour {
  */
 export function contours(regions: readonly Region[]): Contour[] {
   const nest = nestedLoops(regions);
-  return nest.map((_, i) => {
+  return nest.map((n, i) => {
     const region = regionOfLoop(nest, i);
     const ids = (l: Loop) => [...new Set(l.segs.map((s) => s.entity))];
-    return { seed: interiorPoint(region), area: areaOf([region]), outer: ids(region.outer), holes: region.holes.flatMap(ids) };
+    return { seed: interiorPoint(region), area: areaOf([region]), outer: ids(region.outer), holes: region.holes.flatMap(ids), inDefault: n.depth % 2 === 0 };
   });
 }
 

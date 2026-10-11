@@ -59,11 +59,20 @@ function Contours(p: FieldProps) {
   const picked = pickedContours(entitiesOf(p.f, p), p.f.regions);
   if (list.length < 2 && !p.f.regions) return null;
   return (
-    <Field label="Selected contours" block hint={picked ? "only the regions ticked" : "every region of the sketch: untick one to leave it out"}>
+    <Field label="Selected contours" block hint={picked ? "only the regions ticked" : "the sketch's regions: untick one to leave it out, or tick a hole's area to fill it"}>
       <span className="body-checks" data-testid="prop-regions">
         {list.map((c, i) => (
           <label key={i} className="check" title={`A point inside it: ${c.seed.join(", ")}`}>
-            <input type="checkbox" checked={picked ? picked.includes(i) : true} onChange={(e) => p.update(contoursPatch(list, picked, i, e.target.checked))} data-testid={`prop-regions-${i}`} />
+            <input
+              type="checkbox"
+              checked={picked ? picked.includes(i) : c.inDefault}
+              onChange={(e) => {
+                const patch = contoursPatch(list, picked, i, e.target.checked);
+                if (patch) p.update(patch);
+                else p.setError("At least one region must stay ticked: tick another first.");
+              }}
+              data-testid={`prop-regions-${i}`}
+            />
             {contourLabel(c)}
           </label>
         ))}

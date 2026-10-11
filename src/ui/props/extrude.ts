@@ -157,14 +157,22 @@ export function pickedContours(entities: unknown, regions: unknown): number[] | 
 
 /**
  * The patch after ticking or unticking contour `index`: the seeds of those
- * ticked; all of them ticked (or none) means every region, no `regions`.
+ * ticked. The sketch's own regions ticked (and only those) means no
+ * `regions`; nothing ticked is refused (null: no change).
  */
-export function contoursPatch(list: Contour[], picked: number[] | null, index: number, on: boolean): Raw {
-  const now = new Set(picked ?? list.map((_, i) => i));
+export function contoursPatch(list: Contour[], picked: number[] | null, index: number, on: boolean): Raw | null {
+  const now = new Set(picked ?? defaultContours(list));
   if (on) now.add(index);
   else now.delete(index);
-  if (now.size === 0 || now.size === list.length) return { regions: null };
+  if (now.size === 0) return null;
+  const usual = defaultContours(list);
+  if (now.size === usual.length && usual.every((i) => now.has(i))) return { regions: null };
   return { regions: [...now].sort((a, b) => a - b).map((i) => list[i].seed) };
+}
+
+/** The contours used when none is picked: the sketch's regions (a hole's area is not one, until picked). */
+export function defaultContours(list: Contour[]): number[] {
+  return list.flatMap((c, i) => (c.inDefault ? [i] : []));
 }
 
 /** "r1 less c1 · 314.16 mm²". */

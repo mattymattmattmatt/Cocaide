@@ -17,7 +17,7 @@ import { edgeSummary, faceSummary, measurementSummary, newFailures, round6 } fro
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 import type { AskModel } from "./model";
 import { composeFor } from "./drawingPacket";
-import { buildPacket, isDrawingTarget, partOutline, type AskTarget, type Packet } from "./packet";
+import { buildPacket, extrudeMeasurements, isDrawingTarget, partOutline, type AskTarget, type Packet } from "./packet";
 import { classify, isVisual, SYSTEM, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
 
 const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "setView", "setAnnotation"]);
@@ -413,13 +413,22 @@ class Sandbox {
       return null;
     }
     if (f.op === "fillet" || f.op === "chamfer") {
-      const selectors = Array.isArray(rf.edges) ? rf.edges : [rf.edges];
+      // Its edges (and its radius sets'), and every edge of the faces it names; "the edges a feature made" is too broad here.
+      const choices = [rf, ...(Array.isArray(rf.sets) ? (rf.sets as Record<string, unknown>[]) : [])];
+      if (choices.some((ch) => ch.features !== undefined)) return `from a ${t.kind}, name the ${String(f.op)}'s edges with "edges"${t.kind === "face" ? ' or "faces"' : ""}, not "features"`;
+      const selectors = choices.flatMap((ch) => (ch.edges === undefined ? [] : Array.isArray(ch.edges) ? ch.edges : [ch.edges]));
+      const faceSelectors = choices.flatMap((ch) => (Array.isArray(ch.faces) ? ch.faces : []));
       const topo = await this.topology();
       const picked = new Set<number>();
       for (const sel of selectors) {
         const r = await this.kernel.select(this.base, sel);
         if (!r.ok || r.kind !== "edges") return `the ${String(f.op)}'s edges must be ${t.kind === "edge" ? where : `edges of ${where}`}`;
         r.indices.forEach((i) => picked.add(i));
+      }
+      for (const sel of faceSelectors) {
+        const r = await this.kernel.select(this.base, sel);
+        if (!r.ok || r.kind !== "faces" || r.indices.some((i) => t.kind !== "face" || i !== t.index)) return `the ${String(f.op)}'s faces must be ${t.kind === "face" ? where : `faces beside ${where}`}; use "edges" for single edges`;
+        topo?.edges.forEach((e, i) => r.indices.some((fi) => e.faces.includes(fi)) && picked.add(i));
       }
       const ok = t.kind === "edge" ? picked.has(t.index) : [...picked].every((i) => topo?.edges[i]?.faces.includes(t.index));
       return ok && picked.size > 0 ? null : `the ${String(f.op)}'s edges must be ${t.kind === "edge" ? `${where} (and may include others along it)` : `edges of ${where}`}`;
@@ -518,7 +527,8 @@ function localMeasurements(doc: RawDocument, id: string, topo: PartTopology | nu
   if (!f) return { removed: true };
   const rf = resolveExpressions(f, documentParameters(doc), []) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const k of new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "center", ...(defOf(f.op)?.measurementKeys ?? [])])) if (rf[k] !== undefined) out[k] = rf[k];
+  for (const k of new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "center", "angle", "radius2", "distance2", "offset", "startOffset", ...(defOf(f.op)?.measurementKeys ?? [])])) if (rf[k] !== undefined) out[k] = rf[k];
+  Object.assign(out, extrudeMeasurements(rf));
   if (topo) {
     const walls = topo.faces.filter((x, i) => topo.faceOrigins[i] === id && x.cylinder?.concave);
     if (walls.length) out.measuredDiameters = [...new Set(walls.map((x) => round6(2 * x.cylinder!.radius)))].sort((a, b) => a - b);
