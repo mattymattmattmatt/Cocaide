@@ -558,11 +558,35 @@ export interface PointOnConstraint {
   entity: string;
 }
 
-/** Two points mirrored about a line. */
+/**
+ * Two points mirrored about a line (`points`); or two lines, two arcs or two
+ * circles that are each other's mirror images about it (`entities`: their
+ * ends pair up as they lie, the arcs' centres and radii too). Exactly one of
+ * the two. Mirror Entities relates each copy to its original this way.
+ */
 export interface SymmetricConstraint {
   type: "symmetric";
-  points: [PointRef, PointRef];
+  points?: [PointRef, PointRef];
+  entities?: [string, string];
   line: string;
+}
+
+/**
+ * Offset entities held by one driving distance (Offset Entities makes it):
+ * each `offsets[i]` lies `value` mm from `entities[i]`, on the side it is on
+ * now. A line's offset is a line parallel to it at that distance; an arc's or
+ * a circle's is concentric with it, its radius that much larger or smaller.
+ * A base may also be a point ref ("l1.end"): its offset is an arc or circle
+ * centred there with the value for radius (a rounded corner, an arc cap).
+ * Editing the value moves every offset at once.
+ */
+export interface OffsetConstraint {
+  type: "offset";
+  /** The bases: lines, arcs and circles of the sketch, or point refs. */
+  entities: string[];
+  /** One offset per base, in the same order. */
+  offsets: string[];
+  value: number;
 }
 
 /** An entity (a point entity too), or one point, held where it is: only the document's numbers move it. */
@@ -582,7 +606,8 @@ export type Constraint =
   | AngleConstraint
   | PointOnConstraint
   | SymmetricConstraint
-  | FixConstraint;
+  | FixConstraint
+  | OffsetConstraint;
 export type ConstraintType = Constraint["type"];
 
 // ------------------------------------------------------- extrude and cut

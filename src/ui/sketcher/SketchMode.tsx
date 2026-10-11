@@ -1013,7 +1013,7 @@ function round(x: number): number {
 function constraintKey(k: Constraint): string {
   const { value: _ignored, expr: _expr, ...rest } = k as Dimension & { value?: number };
   if (k.type === "coincident" || (k.type === "horizontal" || k.type === "vertical") && k.points) return `${k.type}:${[...k.points!].sort().join("|")}`;
-  if ("entities" in k && k.type !== "angle") return `${k.type}:${[...k.entities].sort().join("|")}`;
+  if ("entities" in k && k.entities && k.type !== "angle" && k.type !== "offset") return `${k.type}:${[...k.entities].sort().join("|")}${k.type === "symmetric" ? `@${k.line}` : ""}`;
   return JSON.stringify(rest);
 }
 
