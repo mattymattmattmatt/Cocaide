@@ -6,7 +6,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../icons";
 import { keyFor, keyHint, useInputPrefs } from "../input";
-import type { FlyoutDef, SketchToolDef, ToolOptions } from "./tools/types";
+import type { FlyoutDef, SketchToolDef, ToolOption, ToolOptions } from "./tools/types";
+
+/** What a toolbar button needs of a tool: drawing tools and edit tools alike. */
+export type ToolLike = Pick<SketchToolDef, "id" | "name" | "label" | "icon" | "title">;
 
 const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
@@ -14,7 +17,7 @@ const keepFocus = (e: React.MouseEvent) => e.preventDefault();
  * One flyout: the button shows the tool picked from it last (and runs it); its
  * arrow opens the list. Pressed while any of its tools is the active one.
  */
-export function Flyout({ flyout, tools, shown, active, onPick }: { flyout: FlyoutDef; tools: SketchToolDef[]; shown: SketchToolDef; active: string; onPick(t: SketchToolDef): void }) {
+export function Flyout<T extends ToolLike>({ flyout, tools, shown, active, onPick }: { flyout: FlyoutDef; tools: T[]; shown: T; active: string; onPick(t: T): void }) {
   const prefs = useInputPrefs();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -127,17 +130,39 @@ export function ToolStrip({
       <span className="strip-prompt" title={prompt} data-testid="tool-prompt">
         {prompt}
       </span>
-      {(tool.options ?? []).map((o) =>
+      <OptionControls options={tool.options ?? []} values={options} onOption={onOption} />
+    </div>
+  );
+}
+
+/** A tool's options, changed on the spot: numbers with − and +, choices as pressed buttons, toggles as tick boxes. */
+export function OptionControls({ options, values, onOption }: { options: ToolOption[]; values: ToolOptions; onOption(key: string, value: number | string): void }) {
+  return (
+    <>
+      {options.map((o) =>
         o.kind === "number" ? (
           <label key={o.key} className="strip-option" title={o.title}>
             {o.label}
             <NumberStepper
-              value={Number(options[o.key] ?? o.default)}
+              value={Number(values[o.key] ?? o.default)}
               min={o.min}
               max={o.max}
+              step={o.step ?? 1}
+              integer={o.integer}
               testId={`tool-option-${o.key}`}
               onChange={(v) => onOption(o.key, o.integer ? Math.round(v) : v)}
             />
+            {o.unit && <span className="unit">{o.unit}</span>}
+          </label>
+        ) : o.kind === "toggle" ? (
+          <label key={o.key} className="strip-option strip-toggle" title={o.title}>
+            <input
+              type="checkbox"
+              checked={(values[o.key] ?? o.default) === "on"}
+              onChange={(e) => onOption(o.key, e.target.checked ? "on" : "off")}
+              data-testid={`tool-option-${o.key}`}
+            />
+            {o.label}
           </label>
         ) : (
           <span key={o.key} className="strip-option" title={o.title} role="radiogroup" aria-label={o.label}>
@@ -146,7 +171,7 @@ export function ToolStrip({
                 key={c.value}
                 type="button"
                 role="radio"
-                aria-checked={(options[o.key] ?? o.default) === c.value}
+                aria-checked={(values[o.key] ?? o.default) === c.value}
                 title={c.title}
                 data-testid={`tool-option-${o.key}-${c.value}`}
                 onMouseDown={keepFocus}
@@ -158,12 +183,12 @@ export function ToolStrip({
           </span>
         ),
       )}
-    </div>
+    </>
   );
 }
 
-/** A whole number with − and + beside it; typed values outside min..max are pulled back in. */
-function NumberStepper({ value, min, max, onChange, testId }: { value: number; min: number; max: number; onChange(v: number): void; testId: string }) {
+/** A number with − and + beside it (by `step`); typed values outside min..max are pulled back in. */
+function NumberStepper({ value, min, max, step, integer, onChange, testId }: { value: number; min: number; max: number; step: number; integer?: boolean; onChange(v: number): void; testId: string }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   const commit = (raw: string) => {
@@ -173,14 +198,15 @@ function NumberStepper({ value, min, max, onChange, testId }: { value: number; m
     setText(String(clamped));
     onChange(clamped);
   };
+  const stepped = (v: number) => Math.round(v * 1e9) / 1e9;
   return (
     <span className="stepper">
-      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min} aria-label="Fewer" data-testid={`${testId}-down`}>
+      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.max(min, stepped(value - step)))} disabled={value <= min} aria-label="Less" data-testid={`${testId}-down`}>
         −
       </button>
       <input
         type="text"
-        inputMode="numeric"
+        inputMode={integer ? "numeric" : "decimal"}
         value={text}
         aria-label="Value"
         data-testid={testId}
@@ -196,7 +222,7 @@ function NumberStepper({ value, min, max, onChange, testId }: { value: number; m
           }
         }}
       />
-      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.min(max, value + 1))} disabled={value >= max} aria-label="More" data-testid={`${testId}-up`}>
+      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.min(max, stepped(value + step)))} disabled={value >= max} aria-label="More" data-testid={`${testId}-up`}>
         +
       </button>
     </span>

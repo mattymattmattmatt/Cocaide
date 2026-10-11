@@ -1158,3 +1158,39 @@ svg.icon { flex: none; display: block; }
 /* The sketch toolbar gained Convert: its buttons sit a little closer, so it stays on one row. */
 .sketch-toolbar .tool { padding: 0 5px; min-width: 48px; }
 .sketch-toolbar .sep { margin: 0 3px; }
+/* ======================================================= Phase O wave 3: sketch edit tools, shaded regions, check sketch */
+:root { --sketch-region: rgb(31 79 191 / 0.08); --sketch-warning: #d97706; --sketch-goes: #cf222e; }
+@media (prefers-color-scheme: dark) { :root { --sketch-region: rgb(122 167 255 / 0.1); --sketch-warning: #f5a524; --sketch-goes: #ff6b6b; } }
+/* Closed contours filled lightly: what will extrude. */
+.sketch-canvas .sketch-region { fill: var(--sketch-region); stroke: none; pointer-events: none; }
+/* What an edit would take away (a trimmed piece), and what it would make. */
+.sketch-canvas .entity.preview.goes { stroke: var(--sketch-goes); stroke-width: 3; stroke-dasharray: 5 3; }
+.sketch-canvas .entity.preview.edit { stroke: var(--sketch-hover); stroke-width: 2; }
+.sketch-canvas .trim-stroke { fill: none; stroke: var(--sketch-goes); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.sketch-canvas .edit-mark circle { fill: var(--panel); stroke: var(--sketch-hover); stroke-width: 1.5; }
+.sketch-canvas .edit-mark.off circle { stroke: var(--muted); }
+.sketch-canvas .edit-mark path { stroke: var(--sketch-goes); stroke-width: 1.5; }
+.sketch-canvas .sketch-warning { color: var(--sketch-warning); cursor: help; }
+.sketch-canvas .sketch-warning svg.icon { overflow: visible; }
+.sketch-canvas.tool-trim, .sketch-canvas.tool-extend, .sketch-canvas.tool-split { cursor: crosshair; }
+/* The status line's warning: what keeps the sketch from a clean profile. */
+.sketch-problems {
+  position: absolute; left: 140px; bottom: 12px; max-width: calc(100% - 340px); display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px; border-radius: 6px; font-size: 12px; color: var(--sketch-warning); cursor: pointer;
+  background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--sketch-warning);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sketch-check h2 { display: flex; align-items: center; justify-content: space-between; }
+.check-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.check-list li { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 6px; }
+.check-list li svg.icon { color: var(--sketch-warning); }
+.check-list li button { height: 22px; padding: 0 8px; font-size: 12px; }
+/* An edit tool's strip: its options may run onto a second row; Apply and Clear at the end. */
+.sketch-tool-strip.edit-strip { flex-wrap: wrap; row-gap: 4px; }
+.sketch-tool-strip .strip-toggle input { margin: 0; }
+.sketch-tool-strip .strip-option .unit { color: var(--muted); }
+.sketch-tool-strip .strip-actions > button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.sketch-tool-strip .strip-actions > button.primary:disabled { opacity: 0.45; cursor: default; }
+.sketch-tool-strip .strip-actions > button[aria-pressed="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
+.sketch-tool-strip .strip-problem { color: var(--bad); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.sketch-tool-strip .stepper input { width: 46px; }

@@ -499,6 +499,19 @@ const ICONS = {
       <path d="M2.5 15.5h5" />
     </>
   ),
+  // Phase O wave 3: explode a rectangle or slot entity into lines and arcs; check the sketch for a feature
+  explodeEntity: (
+    <>
+      <path d="M4 4h6 M4 4v6 M20 4h-6 M20 4v6 M4 20h6 M4 20v-6 M20 20h-6 M20 20v-6" />
+      <path d="M12 9v6 M9 12h6" style={dash} />
+    </>
+  ),
+  checkSketch: (
+    <>
+      <path d="M4 6h9l4 4v9H4z" fill="currentColor" fillOpacity={0.14} />
+      <path d="M13.5 15.5l2.5 2.5 5-5.5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

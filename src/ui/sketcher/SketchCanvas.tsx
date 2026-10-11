@@ -15,6 +15,7 @@ import { shapeWords } from "./names";
 import { tangentStart } from "./tools/arcs";
 import { place, previewOf, snapClick, toolByName, type Placement } from "./tools/run";
 import type { Click, SketchToolDef, ToolContext, ToolOptions } from "./tools/types";
+import type { EditInput, EditPicks, EditPreview, EditToolDef } from "./edit/types";
 
 /** "select", "dimension", "convert" (picking model edges and faces to convert), or a drawing tool's name in the registry (src/ui/sketcher/tools). */
 export type Tool = string;
@@ -47,6 +48,24 @@ export interface DrawProgress {
 
 /** The tool a line chain's A turns its next piece into. */
 const TANGENT_ARC = toolByName("tangent-arc")!;
+/** How an edit tool's placed point snaps (a move's base point): as the Point tool's click does. */
+const PLACE = toolByName("point")!;
+
+/** An edit tool in use (src/ui/sketcher/edit): the canvas feeds it clicks and drags, and draws what it would do. */
+export interface CanvasEdit {
+  tool: EditToolDef;
+  picks: EditPicks;
+  /** What it has picked, drawn as selected. */
+  chosen: SketchItem[];
+  /** The next click places a point (snapped), rather than picking. */
+  places: boolean;
+  /** Its preview follows the pointer (a trim's piece, a move's rubber band). */
+  follows: boolean;
+  preview(hover: EditInput | null): EditPreview;
+  onClick(input: EditInput): void;
+  /** A drag across the sketch (power trim). */
+  onStroke(path: Vec2[]): void;
+}
 
 interface Props {
   entities: SketchEntity[];
@@ -80,6 +99,12 @@ interface Props {
   onEditDimension?(index: number, clientX: number, clientY: number): void;
   /** Smart Dimension: the picks are made (two, or one and a click in space); `at` is where it was placed. */
   onDimension?(picks: SketchItem[], at: Vec2, clientX: number, clientY: number): void;
+  /** The edit tool in use, if one is. */
+  edit?: CanvasEdit;
+  /** The closed contours of the profile, shaded lightly: what will extrude. */
+  regions?: Vec2[][];
+  /** What keeps the sketch from making a clean profile, marked where it is. */
+  problems?: { at: Vec2; text: string }[];
 }
 
 interface ViewState {
@@ -106,6 +131,8 @@ export function SketchCanvas(props: Props) {
   const [arcNext, setArcNext] = useState(false);
   /** Where the pointer went since the last click: an arc bends the way it was drawn. */
   const trail = useRef<Vec2[]>([]);
+  /** A power-trim stroke being dragged. */
+  const [stroke, setStroke] = useState<Vec2[] | null>(null);
   /** Smart Dimension's picks so far. */
   const [picks, setPicks] = useState<SketchItem[]>([]);
   /** A selection box being dragged: left to right selects what is inside it, right to left what it touches. */
@@ -119,6 +146,7 @@ export function SketchCanvas(props: Props) {
     | { kind: "box"; start: Vec2; additive: boolean }
     | { kind: "drag"; handle: string; from: Vec2; moved: boolean; item: SketchItem; additive: boolean }
     | { kind: "click"; at: Vec2; item: SketchItem | null; additive: boolean; startClient: Vec2; startView: ViewState }
+    | { kind: "edit"; path: Vec2[]; startClient: Vec2; stroke: boolean; additive: boolean }
     | null
   >(null);
 
@@ -224,6 +252,16 @@ export function SketchCanvas(props: Props) {
   /** A reference follows the model: picked, never dragged. */
   const fixedId = (id: string) => !!entities.find((e) => e.id === id)?.ref;
 
+  /** What an edit tool gets at p: what is under it, and the point placed there (snapped) when it places one. */
+  const editInput = (p: Vec2, additive = false): EditInput => {
+    const tol = PICK_PX * unit;
+    if (props.edit?.places) {
+      const s = snapClick(PLACE, [], p, { entities, tol: SNAP_PX * unit, grid: snapToGrid ? step : null, options: {}, model: modelEnts });
+      return { p: s.p, item: itemAt(p), ref: s.ref, tol, additive };
+    }
+    return { p, item: itemAt(p), ref: null, tol, additive };
+  };
+
   /** The tool's last click is in: build the shape, with what its clicks inferred, and hand it over. */
   const finishPlacement = (pts: Snap[]): Placement | null => {
     if (!def) return null;
@@ -255,6 +293,10 @@ export function SketchCanvas(props: Props) {
       gesture.current = { kind: "pan", startClient: [e.clientX, e.clientY], startView: v };
       return;
     }
+    if (props.edit && e.button === 0) {
+      gesture.current = { kind: "edit", path: [p], startClient: [e.clientX, e.clientY], stroke: false, additive };
+      return;
+    }
     if (tool !== "select") return;
     const handle = hitHandle(entities, p, PICK_PX * unit);
     if (handle && handle.ref !== "origin" && !fixedId(handle.ref.split(".")[0])) {
@@ -282,6 +324,15 @@ export function SketchCanvas(props: Props) {
     if (!g) return;
     if (g.kind === "box") {
       setBox({ a: g.start, b: p });
+      return;
+    }
+    if (g.kind === "edit") {
+      // A drag (not a click) with a tool that takes one: SOLIDWORKS's power trim stroke.
+      if (!g.stroke && props.edit?.tool.drag && Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) >= 4) g.stroke = true;
+      if (g.stroke) {
+        g.path.push(p);
+        setStroke([...g.path]);
+      }
       return;
     }
     if (g.kind === "zoom") {
@@ -312,6 +363,12 @@ export function SketchCanvas(props: Props) {
     const g = gesture.current;
     gesture.current = null;
     const p = toWorld(e.clientX, e.clientY);
+    if (g?.kind === "edit") {
+      setStroke(null);
+      if (g.stroke) props.edit?.onStroke([...g.path, p]);
+      else props.edit?.onClick(editInput(p, g.additive));
+      return;
+    }
     if (g?.kind === "drag") {
       if (g.moved) props.onDrag("end", g.handle, g.from, p);
       else select(g.item, g.additive);
@@ -438,13 +495,19 @@ export function SketchCanvas(props: Props) {
     return previewOf(def, [...clicks, snap(cursor)], options, toolContext(), construction);
   }, [def, cursor, clicks, construction, options, entities]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const chosen = tool === "dimension" ? picks : selection;
+  const chosen = props.edit ? props.edit.chosen : tool === "dimension" ? picks : selection;
   const selectedIds = new Set(chosen.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
   const selectedPoints = new Set(chosen.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
-  const hoverItem = cursor && (tool === "select" || tool === "dimension" || tool === "convert") && !gesture.current ? itemAt(cursor) : null;
+  const hoverItem = cursor && (tool === "select" || tool === "dimension" || tool === "convert" || (props.edit?.tool.kind === "collect" && !props.edit.places)) && !gesture.current ? itemAt(cursor) : null;
+  // What the edit tool would do: with the pointer where it is, for the tools whose preview follows it.
+  const editHover = props.edit?.follows && !stroke ? cursor : null;
+  const editPreview = useMemo(
+    () => (props.edit ? props.edit.preview(editHover ? editInput(editHover) : null) : {}),
+    [props.edit, editHover?.[0], editHover?.[1], entities], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const selectedFaces = new Set(chosen.flatMap((s) => (s.kind === "face" ? [s.index] : [])));
   const isHover = (id: string) => hoverItem?.kind === "entity" && hoverItem.id === id;
-  const snapMark = cursor && def ? snap(cursor) : null;
+  const snapMark = cursor && def ? snap(cursor) : cursor && props.edit?.places ? snapClick(PLACE, [], cursor, { entities, tol: SNAP_PX * unit, grid: snapToGrid ? step : null, options: {}, model: modelEnts }) : null;
   const inferIcon: IconName | null = !snapMark ? null : snapMark.ref ? "coincident" : snapMark.on ? RELATION[snapMark.on.type].icon : snapMark.orient ?? null;
   // A selected relation outlines what it holds.
   const selectedK = props.selectedConstraint !== null && props.selectedConstraint !== undefined ? constraints[props.selectedConstraint] : undefined;
@@ -524,6 +587,15 @@ export function SketchCanvas(props: Props) {
             </path>
           ))}
         </g>
+        {props.regions && props.regions.length > 0 && (
+          <path
+            d={props.regions.map((loop) => loop.map((q, i) => `${i ? "L" : "M"}${q[0]} ${q[1]}`).join("") + "Z").join("")}
+            className="sketch-region"
+            fillRule="evenodd"
+            data-testid="sketch-regions"
+            data-count={props.regions.length}
+          />
+        )}
         {entities.map((e) => {
           const className = [
             "entity",
@@ -543,6 +615,26 @@ export function SketchCanvas(props: Props) {
             <EntityShape key={`preview:${i}`} e={e} className={`entity preview${e.construction ? " construction" : ""}`} />
           ),
         )}
+        {(editPreview.remove ?? []).map((e, i) => (
+          <EntityShape key={`goes:${i}`} e={e} className="entity preview goes" />
+        ))}
+        {(editPreview.add ?? []).map((e, i) =>
+          e.type === "point" ? (
+            <PointDot key={`edit:${i}`} at={e.at} r={3.5 * unit} className="entity preview" />
+          ) : (
+            <EntityShape key={`edit:${i}`} e={e} className={`entity preview edit${e.construction ? " construction" : ""}`} />
+          ),
+        )}
+        {(editPreview.marks ?? []).map((m, i) => (
+          <g key={`mark:${i}`} className={`edit-mark${m.off ? " off" : ""}`} data-testid="edit-mark" data-off={m.off ? "true" : undefined}>
+            <circle cx={m.at[0]} cy={m.at[1]} r={5 * unit} vectorEffect="non-scaling-stroke" />
+            {m.off && <path d={`M${m.at[0] - 4 * unit} ${m.at[1] - 4 * unit}L${m.at[0] + 4 * unit} ${m.at[1] + 4 * unit}M${m.at[0] - 4 * unit} ${m.at[1] + 4 * unit}L${m.at[0] + 4 * unit} ${m.at[1] - 4 * unit}`} vectorEffect="non-scaling-stroke" />}
+          </g>
+        ))}
+        {(props.edit?.picks.places ?? []).map((pl, i) => (
+          <circle key={`place:${i}`} cx={pl.p[0]} cy={pl.p[1]} r={3.5 * unit} className="placed" />
+        ))}
+        {stroke && <path d={stroke.map((q, i) => `${i ? "L" : "M"}${q[0]} ${q[1]}`).join("")} className="trim-stroke" vectorEffect="non-scaling-stroke" data-testid="trim-stroke" />}
         {[...entities, ...modelHandles(modelEnts, hoverItem, chosen)].flatMap((e) =>
           // A sketch point is its own handle: its dot. A model edge shows its points only when the pointer is on it, or one is picked.
           (e.type === "point" ? [] : handlesOf(e)).map((h) => (
@@ -576,6 +668,12 @@ export function SketchCanvas(props: Props) {
         onEdit={(i, x, y) => props.onEditDimension?.(i, x, y)}
         onContext={(i, x, y) => props.onContext?.({ kind: "constraint", index: i }, x, y)}
       />
+      {(props.problems ?? []).map((w, i) => (
+        <g key={`warn:${i}`} className="sketch-warning" data-testid="sketch-warning" pointerEvents="visiblePainted">
+          <title>{w.text}</title>
+          <Icon name="alert" size={14 * unit} x={w.at[0] - 7 * unit} y={-w.at[1] - 20 * unit} />
+        </g>
+      ))}
       {cursor && inferIcon && (
         <g className="infer" data-testid={`infer-${inferIcon}`} pointerEvents="none">
           <rect x={cursor[0] + 10 * unit} y={-cursor[1] + 8 * unit} width={18 * unit} height={18 * unit} rx={3 * unit} />

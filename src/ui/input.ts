@@ -127,24 +127,26 @@ export const COMMANDS: CommandDef[] = [
 
   { id: "sketch.convert", label: "Convert entities (model edges into the sketch)", group: "Sketch", key: null },
 
-  { id: "sketch.trim", label: "Trim", group: "Sketch", key: "T", planned: true },
-  { id: "sketch.extend", label: "Extend", group: "Sketch", key: "E", planned: true },
-  { id: "sketch.split", label: "Split entity", group: "Sketch", key: null, planned: true },
-  { id: "sketch.fillet", label: "Sketch fillet", group: "Sketch", key: null, planned: true },
-  { id: "sketch.chamfer", label: "Sketch chamfer", group: "Sketch", key: null, planned: true },
-  { id: "sketch.offset", label: "Offset entities", group: "Sketch", key: null, planned: true },
-  { id: "sketch.mirror", label: "Mirror entities", group: "Sketch", key: "M", planned: true },
-  { id: "sketch.linearPattern", label: "Linear sketch pattern", group: "Sketch", key: null, planned: true },
-  { id: "sketch.circularPattern", label: "Circular sketch pattern", group: "Sketch", key: null, planned: true },
-  { id: "sketch.move", label: "Move entities", group: "Sketch", key: null, planned: true },
-  { id: "sketch.rotate", label: "Rotate entities", group: "Sketch", key: null, planned: true },
-  { id: "sketch.scale", label: "Scale entities", group: "Sketch", key: null, planned: true },
-  { id: "sketch.copy", label: "Copy entities", group: "Sketch", key: null, planned: true },
+  { id: "sketch.trim", label: "Trim", group: "Sketch", key: "T" },
+  { id: "sketch.extend", label: "Extend", group: "Sketch", key: "E" },
+  { id: "sketch.split", label: "Split entity", group: "Sketch", key: null },
+  { id: "sketch.fillet", label: "Sketch fillet", group: "Sketch", key: null },
+  { id: "sketch.chamfer", label: "Sketch chamfer", group: "Sketch", key: null },
+  { id: "sketch.offset", label: "Offset entities", group: "Sketch", key: null },
+  { id: "sketch.mirror", label: "Mirror entities", group: "Sketch", key: "M" },
+  { id: "sketch.linearPattern", label: "Linear sketch pattern", group: "Sketch", key: null },
+  { id: "sketch.circularPattern", label: "Circular sketch pattern", group: "Sketch", key: null },
+  { id: "sketch.move", label: "Move entities", group: "Sketch", key: null },
+  { id: "sketch.rotate", label: "Rotate entities", group: "Sketch", key: null },
+  { id: "sketch.scale", label: "Scale entities", group: "Sketch", key: null },
+  { id: "sketch.copy", label: "Copy entities", group: "Sketch", key: null },
 
   { id: "sketch.fullyDefine", label: "Fully define the sketch", group: "Sketch", key: null, planned: true },
 
   { id: "sketch.ellipse", label: "Ellipse", group: "Sketch", key: null, planned: true },
   { id: "sketch.spline", label: "Spline", group: "Sketch", key: null, planned: true },
+  { id: "sketch.explode", label: "Explode a rectangle or slot into lines and arcs", group: "Sketch", key: null },
+  { id: "sketch.check", label: "Check sketch for feature", group: "Sketch", key: null },
 ];
 
 export interface InputPrefs {
