@@ -170,3 +170,102 @@ Tool options: polygon `{sides: 3–40, mode: "inscribed" | "circumscribed"}`; sl
 solveSketch with drag now falls back to slide(): when the pins cannot be met exactly, the handle goes to the nearest place the constraints allow, as long as that brings it closer than it was. Callers see ok:true with the moved geometry. 'the constraints do not let that move' now means the handle cannot get any closer at all. The Point tool's build returns null for a click on an existing sketch point's '.at'.
 
 Known follow-ups: sketch points are not drawn in the 3D overlay after finishing; the polygon's relation glyphs crowd the view; an empty sketch reads 'Fully defined'; plane drag/Ctrl-drag copy not done.
+
+## Wave 2 (merged): sketch references + revolve/shell/draft/scale
+
+Ops:
+- revolve: {sketch, axis: {line: entityId} | DatumRef, angle?, angle2?, midplane?, reverse?, thin?: {thickness, side?: "outside"|"inside"|"mid"}, ...OperationFields}. `isLineAxis(a)` is exported from src/features/revolve/doc.ts.
+- shell: {faces: FaceSelector[] (may be empty), thickness, outward?, body?}.
+- draft: {faces, neutral: DatumRef (plane-like), angle, flip?}.
+
+Helpers:
+- src/kernel/pickFaces.ts (new shared kernel helper): `pickFaces(part, selectors)` returns PickedFace[] ({face, index, body, path}); `bodyOfFaces(picked, body, bodies, opName)`.
+- src/ui/model/carrySelection.ts: carries a whole-body selection through a rebuild.
+- src/features/revolve/band.ts: axisCrossing, regionSegs, openBand, closedBands, wallOffsets, BandError.
+
+Tool exports:
+- src/ui/model/tools/revolve.ts: `sketchAxisLine(entities)`, `revolveFeature(ctx, cut)`.
+- src/ui/model/tools/dress.ts: `shellFeature`, `draftFeature`, `draftNeutral(faces, all, datums)`.
+- src/ui/model/tools/scale.ts: `scaleFeature`.
+
+Tool and test IDs:
+- Revolve: tool.revolve (tool-revolve) and tool.revolveCut (tool-revolve-cut), both in the tool-revolve-menu menu.
+- Shell: tool.shell (tool-shell), right-click ctx-shell.
+- Draft: tool.draft (tool-draft), right-click ctx-draft.
+- Scale: tool.scale (tool-scale, Bodies tab).
+
+Icons: revolve, revolveCut, shell, draft, scaleBody.
+
+New exports: openProfile(entities, axis) in src/ui/model/tools/revolve.ts; defaultAxisIn(frame) in src/features/revolve/ui.tsx. PATTERNABLE in src/ui/model/tools/pattern.ts now includes registry ops with patternable: true.
+
+Document:
+- `SketchEntity.ref?: DatumRef` (line, circle, arc, point only) and `SKETCH_AXES = ["X", "Y"]` with `type SketchAxis`, in `src/doc/types.ts`.
+
+`src/doc/sketch.ts`:
+- `isSketchAxis(id)`
+- `isReference(e)`
+- `isConstruction(e)`: returns `e.construction ?? !!e.ref`.
+- `constraintEntities(k)`: leaves the axes out.
+- `constraintTargets(k)`: keeps the axes (re-exported from `src/geom/axes.ts`).
+- `expressionFields(rawEntities): string[]`
+
+`src/geom/axes.ts`:
+- `AXIS_IDS`, `AXIS_LINES`
+- `isAxisId`
+- `withAxes(entities)`
+- `isConstant(e)`: true for a reference entity or an axis.
+- `constraintTargets`
+
+`src/geom/projection.ts`:
+- `EdgeGeometry`, `ProjectedShape`
+- `projectEdge(edge, frame)`
+- `projectAxis(origin, dir, frame, half)`
+- `projectPoint(p, frame)`
+- `edgePointOf(edge, at)`
+- `withProjection(e, shape, name)`, `withPoint(e, at, name)`
+- `isFullCircle(edge)`
+- `REFERENCEABLE`
+
+Solver (`src/geom/solver.ts`):
+- `solveSketch(entities, constraints, opts)`: reference entities and the axes are frozen automatically.
+- `sketchDof`, `sketchStatus` and `wouldOverDefine` do not count constants.
+
+Kernel:
+- `src/kernel/sketchRefs.ts`: `solvedSketch(ctx, f, frame, hold?)` and `projectReferences(ctx, f, frame)`.
+- `SketchOverlay` (`src/kernel/rebuild.ts`) gains:
+  - `polylines[].reference?`
+  - `points: { at, reference? }[]`
+  - `entities: SketchEntity[]`, which holds the solved entities.
+
+Worker:
+- New request `{ type: "before", doc, feature }` returning `{ type: "before", view }`.
+- `KernelClient.rebuildBefore(doc, featureId): Promise<RebuildView>`
+- `src/worker/before.ts`: `documentBefore`, `beforeKey`, `Recent<T>`.
+
+Sketcher UI:
+- `src/ui/sketcher/model.ts`:
+  - `modelView(view, frame): ModelView` and `EMPTY_MODEL`
+  - model edge stand-in ids are `"@e<index>"`: `modelId`, `isModelId`, `modelIndex`
+  - `modelEntities`, `modelEdge`, `faceAt`
+  - `materialize(ids, model, entities, { convert? })`
+  - `renamed(k, ids)`, `modelIdsOf(k)`
+  - `convertEdges(edgeIds, faceIndices, model, entities, constraints, construction?)`
+- `src/ui/sketcher/names.ts`: `namer(entities, model)`, `referenceName(e)`, `shapeWords(e)`, `directionWord(d)`.
+- `src/ui/sketcher/draft.ts`:
+  - `SketchItem` gains `{ kind: "face"; index }`.
+  - `describeConstraint(k, names?)`
+  - `constraintSentence(k, label, names?)`
+  - `axesAllowed(k)`
+- `src/ui/sketcher/annotate.ts`: `relationGroups(constraints)`; `Glyph.indices?`.
+- `SketchMode` and `SketchCanvas` take the prop `model: ModelView`, which replaces `reference: Float32Array`.
+- New tool name `"convert"` (command `sketch.convert`, icon `convertEntities`).
+- `SnapContext.model?: SketchEntity[]`.
+
+CSS:
+- Tokens `--sketch-reference`, `--model-edge`, `--model-edge-plane` and `--model-face`, appended to `styles.css`.
+
+- `CheckResult.solvedSketches?: Record<string, SketchEntity[]>` (`src/ask/kernel.ts`): the rebuild-solved entities of sketches that reference the model. It is only present when such a sketch built.
+- Sketch packets (`measurements.now`): when the solved geometry differs from the document, they carry `{ note, entities }`.
+- `entityMeasurements` for a circle or an arc now includes `center`.
+
+Note: the sketch toolbar is nearly full at 1500 px: new sketch tools must go in flyouts.
