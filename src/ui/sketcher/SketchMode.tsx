@@ -301,19 +301,29 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   };
 
   /**
-   * Turns the selected (or given) entities to construction geometry and back;
-   * with none, the next ones drawn. A reference is construction unless it says
-   * otherwise, so turning it to profile geometry writes construction: false.
+   * Turns the selected (or given) entities to construction geometry and back
+   * (Q), as one: all construction when any is not, else all back to profile
+   * geometry. A point picked on a line, arc or circle stands for it. With
+   * nothing selected, it turns construction on or off for the next ones drawn.
+   * A reference is construction unless it says otherwise, so turning it to
+   * profile geometry writes construction: false.
    */
   const toggleConstruction = (items = selection) => {
-    const ids = new Set(lineworkIds(items));
-    if (!ids.size) return setConstruction((c) => !c);
+    const owners = items.flatMap((i) => (i.kind === "point" ? [i.ref.split(".")[0]] : [])).filter((id) => {
+      const e = draft.entities.find((x) => x.id === id);
+      return !!e && e.type !== "point";
+    });
+    const ids = new Set([...lineworkIds(items), ...owners]);
+    if (!ids.size) {
+      if (items.length) return setMessage("construction is for the sketch's own lines, arcs, circles and slots: a model edge or an axis is already a reference");
+      return setConstruction((c) => !c);
+    }
+    const next = !draft.entities.filter((e) => ids.has(e.id)).every(isConstruction);
     commit({
       ...draft,
       entities: draft.entities.map((e) => {
         if (!ids.has(e.id)) return e;
         const { construction: _was, ...rest } = e;
-        const next = !isConstruction(e);
         // Whichever way, write only what differs from the entity's default.
         return (next === !!e.ref ? rest : { ...rest, construction: next }) as SketchEntity;
       }),

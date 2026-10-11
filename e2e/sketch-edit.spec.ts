@@ -312,3 +312,35 @@ test("the edit tools: flyouts, keys, the shortcut bar and the right-click menu; 
   await pressed(page, "tool-offset");
   await page.getByTestId("cancel-sketch").click();
 });
+
+test("Q turns any selection construction as one, and back; with nothing selected, the next shapes", async ({ page }) => {
+  await sketchOnTop(page);
+  await page.keyboard.press("l");
+  await sketchClick(page, 0, 0);
+  await sketchClick(page, 20, 0);
+  await page.keyboard.press("Escape");
+  await sketchClick(page, 0, 10);
+  await sketchClick(page, 20, 10);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  // One line, and the other by its end point: both go construction.
+  await sketchClick(page, 10, 0);
+  await page.keyboard.down("Control");
+  await sketchClick(page, 20, 10);
+  await page.keyboard.up("Control");
+  await page.keyboard.press("q");
+  await expect(page.locator("[data-entity=l1].construction")).toHaveCount(1);
+  await expect(page.locator("[data-entity=l2].construction")).toHaveCount(1);
+  await page.keyboard.press("q");
+  await expect(page.locator("[data-entity].construction")).toHaveCount(0);
+  // Nothing selected: the next line drawn is construction.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("q");
+  await pressed(page, "tool-construction");
+  await page.keyboard.press("l");
+  await sketchClick(page, 0, 20);
+  await sketchClick(page, 20, 20);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-entity=l3].construction")).toHaveCount(1);
+  await page.getByTestId("cancel-sketch").click();
+});

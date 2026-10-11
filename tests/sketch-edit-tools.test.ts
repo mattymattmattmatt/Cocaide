@@ -212,3 +212,15 @@ describe("move, copy, rotate, scale", () => {
     expect(big.entities[1]).toEqual({ id: "l2", type: "line", start: [0, 15], end: [30, 15] });
   });
 });
+
+describe("on the canvas", () => {
+  it("draws an offset's one dimension across its first pair, and a symmetric pair's glyphs on both entities", async () => {
+    const { dimensionShapes, relationGlyphs } = await import("../src/ui/sketcher/annotate");
+    const r = edit(tool("offset").apply!(rectangle(), { ...NO_PICKS, entities: ["l1"] }, options("offset", { distance: 2 })));
+    const dims = dimensionShapes(r.entities, r.constraints, 0.1);
+    const k = r.constraints.findIndex((c) => c.type === "offset");
+    expect(dims.find((d) => d.index === k)?.text).toBe("2");
+    const m = edit(tool("mirror").apply!({ entities: [line("l1", [1, 0], [2, 3])], constraints: [] }, { ...NO_PICKS, entities: ["l1"], about: "Y" }, options("mirror")));
+    expect(relationGlyphs(m.entities, m.constraints, 0.1).filter((g) => m.constraints[g.index].type === "symmetric")).toHaveLength(2);
+  });
+});
