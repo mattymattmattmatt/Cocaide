@@ -51,9 +51,9 @@ describe("keys", () => {
     expect(inputPrefs().keys).toEqual({});
   });
 
-  it("keeps keys for the sketch tools still to come; one of them gives its key up without a word", () => {
+  it("keeps keys for the sketch tools; one (Trim, landed in wave 3) says so when it gives its key up", () => {
     expect(["sketch.trim", "sketch.extend", "sketch.point", "sketch.mirror", "sketch.centerline"].map((id) => keyFor(id))).toEqual(["T", "E", "P", "M", "Shift+L"]);
-    expect(bindKey("sketch.line", "T")).toBeNull();
+    expect(bindKey("sketch.line", "T")).toBe("Trim");
     expect(keyFor("sketch.trim")).toBeNull();
     expect(keyFor("sketch.line")).toBe("T");
   });
