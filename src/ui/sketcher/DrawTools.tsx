@@ -17,7 +17,7 @@ const keepFocus = (e: React.MouseEvent) => e.preventDefault();
  * One flyout: the button shows the tool picked from it last (and runs it); its
  * arrow opens the list. Pressed while any of its tools is the active one.
  */
-export function Flyout<T extends ToolLike>({ flyout, tools, shown, active, onPick }: { flyout: FlyoutDef; tools: T[]; shown: T; active: string; onPick(t: T): void }) {
+export function Flyout<T extends ToolLike>({ flyout, tools, shown, active, onPick, small }: { flyout: FlyoutDef; tools: T[]; shown: T; active: string; onPick(t: T): void; small?: boolean }) {
   const prefs = useInputPrefs();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -40,17 +40,18 @@ export function Flyout<T extends ToolLike>({ flyout, tools, shown, active, onPic
     };
   }, [open]);
   return (
-    <div className="menu flyout" ref={ref}>
+    <div className={`menu flyout${small ? " small" : ""}`} ref={ref}>
       <button
-        className="tool"
+        className={small ? "tool compact small" : "tool"}
         onMouseDown={keepFocus}
         onClick={() => onPick(shown)}
         aria-pressed={tools.some((t) => t.name === active)}
+        aria-label={small ? shown.label : undefined}
         title={`${shown.title}${keyHint(shown.id, prefs)}`}
         data-testid={`tool-${shown.name}`}
       >
-        <Icon name={shown.icon} size={18} />
-        <span className="tool-label">{flyout.label}</span>
+        <Icon name={shown.icon} size={small ? 16 : 18} />
+        {!small && <span className="tool-label">{flyout.label}</span>}
       </button>
       <button
         className="flyout-arrow"
@@ -90,11 +91,20 @@ export function Flyout<T extends ToolLike>({ flyout, tools, shown, active, onPic
 }
 
 /** A toolbar toggle or action shown as its icon alone; its name is its label for screen readers and its tooltip. */
-export function IconTool({ icon, label, title, pressed, disabled, onClick, testId }: { icon: IconName; label: string; title: string; pressed?: boolean; disabled?: boolean; onClick(): void; testId?: string }) {
+export function IconTool({ icon, label, title, pressed, disabled, onClick, testId, small }: { icon: IconName; label: string; title: string; pressed?: boolean; disabled?: boolean; onClick(): void; testId?: string; small?: boolean }) {
   return (
-    <button className="tool compact" onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-label={label} title={title} aria-pressed={pressed} data-testid={testId}>
-      <Icon name={icon} size={18} />
+    <button className={`tool compact${small ? " small" : ""}`} onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-label={label} title={title} aria-pressed={pressed} data-testid={testId}>
+      <Icon name={icon} size={small ? 16 : 18} />
     </button>
+  );
+}
+
+/** Small tools stacked two high, SOLIDWORKS's CommandManager way: a group that takes the width of one big button per two. */
+export function ToolStack({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="tool-stack" role="group" aria-label={label}>
+      {children}
+    </div>
   );
 }
 

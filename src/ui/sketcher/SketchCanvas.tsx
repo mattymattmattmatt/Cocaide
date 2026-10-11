@@ -667,6 +667,7 @@ export function SketchCanvas(props: Props) {
         onSelect={(i) => props.onSelectConstraint?.(i)}
         onEdit={(i, x, y) => props.onEditDimension?.(i, x, y)}
         onContext={(i, x, y) => props.onContext?.({ kind: "constraint", index: i }, x, y)}
+        interactive={tool === "select" || tool === "dimension"}
       />
       {(props.problems ?? []).map((w, i) => (
         <g key={`warn:${i}`} className="sketch-warning" data-testid="sketch-warning" pointerEvents="visiblePainted">
@@ -761,7 +762,10 @@ function Annotations({
   onSelect,
   onEdit,
   onContext,
+  interactive,
 }: {
+  /** Clicks reach the dimensions and glyphs (Select, Smart Dimension); with a drawing or edit tool they go through to the sketch. */
+  interactive: boolean;
   entities: SketchEntity[];
   constraints: Constraint[];
   unit: number;
@@ -801,7 +805,7 @@ function Annotations({
   });
   return (
     <>
-      <g className="dimensions">
+      <g className="dimensions" pointerEvents={interactive ? undefined : "none"}>
         {dims.map((d, n) => {
           const sweep = d.arc?.sweep ?? 0;
           const a1 = (d.arc?.from ?? 0) + sweep;
@@ -819,7 +823,7 @@ function Annotations({
           );
         })}
       </g>
-      <g className="relations">
+      <g className="relations" pointerEvents={interactive ? undefined : "none"}>
         {glyphs.map((g, n) => (
           <g
             key={n}

@@ -4,7 +4,7 @@
 // line after "Mirror about" in the strip); Apply (Enter) makes the copies,
 // held by symmetric relations.
 
-import { isAxisId } from "../../../geom/axes";
+import { constraintTargets, isAxisId } from "../../../geom/axes";
 import { mirrorEntities } from "../../../geom/sketchEdit/mirror";
 import { isConstruction } from "../../../doc/sketch";
 import { changedBy, count, fromSelection, lineAt, pickedEntity, toggle } from "./picks";
@@ -21,11 +21,15 @@ export const tools: EditToolDef[] = [
     options: [{ kind: "toggle", key: "copy", label: "Copy", title: "Keep the originals and add mirrored copies (off: move them over)", default: "on" }],
     start: (selection, state) => {
       const picks = fromSelection(selection, state);
-      // A centreline picked with the entities is the mirror line, as SOLIDWORKS takes it.
-      const line = [...picks.entities].reverse().find((id) => {
-        const e = state.entities.find((x) => x.id === id);
-        return e?.type === "line" && isConstruction(e);
+      // A centreline picked last with the entities is the mirror line, as SOLIDWORKS takes it; not one tied to
+      // them by a relation (a slot's own centreline, in a box round the slot), which is one of the entities.
+      const last = picks.entities[picks.entities.length - 1];
+      const e = state.entities.find((x) => x.id === last);
+      const tied = state.constraints.some((k) => {
+        const ids = constraintTargets(k);
+        return ids.includes(last) && ids.some((id) => id !== last && picks.entities.includes(id));
       });
+      const line = e?.type === "line" && isConstruction(e) && !tied ? last : undefined;
       const axis = selection.find((i) => i.kind === "entity" && isAxisId(i.id));
       const about = line && picks.entities.length > 1 ? line : axis && axis.kind === "entity" ? axis.id : undefined;
       return { ...picks, entities: picks.entities.filter((id) => id !== about), ...(about ? { about } : {}) };

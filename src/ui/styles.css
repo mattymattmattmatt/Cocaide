@@ -1194,3 +1194,9 @@ svg.icon { flex: none; display: block; }
 .sketch-tool-strip .strip-actions > button[aria-pressed="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
 .sketch-tool-strip .strip-problem { color: var(--bad); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
 .sketch-tool-strip .stepper input { width: 46px; }
+/* Small tools two high (the edit tools, the toggles, undo): SOLIDWORKS's stacked CommandManager buttons, so the sketch toolbar keeps one row. */
+.sketch-toolbar .tool-stack { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 23px); gap: 2px 1px; flex: none; align-content: center; height: 48px; }
+.sketch-toolbar .tool.small { height: 23px; min-width: 26px; width: 26px; padding: 0; border-radius: 5px; gap: 0; }
+.sketch-toolbar .flyout.small { position: relative; }
+.sketch-toolbar .flyout.small > .tool.small { width: 36px; min-width: 36px; padding: 0 10px 0 0; }
+.sketch-toolbar .flyout.small .flyout-arrow { right: 1px; bottom: 3px; width: 11px; height: 17px; }

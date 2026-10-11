@@ -21,7 +21,7 @@ import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "../ContextMenu";
-import { Flyout, IconTool, OptionControls, ToolStrip } from "./DrawTools";
+import { Flyout, IconTool, OptionControls, ToolStack, ToolStrip } from "./DrawTools";
 import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from "./tools/memory";
 import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
 import type { SketchToolDef } from "./tools/types";
@@ -111,6 +111,11 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     setToolState(t);
   };
   const drawing = toolByName(tool);
+  /** The edit stack's order, two high: Trim ▾ over Convert, then the rest of the edit tools. */
+  const editToolbar = useMemo(() => {
+    const [first, ...rest] = toolbarEntries(EDIT_TOOLS);
+    return [first, "convert" as const, ...rest];
+  }, []);
   /** The edit tool in use (trim, fillet, offset ...), and what it has picked. */
   const editTool: EditToolDef | undefined = editByName(tool);
   const [editPicks, setEditPicks] = useState<EditPicks>(NO_PICKS);
@@ -724,7 +729,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     <>
       <section className="center sketch-center">
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
-          {MODES.map(([t, label, id, icon]) => (
+          {MODES.filter(([t]) => t !== "convert").map(([t, label, id, icon]) => (
             <ToolButton key={t} icon={icon} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${TOOL_TITLE[t] ?? label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
           ))}
           <span className="sep" />
@@ -751,57 +756,77 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             ),
           )}
           <span className="sep" />
-          {toolbarEntries(EDIT_TOOLS).map((entry) =>
-            entry.kind === "flyout" ? (
-              <Flyout
-                key={entry.flyout.id}
-                flyout={entry.flyout}
-                tools={entry.tools}
-                shown={flyoutChoice(memory, entry.flyout.id, EDIT_TOOLS)}
-                active={tool}
-                onPick={(t: EditToolDef) => setTool(t.name)}
-              />
-            ) : (
-              <ToolButton
-                key={entry.tool.name}
-                icon={entry.tool.icon}
-                label={entry.tool.label}
-                pressed={tool === entry.tool.name}
-                onClick={() => setTool(entry.tool.name)}
-                title={`${entry.tool.title}${keyHint(entry.tool.id, prefs)}`}
-                testId={`tool-${entry.tool.name}`}
-              />
-            ),
-          )}
+          {/* The edit tools and Convert, small and two high: Trim ▾ over Convert, Offset over Fillet ▾, Mirror over Pattern ▾, Move ▾. */}
+          <ToolStack label="Edit tools">
+            {editToolbar.map((entry) =>
+              entry === "convert" ? (
+                <IconTool
+                  key="convert"
+                  small
+                  icon="convertEntities"
+                  label="Convert"
+                  pressed={tool === "convert"}
+                  onClick={() => setTool("convert")}
+                  title={`${TOOL_TITLE.convert}${keyHint("sketch.convert", prefs)}`}
+                  testId="tool-convert"
+                />
+              ) : entry.kind === "flyout" ? (
+                <Flyout
+                  key={entry.flyout.id}
+                  small
+                  flyout={entry.flyout}
+                  tools={entry.tools}
+                  shown={flyoutChoice(memory, entry.flyout.id, EDIT_TOOLS)}
+                  active={tool}
+                  onPick={(t: EditToolDef) => setTool(t.name)}
+                />
+              ) : (
+                <IconTool
+                  key={entry.tool.name}
+                  small
+                  icon={entry.tool.icon}
+                  label={entry.tool.label}
+                  pressed={tool === entry.tool.name}
+                  onClick={() => setTool(entry.tool.name)}
+                  title={`${entry.tool.title}${keyHint(entry.tool.id, prefs)}`}
+                  testId={`tool-${entry.tool.name}`}
+                />
+              ),
+            )}
+          </ToolStack>
           <span className="sep" />
-          <IconTool
-            icon="construction"
-            label="Construction"
-            pressed={construction}
-            onClick={() => toggleConstruction()}
-            title={`Construction geometry: guides that are not part of the profile (toggles new or selected entities)${keyHint("sketch.construction", prefs)}`}
-            testId="tool-construction"
-          />
-          <IconTool icon="grid" label="Grid" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Grid: snap new points to it" testId="tool-grid" />
-          <IconTool
-            icon="checkSketch"
-            label="Check sketch"
-            pressed={showCheck}
-            onClick={() => setShowCheck((v) => !v)}
-            title={`Check sketch for feature: open ends, gaps, crossings, overlaps, duplicates, with one-click fixes${keyHint("sketch.check", prefs)}`}
-            testId="tool-check"
-          />
-          <IconTool
-            icon={showRelations ? "eye" : "eyeOff"}
-            label="Relations"
-            pressed={showRelations}
-            onClick={() => setShowRelations((v) => !v)}
-            title="Relations: show or hide the glyphs beside the geometry"
-            testId="tool-relations"
-          />
-          <span className="sep" />
-          <IconTool icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
-          <IconTool icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
+          <ToolStack label="Display and history">
+            <IconTool
+              small
+              icon="construction"
+              label="Construction"
+              pressed={construction}
+              onClick={() => toggleConstruction()}
+              title={`Construction geometry: guides that are not part of the profile (toggles new or selected entities)${keyHint("sketch.construction", prefs)}`}
+              testId="tool-construction"
+            />
+            <IconTool small icon="grid" label="Grid" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Grid: snap new points to it" testId="tool-grid" />
+            <IconTool
+              small
+              icon={showRelations ? "eye" : "eyeOff"}
+              label="Relations"
+              pressed={showRelations}
+              onClick={() => setShowRelations((v) => !v)}
+              title="Relations: show or hide the glyphs beside the geometry"
+              testId="tool-relations"
+            />
+            <IconTool
+              small
+              icon="checkSketch"
+              label="Check sketch"
+              pressed={showCheck}
+              onClick={() => setShowCheck((v) => !v)}
+              title={`Check sketch for feature: open ends, gaps, crossings, overlaps, duplicates, with one-click fixes${keyHint("sketch.check", prefs)}`}
+              testId="tool-check"
+            />
+            <IconTool small icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
+            <IconTool small icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
+          </ToolStack>
           {bar && (
             <Popup x={bar.x} y={bar.y} bar onClose={() => setBar(null)} label="Shortcut bar" testId="shortcut-bar">
               {(close) => (
