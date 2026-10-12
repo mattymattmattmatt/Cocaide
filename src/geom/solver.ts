@@ -15,6 +15,7 @@
 
 import type { Constraint, SketchEntity, Vec2 } from "../doc/types";
 import { constraintTargets, isConstant, isDriven, withAxes } from "./axes";
+import { measureConstraint } from "./constraints";
 
 const TOL = 1e-9;
 /** Accepting tolerance; the rebuild checks constraints to 1e-6. */
@@ -818,12 +819,58 @@ export function conflictSet(entities: SketchEntity[], constraints: Constraint[])
   };
   let keep = constraints.map((_, i) => i).filter((i) => !isDriven(constraints[i]));
   if (!bad(keep)) return [];
+  // Only constraints tied, through geometry that can move, to one that fails or repeats can be in the set: the
+  // search keeps to those (a big sketch's other, unrelated shapes would cost a solve each for nothing).
+  const near = tiedToTrouble(entities, constraints, keep);
+  if (near.length < keep.length && bad(near)) keep = near;
   // From the newest back: the oldest constraints that still conflict are the ones kept.
   for (const i of [...keep].reverse()) {
     const without = keep.filter((j) => j !== i);
     if (bad(without)) keep = without;
   }
   return keep;
+}
+
+/**
+ * The constraints (of `keep`) in the same connected piece of the sketch as
+ * one that doesn't hold or repeats others: entities are joined by every
+ * constraint between them, references and axes joining nothing (they don't
+ * move). All of `keep` when no such constraint is found.
+ */
+function tiedToTrouble(entities: SketchEntity[], constraints: Constraint[], keep: number[]): number[] {
+  const all = withAxes(entities);
+  const fixed = new Set(all.filter(isConstant).map((e) => e.id));
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  const moving = (k: Constraint) => constraintTargets(k).filter((id) => !fixed.has(id));
+  for (const i of keep) {
+    const ids = moving(constraints[i]);
+    for (const id of ids.slice(1)) parent.set(find(id), find(ids[0]));
+  }
+  const ks = keep.map((i) => constraints[i]);
+  let flags: boolean[];
+  try {
+    flags = redundantConstraints(entities, ks);
+  } catch {
+    return keep;
+  }
+  const trouble = keep.filter((i, j) => {
+    if (flags[j]) return true;
+    try {
+      const m = measureConstraint(entities, constraints[i]);
+      return !(Math.abs(m.actual - m.expected) <= 1e-6);
+    } catch {
+      return true;
+    }
+  });
+  const roots = new Set(trouble.flatMap((i) => moving(constraints[i]).map(find)));
+  if (!roots.size) return keep;
+  return keep.filter((i) => moving(constraints[i]).some((id) => roots.has(find(id))));
 }
 
 /**

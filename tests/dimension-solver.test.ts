@@ -157,6 +157,23 @@ describe("over-definition: redundancy and the smallest conflicting set", () => {
     expect(conflictSet(es, extra)).toEqual([0, 3]);
   });
 
+  it("keeps the search to the shape in trouble: unrelated shapes, however many, are not in the set", () => {
+    const es: SketchEntity[] = [];
+    const ks: Constraint[] = [];
+    // Ten separate rectangles of lines, each sized; the first gets a width that repeats its length.
+    for (let r = 0; r < 10; r++) {
+      const x = r * 30;
+      const c: Vec2[] = [[x, 0], [x + 20, 0], [x + 20, 10], [x, 10]];
+      for (let i = 0; i < 4; i++) es.push(line(`l${r}_${i}`, c[i], c[(i + 1) % 4]));
+      for (let i = 0; i < 4; i++) ks.push({ type: "coincident", points: [`l${r}_${i}.end`, `l${r}_${(i + 1) % 4}.start`] });
+      ks.push({ type: "horizontal", entity: `l${r}_0` }, { type: "vertical", entity: `l${r}_1` }, { type: "horizontal", entity: `l${r}_2` }, { type: "vertical", entity: `l${r}_3` });
+      ks.push({ type: "distance", entity: `l${r}_0`, value: 20 }, { type: "distance", entity: `l${r}_1`, value: 10 });
+    }
+    ks.push({ type: "distanceX", entity: "l0_0", value: 20 });
+    // The first rectangle's length and the width that repeats it (where the geometry is, level, they are one).
+    expect(conflictSet(es, ks)).toEqual([8, 100]);
+  });
+
   it("drawing tools make no redundant relations", () => {
     for (const [name, clicks] of [
       ["rect", [[0, 0], [20, 10]]],

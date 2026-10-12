@@ -179,7 +179,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   });
   if (applyRef) {
     applyRef.current = (f) => {
-      commit({ entities: f.entities, constraints: f.constraints ?? [] });
+      // A dimension the proposal kept (renamed or not) keeps the name the document knew it by, so a rename reaches what reads it.
+      const known = new Map(draft.constraints.flatMap((c) => ((c as Dimension).was ? [[constraintKey(c), (c as Dimension).was!] as const] : [])));
+      const constraints = (f.constraints ?? []).map((k) => {
+        const was = "value" in k ? known.get(constraintKey(k)) : undefined;
+        return was ? ({ ...k, was } as Dimension) : k;
+      });
+      commit({ entities: f.entities, constraints });
       setSelection([]);
       setMessage(null);
     };
