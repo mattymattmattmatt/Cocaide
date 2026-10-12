@@ -5,6 +5,7 @@ import type { KernelMethod } from "../ask/kernel";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
 import type { BodyRange } from "../kernel/bodies";
 import type { Datum } from "../features/datum";
+import type { Closest, MassProperties, MeasureRef } from "../kernel/evaluate";
 
 export type KernelRequest =
   | { id: number; type: "rebuild"; doc: unknown }
@@ -12,7 +13,14 @@ export type KernelRequest =
   /** The part as it stands before a feature (the sketch being edited): what that sketch sees and may reference. */
   | { id: number; type: "before"; doc: unknown; feature: string }
   /** A KernelPort call (src/ask/kernel.ts), for the right-click ask. */
-  | { id: number; type: "port"; method: KernelMethod; args: unknown[] };
+  | { id: number; type: "port"; method: KernelMethod; args: unknown[] }
+  /** Measure or Mass Properties on the rebuild of `doc` (the one on screen: the worker keeps it). */
+  | { id: number; type: "evaluate"; doc: unknown; query: EvaluateQuery };
+
+/** What the Evaluate tools ask the kernel. */
+export type EvaluateQuery = { kind: "distance"; a: MeasureRef; b: MeasureRef } | { kind: "mass" };
+
+export type EvaluateResult = { kind: "distance"; closest: Closest } | { kind: "mass"; mass: MassProperties };
 
 export interface RebuildView {
   ok: boolean;
@@ -39,4 +47,5 @@ export type KernelResponse =
   | { id: number; type: "step"; ok: true; name: string; text: string }
   | { id: number; type: "step"; ok: false; errors: string[] }
   | { id: number; type: "port"; result: unknown }
+  | { id: number; type: "evaluated"; result: EvaluateResult }
   | { id: number; type: "error"; message: string };

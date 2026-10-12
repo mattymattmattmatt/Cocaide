@@ -583,6 +583,75 @@ const ICONS = {
       <path d="M9.5 8.5l5 1.5 M9.5 11.5l5 1.5 M9.5 14.5l5 1.5" strokeWidth={1.2} />
     </>
   ),
+  // Phase O wave 5: evaluate and view (mass properties, rollback, display styles, selection filters, palette)
+  massProperties: (
+    <>
+      <path d="M7 8h10l3 12H4z" />
+      <circle cx="12" cy="5.5" r="2.5" />
+      <path d="M9 15.5h6 M12 12.5v6" />
+    </>
+  ),
+  centreOfMass: (
+    <>
+      <circle cx="12" cy="12" r="7" />
+      <path d="M12 5a7 7 0 0 1 7 7h-7z M12 19a7 7 0 0 1-7-7h7z" fill="currentColor" fillOpacity={0.5} />
+    </>
+  ),
+  rollback: (
+    <>
+      <path d="M5 5h9 M5 9h9" />
+      <path d="M3 13h18" strokeWidth={2.6} />
+      <path d="M5 17h9 M5 21h9" style={dash} />
+    </>
+  ),
+  shaded: (
+    <>
+      <path d="M12 3l8 4.5-8 4.5-8-4.5z" {...face} fillOpacity={0.14} />
+      <path d="M4 7.5 12 12v9l-8-4.5z" {...face} fillOpacity={0.34} />
+      <path d="M20 7.5 12 12v9l8-4.5z" {...face} fillOpacity={0.22} />
+    </>
+  ),
+  hiddenLinesVisible: (
+    <>
+      <path d="M4 8h12v12H4z M4 8l4-4h12v12l-4 4 M16 8l4-4" />
+      <path d="M8 4v12h12 M4 20l4-4" strokeOpacity={0.55} style={{ strokeDasharray: "1.4 1.8" }} />
+    </>
+  ),
+  perspective: <path d="M3 6l6 3v6l-6 3z M9 9h12 M9 15h12 M21 9v6 M3 6l18 3 M3 18l18-3" />,
+  orthographic: <path d="M4 7h10v10H4z M14 7h6v10h-6z M4 7l3-3h13v3 M20 4v3" />,
+  previousView: (
+    <>
+      <path d="M9 7 4 12l5 5 M4 12h9" />
+      <path d="M15 6h5v12h-5" style={dash} />
+    </>
+  ),
+  filterFaces: <path d="M5 8l7-4 7 4-7 4z" fill="currentColor" fillOpacity={0.35} />,
+  filterEdges: <path d="M4 18 20 6" strokeWidth={2.6} />,
+  filterVertices: (
+    <>
+      <path d="M4 18 12 6l8 12" strokeOpacity={0.45} />
+      <circle cx="12" cy="6" r="2.6" fill="currentColor" />
+    </>
+  ),
+  filterPlanes: <path d="M3 16 8 7h13l-5 9z" fill="currentColor" fillOpacity={0.2} />,
+  palette: (
+    <>
+      <path d="M4 5h16v14H4z" />
+      <path d="M7 9l3 3-3 3 M12 15h5" />
+    </>
+  ),
+  copy: (
+    <>
+      <path d="M9 9h10v11H9z" />
+      <path d="M5 15V4h10" />
+    </>
+  ),
+  boxSelect: (
+    <>
+      <path d="M4 4h16v16H4z" style={dash} />
+      <path d="M11 11l7 3-3 1-1 3z" fill="currentColor" fillOpacity={0.4} />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

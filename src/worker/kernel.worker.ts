@@ -18,6 +18,7 @@ import {
 import { LocalKernel } from "../ask/kernel";
 import { exportRefusal, photoNote } from "../doc/photo";
 import { labelBodies } from "../kernel/bodies";
+import { evaluate } from "./evaluate";
 import { rebuild } from "../kernel/rebuild";
 import { beforeKey, documentBefore, Recent } from "./before";
 import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
@@ -89,6 +90,8 @@ async function handle(kernel: OC, req: KernelRequest) {
       const mesh = view.mesh;
       const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
       post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);
+    } else if (req.type === "evaluate") {
+      post({ id: req.id, type: "evaluated", result: evaluate(kernel, rebuildCached(req.doc), req.doc, req.query) });
     } else if (req.type === "before") {
       // Its own rebuild, so the document on screen keeps the shared one; kept as plain data (copied out, never transferred).
       const key = beforeKey(req.doc, req.feature);

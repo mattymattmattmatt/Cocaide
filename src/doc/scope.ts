@@ -9,6 +9,7 @@
 //   "+"             add any new feature, or a new parameter
 //   "param:<name>"  change that parameter
 //   "name"          rename the document
+//   "rollback"      move the rollback bar ("+" may too)
 //   "photo"         move or rescale the photo's scale (never confirm it: only the user can)
 //   "body:<name>"   add features that touch only that body (sketches touch none); rename it; set its material
 //   "node:<name>"   move or rename that node
@@ -118,6 +119,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
     case "setName":
       what = "setName";
       allowed = has("name");
+      break;
+    case "setRollback":
+      // Where the part is shown up to: a view of the history, it changes no feature.
+      what = "setRollback";
+      allowed = has("rollback") || has("+");
       break;
     case "setPhotoScale":
       what = "setPhotoScale";

@@ -152,7 +152,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -292,6 +292,15 @@ export function validateDocument(input: unknown): ValidationResult {
         if (mat) result.bodyMaterials[name] = mat;
       }
     result.headerErrors.push(...m.errors);
+  }
+  if (input.rollback !== undefined) {
+    // The rollback bar: it sits just above this feature, which and everything after it the view leaves unbuilt.
+    const ids = Array.isArray(input.features) ? input.features.map((f) => (isObject(f) ? f.id : undefined)) : [];
+    if (typeof input.rollback !== "string" || !ids.includes(input.rollback)) {
+      const r = new Checker("document");
+      r.fail("rollback", `must be the id of a feature, the first one below the rollback bar (got ${describe(input.rollback)}); remove "rollback" to roll to the end`);
+      result.headerErrors.push(...r.errors);
+    }
   }
   if (input.welds !== undefined) {
     const welds = new Checker("document");
