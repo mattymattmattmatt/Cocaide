@@ -69,6 +69,9 @@ describe("the registry", () => {
       "tool-loft",
       "tool-loft-cut",
       "tool-rib",
+      "tool-measure",
+      "tool-mass-properties",
+      "tool-section",
     ]);
   });
 
@@ -82,11 +85,12 @@ describe("the registry", () => {
     expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"]]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point"]]);
+    expect(ids(toolbarGroups("evaluate"))).toEqual([["tool.measure", "tool.massProperties"], ["tool.section"]]);
   });
 
   it("shows only the tabs that have tools, in the usual CAD order", () => {
     expect(TABS.map((t) => t.label)).toEqual(["Features", "Reference", "Bodies", "Weldments", "Evaluate"]);
-    expect(visibleTabs().map((t) => t.id)).toEqual(["features", "reference", "bodies", "weldments"]);
+    expect(visibleTabs().map((t) => t.id)).toEqual(["features", "reference", "bodies", "weldments", "evaluate"]);
   });
 
   it("orders groups by the tab, puts unknown groups last, and gathers a menu's tools where the first of them is", () => {
@@ -113,10 +117,9 @@ describe("the registry", () => {
 
   it("reserves a command for each tool still to come, out of Settings until it lands", () => {
     const planned = COMMANDS.filter((c) => c.planned).map((c) => c.id);
-    // Sweep, Loft and Rib landed in wave 4.
-    for (const id of ["tool.measure", "tool.section", "tool.sketchPattern"]) {
-      expect(planned).toContain(id);
-    }
+    // Sweep, Loft and Rib landed in wave 4; Measure and Section in wave 5.
+    expect(planned).toContain("tool.sketchPattern");
+    for (const id of ["tool.measure", "tool.section", "tool.massProperties"]) expect(planned).not.toContain(id);
     // The sketch edit tools (trim … copy) landed in wave 3, Fully Define in wave 4.
     const sketch = ["ellipse", "spline"];
     expect(planned.filter((id) => id.startsWith("sketch.")).sort()).toEqual(sketch.map((s) => `sketch.${s}`).sort());
