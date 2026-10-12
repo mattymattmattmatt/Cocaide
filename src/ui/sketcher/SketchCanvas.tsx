@@ -8,7 +8,7 @@ import { dist2 } from "../../geom/vec";
 import { Icon, type IconName } from "../icons";
 import { inputPrefs, keyFor, keyOf, useCommands, wheelZoom } from "../input";
 import { dimensionShapes, RELATION, relationGlyphs } from "./annotate";
-import { constraintTargets } from "../../geom/axes";
+import { constraintTargets, isDriven } from "../../geom/axes";
 import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem, type SmartOptions } from "./draft";
 import { faceAt, isModelId, modelEntities, type ModelFace, type ModelView } from "./model";
 import { shapeWords } from "./names";
@@ -123,6 +123,9 @@ interface ViewState {
 }
 
 const SNAP_PX = 10;
+/** Stable empty defaults, so memoised annotations don't redo their work every render. */
+const NONE: Constraint[] = [];
+const NO_INDICES: number[] = [];
 const PICK_PX = 7;
 
 export function SketchCanvas(props: Props) {
@@ -920,7 +923,12 @@ function Annotations({
             ? `M${f([d.arc.center[0] + d.arc.r * Math.cos(d.arc.from), d.arc.center[1] + d.arc.r * Math.sin(d.arc.from)])}A${d.arc.r} ${d.arc.r} 0 ${Math.abs(sweep) > Math.PI ? 1 : 0} ${sweep > 0 ? 0 : 1} ${f([d.arc.center[0] + d.arc.r * Math.cos(a1), d.arc.center[1] + d.arc.r * Math.sin(a1)])}`
             : "";
           return (
-            <g key={n} className={`dim${selected === d.index ? " selected" : ""}`} data-testid={`dim-${d.index}`} {...handlers(d.index, true)}>
+            <g
+              key={n}
+              className={`dim${selected === d.index ? " selected" : ""}${dimClass(d.index)}`}
+              data-testid={d.index < constraints.length ? `dim-${d.index}` : `dim-proposed-${d.index - constraints.length}`}
+              {...(d.index < constraints.length ? handlers(d.index, true) : { pointerEvents: "none" })}
+            >
               <path d={d.lines.map(([a, b]) => `M${f(a)}L${f(b)}`).join("") + arcPath} className="dim-line" vectorEffect="non-scaling-stroke" />
               <path d={d.arrows.map((a) => arrow(a.at, a.dir)).join("")} className="dim-arrow" />
               <text x={d.at[0]} y={-d.at[1]} fontSize={12 * unit} textAnchor="middle" dominantBaseline="middle">
