@@ -104,8 +104,8 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
       // Parallel either way along; the angle each way from square for perpendicular.
       if (k.type === "parallel") return { label: `parallel ${pair}`, actual: Math.min(between, 180 - between), expected: 0, tol: ANGLE_TOL };
       if (k.type === "perpendicular") return { label: `perpendicular ${pair}`, actual: between, expected: 90, tol: ANGLE_TOL };
-      const value = (k as AngleConstraint).value;
-      return { label: `angle ${pair} = ${fmt(value)}°`, actual: between, expected: value, tol: ANGLE_TOL };
+      const { value, supplement } = k as AngleConstraint;
+      return { label: `angle ${pair} = ${fmt(value)}°`, actual: supplement ? 180 - between : between, expected: value, tol: ANGLE_TOL };
     }
     case "collinear": {
       const [a, b] = k.entities.map(get);

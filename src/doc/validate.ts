@@ -787,14 +787,15 @@ function validateConstraint(
     case "concentric":
     case "coradial":
     case "angle": {
-      c.keys(k, label, k.type === "angle" ? ["type", "entities", "value", ...DIM_KEYS] : ["type", "entities"]);
+      c.keys(k, label, k.type === "angle" ? ["type", "entities", "value", "supplement", ...DIM_KEYS] : ["type", "entities"]);
+      if (k.supplement !== undefined && typeof k.supplement !== "boolean") c.fail(label, `supplement must be true or false (got ${describe(k.supplement)})`);
       const round = k.type === "concentric" || k.type === "coradial";
       const pair = entityPair(round ? ["circle", "arc"] : ["line"], !round);
       if (k.type === "angle") {
         const value = c.num(k, "value", label, {});
         const dim = dimension();
         if (value !== undefined && !(value > 0 && value < 180)) c.fail(label, `value must be over 0 and under 180 degrees (got ${value}); for 0 use parallel`);
-        return pair && value !== undefined && c.errors.length === before ? { type: "angle", entities: pair, value, ...dim } : null;
+        return pair && value !== undefined && c.errors.length === before ? { type: "angle", entities: pair, value, ...(k.supplement === true ? { supplement: true } : {}), ...dim } : null;
       }
       return pair && c.errors.length === before ? { type: k.type, entities: pair } : null;
     }

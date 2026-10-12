@@ -117,4 +117,27 @@ export interface SketchToolDef {
   preview?(clicks: Click[], options: ToolOptions, ids: IdMaker, ctx: ToolContext): SketchEntity[];
   /** The geometry and its relations from every click; null when they make nothing (a zero-length line). Pure. */
   build(clicks: Click[], options: ToolOptions, ids: IdMaker, ctx: ToolContext): Built | null;
+  /** On-screen numeric input: the values typed while the last click is placed (a line's length and angle). */
+  typed?: TypedInput;
+}
+
+/** One value typed while drawing. */
+export interface TypedField {
+  key: string;
+  label: string;
+  unit: "mm" | "°";
+}
+
+/**
+ * SOLIDWORKS's on-screen numeric input: once the clicks before the last are
+ * down, typing a number opens a box at the pointer (Tab goes to the next
+ * value). The values place the last click exactly, and each becomes a
+ * driving dimension of what is built. A value left empty follows the pointer.
+ */
+export interface TypedInput {
+  fields: TypedField[];
+  /** Where the last click goes for the values (undefined: not typed), the pointer giving the rest. Null: they make nothing. */
+  place(clicks: Click[], values: (number | undefined)[], pointer: Vec2): Click | null;
+  /** The dimensions the typed values become, on what was built. */
+  dimensions(built: Built, values: (number | undefined)[]): Constraint[];
 }

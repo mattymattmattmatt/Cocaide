@@ -596,6 +596,8 @@ export interface AngleConstraint extends DimensionFields {
   type: "angle";
   entities: [string, string];
   value: number;
+  /** The other quadrant: the value is 180° minus the angle between the directions (where the dimension was dropped). */
+  supplement?: boolean;
 }
 
 /** A point at the middle of a line, or on a line (extended), circle or arc. */

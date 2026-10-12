@@ -108,6 +108,11 @@ export function mapRefs(k: Constraint, point: (ref: string) => string | null, en
     if (!ys) return null;
     out.entities = ys;
   }
+  if ("lines" in k && k.lines) {
+    const ys = all(k.lines, e);
+    if (!ys) return null;
+    out.lines = ys;
+  }
   return out as unknown as Constraint;
 }
 
@@ -152,6 +157,7 @@ export function relationKey(k: Constraint): string {
     case "collinear":
     case "tangent":
     case "concentric":
+    case "coradial":
       return `${k.type}:${sorted(k.entities)}`;
     case "symmetric":
       return `symmetric:${sorted(k.entities ?? k.points!)}@${k.line}`;
@@ -165,6 +171,7 @@ function degenerate(k: Constraint): boolean {
   if (k.type === "coincident") return k.points[0] === k.points[1];
   if ((k.type === "horizontal" || k.type === "vertical") && k.points) return k.points[0] === k.points[1];
   if ((k.type === "distance" || k.type === "distanceX" || k.type === "distanceY") && k.points) return k.points[0] === k.points[1];
+  if (k.type === "distance" && k.lines) return k.lines[0] === k.lines[1];
   if ("entities" in k && k.entities && k.type !== "offset") return k.entities[0] === k.entities[1];
   if ((k.type === "pointOn" || k.type === "midpoint") && k.point.split(".")[0] === k.entity) return true;
   return false;

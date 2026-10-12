@@ -267,7 +267,8 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         const [vx, vy] = direction(l, k.entities[1]);
         const theta: Fn = (x) => Math.atan2(ux(x) * vy(x) - uy(x) * vx(x), ux(x) * vx(x) + uy(x) * vy(x));
         const s = sign(theta);
-        const want = (k.value * Math.PI) / 180;
+        // The other quadrant's value is the supplement of the angle between the directions.
+        const want = ((k.supplement ? 180 - k.value : k.value) * Math.PI) / 180;
         push(i, (x) => s * theta(x) - want);
         break;
       }
