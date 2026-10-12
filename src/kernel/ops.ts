@@ -17,7 +17,7 @@ import type {
 } from "../doc/types";
 import { to3D, type Frame } from "../geom/frame";
 import { reach, placeSection, type PlacedSection } from "../geom/member";
-import { arcMid, buildProfile, type Loop, type Region } from "../geom/profile";
+import { arcMid, buildProfile, type EllipseSeg, type Loop, type Region, type SplineSeg } from "../geom/profile";
 import type { CutPlane, MemberEnds } from "../weldment/joints";
 import { add3, cross3, dot3, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
@@ -52,11 +52,78 @@ export const pnt = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Pnt(v[0], v[
 export const dir = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Dir(v[0], v[1], v[2]));
 export const vec = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Vec(v[0], v[1], v[2]));
 
-/** One loop of a profile as a wire in the model (lines, arcs, whole circles). Tracked in `s`. */
+/**
+ * An ellipse or a spline segment as an edge maker. An ellipse is a gp_Elips
+ * (OCCT wants its major radius the larger, so a drawn "major" shorter than the
+ * minor swaps axes and shifts the parameter a quarter turn); a part of one is
+ * trimmed by parameter, built counter-clockwise and reversed when it runs the
+ * other way. A spline is the very curve the sketch shows: an open one through
+ * GeomAPI_Interpolate with the sketch's chord-length parameters and end
+ * derivatives (that pins the cubic down exactly), a closed one as the B-spline
+ * of its cubic pieces with the inner knots reduced to simple ones (exact, as
+ * the curve is twice differentiable there). Tracked in `s`.
+ */
+export function curveEdge(oc: OC, s: Scope, frame: Frame, seg: EllipseSeg | SplineSeg) {
+  const p3 = (p: Vec2) => pnt(oc, s, to3D(frame, p));
+  if (seg.kind === "ellipse") {
+    const swap = seg.ry > seg.rx;
+    const [R, r] = swap ? [seg.ry, seg.rx] : [seg.rx, seg.ry];
+    const along: Vec2 = swap ? [-seg.u[1], seg.u[0]] : seg.u;
+    const xDir = sub3(to3D(frame, [seg.c[0] + along[0], seg.c[1] + along[1]]), to3D(frame, seg.c));
+    const ax2 = s.track(new oc.gp_Ax2(p3(seg.c), dir(oc, s, frame.z), dir(oc, s, xDir)));
+    const elips = s.track(new oc.gp_Elips(ax2, R, r));
+    // In the swapped frame the parameter is a quarter turn behind (cos t·u + sin t·v = cos(t − π/2)·v + sin(t − π/2)·(−u)).
+    const shift = swap ? -Math.PI / 2 : 0;
+    if (Math.abs(seg.sweep) >= 2 * Math.PI - 1e-12) {
+      const mk = s.track(new oc.BRepBuilderAPI_MakeEdge(elips, seg.start + shift, seg.start + shift + 2 * Math.PI));
+      if (seg.sweep < 0 && mk.IsDone()) return { mk, reversed: true };
+      return { mk, reversed: false };
+    }
+    const lo = Math.min(seg.start, seg.start + seg.sweep) + shift;
+    const mk = s.track(new oc.BRepBuilderAPI_MakeEdge(elips, lo, lo + Math.abs(seg.sweep)));
+    return { mk, reversed: seg.sweep < 0 };
+  }
+  const c = seg.curve;
+  if (!c.closed) {
+    const n = c.points.length;
+    const pts = s.track(new oc.NCollection_Array1_gp_Pnt(1, n));
+    c.points.forEach((p, i) => pts.SetValue(i + 1, p3(p)));
+    const params = s.track(new oc.NCollection_Array1_double(1, n));
+    c.knots.forEach((k, i) => params.SetValue(i + 1, k));
+    const interp = s.track(new oc.GeomAPI_Interpolate(s.track(new oc.NCollection_HArray1_gp_Pnt(pts)), s.track(new oc.NCollection_HArray1_double(params)), false, 1e-9));
+    const d = (v: Vec2) => vec(oc, s, sub3(to3D(frame, v), to3D(frame, [0, 0])));
+    interp.Load(d(c.derivs[0]), d(c.derivs[n - 1]), false);
+    interp.Perform();
+    if (!interp.IsDone()) throw new OpError(`could not build spline "${seg.entity}" through its points`);
+    return { mk: s.track(new oc.BRepBuilderAPI_MakeEdge(interp.Curve())), reversed: false };
+  }
+  const m = c.spans.length;
+  const poles = s.track(new oc.NCollection_Array1_gp_Pnt(1, 3 * m + 1));
+  let k = 1;
+  c.spans.forEach((b, i) => (i === 0 ? b : b.slice(1)).forEach((p) => poles.SetValue(k++, p3(p))));
+  const knots = s.track(new oc.NCollection_Array1_double(1, m + 1));
+  const mults = s.track(new oc.NCollection_Array1_int(1, m + 1));
+  c.knots.forEach((t, i) => {
+    knots.SetValue(i + 1, t);
+    mults.SetValue(i + 1, i === 0 || i === m ? 4 : 3);
+  });
+  const curve = s.track(new oc.Geom_BSplineCurve(poles, knots, mults, 3, false));
+  for (let i = 2; i <= m; i++) curve.RemoveKnot(i, 1, 1e-7);
+  return { mk: s.track(new oc.BRepBuilderAPI_MakeEdge(curve)), reversed: false };
+}
+
+/** One loop of a profile as a wire in the model (lines, arcs, whole circles, ellipses, splines). Tracked in `s`. */
 export function loopWire(oc: OC, s: Scope, frame: Frame, loop: Loop) {
   const wire = s.track(new oc.BRepBuilderAPI_MakeWire());
   for (const seg of loop.segs) {
     let edge;
+    if (seg.kind === "ellipse" || seg.kind === "spline") {
+      const { mk, reversed } = curveEdge(oc, s, frame, seg);
+      if (!mk.IsDone()) throw new OpError(`could not build an edge for "${seg.entity}"`);
+      const e = s.track(mk.Edge());
+      wire.Add(reversed ? s.track(oc.TopoDS.Edge(s.track(e.Reversed()))) : e);
+      continue;
+    }
     if (seg.kind === "line") {
       edge = s.track(new oc.BRepBuilderAPI_MakeEdge(pnt(oc, s, to3D(frame, seg.a)), pnt(oc, s, to3D(frame, seg.b))));
     } else if (Math.abs(seg.sweep) >= 2 * Math.PI - 1e-12) {
@@ -93,9 +160,15 @@ export function profileFaces(oc: OC, s: Scope, profile: SketchProfile): TopoDS_F
     if (!mf.IsDone()) throw new OpError(`could not build a face for the profile through "${region.outer.segs[0].entity}"`);
     const face = s.track(mf.Face());
     const props = s.track(new oc.GProp_GProps());
-    oc.BRepGProp.SurfaceProperties(face, props, false, false);
+    // Bounded by an ellipse or a spline, the face's area needs the kernel's adaptive integration (the plain one
+    // is exact only for lines and arcs); the sketch's area is exact either way. A spline face is allowed a
+    // little more, as its integration converges more slowly.
+    const curved = [region.outer, ...region.holes].flatMap((l) => l.segs).filter((g) => g.kind === "ellipse" || g.kind === "spline");
+    if (curved.length) oc.BRepGProp.SurfaceProperties(face, props, 1e-10, false);
+    else oc.BRepGProp.SurfaceProperties(face, props, false, false);
     const expected = region.outer.area + region.holes.reduce((t, h) => t + h.area, 0);
-    if (Math.abs(props.Mass() - expected) > 1e-6 * Math.max(1, expected)) {
+    const splines = curved.some((g) => g.kind === "spline");
+    if (Math.abs(props.Mass() - expected) > (splines ? 1e-5 : 1e-6) * Math.max(1, expected)) {
       throw new OpError(
         `profile face area ${roundTo(props.Mass(), 6)} does not match the sketch area ${roundTo(expected, 6)}`,
       );

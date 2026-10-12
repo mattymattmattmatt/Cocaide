@@ -5,6 +5,8 @@
 // a loop inside that hole is an island again.
 
 import type { SketchEntity, Vec2 } from "../doc/types";
+import { closestOnEllipse, closestOnSpline, ellipseGeom, ellipsePoint, ellipseSpan, splineOf } from "./curves";
+import { bezierArea, bezierLength, reverseSpline, sampleBezier, SplineError, type SplineCurve } from "./spline";
 import { add2, angleOf, cross2, dist2, dot2, len2, polar, scale2, sub2, wrapAngle } from "./vec";
 
 /** Positional tolerance in document units (mm). */
@@ -13,7 +15,17 @@ export const TOL = 1e-6;
 export type Seg =
   | { kind: "line"; entity: string; a: Vec2; b: Vec2 }
   /** sweep > 0 is counter-clockwise. A full circle has |sweep| = 2π and a == b. */
-  | { kind: "arc"; entity: string; c: Vec2; r: number; a: Vec2; b: Vec2; start: number; sweep: number };
+  | { kind: "arc"; entity: string; c: Vec2; r: number; a: Vec2; b: Vec2; start: number; sweep: number }
+  /**
+   * An ellipse or part of one: the point at parameter t is c + rx·cos t·u + ry·sin t·v (v is u turned a
+   * quarter left); it runs from parameter `start` through `sweep` (> 0 counter-clockwise). Whole: |sweep| = 2π.
+   */
+  | { kind: "ellipse"; entity: string; c: Vec2; u: Vec2; rx: number; ry: number; a: Vec2; b: Vec2; start: number; sweep: number }
+  /** A spline through points (spline.ts), run from a to b; closed when a == b. */
+  | { kind: "spline"; entity: string; a: Vec2; b: Vec2; curve: SplineCurve };
+
+export type EllipseSeg = Extract<Seg, { kind: "ellipse" }>;
+export type SplineSeg = Extract<Seg, { kind: "spline" }>;
 
 export interface Loop {
   segs: Seg[];
@@ -56,6 +68,18 @@ export function buildProfile(entities: SketchEntity[]): ProfileResult {
           break;
         case "point":
           break; // a sketch point marks a place; it bounds nothing
+        case "ellipse": {
+          const s = ellipseSeg(e);
+          if (Math.abs(s.sweep) >= 2 * Math.PI - 1e-12) loops.push(makeLoop([s]));
+          else open.push(s);
+          break;
+        }
+        case "spline": {
+          const s = splineSeg(e);
+          if (e.closed) loops.push(makeLoop([s]));
+          else open.push(s);
+          break;
+        }
       }
     }
     loops.push(...chain(open));
@@ -64,12 +88,37 @@ export function buildProfile(entities: SketchEntity[]): ProfileResult {
     const area = regions.reduce((s, r) => s + r.outer.area + r.holes.reduce((h, l) => h + l.area, 0), 0);
     return { ok: true, regions, area };
   } catch (e) {
-    if (e instanceof ProfileError) return { ok: false, error: e.message };
+    if (e instanceof ProfileError || e instanceof SplineError) return { ok: false, error: e.message };
     throw e;
   }
 }
 
 class ProfileError extends Error {}
+
+/** An ellipse entity's segment: the whole ellipse from its major end, or the arc from start to end (counter-clockwise). */
+export function ellipseSeg(e: Extract<SketchEntity, { type: "ellipse" }>): EllipseSeg {
+  const g = ellipseGeom(e);
+  if (!(g.a > TOL) || !(g.b > TOL)) throw new ProfileError(`ellipse "${e.id}" has a zero radius`);
+  const { start, sweep } = ellipseSpan(e);
+  return { kind: "ellipse", entity: e.id, c: g.c, u: g.u, rx: g.a, ry: g.b, a: ellipsePoint(g, start), b: ellipsePoint(g, start + sweep), start, sweep };
+}
+
+/** A spline entity's segment, from its first point (to its last, or round to its first when closed). */
+export function splineSeg(e: Extract<SketchEntity, { type: "spline" }>): SplineSeg {
+  let curve: SplineCurve;
+  try {
+    curve = splineOf(e);
+  } catch (err) {
+    throw new ProfileError(`spline "${e.id}": ${(err as Error).message}`);
+  }
+  const spans = curve.spans;
+  return { kind: "spline", entity: e.id, a: spans[0][0], b: spans[spans.length - 1][3], curve };
+}
+
+/** The point of an ellipse segment at parameter t. */
+export function ellipseSegPoint(s: EllipseSeg, t: number): Vec2 {
+  return ellipsePoint({ c: s.c, u: s.u, v: [-s.u[1], s.u[0]], a: s.rx, b: s.ry }, t);
+}
 
 // ------------------------------------------------------------ primitives
 
@@ -169,8 +218,10 @@ function chain(segs: Seg[]): Loop[] {
   return loops;
 }
 
-function reverseSeg(s: Seg): Seg {
+/** The same segment run the other way. */
+export function reverseSeg(s: Seg): Seg {
   if (s.kind === "line") return { ...s, a: s.b, b: s.a };
+  if (s.kind === "spline") return { ...s, a: s.b, b: s.a, curve: reverseSpline(s.curve) };
   return { ...s, a: s.b, b: s.a, start: s.start + s.sweep, sweep: -s.sweep };
 }
 
@@ -178,11 +229,17 @@ function makeLoop(segs: Seg[]): Loop {
   return { segs, area: segs.reduce((sum, s) => sum + segArea(s), 0) };
 }
 
-/** Green's theorem contribution: ½∮(x dy − y dx). */
-function segArea(s: Seg): number {
+/**
+ * Green's theorem contribution: ½∮(x dy − y dx). Exact for every kind: an
+ * ellipse's is ½(rx·ry·sweep + c × (b − a)) (the arc's with r² → rx·ry), a
+ * spline's the sum over its cubic pieces, integrated exactly.
+ */
+export function segArea(s: Seg): number {
   if (s.kind === "line") return 0.5 * cross2(s.a, s.b);
-  const { c, r, a, b, sweep } = s;
-  return 0.5 * (r * r * sweep + c[0] * (b[1] - a[1]) - c[1] * (b[0] - a[0]));
+  if (s.kind === "spline") return s.curve.spans.reduce((t, b) => t + bezierArea(b), 0);
+  const { c, a, b, sweep } = s;
+  const r2 = s.kind === "arc" ? s.r * s.r : s.rx * s.ry;
+  return 0.5 * (r2 * sweep + c[0] * (b[1] - a[1]) - c[1] * (b[0] - a[0]));
 }
 
 export function reverseLoop(loop: Loop): Loop {
@@ -193,6 +250,12 @@ export function reverseLoop(loop: Loop): Loop {
 
 function checkIntersections(loops: Loop[]): void {
   const all = loops.flatMap((loop, li) => loop.segs.map((seg, si) => ({ seg, li, si, n: loop.segs.length })));
+  // A spline may loop over itself.
+  for (const { seg } of all) {
+    if (seg.kind !== "spline") continue;
+    const hit = selfHits(segPolyline(seg), seg.curve.closed);
+    if (hit.length) throw new ProfileError(`"${seg.entity}" crosses itself at ${fmtPt(hit[0])}; profiles must not cross or touch (move its points so it doesn't loop)`);
+  }
   for (let i = 0; i < all.length; i++) {
     for (let j = i + 1; j < all.length; j++) {
       const A = all[i];
@@ -216,7 +279,17 @@ function checkIntersections(loops: Loop[]): void {
   }
 }
 
-function intersect(A: Seg, B: Seg): Vec2[] | "overlap" {
+/**
+ * Where two segments meet. Lines, arcs and circles exactly; a line and an
+ * ellipse exactly (a quadratic in the ellipse's own frame); anything else with
+ * an ellipse or a spline along fine polylines of the curves (a few
+ * micrometres off at most, for the messages; whether they meet is what
+ * matters).
+ */
+export function intersect(A: Seg, B: Seg): Vec2[] | "overlap" {
+  if (A.kind === "line" && B.kind === "ellipse") return lineEllipse(A.a, A.b, B);
+  if (A.kind === "ellipse" && B.kind === "line") return lineEllipse(B.a, B.b, A);
+  if (A.kind === "ellipse" || A.kind === "spline" || B.kind === "ellipse" || B.kind === "spline") return polylineHits(segPolyline(A), segPolyline(B));
   if (A.kind === "line" && B.kind === "line") return lineLine(A.a, A.b, B.a, B.b);
   if (A.kind === "line" && B.kind === "arc") return lineCircle(A.a, A.b, B.c, B.r).filter((p) => onArc(B, p));
   if (A.kind === "arc" && B.kind === "line") return lineCircle(B.a, B.b, A.c, A.r).filter((p) => onArc(A, p));
@@ -292,6 +365,109 @@ function arcArc(A: ArcSeg, B: ArcSeg): Vec2[] | "overlap" {
   return pts.filter((p) => onArc(A, p) && onArc(B, p));
 }
 
+/** A line segment and an ellipse (or part of one): in the ellipse's frame scaled to a unit circle it is a line and a circle. */
+function lineEllipse(a: Vec2, b: Vec2, e: EllipseSeg): Vec2[] {
+  const v: Vec2 = [-e.u[1], e.u[0]];
+  const local = (p: Vec2): Vec2 => {
+    const d = sub2(p, e.c);
+    return [dot2(d, e.u) / e.rx, dot2(d, v) / e.ry];
+  };
+  const pa = local(a);
+  const pb = local(b);
+  const d = sub2(pb, pa);
+  const A = dot2(d, d);
+  const B = 2 * dot2(pa, d);
+  const C = dot2(pa, pa) - 1;
+  const disc = B * B - 4 * A * C;
+  // Tolerances in mm, measured back in the sketch: the smaller radius scales the unit circle's.
+  const scale = Math.min(e.rx, e.ry);
+  const along = dist2(a, b);
+  const ts: number[] = [];
+  const foot = -B / (2 * A);
+  const footDist = len2(add2(pa, scale2(d, foot)));
+  if (Math.abs(footDist - 1) * scale <= TOL) ts.push(foot);
+  else if (disc > 0) {
+    const r = Math.sqrt(disc);
+    ts.push((-B - r) / (2 * A), (-B + r) / (2 * A));
+  }
+  const eps = TOL / along;
+  const full = Math.abs(e.sweep) >= 2 * Math.PI - 1e-12;
+  return ts
+    .filter((t) => t >= -eps && t <= 1 + eps)
+    .map((t) => add2(a, scale2(sub2(b, a), t)))
+    .filter((p) => full || onEllipseArc(e, p));
+}
+
+/** Whether a point of an ellipse lies on the part a segment covers. */
+function onEllipseArc(s: EllipseSeg, p: Vec2): boolean {
+  const v: Vec2 = [-s.u[1], s.u[0]];
+  const d = sub2(p, s.c);
+  const t = Math.atan2(dot2(d, v) / s.ry, dot2(d, s.u) / s.rx);
+  const tolAngle = TOL / Math.min(s.rx, s.ry);
+  const k = s.sweep > 0 ? wrapAngle(t - s.start) : wrapAngle(s.start - t);
+  return k <= Math.abs(s.sweep) + tolAngle || k >= 2 * Math.PI - tolAngle;
+}
+
+/** A fine polyline along a segment (ends exact), for intersections and winding numbers. */
+export function segPolyline(s: Seg): Vec2[] {
+  if (s.kind === "line") return [s.a, s.b];
+  if (s.kind === "spline") {
+    const out: Vec2[] = [];
+    s.curve.spans.forEach((b, i) => {
+      const pts = sampleBezier(b, Infinity, 48);
+      out.push(...(i === 0 ? pts : pts.slice(1)));
+    });
+    out[0] = s.a;
+    out[out.length - 1] = s.b;
+    return out;
+  }
+  const n = Math.max(16, Math.ceil(Math.abs(s.sweep) / (Math.PI / 180)));
+  const at = (i: number): Vec2 => (s.kind === "arc" ? polar(s.c, s.r, s.start + (s.sweep * i) / n) : ellipseSegPoint(s, s.start + (s.sweep * i) / n));
+  const out = Array.from({ length: n + 1 }, (_, i) => at(i));
+  out[0] = s.a;
+  out[n] = s.b;
+  return out;
+}
+
+/** Where two polylines cross or touch (each point once), or "overlap" where pieces run along each other. */
+function polylineHits(P: Vec2[], Q: Vec2[]): Vec2[] | "overlap" {
+  const out: Vec2[] = [];
+  const boxQ = Q.slice(1).map((q, j) => box(Q[j], q));
+  for (let i = 0; i + 1 < P.length; i++) {
+    const bp = box(P[i], P[i + 1]);
+    for (let j = 0; j + 1 < Q.length; j++) {
+      const bq = boxQ[j];
+      if (bp[0] > bq[2] + TOL || bq[0] > bp[2] + TOL || bp[1] > bq[3] + TOL || bq[1] > bp[3] + TOL) continue;
+      const hit = lineLine(P[i], P[i + 1], Q[j], Q[j + 1]);
+      if (hit === "overlap") return "overlap";
+      for (const p of hit) if (!out.some((q) => dist2(p, q) <= 10 * TOL)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Where a polyline crosses itself: pieces that are not neighbours (a closed one's last and first are). */
+function selfHits(P: Vec2[], closed: boolean): Vec2[] {
+  const out: Vec2[] = [];
+  const n = P.length - 1;
+  for (let i = 0; i < n; i++) {
+    const bi = box(P[i], P[i + 1]);
+    for (let j = i + 2; j < n; j++) {
+      if (closed && i === 0 && j === n - 1) continue;
+      const bj = box(P[j], P[j + 1]);
+      if (bi[0] > bj[2] + TOL || bj[0] > bi[2] + TOL || bi[1] > bj[3] + TOL || bj[1] > bi[3] + TOL) continue;
+      const hit = lineLine(P[i], P[i + 1], P[j], P[j + 1]);
+      if (hit === "overlap") return [P[j]];
+      out.push(...hit);
+    }
+  }
+  return out;
+}
+
+function box(a: Vec2, b: Vec2): [number, number, number, number] {
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+}
+
 function onArc(s: ArcSeg, p: Vec2): boolean {
   if (Math.abs(s.sweep) >= 2 * Math.PI - 1e-12) return true;
   const phi = angleOf(sub2(p, s.c));
@@ -329,6 +505,16 @@ function nest(loops: Loop[]): Region[] {
 export function windingNumber(loop: Loop, p: Vec2): number {
   let total = 0;
   for (const s of loop.segs) {
+    if (s.kind === "ellipse" || s.kind === "spline") {
+      // Along a fine polyline: exact unless p is closer to the curve than the polyline's sag (well under a micrometre).
+      const pts = segPolyline(s);
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const va = sub2(pts[i], p);
+        const vb = sub2(pts[i + 1], p);
+        total += Math.atan2(cross2(va, vb), dot2(va, vb));
+      }
+      continue;
+    }
     const va = sub2(s.a, p);
     const vb = sub2(s.b, p);
     const direct = Math.atan2(cross2(va, vb), dot2(va, vb));
@@ -346,6 +532,73 @@ export function windingNumber(loop: Loop, p: Vec2): number {
 
 // --------------------------------------------------------------- helpers
 
+/** The segment moved by v. */
+export function translateSeg(s: Seg, v: Vec2): Seg {
+  const m = (p: Vec2) => add2(p, v);
+  if (s.kind === "line") return { ...s, a: m(s.a), b: m(s.b) };
+  if (s.kind === "spline") {
+    const c = s.curve;
+    return { ...s, a: m(s.a), b: m(s.b), curve: { ...c, points: c.points.map(m), spans: c.spans.map((b) => b.map(m) as typeof b) } };
+  }
+  return { ...s, c: m(s.c), a: m(s.a), b: m(s.b) };
+}
+
+/** How far p is from the segment (exact for every kind; an ellipse's and a spline's by their nearest point). */
+export function distanceToSeg(s: Seg, p: Vec2): number {
+  if (s.kind === "line") {
+    const d = sub2(s.b, s.a);
+    const l2 = dot2(d, d);
+    const t = Math.max(0, Math.min(1, dot2(sub2(p, s.a), d) / l2));
+    return dist2(add2(s.a, scale2(d, t)), p);
+  }
+  if (s.kind === "spline") return closestOnSpline(s.curve, p).distance;
+  if (s.kind === "arc") {
+    if (onArc(s, polar(s.c, s.r, angleOf(sub2(p, s.c))))) return Math.abs(dist2(p, s.c) - s.r);
+    return Math.min(dist2(p, s.a), dist2(p, s.b));
+  }
+  const g = { c: s.c, u: s.u, v: [-s.u[1], s.u[0]] as Vec2, a: s.rx, b: s.ry };
+  const near = closestOnEllipse(g, p);
+  if (onEllipseArc(s, near.at)) return near.distance;
+  return Math.min(dist2(p, s.a), dist2(p, s.b));
+}
+
+/** A segment's length (an ellipse's and a spline's by quadrature, to well under a micrometre). */
+export function segLength(s: Seg): number {
+  if (s.kind === "line") return dist2(s.a, s.b);
+  if (s.kind === "arc") return Math.abs(s.sweep) * s.r;
+  if (s.kind === "spline") return s.curve.spans.reduce((t, b) => t + bezierLength(b), 0);
+  let total = 0;
+  const parts = Math.max(16, Math.ceil(Math.abs(s.sweep) / (Math.PI / 32)));
+  const g = [-Math.sqrt(3 / 5), 0, Math.sqrt(3 / 5)];
+  const w = [5 / 9, 8 / 9, 5 / 9];
+  const h = s.sweep / parts;
+  for (let k = 0; k < parts; k++) {
+    g.forEach((x, i) => {
+      const t = s.start + h * (k + (x + 1) / 2);
+      total += (w[i] * Math.abs(h) * Math.hypot(s.rx * Math.sin(t), s.ry * Math.cos(t))) / 2;
+    });
+  }
+  return total;
+}
+
+/** The unit tangent of travel along a segment at its start (a) or end (b). */
+export function segTangent(s: Seg, at: "a" | "b"): Vec2 {
+  if (s.kind === "line") {
+    const d = sub2(s.b, s.a);
+    return scale2(d, 1 / len2(d));
+  }
+  if (s.kind === "spline") {
+    const d = at === "a" ? s.curve.derivs[0] : s.curve.derivs[s.curve.derivs.length - 1];
+    return scale2(d, 1 / len2(d));
+  }
+  const angle = at === "a" ? s.start : s.start + s.sweep;
+  const sign = s.sweep > 0 ? 1 : -1;
+  if (s.kind === "arc") return [-Math.sin(angle) * sign, Math.cos(angle) * sign];
+  const v: Vec2 = [-s.u[1], s.u[0]];
+  const d = add2(scale2(s.u, -s.rx * Math.sin(angle) * sign), scale2(v, s.ry * Math.cos(angle) * sign));
+  return scale2(d, 1 / len2(d));
+}
+
 /** Point at the middle of an arc, used for three-point arc construction. */
 export function arcMid(s: ArcSeg): Vec2 {
   return polar(s.c, s.r, s.start + s.sweep / 2);
@@ -354,7 +607,18 @@ export function arcMid(s: ArcSeg): Vec2 {
 /** Polyline approximation of a segment, for display only. */
 export function sampleSeg(s: Seg, maxAngleStep = Math.PI / 32): Vec2[] {
   if (s.kind === "line") return [s.a, s.b];
+  if (s.kind === "spline") {
+    // A piece turns through well under a right angle at sketch spacing: a quarter turn's worth of steps per piece.
+    const steps = Math.max(8, Math.ceil(Math.PI / 2 / maxAngleStep));
+    const out: Vec2[] = [];
+    s.curve.spans.forEach((b, i) => {
+      const pts = sampleBezier(b, Infinity, steps);
+      out.push(...(i === 0 ? pts : pts.slice(1)));
+    });
+    return out;
+  }
   const n = Math.max(2, Math.ceil(Math.abs(s.sweep) / maxAngleStep));
+  if (s.kind === "ellipse") return Array.from({ length: n + 1 }, (_, i) => ellipseSegPoint(s, s.start + (s.sweep * i) / n));
   return Array.from({ length: n + 1 }, (_, i) => polar(s.c, s.r, s.start + (s.sweep * i) / n));
 }
 
@@ -388,6 +652,12 @@ export function entityPolylines(e: SketchEntity, maxAngleStep = Math.PI / 32): V
         break;
       case "point":
         return []; // drawn as a dot by whoever draws it
+      case "ellipse":
+        segs = [ellipseSeg(e)];
+        break;
+      case "spline":
+        segs = [splineSeg(e)];
+        break;
     }
     return segs.map((s) => sampleSeg(s, maxAngleStep));
   } catch {

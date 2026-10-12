@@ -961,18 +961,27 @@ export function resolveSketch(
   for (const e of rawEntities) {
     for (const [field, v] of Object.entries(e)) {
       if (isExpression(v)) fixed.push(`${String(e.id)}.${field}`);
-      else if (Array.isArray(v)) v.forEach((c, k) => isExpression(c) && fixed.push(`${String(e.id)}.${field}.${k}`));
+      else if (Array.isArray(v)) {
+        v.forEach((c, k) => {
+          if (isExpression(c)) fixed.push(`${String(e.id)}.${field}.${k}`);
+          // A spline's points: the solver calls points[i] "p<i>".
+          else if (field === "points" && Array.isArray(c)) c.forEach((x, j) => isExpression(x) && fixed.push(`${String(e.id)}.p${k}.${j}`));
+        });
+      }
     }
   }
   const r = solveSketch(resolved.entities, constraints, { fixed });
   if (!r.ok) return { ok: false, error: `${String(raw.id)}: ${r.error}` };
   const out = structuredClone(raw);
+  // The solved numbers written back, field by field and into nested arrays (a spline's points), expressions kept.
+  const written = (v: unknown, solved: unknown): unknown => {
+    if (typeof v === "number" && typeof solved === "number") return clean(solved);
+    if (Array.isArray(v) && Array.isArray(solved)) return v.map((c, k) => written(c, solved[k]));
+    return v;
+  };
   (out.entities as Record<string, unknown>[]).forEach((e, n) => {
     const solved = r.entities[n] as unknown as Record<string, unknown>;
-    for (const [field, v] of Object.entries(e)) {
-      if (typeof v === "number") e[field] = clean(solved[field] as number);
-      else if (Array.isArray(v)) e[field] = v.map((c, k) => (isExpression(c) ? c : clean((solved[field] as number[])[k])));
-    }
+    for (const [field, v] of Object.entries(e)) e[field] = written(v, solved[field]);
   });
   return { ok: true, feature: measureDriven(out, r.entities, constraints) };
 }

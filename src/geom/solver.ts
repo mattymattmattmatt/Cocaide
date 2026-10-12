@@ -13,9 +13,27 @@
 // the sketch axes X and Y are constants here, not unknowns, so they count no
 // degrees of freedom, never move, and what is related to them follows them.
 
-import type { Constraint, SketchEntity, Vec2 } from "../doc/types";
+import type { Constraint, SketchEntity, SplineEntity, Vec2 } from "../doc/types";
 import { constraintTargets, isConstant, isDriven, withAxes } from "./axes";
-import { measureConstraint } from "./constraints";
+import { measureConstraint, splineTangentEnd } from "./constraints";
+import {
+  closestOnSpline,
+  DEG,
+  ellipseDeriv,
+  ellipseGeom,
+  ellipseLevel,
+  ellipsePoint,
+  ellipseSupport,
+  endRefs,
+  isEllipticalArc,
+  minorEnd,
+  splineEndTangent,
+  splineOf,
+  splineTangentAt,
+  splinePointIndex,
+  splinePointName,
+  type EllipseGeom,
+} from "./curves";
 
 const TOL = 1e-9;
 /** Accepting tolerance; the rebuild checks constraints to 1e-6. */
@@ -56,14 +74,45 @@ interface Layout {
   frozen: Uint8Array;
 }
 
-const FIELDS: Record<SketchEntity["type"], [string, 1 | 2][]> = {
-  line: [["start", 2], ["end", 2]],
-  circle: [["center", 2], ["radius", 1]],
-  arc: [["center", 2], ["start", 2], ["end", 2]],
-  rect: [["center", 2], ["w", 1], ["h", 1]],
-  slot: [["center1", 2], ["center2", 2], ["width", 1]],
-  point: [["at", 2]],
-};
+/**
+ * The unknowns of an entity: [field, width 1 | 2]. Most types have a fixed
+ * list; an elliptical arc adds its two angles, and a spline has one point
+ * per point it passes through ("p0", "p1", … read from points[i]) and its end
+ * tangent angles when it has them.
+ */
+export function fieldsOf(e: SketchEntity): [string, 1 | 2][] {
+  switch (e.type) {
+    case "line":
+      return [["start", 2], ["end", 2]];
+    case "circle":
+      return [["center", 2], ["radius", 1]];
+    case "arc":
+      return [["center", 2], ["start", 2], ["end", 2]];
+    case "rect":
+      return [["center", 2], ["w", 1], ["h", 1]];
+    case "slot":
+      return [["center1", 2], ["center2", 2], ["width", 1]];
+    case "point":
+      return [["at", 2]];
+    case "ellipse":
+      return isEllipticalArc(e) ? [["center", 2], ["major", 2], ["minor", 1], ["startAngle", 1], ["endAngle", 1]] : [["center", 2], ["major", 2], ["minor", 1]];
+    case "spline": {
+      const out: [string, 1 | 2][] = e.points.map((_, i) => [splinePointName(i), 2]);
+      if (e.startTangent !== undefined) out.push(["startTangent", 1]);
+      if (e.endTangent !== undefined) out.push(["endTangent", 1]);
+      return out;
+    }
+  }
+}
+
+/** The number or point an entity's field holds (a spline's "p3" is points[3]). */
+function fieldValue(e: SketchEntity, field: string): number | Vec2 {
+  if (e.type === "spline") {
+    const i = splinePointIndex(field);
+    if (i >= 0) return e.points[i];
+  }
+  return (e as unknown as Record<string, number | Vec2>)[field];
+}
 
 function layout(own: SketchEntity[]): Layout {
   const values: number[] = [];
@@ -72,9 +121,9 @@ function layout(own: SketchEntity[]): Layout {
   const entities = withAxes(own);
   for (const e of entities) {
     const constant = isConstant(e) ? 1 : 0;
-    for (const [field, n] of FIELDS[e.type]) {
+    for (const [field, n] of fieldsOf(e)) {
       at.set(`${e.id}.${field}`, values.length);
-      const v = (e as unknown as Record<string, number | Vec2>)[field];
+      const v = fieldValue(e, field);
       if (n === 1) values.push(v as number);
       else values.push(...(v as Vec2));
       for (let k = 0; k < n; k++) frozen.push(constant);
@@ -85,22 +134,65 @@ function layout(own: SketchEntity[]): Layout {
 
 /** The sketch's own entities with the solved numbers (constants come back as they went in). */
 function unpack(l: Layout, x: Float64Array): SketchEntity[] {
-  return l.entities.slice(0, l.own).map((e) => {
-    const out = structuredClone(e) as unknown as Record<string, unknown>;
-    for (const [field, n] of FIELDS[e.type]) {
-      const i = l.at.get(`${e.id}.${field}`)!;
-      out[field] = n === 1 ? x[i] : [x[i], x[i + 1]];
-    }
-    return out as unknown as SketchEntity;
-  });
+  return l.entities.slice(0, l.own).map((e) => entityAt(l, e, x));
 }
 
-/** Accessor for a point ref: returns functions reading its x and y. */
+/** An entity with the numbers of x. */
+function entityAt(l: Layout, e: SketchEntity, x: Float64Array): SketchEntity {
+  const out = structuredClone(e) as unknown as Record<string, unknown>;
+  for (const [field, n] of fieldsOf(e)) {
+    const i = l.at.get(`${e.id}.${field}`)!;
+    const v = n === 1 ? x[i] : [x[i], x[i + 1]];
+    const k = e.type === "spline" ? splinePointIndex(field) : -1;
+    if (k >= 0) (out.points as Vec2[])[k] = v as Vec2;
+    else out[field] = v;
+  }
+  return out as unknown as SketchEntity;
+}
+
+/** Accessor for a point ref: returns functions reading its x and y (an ellipse's minor end and arc ends worked out from its numbers). */
 function pointOf(l: Layout, ref: string): [Fn, Fn] {
   if (ref === "origin") return [() => 0, () => 0];
   const i = l.at.get(ref);
-  if (i === undefined) throw new Error(`unknown point ${ref}`);
-  return [(x) => x[i], (x) => x[i + 1]];
+  if (i !== undefined && !ref.endsWith(".minor")) return [(x) => x[i], (x) => x[i + 1]];
+  const [id, name] = ref.split(".");
+  const e = entityById(l, id);
+  if (e?.type === "ellipse") {
+    const g = ellipseOf(l, id);
+    if (name === "minorEnd") return [(x) => minorEnd(g(x))[0], (x) => minorEnd(g(x))[1]];
+    if (isEllipticalArc(e) && (name === "start" || name === "end")) {
+      const t = l.at.get(`${id}.${name}Angle`)!;
+      return [(x) => ellipsePoint(g(x), x[t] * DEG)[0], (x) => ellipsePoint(g(x), x[t] * DEG)[1]];
+    }
+  }
+  throw new Error(`unknown point ${ref}`);
+}
+
+/** An ellipse's frame from x. */
+function ellipseOf(l: Layout, id: string): (x: Float64Array) => EllipseGeom {
+  const c = l.at.get(`${id}.center`)!;
+  const m = l.at.get(`${id}.major`)!;
+  const b = l.at.get(`${id}.minor`)!;
+  return (x) => ellipseGeom({ center: [x[c], x[c + 1]], major: [x[m], x[m + 1]], minor: x[b] });
+}
+
+/** A spline entity with the numbers of x. */
+function splineAt(l: Layout, id: string): (x: Float64Array) => SplineEntity {
+  const e = entityById(l, id) as SplineEntity;
+  return (x) => entityAt(l, e, x) as SplineEntity;
+}
+
+/** The unit tangent at a spline's start or end, from x; NaN where its points have run together. */
+function splineTangentFn(l: Layout, id: string, end: boolean): [Fn, Fn] {
+  const at = splineAt(l, id);
+  const t = (x: Float64Array): Vec2 => {
+    try {
+      return splineEndTangent(at(x), end);
+    } catch {
+      return [NaN, NaN];
+    }
+  };
+  return [(x) => t(x)[0], (x) => t(x)[1]];
 }
 
 const len = (ax: Fn, ay: Fn, bx: Fn, by: Fn): Fn => (x) => Math.hypot(bx(x) - ax(x), by(x) - ay(x));
@@ -112,7 +204,10 @@ function entityById(l: Layout, id: string): SketchEntity {
 /** The two points a distance on an entity measures between. */
 function span(l: Layout, id: string): [[Fn, Fn], [Fn, Fn]] {
   const e = entityById(l, id);
-  return e.type === "slot" ? [pointOf(l, `${id}.center1`), pointOf(l, `${id}.center2`)] : [pointOf(l, `${id}.start`), pointOf(l, `${id}.end`)];
+  if (e.type === "slot") return [pointOf(l, `${id}.center1`), pointOf(l, `${id}.center2`)];
+  // An ellipse's major axis (horizontal, vertical).
+  if (e.type === "ellipse") return [pointOf(l, `${id}.center`), pointOf(l, `${id}.major`)];
+  return [pointOf(l, `${id}.start`), pointOf(l, `${id}.end`)];
 }
 
 function radiusOf(l: Layout, id: string): Fn {
@@ -231,6 +326,13 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         break;
       }
       case "equal": {
+        if (entityById(l, k.entities[0]).type === "ellipse") {
+          // Both radii the same.
+          const g = ellipseOf(l, k.entities[0]);
+          const h = ellipseOf(l, k.entities[1]);
+          push(i, (x) => g(x).a - h(x).a, (x) => g(x).b - h(x).b);
+          break;
+        }
         const size = (id: string): Fn => {
           const e = entityById(l, id);
           if (e.type === "line") {
@@ -275,6 +377,14 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
       }
       case "tangent": {
         const [a, b] = k.entities.map((id) => entityById(l, id));
+        if (a.type === "spline" || b.type === "spline") {
+          push(i, splineTangency(l, (a.type === "spline" ? a : b) as SplineEntity, a.type === "spline" ? b : a, joined));
+          break;
+        }
+        if (a.type === "ellipse" || b.type === "ellipse") {
+          push(i, ellipseTangency(l, a.type === "ellipse" ? a.id : b.id, a.type === "ellipse" ? b.id : a.id, joined));
+          break;
+        }
         // Joined end to end (a slot's sides, a tangent arc off a line), the touching point is that end: the
         // radius there is square to the line, or in line with the other arc's. Distance-equals-radius would
         // only hold there to second order, and the solver could neither count it nor converge on it.
@@ -357,7 +467,24 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         const p = pointOf(l, k.point);
         const e = entityById(l, k.entity);
         if (e.type === "line") push(i, offsetFrom(l, k.entity, p));
-        else {
+        else if (e.type === "ellipse") {
+          const g = ellipseOf(l, k.entity);
+          push(i, (x) => ellipseLevel(g(x), [p[0](x), p[1](x)]));
+        } else if (e.type === "spline") {
+          // Signed: the point's offset across the spline from its nearest point (smooth through zero).
+          const at = splineAt(l, k.entity);
+          push(i, (x) => {
+            try {
+              const q: Vec2 = [p[0](x), p[1](x)];
+              const s = splineOf(at(x));
+              const near = closestOnSpline(s, q);
+              const d = splineTangentAt(s, near.t);
+              return d[0] * (q[1] - near.at[1]) - d[1] * (q[0] - near.at[0]);
+            } catch {
+              return NaN;
+            }
+          });
+        } else {
           const [cx, cy] = pointOf(l, `${k.entity}.center`);
           const d = len(cx, cy, p[0], p[1]);
           const r = radiusOf(l, k.entity);
@@ -423,11 +550,14 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
       }
       case "fix": {
         // Held at the numbers the solve starts from: the document's.
-        const refs = k.entity ? FIELDS[entityById(l, k.entity).type].map(([field]) => `${k.entity}.${field}`) : [k.point!];
-        for (const ref of refs) {
-          const at = l.at.get(ref);
-          if (at === undefined) continue;
-          const width = ref === k.point ? 2 : FIELDS[entityById(l, ref.split(".")[0]).type].find(([f]) => f === ref.split(".")[1])![1];
+        if (k.point) {
+          const [px, py] = pointOf(l, k.point);
+          const [vx, vy] = [px(x0), py(x0)];
+          push(i, (x) => px(x) - vx, (x) => py(x) - vy);
+          break;
+        }
+        for (const [field, width] of fieldsOf(entityById(l, k.entity!))) {
+          const at = l.at.get(`${k.entity}.${field}`)!;
           for (let c = 0; c < width; c++) {
             const v = x0[at + c];
             push(i, (x) => x[at + c] - v);
@@ -496,6 +626,58 @@ function sharedEnd(
   return null;
 }
 
+/**
+ * A spline tangent to a line, a circle or arc, or another spline, at the end
+ * of it that meets the other (joined by a coincident relation, or else the
+ * nearer end): the sine between the spline's direction there and the
+ * direction it must have.
+ */
+function splineTangency(l: Layout, spline: SplineEntity, other: SketchEntity, joined: (p: string, q: string) => boolean): Fn {
+  const ends = endRefs(spline)!;
+  const otherEnds = endRefs(other) ?? [];
+  const joinedEnd = ends.findIndex((p) => otherEnds.some((q) => joined(p, q)) || (other.type !== "line" && other.type !== "spline" && joined(p, `${other.id}.center`)));
+  const end = joinedEnd >= 0 ? joinedEnd === 1 : splineTangentEnd(spline, other);
+  const [tx, ty] = splineTangentFn(l, spline.id, end);
+  const [px, py] = pointOf(l, ends[end ? 1 : 0]);
+  let w: [Fn, Fn];
+  if (other.type === "line") w = direction(l, other.id);
+  else if (other.type === "circle" || other.type === "arc") {
+    const [cx, cy] = pointOf(l, `${other.id}.center`);
+    w = [(x) => -(py(x) - cy(x)), (x) => px(x) - cx(x)];
+  } else if (other.type === "spline") w = splineTangentFn(l, other.id, splineTangentEnd(other, spline));
+  else throw new Error(`a spline can't be tangent to a ${other.type}`);
+  const [wx, wy] = w;
+  return (x) => (tx(x) * wy(x) - ty(x) * wx(x)) / Math.hypot(wx(x), wy(x));
+}
+
+/**
+ * An ellipse tangent to a line. Joined end to end (an elliptical arc's end on
+ * the line's), the ellipse's direction there in line with the line; else the
+ * line as far from the centre as the ellipse reaches across it.
+ */
+function ellipseTangency(l: Layout, ellipse: string, line: string, joined: (p: string, q: string) => boolean): Fn {
+  const e = entityById(l, ellipse);
+  const g = ellipseOf(l, ellipse);
+  const [ux, uy] = direction(l, line);
+  if (e.type === "ellipse" && isEllipticalArc(e)) {
+    const lineEnds = [`${line}.start`, `${line}.end`];
+    for (const name of ["start", "end"] as const) {
+      if (!lineEnds.some((q) => joined(`${ellipse}.${name}`, q))) continue;
+      const t = l.at.get(`${ellipse}.${name}Angle`)!;
+      return (x) => {
+        const d = ellipseDeriv(g(x), x[t] * DEG);
+        return (d[0] * uy(x) - d[1] * ux(x)) / (Math.hypot(d[0], d[1]) * Math.hypot(ux(x), uy(x)));
+      };
+    }
+  }
+  const d = offsetFrom(l, line, pointOf(l, `${ellipse}.center`));
+  const s = d(l.x) < 0 ? -1 : 1;
+  return (x) => {
+    const n = Math.hypot(ux(x), uy(x));
+    return s * d(x) - ellipseSupport(g(x), [-uy(x) / n, ux(x) / n]);
+  };
+}
+
 /** The cosine between an arc's radius at one of its ends and a line: zero when the line touches the arc there. */
 function radiusSquareTo(l: Layout, arc: string, end: string, line: string): Fn {
   const [cx, cy] = pointOf(l, `${arc}.center`);
@@ -559,7 +741,7 @@ function dragEquations(l: Layout, drag: NonNullable<SolveOptions["drag"]>): Fn[]
       const from = d.from ?? d.to;
       const dx = d.to[0] - from[0];
       const dy = d.to[1] - from[1];
-      for (const [field, n] of FIELDS[e.type]) {
+      for (const [field, n] of fieldsOf(e)) {
         if (n !== 2) continue;
         const i = l.at.get(`${id}.${field}`)!;
         const tx = l.x[i] + dx;
@@ -596,10 +778,23 @@ function anchorEquations(l: Layout, drag: NonNullable<SolveOptions["drag"]>): Fn
   for (const d of drag) {
     const [id, name] = d.handle.split(".");
     const e = entityById(l, id);
-    if (e?.type === "circle" && name === "edge") {
+    // A circle's edge, or an ellipse's axis end or arc end, turns or resizes it about its centre.
+    if ((e?.type === "circle" && name === "edge") || (e?.type === "ellipse" && name !== "center" && name !== "body")) {
       const c = l.at.get(`${id}.center`)!;
       const [cx, cy] = [l.x[c], l.x[c + 1]];
       fns.push((x) => x[c] - cx, (x) => x[c + 1] - cy);
+      if (e.type === "ellipse") {
+        // Its other radius stays: dragging the major end keeps the minor radius, and the minor end keeps the major one.
+        const m = l.at.get(`${id}.major`)!;
+        const b = l.at.get(`${id}.minor`)!;
+        if (name === "major") {
+          const v = l.x[b];
+          fns.push((x) => x[b] - v);
+        } else if (name === "minorEnd") {
+          const a = Math.hypot(l.x[m] - cx, l.x[m + 1] - cy);
+          fns.push((x) => Math.hypot(x[m] - x[c], x[m + 1] - x[c + 1]) - a);
+        }
+      }
       continue;
     }
     if (e?.type !== "rect" || !name.startsWith("corner")) continue;
@@ -629,7 +824,7 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     const i = l.at.get(`${parts[0]}.${parts[1]}`);
     if (i === undefined) return { ok: false, error: `unknown field ${ref}` };
     const e = entityById(l, parts[0]);
-    const width = FIELDS[e.type].find(([f]) => f === parts[1])![1];
+    const width = (fieldsOf(e).find(([f]) => f === parts[1])?.[1] ?? 1);
     const comps = parts[2] !== undefined ? [Number(parts[2])] : Array.from({ length: width }, (_, k) => k);
     for (const k of comps) {
       const v = l.x[i + k];
@@ -894,13 +1089,15 @@ export function sketchStatus(entities: SketchEntity[], constraints: Constraint[]
   const free = new Set<string>();
   const freePoints = new Set<string>();
   for (const e of entities) {
-    for (const [field, n] of FIELDS[e.type]) {
+    for (const [field, n] of fieldsOf(e)) {
       const i = l.at.get(`${e.id}.${field}`)!;
       const loose = n === 1 ? moves[i] : moves[i] || moves[i + 1];
       if (!loose) continue;
       free.add(e.id);
       if (n === 2) freePoints.add(`${e.id}.${field}`);
     }
+    // An ellipse's minor end and arc ends are worked out from its numbers: free when any of them is.
+    if (e.type === "ellipse" && free.has(e.id)) for (const name of ["minorEnd", "start", "end"]) if (name === "minorEnd" || isEllipticalArc(e)) freePoints.add(`${e.id}.${name}`);
   }
   return { dof: freedom(l.x, fns, l.frozen), free, freePoints };
 }
@@ -911,6 +1108,18 @@ function invalidGeometry(entities: SketchEntity[]): string | null {
     if (e.type === "rect" && (e.w <= 0 || e.h <= 0)) return `rect "${e.id}" would get a size of ${round(e.w)} x ${round(e.h)}`;
     if (e.type === "slot" && e.width <= 0) return `slot "${e.id}" would get a width of ${round(e.width)}`;
     if (e.type === "line" && Math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1]) < 1e-9) return `line "${e.id}" would have zero length`;
+    if (e.type === "ellipse") {
+      if (e.minor <= 1e-9) return `ellipse "${e.id}" would get a minor radius of ${round(e.minor)}`;
+      if (Math.hypot(e.major[0] - e.center[0], e.major[1] - e.center[1]) < 1e-9) return `ellipse "${e.id}" would get a major radius of 0`;
+    }
+    if (e.type === "spline") {
+      const n = e.points.length;
+      for (let i = 0; i < (e.closed ? n : n - 1); i++) {
+        const p = e.points[i];
+        const q = e.points[(i + 1) % n];
+        if (Math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-9) return `spline "${e.id}" would get points ${i} and ${(i + 1) % n} in the same place`;
+      }
+    }
   }
   return null;
 }

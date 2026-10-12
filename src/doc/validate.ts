@@ -69,6 +69,7 @@ import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpr
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
 import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, type DatumKind } from "../features/datum";
 import { isSketchAxis } from "./sketch";
+import { pointNames } from "../geom/curves";
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
@@ -392,8 +393,11 @@ const ENTITY_FIELDS: Record<SketchEntity["type"], string[]> = {
   rect: ["center", "w", "h"],
   slot: ["center1", "center2", "width"],
   point: ["at"],
+  ellipse: ["center", "major", "minor", "startAngle", "endAngle"],
+  spline: ["points", "closed", "startTangent", "endTangent"],
 };
 
+/** The point names of each type, for the messages; an entity's own come from pointNames (an arc of an ellipse has ends, a spline one per point). */
 const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   line: ["start", "end"],
   circle: ["center"],
@@ -401,7 +405,12 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   rect: ["center"],
   slot: ["center1", "center2"],
   point: ["at"],
+  ellipse: ["center", "major", "minorEnd", "start", "end"],
+  spline: ["p0", "p1", "… (one per point)"],
 };
+
+/** The most points a spline may have. */
+export const MAX_SPLINE_POINTS = 200;
 
 /** What each entity type may reference (DESIGN §2.4), as the messages say it. Rects and slots reference nothing. */
 const REF_KINDS: Partial<Record<SketchEntity["type"], string>> = {
@@ -464,6 +473,8 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
 
   const entities: SketchEntity[] = [];
   const entityTypes = new Map<string, SketchEntity["type"]>();
+  /** The entities by id: an elliptical arc has ends, a spline one point name per point, a closed spline no ends. */
+  const entityById = new Map<string, SketchEntity>();
   /** The reference entities: their numbers follow the model, so nothing may fix them. */
   const references = new Set<string>();
   if (!Array.isArray(raw.entities)) {
@@ -474,6 +485,7 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
       if (entity) {
         entities.push(entity);
         entityTypes.set(entity.id, entity.type);
+        entityById.set(entity.id, entity);
         if (entity.ref) references.add(entity.id);
       }
     });
@@ -485,7 +497,7 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
       c.fail("constraints", `must be an array (got ${describe(raw.constraints)})`);
     } else {
       raw.constraints.forEach((k, i) => {
-        const constraint = validateConstraint(k, `constraints[${i}]`, c, entityTypes, references);
+        const constraint = validateConstraint(k, `constraints[${i}]`, c, entityTypes, references, entityById);
         if (constraint) constraints.push(constraint);
       });
       // Expressions read a dimension by its name: two of one name would be ambiguous.
@@ -537,7 +549,7 @@ function validateEntity(
   }
   c.keys(e, label, ["id", "type", "construction", "ref", ...ENTITY_FIELDS[type]]);
   // A rect or a slot is several curves at once: it takes no ref.
-  if (e.ref !== undefined && !REF_KINDS[type]) c.fail(`${label} ref`, `a ${type} can't reference the model (lines, circles, arcs and points can); remove ref, or reference the edges with lines (Convert Entities)`);
+  if (e.ref !== undefined && !REF_KINDS[type]) c.fail(`${label} ref`, `${type === "ellipse" ? "an" : "a"} ${type} can't reference the model (lines, circles, arcs and points can); remove ref, or reference the edges with lines (Convert Entities)`);
   const ref = e.ref === undefined || !REF_KINDS[type] ? undefined : referenceOf(e.ref, type, `${label} ref`, c, opts);
   const base = {
     id: e.id as string,
@@ -590,6 +602,63 @@ function validateEntity(
       if (at) entity = { ...base, type, at };
       break;
     }
+    case "ellipse": {
+      const center = c.vec2(e, "center", label);
+      const major = c.vec2(e, "major", label);
+      const minor = c.num(e, "minor", label, { positive: true });
+      if (center && major && Math.hypot(major[0] - center[0], major[1] - center[1]) < 1e-9) {
+        c.fail(`${label}.major`, "is the end of the major semi-axis: it must not be at the center (it sets the major radius and the tilt)");
+      }
+      if ((e.startAngle === undefined) !== (e.endAngle === undefined)) {
+        c.fail(label, "an elliptical arc needs both startAngle and endAngle (degrees along the ellipse); give neither for a whole ellipse");
+      }
+      const startAngle = e.startAngle === undefined ? undefined : c.num(e, "startAngle", label, {});
+      const endAngle = e.endAngle === undefined ? undefined : c.num(e, "endAngle", label, {});
+      if (startAngle !== undefined && endAngle !== undefined && Math.abs((((endAngle - startAngle) % 360) + 360) % 360) < 1e-9) {
+        c.fail(label, `startAngle and endAngle are the same place (${startAngle}° and ${endAngle}°); leave both out for a whole ellipse`);
+      }
+      if (center && major && minor !== undefined) {
+        entity = { ...base, type, center, major, minor };
+        if (startAngle !== undefined && endAngle !== undefined) Object.assign(entity, { startAngle, endAngle });
+      }
+      break;
+    }
+    case "spline": {
+      if (e.closed !== undefined && typeof e.closed !== "boolean") c.fail(label, `closed must be true or false (got ${describe(e.closed)})`);
+      const closed = e.closed === true;
+      const least = closed ? 3 : 2;
+      const points: Vec2[] = [];
+      if (!Array.isArray(e.points) || e.points.length < least) {
+        c.fail(`${label}.points`, `must be an array of at least ${least} points [x, y] (a ${closed ? "closed" : "open"} spline) (got ${describe(e.points)})`);
+      } else if (e.points.length > MAX_SPLINE_POINTS) {
+        c.fail(`${label}.points`, `has ${e.points.length} points; a spline takes at most ${MAX_SPLINE_POINTS}`);
+      } else {
+        e.points.forEach((p, i) => {
+          const v = c.vec2({ [i]: p }, String(i), `${label}.points`);
+          if (v) points.push(v);
+        });
+        if (points.length === e.points.length) {
+          const n = points.length;
+          for (let i = 0; i < (closed ? n : n - 1); i++) {
+            const p = points[i];
+            const q = points[(i + 1) % n];
+            if (Math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-9) c.fail(`${label}.points`, `points ${i} and ${(i + 1) % n} are in the same place; a spline passes through each point once`);
+          }
+        }
+      }
+      for (const key of ["startTangent", "endTangent"] as const) {
+        if (e[key] === undefined) continue;
+        if (closed) c.fail(label, `a closed spline has no ends: remove ${key}`);
+        else c.num(e, key, label, {});
+      }
+      if (points.length >= least && points.length === (e.points as unknown[]).length) {
+        entity = { ...base, type, points };
+        if (closed) entity.closed = true;
+        if (!closed && typeof e.startTangent === "number") entity.startTangent = e.startTangent;
+        if (!closed && typeof e.endTangent === "number") entity.endTangent = e.endTangent;
+      }
+      break;
+    }
   }
   return c.errors.length === before ? entity : null;
 }
@@ -600,6 +669,7 @@ function validateConstraint(
   c: Checker,
   entities: Map<string, SketchEntity["type"]>,
   references: ReadonlySet<string> = new Set(),
+  byId: ReadonlyMap<string, SketchEntity> = new Map(),
 ): Constraint | null {
   if (!isObject(k)) {
     c.fail(path, `must be an object (got ${describe(k)})`);
@@ -620,7 +690,7 @@ function validateConstraint(
     }
     const type = entities.get(value)!;
     if (!allowed.includes(type)) {
-      c.fail(label, `${key} "${value}" is a ${type}; this constraint applies to ${allowed.join(" or ")}`);
+      c.fail(label, `${key} "${value}" is ${type === "ellipse" ? "an" : "a"} ${type}; this constraint applies to ${allowed.join(" or ")}`);
       return undefined;
     }
     return value;
@@ -637,8 +707,11 @@ function validateConstraint(
       c.fail(label, `point ref "${value}" must be "origin" or "<entity>.<point>" for an entity in this sketch`);
       return undefined;
     }
-    if (!POINT_NAMES[type].includes(point)) {
-      c.fail(label, `point ref "${value}": a ${type} has points ${POINT_NAMES[type].join(", ")}`);
+    const own = byId.has(id) ? pointNames(byId.get(id)!) : undefined;
+    if (!(own ?? POINT_NAMES[type]).includes(point)) {
+      const list = own && own.length > 6 ? `${own.slice(0, 3).join(", ")}, … ${own[own.length - 1]}` : (own ?? POINT_NAMES[type]).join(", ");
+      const what = type === "ellipse" && (point === "start" || point === "end") ? `"${id}" is a whole ellipse (only an elliptical arc, with startAngle and endAngle, has a start and an end); it` : `a ${type}`;
+      c.fail(label, `point ref "${value}": ${what} has points ${list}`);
       return undefined;
     }
     return value;
@@ -702,7 +775,7 @@ function validateConstraint(
         const points = pointPair(k.points);
         return points && c.errors.length === before ? { type: k.type, points } : null;
       }
-      const entity = entityRef("entity", k.entity, ["line"]);
+      const entity = entityRef("entity", k.entity, ["line", "ellipse"]);
       return entity && c.errors.length === before ? { type: k.type, entity } : null;
     }
     case "distance":
@@ -772,6 +845,10 @@ function validateConstraint(
     case "diameter":
     case "arcLength": {
       c.keys(k, label, ["type", "entity", "value", ...DIM_KEYS]);
+      if (typeof k.entity === "string" && entities.get(k.entity) === "ellipse" && k.type !== "arcLength") {
+        c.fail(label, `"${k.entity}" is an ellipse: it has two radii. Dimension them as distances: { "type": "distance", "points": ["${k.entity}.center", "${k.entity}.major"] } (major) or ["${k.entity}.center", "${k.entity}.minorEnd"] (minor)`);
+        return null;
+      }
       const entity = entityRef("entity", k.entity, k.type === "arcLength" ? ["arc"] : ["circle", "arc"]);
       const value = c.num(k, "value", label, { positive: true });
       const dim = dimension();
@@ -786,12 +863,13 @@ function validateConstraint(
     }
     case "equal": {
       c.keys(k, label, ["type", "entities"]);
-      const pair = entityPair(["line", "circle", "arc"]);
+      const pair = entityPair(["line", "circle", "arc", "ellipse"]);
       if (!pair) return null;
       const [a, b] = pair;
-      const kind = (id: string) => (entities.get(id) === "line" ? "line" : "round");
+      const kind = (id: string) => (entities.get(id) === "line" ? "line" : entities.get(id) === "ellipse" ? "ellipse" : "round");
       if (kind(a) !== kind(b)) {
-        c.fail(label, `cannot make a line equal to a circle or arc ("${a}", "${b}")`);
+        const words = { line: "a line", round: "a circle or arc", ellipse: "an ellipse" };
+        c.fail(label, `cannot make ${words[kind(a)]} equal to ${words[kind(b)]} ("${a}", "${b}"): lines are equal in length, circles and arcs in radius, ellipses in both radii`);
         return null;
       }
       return c.errors.length === before ? { type: "equal", entities: [a, b] } : null;
@@ -805,7 +883,7 @@ function validateConstraint(
       c.keys(k, label, k.type === "angle" ? ["type", "entities", "value", "supplement", ...DIM_KEYS] : ["type", "entities"]);
       if (k.supplement !== undefined && typeof k.supplement !== "boolean") c.fail(label, `supplement must be true or false (got ${describe(k.supplement)})`);
       const round = k.type === "concentric" || k.type === "coradial";
-      const pair = entityPair(round ? ["circle", "arc"] : ["line"], !round);
+      const pair = entityPair(round ? (k.type === "concentric" ? ["circle", "arc", "ellipse"] : ["circle", "arc"]) : ["line"], !round);
       if (k.type === "angle") {
         const value = c.num(k, "value", label, {});
         const dim = dimension();
@@ -818,11 +896,30 @@ function validateConstraint(
     }
     case "tangent": {
       c.keys(k, label, ["type", "entities"]);
-      const pair = entityPair(["line", "circle", "arc"], true);
+      const pair = entityPair(["line", "circle", "arc", "ellipse", "spline"], true);
       if (!pair) return null;
       if (pair.every((id) => isSketchAxis(id) || entities.get(id) === "line")) {
         c.fail(label, `two lines cannot be tangent ("${pair[0]}", "${pair[1]}"); use collinear or parallel`);
         return null;
+      }
+      // An ellipse touches lines; a spline leaves or meets a line, an arc, a circle or another spline at one of its ends.
+      const typeOf = (id: string) => (isSketchAxis(id) ? "line" : entities.get(id));
+      const ellipse = pair.find((id) => typeOf(id) === "ellipse");
+      if (ellipse && typeOf(pair[0] === ellipse ? pair[1] : pair[0]) !== "line") {
+        c.fail(label, `"${ellipse}" is an ellipse: it can be tangent to a line (or the X or Y axis), not to a ${typeOf(pair[0] === ellipse ? pair[1] : pair[0])}`);
+        return null;
+      }
+      const spline = pair.find((id) => typeOf(id) === "spline");
+      if (spline) {
+        const other = pair[0] === spline ? pair[1] : pair[0];
+        if (byId.get(spline)?.type === "spline" && (byId.get(spline) as { closed?: boolean }).closed) {
+          c.fail(label, `"${spline}" is a closed spline: it has no ends to be tangent at`);
+          return null;
+        }
+        if (isSketchAxis(other)) {
+          c.fail(label, `a spline is tangent at one of its ends to an entity of the sketch; draw a line along the ${other} axis and make "${spline}" tangent to it`);
+          return null;
+        }
       }
       return c.errors.length === before ? { type: "tangent", entities: pair } : null;
     }
@@ -830,7 +927,7 @@ function validateConstraint(
     case "pointOn": {
       c.keys(k, label, ["type", "point", "entity"]);
       const point = pointRef(k.point);
-      const entity = entityRef("entity", k.entity, k.type === "midpoint" ? ["line", "slot"] : ["line", "circle", "arc"], k.type === "pointOn");
+      const entity = entityRef("entity", k.entity, k.type === "midpoint" ? ["line", "slot"] : ["line", "circle", "arc", "ellipse", "spline"], k.type === "pointOn");
       if (point && entity && point.split(".")[0] === entity) c.fail(label, `"${point}" is a point of "${entity}" itself`);
       return point && entity && c.errors.length === before ? { type: k.type, point, entity } : null;
     }
@@ -888,7 +985,7 @@ function validateConstraint(
         else if (point && references.has(point.split(".")[0])) c.fail(label, `"${point}" is a point of a reference entity: it follows the model already`);
         return point && c.errors.length === before ? { type: "fix", point } : null;
       }
-      const entity = entityRef("entity", k.entity, ["line", "circle", "arc", "rect", "slot", "point"]);
+      const entity = entityRef("entity", k.entity, ["line", "circle", "arc", "rect", "slot", "point", "ellipse", "spline"]);
       if (entity && references.has(entity)) c.fail(label, `"${entity}" is a reference entity: it follows the model already`);
       return entity && c.errors.length === before ? { type: "fix", entity } : null;
     }

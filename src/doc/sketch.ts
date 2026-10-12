@@ -59,7 +59,7 @@ export function rawConstraintEntities(k: unknown): string[] {
   }
 }
 
-export const ENTITY_PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p" };
+export const ENTITY_PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p", ellipse: "el", spline: "sp" };
 
 /** The first free entity id with the type's prefix: l1, l2, ... */
 export function nextEntityId(entities: { id?: unknown }[], prefix: string): string {
@@ -80,7 +80,13 @@ export function expressionFields(rawEntities: unknown): string[] {
     const id = String((e as { id?: unknown }).id);
     for (const [field, v] of Object.entries(e)) {
       if (isExpression(v)) out.push(`${id}.${field}`);
-      else if (Array.isArray(v)) v.forEach((c, k) => isExpression(c) && out.push(`${id}.${field}.${k}`));
+      else if (Array.isArray(v)) {
+        v.forEach((c, k) => {
+          if (isExpression(c)) out.push(`${id}.${field}.${k}`);
+          // A spline's points: the solver calls points[k] "p<k>".
+          else if (field === "points" && Array.isArray(c)) c.forEach((x, j) => isExpression(x) && out.push(`${id}.p${k}.${j}`));
+        });
+      }
     }
   }
   return out;

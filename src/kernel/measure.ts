@@ -79,8 +79,24 @@ export interface Interference {
 
 export function volumeOf(oc: OC, s: Scope, shape: TopoDS_Shape): number {
   const props = s.track(new oc.GProp_GProps());
-  oc.BRepGProp.VolumeProperties(shape, props, false, false, false);
+  // The plain integration is exact on planes, cylinders, cones, spheres and tori; a swept ellipse or spline
+  // face (an extrusion or revolution surface) needs the adaptive one to come within 1e-9 of the truth.
+  if (hasSweptFaces(oc, s, shape)) oc.BRepGProp.VolumePropertiesGK(shape, props, 1e-9, false, true, false, false, false);
+  else oc.BRepGProp.VolumeProperties(shape, props, false, false, false);
   return props.Mass();
+}
+
+const ANALYTIC_SURFACES: ReadonlySet<unknown> = new Set(["GeomAbs_Plane", "GeomAbs_Cylinder", "GeomAbs_Cone", "GeomAbs_Sphere", "GeomAbs_Torus"]);
+
+/** Does the shape have a face on a surface other than a plane, cylinder, cone, sphere or torus? */
+function hasSweptFaces(oc: OC, s: Scope, shape: TopoDS_Shape): boolean {
+  const ex = s.track(new oc.TopExp_Explorer(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
+  for (; ex.More(); ex.Next()) {
+    const face = s.track(oc.TopoDS.Face(s.track(ex.Current())));
+    const type: unknown = s.track(new oc.BRepAdaptor_Surface(face, true)).GetType();
+    if (!ANALYTIC_SURFACES.has(type)) return true;
+  }
+  return false;
 }
 
 /** The centre of volume of a solid (or of the solids of a compound together). */

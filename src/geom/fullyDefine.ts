@@ -9,6 +9,7 @@
 
 import type { Constraint, SketchEntity, Vec2 } from "../doc/types";
 import { isConstant } from "./axes";
+import { entityPoint, pointNames } from "./curves";
 import { rankTracker } from "./solver";
 
 export interface FullyDefineOptions {
@@ -48,6 +49,12 @@ function pointsOf(e: SketchEntity): [string, Vec2][] {
       return [p("center1", e.center1), p("center2", e.center2)];
     case "point":
       return [p("at", e.at)];
+    case "ellipse":
+    case "spline":
+      // An ellipse's minor end is set by its radii, so it is no point to place.
+      return pointNames(e)
+        .filter((n) => n !== "minorEnd")
+        .map((n) => p(n, entityPoint(e, n)!));
   }
 }
 
@@ -55,7 +62,7 @@ const at = (ref: string, entities: SketchEntity[]): Vec2 | null => {
   if (ref === "origin") return [0, 0];
   const [id, name] = ref.split(".");
   const e = entities.find((x) => x.id === id);
-  return e ? ((e as unknown as Record<string, Vec2>)[name] ?? null) : null;
+  return e ? (entityPoint(e, name) ?? null) : null;
 };
 
 export function fullyDefine(entities: SketchEntity[], constraints: Constraint[], opts: FullyDefineOptions = {}): FullyDefineResult {
@@ -106,6 +113,14 @@ export function fullyDefine(entities: SketchEntity[], constraints: Constraint[],
         offer({ type: "distanceY", entity: e.id, value: tidy(e.h) });
       }
       if (e.type === "slot") offer({ type: "distance", entity: e.id, value: tidy(Math.hypot(e.center2[0] - e.center1[0], e.center2[1] - e.center1[1])) });
+      if (e.type === "ellipse") {
+        // Its two radii, as distances from the centre; a level or plumb major axis says so.
+        const a = Math.hypot(e.major[0] - e.center[0], e.major[1] - e.center[1]);
+        offer({ type: "distance", points: [`${e.id}.center`, `${e.id}.major`], value: tidy(a) });
+        offer({ type: "distance", points: [`${e.id}.center`, `${e.id}.minorEnd`], value: tidy(e.minor) });
+        if (Math.abs(e.major[1] - e.center[1]) <= TOL * Math.max(1, a)) offer({ type: "horizontal", entity: e.id });
+        else if (Math.abs(e.major[0] - e.center[0]) <= TOL * Math.max(1, a)) offer({ type: "vertical", entity: e.id });
+      }
     }
     // Where things are: each key point's X and Y from the datum; one level with or plumb above it says so instead of a 0.
     const datum = opts.datum && at(opts.datum, entities) ? opts.datum : "origin";

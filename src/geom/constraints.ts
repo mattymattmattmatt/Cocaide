@@ -5,6 +5,7 @@
 
 import type { AngleConstraint, Constraint, SketchEntity, Vec2 } from "../doc/types";
 import { isDriven, withAxes } from "./axes";
+import { closestOnEllipse, closestOnSpline, ellipseGeom, ellipseSupport, entityPoint, splineEndTangent, splineOf } from "./curves";
 import { dist2, sub2 } from "./vec";
 
 const CONSTRAINT_TOL = 1e-6;
@@ -92,6 +93,10 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
       return { label: `diameter ${k.entity} = ${fmt(k.value)}`, actual: 2 * radius(get(k.entity)), expected: k.value };
     case "equal": {
       const [a, b] = k.entities.map(get);
+      if (a.type === "ellipse" && b.type === "ellipse") {
+        const [g, h] = [ellipseGeom(a), ellipseGeom(b)];
+        return { label: `equal ${k.entities[0]} ${k.entities[1]}`, actual: Math.abs(g.a - h.a) + Math.abs(g.b - h.b), expected: 0 };
+      }
       const size = (e: SketchEntity) => (e.type === "line" ? dist2(e.start, e.end) : radius(e));
       return { label: `equal ${k.entities[0]} ${k.entities[1]}`, actual: size(a), expected: size(b) };
     }
@@ -115,6 +120,17 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
     case "tangent": {
       const [a, b] = k.entities.map(get);
       const label = `tangent ${k.entities[0]} ${k.entities[1]}`;
+      if (a.type === "spline" || b.type === "spline") {
+        // At the spline's end that meets the other: the directions in line (degrees off).
+        const [spline, other] = (a.type === "spline" ? [a, b] : [b, a]) as [Extract<SketchEntity, { type: "spline" }>, SketchEntity];
+        return { label, actual: tangentMiss(spline, other), expected: 0, tol: ANGLE_TOL };
+      }
+      if (a.type === "ellipse" || b.type === "ellipse") {
+        // The line as far from the centre as the ellipse reaches across it.
+        const [line, el] = (a.type === "ellipse" ? [b, a] : [a, b]) as [SketchEntity, Extract<SketchEntity, { type: "ellipse" }>];
+        const u = unit(line);
+        return { label, actual: Math.abs(offset(line, el.center)), expected: ellipseSupport(ellipseGeom(el), [-u[1], u[0]]) };
+      }
       if (a.type === "line" || b.type === "line") {
         const [line, round] = a.type === "line" ? [a, b] : [b, a];
         return { label, actual: Math.abs(offset(line, centre(round))), expected: radius(round) };
@@ -138,6 +154,8 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
       const p = pt(k.point);
       const label = `${k.point} on ${k.entity}`;
       if (e.type === "line") return { label, actual: Math.abs(offset(e, p)), expected: 0 };
+      if (e.type === "ellipse") return { label, actual: closestOnEllipse(ellipseGeom(e), p).distance, expected: 0 };
+      if (e.type === "spline") return { label, actual: closestOnSpline(splineOf(e), p).distance, expected: 0 };
       return { label, actual: dist2(p, centre(e)), expected: radius(e) };
     }
     case "symmetric": {
@@ -258,6 +276,8 @@ function entitySpan(e: SketchEntity): [Vec2, Vec2] {
       return [e.start, e.end];
     case "slot":
       return [e.center1, e.center2];
+    case "ellipse":
+      return [e.center, e.major]; // its major axis: what horizontal and vertical level
     default:
       return [[0, 0], [0, 0]]; // rect is handled by the caller; validation rejects the rest
   }
@@ -269,11 +289,65 @@ function radius(e: SketchEntity): number {
   return NaN;
 }
 
+/**
+ * Which end of an open spline a tangent relation with `other` is at: the end
+ * nearer the other entity (a joined end is on it). True: the last point.
+ */
+export function splineTangentEnd(spline: Extract<SketchEntity, { type: "spline" }>, other: SketchEntity): boolean {
+  const first = spline.points[0];
+  const last = spline.points[spline.points.length - 1];
+  return distanceTo(other, last) < distanceTo(other, first);
+}
+
+/** How far p is from an entity's curve (a line as drawn, a circle's or arc's circle, a spline's ends). */
+function distanceTo(e: SketchEntity, p: Vec2): number {
+  if (e.type === "line") {
+    const d = sub2(e.end, e.start);
+    const l2 = d[0] * d[0] + d[1] * d[1] || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - e.start[0]) * d[0] + (p[1] - e.start[1]) * d[1]) / l2));
+    return dist2(p, [e.start[0] + t * d[0], e.start[1] + t * d[1]]);
+  }
+  if (e.type === "circle" || e.type === "arc") return Math.abs(dist2(p, e.center) - radius(e));
+  if (e.type === "spline") return e.closed ? closestOnSpline(splineOf(e), p).distance : Math.min(dist2(p, e.points[0]), dist2(p, e.points[e.points.length - 1]));
+  if (e.type === "ellipse") return closestOnEllipse(ellipseGeom(e), p).distance;
+  return Infinity;
+}
+
+/**
+ * The unit direction a tangent at a spline's end must have, by what it is
+ * tangent to (either way along): a line's direction; square to a circle's or
+ * arc's radius through that end; another spline's nearer end tangent.
+ */
+export function tangentTarget(spline: Extract<SketchEntity, { type: "spline" }>, other: SketchEntity, end: boolean): Vec2 | null {
+  const at = end ? spline.points[spline.points.length - 1] : spline.points[0];
+  let w: Vec2;
+  if (other.type === "line") w = unit(other);
+  else if (other.type === "circle" || other.type === "arc") {
+    const r = sub2(at, other.center);
+    w = [-r[1], r[0]];
+  } else if (other.type === "spline" && !other.closed) w = splineEndTangent(other, splineTangentEnd(other, spline));
+  else return null;
+  const l = Math.hypot(w[0], w[1]) || 1;
+  return [w[0] / l, w[1] / l];
+}
+
+/** Degrees a spline's end is off tangent to the other entity there. */
+function tangentMiss(spline: Extract<SketchEntity, { type: "spline" }>, other: SketchEntity): number {
+  if (spline.closed) return NaN;
+  const end = splineTangentEnd(spline, other);
+  const t = splineEndTangent(spline, end);
+  const w = tangentTarget(spline, other, end);
+  if (!w) return NaN;
+  const sin = Math.abs(t[0] * w[1] - t[1] * w[0]);
+  return (Math.asin(Math.min(1, sin)) * 180) / Math.PI;
+}
+
 export function point(ref: string, byId: Map<string, SketchEntity>): Vec2 {
   if (ref === "origin") return [0, 0];
   const [id, name] = ref.split(".");
-  const e = byId.get(id) as unknown as Record<string, Vec2>;
-  return e[name];
+  const e = byId.get(id);
+  if (e?.type === "ellipse" || e?.type === "spline") return entityPoint(e, name)!;
+  return (e as unknown as Record<string, Vec2>)[name];
 }
 
 function fmt(x: number): string {
