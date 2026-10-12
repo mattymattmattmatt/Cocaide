@@ -9,7 +9,7 @@ import { references, type RawDocument } from "../doc/commands";
 import { documentParameters, parameterRefs, resolveExpressions } from "../doc/parameters";
 import { photoGuesses, photoOf } from "../doc/photo";
 import { constraintEntities, isConstruction } from "../doc/sketch";
-import { DEFAULT_BODY, type Constraint, type DatumRef, type MemberFeature, type ProfileDef, type SketchEntity } from "../doc/types";
+import { DEFAULT_BODY, seedIds, type Constraint, type DatumRef, type MemberFeature, type ProfileDef, type SketchEntity } from "../doc/types";
 import { isObject, memberAtNode, validateDocument } from "../doc/validate";
 import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
@@ -135,7 +135,7 @@ export function bodyFeatures(doc: RawDocument, name: string): string[] {
     else if ((f.op === "cut" || f.op === "hole") && only(f.bodies)) ids.add(id);
     else if (f.op === "combine" && f.target === name) ids.add(id);
     else if ((f.op === "member" || f.op === "endCap" || f.op === "gusset") && (f.newBody ?? f.id) === name) ids.add(id);
-    else if ((f.op === "linearPattern" || f.op === "circularPattern") && ids.has(String(f.feature))) ids.add(id);
+    else if ((f.op === "linearPattern" || f.op === "circularPattern") && seedIds(f).length > 0 && seedIds(f).every((s) => ids.has(s))) ids.add(id);
     else if (defOf(f.op)?.onlyBodies?.(f, (n) => n === name, doc)) ids.add(id);
   }
   return [...ids];

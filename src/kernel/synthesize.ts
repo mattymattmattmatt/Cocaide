@@ -2,12 +2,13 @@
 // only if running it selects exactly what was clicked, so a pick never
 // produces a selector that means something else. Candidates are tried from
 // the most robust to the most specific: "the largest face facing +Z" survives
-// a thickness change, "the face at offset 6" does not.
+// a thickness change, and so does "the outermost face facing +Z" (its rank
+// along the normal), but "the face at offset 6" does not.
 //
 // Pure: works on FaceInfo / EdgeInfo, so it runs on either side of the worker.
 
 import type { EdgeSelector, FaceSelector, Vec3 } from "../doc/types";
-import { selectEdges, selectFaces } from "./selectors";
+import { rankLevels, selectEdges, selectFaces } from "./selectors";
 import type { EdgeInfo, FaceInfo } from "./topology";
 
 export type Synthesis<T> = { ok: true; selector: T } | { ok: false; error: string };
@@ -19,9 +20,16 @@ export function faceSelectorFor(faces: FaceInfo[], index: number): Synthesis<Fac
   if (f.type === "plane" && f.normal) {
     const normal = clean(f.normal);
     const offset = cleanScalar(f.offset ?? 0);
+    candidates.push({ type: "planar", normal, pick: "largest" }, { type: "planar", normal, pick: "smallest" });
+    // Its level along the normal before its offset: "the top face" still means it when the block gets taller.
+    for (const rank of ranksOf(faces, f)) {
+      candidates.push(
+        { type: "planar", normal, rank, pick: "largest" },
+        { type: "planar", normal, rank, pick: "smallest" },
+        { type: "planar", normal, rank, near: clean3(f.centroid), pick: "all" },
+      );
+    }
     candidates.push(
-      { type: "planar", normal, pick: "largest" },
-      { type: "planar", normal, pick: "smallest" },
       { type: "planar", normal, offset, pick: "largest" },
       { type: "planar", normal, offset, pick: "smallest" },
       { type: "planar", normal, near: clean3(f.centroid), pick: "all" },
@@ -151,6 +159,23 @@ export function edgesSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], indices: 
     each.push(s.selector);
   }
   return { ok: true, selector: each };
+}
+
+/**
+ * The face's level among the faces facing the same way (of its body, in a
+ * part of several): counted from the outside and from the inside, the
+ * smaller count first (1 the furthest out along the normal, -1 the furthest in);
+ * none when every such face is on one level.
+ */
+function ranksOf(faces: FaceInfo[], f: FaceInfo): number[] {
+  const same = selectFaces(faces, { type: "planar", normal: f.normal!, pick: "all", ...(f.body ? { body: f.body } : {}) }).matches;
+  const levels = rankLevels(same);
+  const i = levels.findIndex((o) => Math.abs(o - (f.offset ?? 0)) <= 1e-6);
+  // With one level the rank says nothing the normal does not.
+  if (i < 0 || levels.length < 2) return [];
+  const out = i + 1;
+  const inner = i - levels.length;
+  return out <= -inner ? [out, inner] : [inner, out];
 }
 
 /** A point with document-friendly precision. */

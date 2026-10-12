@@ -52,6 +52,8 @@ import {
   type DeleteBodyFeature,
   type DatumRef,
   type EdgePoint,
+  seedIds,
+  instanceNumbers,
   type PlaneSpec,
   DERIVED_SUFFIX,
   DIRECTION2_EXTENTS,
@@ -69,6 +71,7 @@ import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, poss
 import { isSketchAxis } from "./sketch";
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
+import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
 
 export interface ValidatedFeature {
   index: number;
@@ -116,6 +119,8 @@ export interface FeatureContext {
   members: Map<string, MemberFeature>;
   /** The joint at each node so far. */
   joints: Map<string, string>;
+  /** Valid sketches so far, by id (their point entities place holes and sketch patterns). */
+  sketches: Map<string, SketchFeature>;
 }
 
 const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -234,7 +239,7 @@ export function validateDocument(input: unknown): ValidationResult {
   result.headerErrors = header.errors;
   /** Every profile the part lists, valid or not: a member of a broken one points at its errors. */
   const listed = isObject(input.profiles) ? Object.keys(input.profiles) : [];
-  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, members: new Map(), joints: new Map() };
+  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, members: new Map(), joints: new Map(), sketches: new Map() };
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
   const bodies = new BodyNames();
@@ -261,6 +266,7 @@ export function validateDocument(input: unknown): ValidationResult {
       if (feature) bodies.check(feature, c);
       if (feature?.op === "member" && c.errors.length === 0) ctx.members.set(feature.id, feature);
       if (feature?.op === "joint" && c.errors.length === 0) ctx.joints.set(feature.node, feature.id);
+      if (feature?.op === "sketch" && c.errors.length === 0) ctx.sketches.set(feature.id, feature);
       if (typeof raw.id === "string" && !seen.has(raw.id)) seen.set(raw.id, String(raw.op));
     }
     result.features.push({
@@ -316,7 +322,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       feature = validateExtrude(raw, c, earlier);
       break;
     case "hole":
-      feature = validateHole(raw, c);
+      feature = validateHole(raw, c, earlier, ctx);
       break;
     case "fillet":
     case "chamfer":
@@ -1073,63 +1079,124 @@ function quoted(values: readonly string[]): string {
 
 // ------------------------------------------------------------------ hole
 
-function validateHole(raw: Record<string, unknown>, c: Checker): HoleFeature | null {
-  c.keys(raw, "", ["id", "op", "face", "center", "diameter", "depth", "counterbore", "countersink", "bodies"]);
+function validateHole(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>, ctx: FeatureContext): HoleFeature | null {
+  c.keys(raw, "", ["id", "op", "face", "center", "centers", "points", "size", "kind", "fit", "diameter", "depth", "counterbore", "countersink", "thread", "bodies"]);
   const bodies = raw.bodies === undefined ? undefined : bodyList(raw.bodies, "bodies", c);
-  const face = validateFaceSelector(raw.face, "face", c);
-  if (face && face.type !== "planar") c.fail("face", `a hole needs a planar face selector (got "${face.type}")`);
-  const center = c.vec2(raw, "center", "");
-  const diameter = c.num(raw, "diameter", "", { positive: true });
-  let depth: number | "through" | undefined;
-  if (raw.depth === "through") depth = "through";
-  else if (typeof raw.depth === "number" && Number.isFinite(raw.depth) && raw.depth > 0) depth = raw.depth;
-  else c.fail("depth", `must be a positive number or "through" (got ${describe(raw.depth)})`);
 
-  let counterbore: HoleFeature["counterbore"];
-  let countersink: HoleFeature["countersink"];
-  if (raw.counterbore !== undefined && raw.countersink !== undefined) {
-    c.fail("", "use counterbore or countersink, not both");
-  }
-  if (raw.counterbore !== undefined) {
-    if (!isObject(raw.counterbore)) {
-      c.fail("counterbore", `must be an object (got ${describe(raw.counterbore)})`);
-    } else {
-      c.keys(raw.counterbore, "counterbore", ["diameter", "depth"]);
-      const d = c.num(raw.counterbore, "diameter", "counterbore", { positive: true });
-      const t = c.num(raw.counterbore, "depth", "counterbore", { positive: true });
-      if (d !== undefined && diameter !== undefined && d <= diameter) {
-        c.fail("counterbore.diameter", `must be larger than the hole diameter ${diameter} (got ${d})`);
-      }
-      if (t !== undefined && typeof depth === "number" && t >= depth) {
-        c.fail("counterbore.depth", `must be less than the hole depth ${depth} (got ${t})`);
-      }
-      if (d !== undefined && t !== undefined) counterbore = { diameter: d, depth: t };
+  // Where: one centre, several, or a sketch's points.
+  const where = (["center", "centers", "points"] as const).filter((k) => raw[k] !== undefined);
+  if (where.length !== 1) c.fail("", where.length ? `give one of ${where.join(" and ")}, not both` : 'needs where it goes: "center": [x, y], "centers": [[x, y], ...] or "points": "<sketch id>"');
+  const center = raw.center === undefined ? undefined : c.vec2(raw, "center", "");
+  let centers: Vec2[] | undefined;
+  if (raw.centers !== undefined) {
+    if (!Array.isArray(raw.centers) || raw.centers.length === 0) c.fail("centers", `must be a list of [x, y] centres, at least one (got ${describe(raw.centers)})`);
+    else {
+      const list = raw.centers.map((p, i) => c.vec2({ [`centers[${i}]`]: p }, `centers[${i}]`, ""));
+      list.forEach((p, i) => {
+        const j = list.findIndex((q) => p && q && Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-9);
+        if (p && j < i) c.fail(`centers[${i}]`, `is the same point as centers[${j}]`);
+      });
+      if (list.every((p) => p)) centers = list as Vec2[];
     }
   }
-  if (raw.countersink !== undefined) {
-    if (!isObject(raw.countersink)) {
-      c.fail("countersink", `must be an object (got ${describe(raw.countersink)})`);
-    } else {
-      c.keys(raw.countersink, "countersink", ["diameter", "angle"]);
-      const d = c.num(raw.countersink, "diameter", "countersink", { positive: true });
-      const angle = c.num(raw.countersink, "angle", "countersink", { positive: true });
-      if (angle !== undefined && angle >= 180) c.fail("countersink.angle", `must be below 180 degrees (got ${angle})`);
-      if (d !== undefined && diameter !== undefined && d <= diameter) {
-        c.fail("countersink.diameter", `must be larger than the hole diameter ${diameter} (got ${d})`);
-      }
-      if (d !== undefined && angle !== undefined && angle < 180 && diameter !== undefined && typeof depth === "number") {
-        const sinkDepth = (d - diameter) / 2 / Math.tan(((angle / 2) * Math.PI) / 180);
-        if (sinkDepth >= depth) {
-          c.fail("countersink", `is ${round(sinkDepth)} deep, which reaches the hole depth ${depth}`);
-        }
-      }
-      if (d !== undefined && angle !== undefined) countersink = { diameter: d, angle };
+  let points: string | undefined;
+  if (raw.points !== undefined) {
+    const id = raw.points;
+    if (typeof id !== "string") c.fail("points", `must be the id of a sketch before this one, whose points are the hole centres (got ${describe(id)})`);
+    else if (!earlier.has(id)) c.fail("points", `"${id}" is not a feature before this one`);
+    else if (earlier.get(id) !== "sketch") c.fail("points", `"${id}" is ${article(earlier.get(id)!)}, not a sketch`);
+    else if (ctx.sketches.has(id) && !ctx.sketches.get(id)!.entities.some((e) => e.type === "point")) {
+      c.fail("points", `sketch "${id}" has no points: put a point (the Point tool) where each hole goes`);
+    } else points = id;
+  }
+
+  // The face: needed, except with a sketch's points (they bring their plane).
+  let face: FaceSelector | null | undefined;
+  if (raw.face !== undefined || raw.points === undefined) {
+    face = validateFaceSelector(raw.face, "face", c);
+    if (face && face.type !== "planar") c.fail("face", `a hole needs a planar face selector (got "${face.type}")`);
+  }
+
+  // What: a size from the table, a kind, a fit, and the numbers the hole gives itself.
+  if (raw.size !== undefined && (typeof raw.size !== "string" || !HOLE_SIZES.includes(raw.size))) {
+    c.fail("size", `must be an ISO metric size: ${HOLE_SIZES.map((x) => `"${x}"`).join(", ")} (got ${describe(raw.size)})`);
+  }
+  if (raw.kind !== undefined && !HOLE_KINDS.includes(raw.kind as HoleKind)) c.fail("kind", `must be ${quoted(HOLE_KINDS)} (got ${describe(raw.kind)})`);
+  if (raw.fit !== undefined && !HOLE_FITS.includes(raw.fit as HoleFit)) c.fail("fit", `must be ${quoted(HOLE_FITS)} (got ${describe(raw.fit)})`);
+  // Without a size the hole gives its own diameter (a tapped hole is told it needs a size instead).
+  const sized = raw.size !== undefined || raw.kind === "tapped" || raw.thread !== undefined;
+  const diameter = raw.diameter === undefined && sized ? undefined : c.num(raw, "diameter", "", { positive: true });
+  let depth: HoleFeature["depth"] | undefined;
+  if (raw.depth === "through" || raw.depth === "upToNext") depth = raw.depth;
+  else if (typeof raw.depth === "number" && Number.isFinite(raw.depth) && raw.depth > 0) depth = raw.depth;
+  else c.fail("depth", `must be a positive number (blind), "through" or "upToNext" (got ${describe(raw.depth)})`);
+
+  if (raw.counterbore !== undefined && raw.countersink !== undefined) c.fail("", "use counterbore or countersink, not both");
+  /** A counterbore, countersink or thread: an object of positive numbers, each optional here (the size may give it). */
+  const part = (key: "counterbore" | "countersink" | "thread", fields: string[]): Record<string, number> | undefined => {
+    const v = raw[key];
+    if (v === undefined) return undefined;
+    if (!isObject(v)) {
+      c.fail(key, `must be an object (got ${describe(v)})`);
+      return undefined;
+    }
+    c.keys(v, key, fields);
+    const out: Record<string, number> = {};
+    for (const k of fields) {
+      if (v[k] === undefined) continue;
+      const n = c.num(v, k, key, { positive: true });
+      if (n !== undefined) out[k] = n;
+    }
+    return out;
+  };
+  const counterbore = part("counterbore", ["diameter", "depth"]);
+  const countersink = part("countersink", ["diameter", "angle"]);
+  const thread = part("thread", ["pitch", "depth"]);
+  const kind = holeKind({ kind: raw.kind as HoleKind | undefined, counterbore, countersink, thread });
+  for (const [key, own] of [["counterbore", "counterbore"], ["countersink", "countersink"], ["thread", "tapped"]] as const) {
+    if (raw[key] !== undefined && raw.kind !== undefined && kind !== own) c.fail(key, `goes with kind "${own}" (the hole is "${kind}")`);
+  }
+  if (raw.fit !== undefined && kind === "tapped") c.fail("fit", "is the clearance of a hole a screw passes through; a tapped hole's drill comes from its thread");
+  if (c.errors.length > 0) return null;
+
+  const spec = holeSpec({ size: raw.size as string | undefined, kind, fit: raw.fit as HoleFit | undefined, diameter, counterbore, countersink, thread, depth });
+  if (typeof spec === "string") {
+    c.fail(spec.startsWith("needs a diameter") ? "diameter" : "", spec);
+    return null;
+  }
+  const d = spec.diameter;
+  if (spec.counterbore) {
+    const { diameter: cd, depth: ct } = spec.counterbore;
+    if (cd <= d) c.fail("counterbore.diameter", `must be larger than the hole diameter ${d} (got ${cd})`);
+    if (typeof depth === "number" && ct >= depth) c.fail("counterbore.depth", `must be less than the hole depth ${depth} (got ${ct})`);
+  }
+  if (spec.countersink) {
+    const { diameter: sd, angle } = spec.countersink;
+    if (angle >= 180) c.fail("countersink.angle", `must be below 180 degrees (got ${angle})`);
+    if (sd <= d) c.fail("countersink.diameter", `must be larger than the hole diameter ${d} (got ${sd})`);
+    if (angle < 180 && sd > d && typeof depth === "number") {
+      const sinkDepth = (sd - d) / 2 / Math.tan(((angle / 2) * Math.PI) / 180);
+      if (sinkDepth >= depth) c.fail("countersink", `is ${round(sinkDepth)} deep, which reaches the hole depth ${depth}`);
     }
   }
-  if (c.errors.length > 0 || !face || !center || diameter === undefined || depth === undefined) return null;
-  const hole: HoleFeature = { id: raw.id as string, op: "hole", face, center, diameter, depth };
-  if (counterbore) hole.counterbore = counterbore;
-  if (countersink) hole.countersink = countersink;
+  if (spec.thread) {
+    const t = spec.thread;
+    if (d >= t.major) c.fail("diameter", `a tapped hole's drill must be smaller than its thread (${t.designation}: ${t.major}) (got ${d})`);
+    if (t.pitch >= t.major / 2) c.fail("thread.pitch", `must be less than half the thread's diameter ${t.major} (got ${t.pitch})`);
+    if (typeof t.depth === "number" && typeof depth === "number" && t.depth > depth) c.fail("thread.depth", `must be at most the drill depth ${depth} (got ${t.depth})`);
+  }
+  if (c.errors.length > 0 || face === null || depth === undefined) return null;
+  const hole: HoleFeature = { id: raw.id as string, op: "hole", diameter: d, depth };
+  if (face) hole.face = face;
+  if (center) hole.center = center;
+  if (centers) hole.centers = centers;
+  if (points) hole.points = points;
+  if (raw.size !== undefined) hole.size = raw.size as string;
+  if (raw.kind !== undefined) hole.kind = kind;
+  if (raw.fit !== undefined) hole.fit = raw.fit as HoleFit;
+  if (spec.counterbore) hole.counterbore = spec.counterbore;
+  if (spec.countersink) hole.countersink = spec.countersink;
+  if (spec.thread) hole.thread = spec.thread;
   if (bodies) hole.bodies = bodies;
   return hole;
 }
@@ -1302,45 +1369,51 @@ function validatePattern(
     raw,
     "",
     linear
-      ? ["id", "op", "feature", "direction", "spacing", "count", "direction2", "spacing2", "count2"]
-      : ["id", "op", "feature", "axis", "count", "angle"],
+      ? ["id", "op", "feature", "features", "direction", "along", "reverse", "spacing", "count", "direction2", "along2", "reverse2", "spacing2", "count2", "skip"]
+      : ["id", "op", "feature", "features", "axis", "count", "angle", "reverse", "skip"],
   );
-  if (typeof raw.feature !== "string") {
-    c.fail("feature", `must be the id of an earlier extrude, cut or hole (got ${describe(raw.feature)})`);
-  } else if (!earlier.has(raw.feature)) {
-    c.fail("feature", `"${raw.feature}" is not a feature before this one`);
-  } else if (!patternable(earlier.get(raw.feature))) {
-    c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a pattern repeats an extrude, cut or hole`);
-  }
+  const seeds = seedList(raw, c, earlier, "pattern");
   const count = instanceCount(raw, "count", c);
+  const reverse = flag(raw, "reverse", c);
   if (linear) {
-    const direction = c.unitVec(raw, "direction", "");
+    const direction = lineDirection(raw, "direction", "along", c, earlier);
     const spacing = c.num(raw, "spacing", "", { positive: true });
-    const second = ["direction2", "spacing2", "count2"].filter((k) => raw[k] !== undefined);
-    let direction2: [number, number, number] | undefined;
+    const reverse2 = flag(raw, "reverse2", c);
+    const second = ["direction2", "along2", "spacing2", "count2"].filter((k) => raw[k] !== undefined);
+    let direction2: Vec3 | DatumRef | undefined;
     let spacing2: number | undefined;
     let count2: number | undefined;
-    if (second.length > 0 && second.length < 3) {
-      c.fail("", "a second direction needs direction2, spacing2 and count2 together");
-    } else if (second.length === 3) {
-      direction2 = c.unitVec(raw, "direction2", "");
+    if (second.length > 0 && !(raw.spacing2 !== undefined && raw.count2 !== undefined && (raw.direction2 !== undefined || raw.along2 !== undefined))) {
+      c.fail("", "a second direction needs direction2 (or along2), spacing2 and count2 together");
+    } else if (second.length > 0) {
+      direction2 = lineDirection(raw, "direction2", "along2", c, earlier);
       spacing2 = c.num(raw, "spacing2", "", { positive: true });
       count2 = instanceCount(raw, "count2", c);
-      if (direction && direction2) {
-        const n1 = Math.hypot(...direction);
-        const n2 = Math.hypot(...direction2);
-        const cos = Math.abs(direction[0] * direction2[0] + direction[1] * direction2[1] + direction[2] * direction2[2]) / (n1 * n2);
+      // Both written out: they must differ (a reference is checked when the part rebuilds).
+      if (Array.isArray(direction) && Array.isArray(direction2)) {
+        const cos = Math.abs(dot3(normalize3(direction), normalize3(direction2)));
         if (cos > 1 - 1e-9) c.fail("direction2", "must not be parallel to direction");
       }
     }
-    if (c.errors.length > 0 || !direction || spacing === undefined || count === undefined) return null;
-    const f: LinearPatternFeature = { id: raw.id as string, op: "linearPattern", feature: raw.feature as string, direction, spacing, count };
-    if (direction2 && spacing2 !== undefined && count2 !== undefined) Object.assign(f, { direction2, spacing2, count2 });
+    if (reverse2 !== undefined && direction2 === undefined && second.length === 0) c.fail("reverse2", "turns the second direction round: give one (direction2 or along2, spacing2, count2)");
+    const skip = count === undefined ? undefined : skipList(raw, count * (count2 ?? 1), c);
+    if (c.errors.length > 0 || !seeds || !direction || spacing === undefined || count === undefined) return null;
+    const f: LinearPatternFeature = { id: raw.id as string, op: "linearPattern", ...seeds, ...(Array.isArray(direction) ? { direction } : { along: direction }), spacing, count };
+    if (reverse) f.reverse = true;
+    if (direction2 && spacing2 !== undefined && count2 !== undefined) {
+      Object.assign(f, Array.isArray(direction2) ? { direction2 } : { along2: direction2 }, { spacing2, count2 });
+      if (reverse2) f.reverse2 = true;
+    }
+    if (skip) f.skip = skip;
     return f;
   }
   let axis: CircularPatternFeature["axis"] | undefined;
   if (!isObject(raw.axis)) {
-    c.fail("axis", `must be { "origin": [x, y, z], "direction": [x, y, z] } (got ${describe(raw.axis)})`);
+    c.fail("axis", `must be { "origin": [x, y, z], "direction": [x, y, z] } or { "ref": <an edge, axis or cylindrical face> } (got ${describe(raw.axis)})`);
+  } else if (raw.axis.ref !== undefined) {
+    c.keys(raw.axis, "axis", ["ref"]);
+    const ref = validateDatumRef(raw.axis.ref, "axis.ref", c, earlier, "axis");
+    if (ref) axis = { ref };
   } else {
     c.keys(raw.axis, "axis", ["origin", "direction"]);
     const origin = c.vec3(raw.axis, "origin", "axis");
@@ -1349,10 +1422,79 @@ function validatePattern(
   }
   const angle = raw.angle === undefined ? undefined : c.num(raw, "angle", "", { positive: true });
   if (angle !== undefined && angle > 360) c.fail("angle", `must be at most 360 degrees (got ${angle})`);
-  if (c.errors.length > 0 || !axis || count === undefined) return null;
-  const f: CircularPatternFeature = { id: raw.id as string, op: "circularPattern", feature: raw.feature as string, axis, count };
+  const skip = count === undefined ? undefined : skipList(raw, count, c);
+  if (c.errors.length > 0 || !seeds || !axis || count === undefined) return null;
+  const f: CircularPatternFeature = { id: raw.id as string, op: "circularPattern", ...seeds, axis, count };
   if (angle !== undefined) f.angle = angle;
+  if (reverse) f.reverse = true;
+  if (skip) f.skip = skip;
   return f;
+}
+
+/** A pattern's or mirror's seeds: `feature` (one) or `features` (several, different), each an earlier feature a pattern can repeat. */
+function seedList(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>, what: "pattern" | "mirror"): { feature: string } | { features: string[] } | null {
+  const repeats = what === "pattern" ? "a pattern repeats an extrude, cut or hole" : "a mirror repeats an extrude, cut, hole or member";
+  const one = (v: unknown, path: string): boolean => {
+    if (typeof v !== "string") c.fail(path, `must be the id of an earlier extrude, cut or hole (got ${describe(v)})`);
+    else if (!earlier.has(v)) c.fail(path, `"${v}" is not a feature before this one`);
+    else if (!patternable(earlier.get(v))) c.fail(path, `"${v}" is a ${earlier.get(v)}; ${repeats}`);
+    else return true;
+    return false;
+  };
+  if (raw.feature !== undefined && raw.features !== undefined) {
+    c.fail("", 'give "feature" (one) or "features" (several), not both');
+    return null;
+  }
+  if (raw.features !== undefined) {
+    if (!Array.isArray(raw.features) || raw.features.length === 0) {
+      c.fail("features", `must be a list of earlier features' ids, at least one (got ${describe(raw.features)})`);
+      return null;
+    }
+    const list = raw.features as unknown[];
+    const ok = list.map((v, i) => one(v, `features[${i}]`));
+    const dup = list.find((v, i) => list.indexOf(v) !== i);
+    if (dup !== undefined) c.fail("features", `lists "${String(dup)}" twice`);
+    return ok.every(Boolean) && dup === undefined ? { features: list as string[] } : null;
+  }
+  return one(raw.feature, "feature") ? { feature: raw.feature as string } : null;
+}
+
+/** A linear pattern's direction: written out (`key`) or from the model (`refKey`: an edge, an axis, a face's normal), one of them. */
+function lineDirection(raw: Record<string, unknown>, key: string, refKey: string, c: Checker, earlier: ReadonlyMap<string, string>): Vec3 | DatumRef | undefined {
+  if (raw[key] !== undefined && raw[refKey] !== undefined) {
+    c.fail("", `give ${key} (written out) or ${refKey} (from the model), not both`);
+    return undefined;
+  }
+  if (raw[refKey] !== undefined) {
+    const ref = validateDatumRef(raw[refKey], refKey, c, earlier, ["axis", "plane"]);
+    return ref ?? undefined;
+  }
+  return c.unitVec(raw, key, "");
+}
+
+/**
+ * Instances to leave out, by number (the original is 1): different whole
+ * numbers from 2 to `total`, sorted. At least one copy must be left.
+ */
+function skipList(raw: Record<string, unknown>, total: number, c: Checker): number[] | undefined {
+  const v = raw.skip;
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v)) {
+    c.fail("skip", `must be a list of instance numbers (the original is 1) (got ${describe(v)})`);
+    return undefined;
+  }
+  const before = c.errors.length;
+  v.forEach((n, i) => {
+    if (n === 1) c.fail(`skip[${i}]`, "instance 1 is the original feature: it can't be skipped");
+    else if (typeof n !== "number" || !Number.isInteger(n) || n < 2 || n > total) c.fail(`skip[${i}]`, `must be an instance number from 2 to ${total} (got ${describe(n)})`);
+    else if (v.indexOf(n) !== i) c.fail(`skip[${i}]`, `skips instance ${n} twice`);
+  });
+  if (c.errors.length > before) return undefined;
+  if (v.length >= total - 1) {
+    c.fail("skip", `skips every copy (${total - 1} of them): nothing would be left to make`);
+    return undefined;
+  }
+  return [...(v as number[])].sort((a, b) => a - b);
 }
 
 function instanceCount(raw: Record<string, unknown>, key: string, c: Checker): number | undefined {
@@ -1376,14 +1518,21 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
   }
   switch (raw.type) {
     case "planar": {
-      c.keys(raw, path, ["type", "normal", "pick", "offset", "near", "body"]);
+      c.keys(raw, path, ["type", "normal", "pick", "offset", "rank", "near", "body"]);
       const normal = c.unitVec(raw, "normal", path);
       const offset = raw.offset === undefined ? undefined : c.num(raw, "offset", path, {});
+      const rank = raw.rank;
+      if (rank !== undefined && (typeof rank !== "number" || !Number.isInteger(rank) || rank === 0)) {
+        c.fail(`${path}.rank`, `must be a whole number other than 0: 1 the level furthest out along the normal, -1 the furthest in (got ${describe(rank)})`);
+      } else if (rank !== undefined && offset !== undefined) {
+        c.fail(path, "give offset or rank, not both");
+      }
       const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
       const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
       if (!normal || c.errors.length > before) return null;
       const s: FaceSelector = { type: "planar", normal, pick: pick as FaceSelector["pick"] };
       if (offset !== undefined) s.offset = offset;
+      if (rank !== undefined) s.rank = rank as number;
       if (near) s.near = near;
       if (body) s.body = body;
       return s;
@@ -1853,18 +2002,20 @@ function optionalNewBody(raw: Record<string, unknown>, c: Checker): string | und
 }
 
 function validateMirror(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): MirrorFeature | null {
-  c.keys(raw, "", ["id", "op", "plane", "feature", "bodies", "merge", "newBody"]);
+  c.keys(raw, "", ["id", "op", "plane", "feature", "features", "bodies", "merge", "newBody"]);
   const plane = validatePlane(raw.plane, "plane", c, earlier);
-  const byFeature = raw.feature !== undefined;
-  if (byFeature === (raw.bodies !== undefined)) c.fail("", 'mirrors either one "feature" or a list of "bodies"');
+  const byFeature = raw.feature !== undefined || raw.features !== undefined;
+  if (byFeature === (raw.bodies !== undefined)) c.fail("", raw.features !== undefined ? 'mirrors either "features" or a list of "bodies"' : 'mirrors either one "feature" or a list of "bodies"');
   let bodies: string[] | undefined;
-  if (byFeature) {
-    if (typeof raw.feature !== "string" || !earlier.has(raw.feature)) c.fail("feature", `${describe(raw.feature)} is not a feature before this one`);
+  let seeds: { feature: string } | { features: string[] } | null = null;
+  if (raw.features !== undefined || (raw.feature !== undefined && raw.bodies === undefined && raw.features === undefined)) {
+    if (raw.features !== undefined) seeds = seedList(raw, c, earlier, "mirror");
+    else if (typeof raw.feature !== "string" || !earlier.has(raw.feature)) c.fail("feature", `${describe(raw.feature)} is not a feature before this one`);
     else if (!patternable(earlier.get(raw.feature))) c.fail("feature", `"${raw.feature}" is a ${earlier.get(raw.feature)}; a mirror repeats an extrude, cut, hole or member`);
-    if (raw.merge !== undefined) c.fail("merge", "merges a mirrored body into itself: it goes with \"bodies\"");
-  } else if (raw.bodies !== undefined) {
-    bodies = bodyList(raw.bodies, "bodies", c);
+    else seeds = { feature: raw.feature };
   }
+  if (byFeature && raw.merge !== undefined) c.fail("merge", "merges a mirrored body into itself: it goes with \"bodies\"");
+  if (!byFeature && raw.bodies !== undefined) bodies = bodyList(raw.bodies, "bodies", c);
   if (raw.merge !== undefined && typeof raw.merge !== "boolean") c.fail("merge", `must be true or false (got ${describe(raw.merge)})`);
   const newBody = optionalNewBody(raw, c);
   if (newBody !== undefined && raw.merge === true) c.fail("newBody", "a merged mirror makes no new body");
@@ -1874,7 +2025,7 @@ function validateMirror(raw: Record<string, unknown>, c: Checker, earlier: Map<s
     id: raw.id as string,
     op: "mirror",
     plane,
-    ...(byFeature ? { feature: raw.feature as string } : { bodies }),
+    ...(seeds ?? { bodies }),
     ...(raw.merge === true ? { merge: true } : {}),
     ...(newBody ? { newBody } : {}),
   };
@@ -2051,8 +2202,16 @@ class BodyNames {
         if (f.bodies) {
           f.bodies.forEach((b, i) => need(b, `bodies[${i}]`));
           if (!f.merge) makes = f.newBody ? [f.newBody] : f.bodies.map((b) => `${b}${DERIVED_SUFFIX.mirror}`);
-        } else if (f.feature && this.made.has(f.feature)) makes = [f.newBody ?? `${this.made.get(f.feature)}${DERIVED_SUFFIX.mirror}`];
-        else if (f.newBody) c.fail("newBody", `${f.feature} makes no body of its own, so its mirror makes none`);
+        } else {
+          // Each seed that starts a body makes a mirrored one; newBody names it when there is just one.
+          const seeds = seedIds(f);
+          const made = seeds.filter((id) => this.made.has(id)).map((id) => this.made.get(id)!);
+          if (made.length === 1) makes = [f.newBody ?? `${made[0]}${DERIVED_SUFFIX.mirror}`];
+          else if (made.length > 1) {
+            if (f.newBody) c.fail("newBody", `names one new body, but ${made.length} of the features start bodies of their own: each mirror is <body>_mirror`);
+            makes = made.map((m) => `${m}${DERIVED_SUFFIX.mirror}`);
+          } else if (f.newBody) c.fail("newBody", `${seeds.join(", ")} ${seeds.length === 1 ? "makes" : "make"} no body of ${seeds.length === 1 ? "its" : "their"} own, so its mirror makes none`);
+        }
         break;
       case "split":
         need(f.body, "body");
@@ -2086,7 +2245,7 @@ class BodyNames {
     }
     if (makes.length && c.errors.length === 0) {
       const named = (f.op === "mirror" || f.op === "split" || f.op === "move") && f.newBody !== undefined;
-      this.fresh(makes, makesPath ?? (named ? "newBody" : f.op === "split" ? "body" : f.op === "mirror" && !f.bodies ? "feature" : "bodies"), c);
+      this.fresh(makes, makesPath ?? (named ? "newBody" : f.op === "split" ? "body" : f.op === "mirror" && !f.bodies ? (f.features ? "features" : "feature") : "bodies"), c);
     }
     for (const [path, name] of selectorBodies(f)) need(name, path);
     if (c.errors.length > 0) return;
@@ -2097,20 +2256,25 @@ class BodyNames {
       if (seed) this.made.set(f.id, seed);
     }
     for (const n of makes) this.add(n);
-    if (f.op === "mirror" && f.feature && makes.length) this.made.set(f.id, makes[0]);
+    if (f.op === "mirror" && !f.bodies && makes.length === 1) this.made.set(f.id, makes[0]);
     if (f.op === "deleteBody") for (const n of f.bodies ?? [...this.names].filter((x) => !f.keep!.includes(x))) this.names.delete(n);
     // What this feature makes, for the features after it.
     if (f.op === "extrude" && !f.intersect) {
       const name = f.newBody ?? f.body ?? DEFAULT_BODY;
       this.add(name);
       if (f.newBody) this.made.set(f.id, f.newBody);
-    } else if ((f.op === "linearPattern" || f.op === "circularPattern") && this.made.has(f.feature)) {
-      const seed = this.made.get(f.feature)!;
+    } else if (f.op === "linearPattern" || f.op === "circularPattern") {
+      // A copy of a seed that starts a body is a body of its own, named by its instance number (skipped ones are not made).
       const total = f.count * (f.op === "linearPattern" ? (f.count2 ?? 1) : 1);
-      const copies = Array.from({ length: total - 1 }, (_, i) => `${seed}_${i + 2}`);
-      const taken = copies.filter((n) => this.names.has(n));
-      if (taken.length) c.fail("feature", `its copies of body "${seed}" would be named ${taken.join(", ")}, which ${taken.length === 1 ? "is" : "are"} already a body`);
-      else for (const n of copies) this.add(n);
+      const made = instanceNumbers(total, f.skip);
+      for (const id of seedIds(f)) {
+        const seed = this.made.get(id);
+        if (!seed) continue;
+        const copies = made.map((k) => `${seed}_${k}`);
+        const taken = copies.filter((n) => this.names.has(n));
+        if (taken.length) c.fail(f.features ? "features" : "feature", `its copies of body "${seed}" would be named ${taken.join(", ")}, which ${taken.length === 1 ? "is" : "are"} already a body`);
+        else for (const n of copies) this.add(n);
+      }
     } else if (f.op === "combine") {
       for (const t of f.tools) this.names.delete(t);
     } else if (f.op === "member" || f.op === "endCap" || f.op === "gusset") {

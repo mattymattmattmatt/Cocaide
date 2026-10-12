@@ -30,6 +30,7 @@ import { validateDocument, type ValidationResult } from "../doc/validate";
 import type { Measurements } from "../kernel/measure";
 import type { ProjectedView } from "../kernel/project";
 import type { HoleRecord } from "../kernel/rebuild";
+import { threadCallout } from "../features/hole/standards";
 import { anglesText, cutList, type CutListItem } from "../weldment/cutlist";
 import { boxOf, centre, grow, inside, overlaps, primBox, size, union, type Box, type Prim } from "./sheet";
 import { CAP, LINE, TEXT, textWidth } from "./text";
@@ -150,7 +151,9 @@ class Composer {
   private readonly annotations = new Map<string, ComposedAnnotation>();
   private readonly cut: CutListItem[];
   private readonly projected = new Map<string, ProjectedView>();
+  /** Each hole feature's first hole (what its callout points at and a dimension measures to), and how many holes it made in all. */
   private readonly holes = new Map<string, HoleRecord>();
+  private readonly holeCounts = new Map<string, number>();
   private views: ComposedView[] = [];
   private readonly dims = new Map<string, DimPlan>();
 
@@ -164,7 +167,10 @@ class Composer {
     this.titleBlock = { min: [this.frame.max[0] - TITLE_BLOCK[0], this.frame.min[1]], max: [this.frame.max[0], this.frame.min[1] + TITLE_BLOCK[1]] };
     this.cut = ctx.measurements ? cutList(ctx.measurements.members) : [];
     for (const pv of ctx.geometry?.views ?? []) this.projected.set(pv.id, pv);
-    for (const h of ctx.geometry?.holes ?? []) this.holes.set(h.feature, h);
+    for (const h of ctx.geometry?.holes ?? []) {
+      if (!this.holes.has(h.feature)) this.holes.set(h.feature, h);
+      this.holeCounts.set(h.feature, (this.holeCounts.get(h.feature) ?? 0) + h.copies + 1);
+    }
   }
 
   private tableBoxes: Box[] = [];
@@ -753,7 +759,7 @@ class Composer {
     const f = viewFrame(cv.look);
     const facing = Math.abs(h.axis[0] * f.eye[0] + h.axis[1] * f.eye[1] + h.axis[2] * f.eye[2]);
     if (facing < 0.999) return { problem: `${a.hole} isn't seen as a circle in ${cv.id}: call it out in a view that looks along it` };
-    const lines = holeText(h);
+    const lines = holeText(h, this.holeCounts.get(a.hole));
     const c = this.toSheet(cv, inView(h.entry, f));
     const r = ((h.counterbore?.diameter ?? h.countersink?.diameter ?? h.diameter) / 2) * cv.scale;
     // Its centre mark.
@@ -762,7 +768,7 @@ class Composer {
     this.prims.push({ k: "line", pts: [[c[0], c[1] - m], [c[0], c[1] + m]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
     const at: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.outside(cv, [c[0] + 1, c[1] + 1], 8, [1, 1]);
     const right = at[0] >= c[0];
-    const w = Math.max(...lines.map((l) => textWidth(l, TEXT.dimension)));
+    const w = Math.max(...lines.map((l) => calloutWidth(l, TEXT.dimension)));
     // Leader from the hole's edge to a landing under the text.
     const d: Vec2 = [at[0] - c[0], at[1] - c[1]];
     const len = Math.hypot(d[0], d[1]) || 1;
@@ -770,10 +776,31 @@ class Composer {
     const landing: Vec2 = [at[0] + (right ? w + 1 : -w - 1), at[1]];
     this.prims.push({ k: "line", pts: [landing, at, edge], w: LINE.thin });
     this.arrow(edge, [-d[0] / len, -d[1] / len]);
-    lines.forEach((l, i) =>
-      this.prims.push({ k: "text", at: [at[0] + (right ? 0.5 : -0.5), at[1] + 1.2 - i * TEXT.dimension * 1.25], text: l, size: TEXT.dimension, anchor: right ? "start" : "end" }),
-    );
+    lines.forEach((l, i) => this.calloutLine([at[0] + (right ? 0.5 : -0.5), at[1] + 1.2 - i * TEXT.dimension * 1.25], l, TEXT.dimension, right ? "start" : "end"));
     return { text: lines.join(" "), at };
+  }
+
+  /**
+   * One line of a hole callout. The depth symbol ⌴ is drawn (a box open at
+   * the top), not set as text: Helvetica, the PDF's font, has no such glyph.
+   */
+  private calloutLine(at: Vec2, text: string, size: number, anchor: "start" | "end"): void {
+    if (!text.includes(DEPTH)) {
+      this.prims.push({ k: "text", at, text, size, anchor });
+      return;
+    }
+    let x = anchor === "start" ? at[0] : at[0] - calloutWidth(text, size);
+    const pieces = text.split(DEPTH);
+    pieces.forEach((piece, i) => {
+      if (piece) this.prims.push({ k: "text", at: [x, at[1]], text: piece, size, anchor: "start" });
+      x += textWidth(piece, size);
+      if (i === pieces.length - 1) return;
+      const h = size * CAP * 0.8;
+      const w = size * DEPTH_WIDTH;
+      const inset = size * 0.08;
+      this.prims.push({ k: "line", pts: [[x + inset, at[1] + h], [x + inset, at[1]], [x + w - inset, at[1]], [x + w - inset, at[1] + h]], w: LINE.thin });
+      x += w;
+    });
   }
 
   /** Where two bodies meet: the middle of where their boxes overlap (or come closest). */
@@ -974,9 +1001,30 @@ class Composer {
   }
 }
 
-/** "4× Ø6.6 THRU", then a counterbore or countersink line. */
-export function holeText(h: HoleRecord): string[] {
-  const n = h.copies + 1;
+/** The depth symbol of a hole callout (ISO 129): drawn on the sheet, written in the callout's text. */
+const DEPTH = "⌴";
+/** Its width, as a fraction of the font size. */
+const DEPTH_WIDTH = 0.62;
+
+/** A callout line's width on the sheet, the depth symbol as drawn. */
+function calloutWidth(text: string, size: number): number {
+  const pieces = text.split(DEPTH);
+  return pieces.reduce((w, p) => w + textWidth(p, size), 0) + (pieces.length - 1) * size * DEPTH_WIDTH;
+}
+
+/**
+ * "4× Ø6.6 THRU", then a counterbore or countersink line. A tapped hole: its
+ * thread, "3× M6×1 - 6H ⌴12" (or THRU), then its tap drill when the drill
+ * stops short, "Ø5 ⌴15". `count` is how many holes the callout stands for
+ * (default: this one and its copies).
+ */
+export function holeText(h: HoleRecord, count = h.copies + 1): string[] {
+  const n = count;
+  if (h.thread) {
+    const lines = [`${n > 1 ? `${n}× ` : ""}${threadCallout(h.thread)}`];
+    if (!h.through) lines.push(`Ø${fmt(h.diameter)} ${DEPTH}${fmt(h.depth)}`);
+    return lines;
+  }
   const lines = [`${n > 1 ? `${n}× ` : ""}Ø${fmt(h.diameter)} ${h.through ? "THRU" : `× ${fmt(h.depth)} DEEP`}`];
   if (h.counterbore) lines.push(`CBORE Ø${fmt(h.counterbore.diameter)} × ${fmt(h.counterbore.depth)} DEEP`);
   if (h.countersink) lines.push(`CSK Ø${fmt(h.countersink.diameter)} × ${fmt(h.countersink.angle)}°`);

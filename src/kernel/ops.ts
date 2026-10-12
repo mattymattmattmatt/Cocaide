@@ -5,27 +5,23 @@
 
 import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
 import type {
-  CircularPatternFeature,
   CombineFeature,
   EndCapFeature,
   GussetFeature,
   MemberFeature,
   ProfileDef,
   HoleFeature,
-  LinearPatternFeature,
   MoveFeature,
   Vec2,
   Vec3,
 } from "../doc/types";
-import { facePlaneFrame, to3D, type Frame } from "../geom/frame";
+import { to3D, type Frame } from "../geom/frame";
 import { reach, placeSection, type PlacedSection } from "../geom/member";
 import { arcMid, buildProfile, type Loop, type Region } from "../geom/profile";
 import type { CutPlane, MemberEnds } from "../weldment/joints";
 import { add3, cross3, dot3, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
 import { type OC, type Scope } from "./oc";
-import type { DescribedPart } from "./bodies";
-import { selectFaces, selectionError } from "./selectors";
 import { countSubShapes } from "./topology";
 
 export class OpError extends Error {}
@@ -253,37 +249,13 @@ export interface Drilled {
   length: number;
 }
 
-/** The hole's tool, drilled into the selected face of the part. `reach` is what a through hole goes through. */
-export function drillTool(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart, reach: TopoDS_Shape, drilled?: (d: Drilled) => void): TopoDS_Shape {
-  const selection = selectFaces(part.faceInfos, f.face);
-  const problem = selectionError(f.face, selection, 1);
-  if (problem) throw new OpError(problem);
-  const info = selection.matches[0];
-  const face = part.faces[info.index];
-
-  const frame = facePlaneFrame(info.normal!, info.point!);
-  const entry = to3D(frame, f.center);
-  const vertex = s.track(s.track(new oc.BRepBuilderAPI_MakeVertex(pnt(oc, s, entry))).Vertex());
-  const dist = s.track(new oc.BRepExtrema_DistShapeShape(vertex, face));
-  if (!dist.IsDone()) throw new OpError("could not locate the hole centre on the face");
-  if (dist.Value() > 1e-6) {
-    throw new OpError(
-      `center ${fmtPt(f.center)} is not on the selected face (it is ${roundTo(dist.Value(), 4)} mm outside it)`,
-    );
-  }
-
-  const into = scale3(frame.z, -1);
-  const through = f.depth === "through";
-  const length = through ? reachAlong(oc, s, reach, entry, into) : (f.depth as number);
-  drilled?.({ entry, into, length });
-  return holeTool(oc, s, f, entry, into, frame.x, length);
-}
+// Where holes go and how deep is in hole.ts.
 
 /**
  * The hole as one solid of revolution: a closed (radius, depth) profile spun
  * about the hole axis. depth 0 is the face, positive goes into the material.
  */
-export function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Vec3, radial: Vec3, length: number) {
+export function holeTool(oc: OC, s: Scope, f: Pick<HoleFeature, "diameter" | "counterbore" | "countersink">, entry: Vec3, into: Vec3, radial: Vec3, length: number) {
   const r = f.diameter / 2;
   const profile: Vec2[] = [[0, 0]];
   if (f.counterbore) {
@@ -316,35 +288,7 @@ export function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Ve
 
 // -------------------------------------------------------------- patterns
 
-/** The copies a pattern makes (not the original): a label for messages and the transform. */
-export function patternInstances(oc: OC, s: Scope, f: LinearPatternFeature | CircularPatternFeature): { label: string; trsf: ReturnType<typeof identity> }[] {
-  const instances: { label: string; trsf: ReturnType<typeof identity> }[] = [];
-  if (f.op === "linearPattern") {
-    const d1 = normalize3(f.direction);
-    const d2 = f.direction2 ? normalize3(f.direction2) : ([0, 0, 0] as Vec3);
-    const n2 = f.count2 ?? 1;
-    for (let j = 0; j < n2; j++) {
-      for (let i = 0; i < f.count; i++) {
-        if (i === 0 && j === 0) continue;
-        const offset = add3(scale3(d1, i * f.spacing), scale3(d2, j * (f.spacing2 ?? 0)));
-        const t = identity(oc, s);
-        t.SetTranslation(vec(oc, s, offset));
-        const label = n2 > 1 ? `instance [${i + 1}, ${j + 1}]` : `instance ${i + 1}`;
-        instances.push({ label: `${label} (offset ${fmt3(offset)})`, trsf: t });
-      }
-    }
-  } else {
-    const total = f.angle ?? 360;
-    const step = total >= 360 ? total / f.count : total / (f.count - 1);
-    const axis = s.track(new oc.gp_Ax1(pnt(oc, s, f.axis.origin), dir(oc, s, normalize3(f.axis.direction))));
-    for (let k = 1; k < f.count; k++) {
-      const t = identity(oc, s);
-      t.SetRotation(axis, (k * step * Math.PI) / 180);
-      instances.push({ label: `instance ${k + 1} (${roundTo(k * step, 4)} deg)`, trsf: t });
-    }
-  }
-  return instances;
-}
+// Where a pattern's copies go is in pattern.ts.
 
 export function transformed(oc: OC, s: Scope, shape: TopoDS_Shape, trsf: ReturnType<typeof identity>): TopoDS_Shape {
   return s.track(s.track(new oc.BRepBuilderAPI_Transform(shape, trsf, true, false)).Shape());
@@ -567,9 +511,6 @@ export function identity(oc: OC, s: Scope) {
   return s.track(new oc.gp_Trsf());
 }
 
-function fmt3(v: Vec3): string {
-  return `[${v.map((x) => roundTo(x, 4)).join(", ")}]`;
-}
 
 /**
  * A second embind handle to the same C++ shape. The scope deletes its own
@@ -577,8 +518,4 @@ function fmt3(v: Vec3): string {
  */
 export function copyOut(shape: TopoDS_Shape): TopoDS_Shape {
   return (shape as unknown as { clone(): TopoDS_Shape }).clone();
-}
-
-function fmtPt(p: Vec2): string {
-  return `[${p.map((x) => roundTo(x, 4)).join(", ")}]`;
 }
