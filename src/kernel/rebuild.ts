@@ -21,17 +21,18 @@ import { bodyRanges, compound, describePart, partShape, type BodyRange } from ".
 import { memberCut } from "./cutlist";
 import { planeSpecFrame } from "./datum";
 import { solvedSketch } from "./sketchRefs";
+import { byBody, treatBody, treatments } from "./edgeTreat";
+import { cutMissed, extrudeTool } from "./extrude";
 import { interference, measure, volumeOf, type Measurements } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { getOC, type OC, type Scope, scoped } from "./oc";
 import {
   combineBodies,
+  commonWith,
   copyOut,
-  cutMissed,
   drillTool,
   type Drilled,
   endCapTool,
-  extrudeTool,
   fuseInto,
   gussetTool,
   memberTool,
@@ -42,11 +43,9 @@ import {
   OpError,
   patternInstances,
   removeFrom,
-  selectTreatedEdges,
   splitBody,
   transformLine,
   transformed,
-  treatEdges,
   type SketchProfile,
   type Trsf,
 } from "./ops";
@@ -231,6 +230,22 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   const profiles = new Map<string, SketchProfile | null>();
   /** The tool of each extrude, cut and hole, and where it went, for patterns. Disposed before returning. */
   const tools = new Map<string, Seed>();
+  /** Extrudes that intersect: they leave no tool, so a pattern of one says why. */
+  const intersected = new Set<string>();
+  /** The face signatures each feature made that a fillet or chamfer treats "the edges of" (its features field). */
+  const madeFaces = new Map<string, Set<string>>();
+  const watched = new Set(
+    v.features.flatMap((vf) => {
+      const f = vf.feature;
+      if (f?.op !== "fillet" && f?.op !== "chamfer") return [];
+      return [f, ...(f.op === "fillet" ? (f.sets ?? []) : [])].flatMap((ch) => ch.features ?? []);
+    }),
+  );
+  const signatures = (): Set<string> =>
+    scoped((s) => {
+      const shape = partShape(oc, s, bodies);
+      return new Set(shape ? describeFaces(oc, s, shape).infos.map(faceSignature) : []);
+    });
   const suppressed = new Set<string>();
   const missing = (id: string, what: string) =>
     suppressed.has(id) ? `${what} "${id}" is suppressed` : `${what} "${id}" failed`;
@@ -349,6 +364,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
     }
     try {
       current = raw.id;
+      const facesBefore = watched.has(raw.id) ? signatures() : null;
       switch (raw.op) {
         case "sketch": {
           profiles.set(raw.id, null);
@@ -375,8 +391,16 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const name = raw.newBody ?? raw.body ?? DEFAULT_BODY;
           if (raw.newBody && bodies.has(raw.newBody)) throw new OpError(`a body "${raw.newBody}" already exists; use "body" to add to it`);
           const into = raw.newBody ? null : raw.body ? need(raw.body) : (bodies.get(DEFAULT_BODY) ?? null);
+          if (raw.intersect && !into) throw new OpError(`intersect keeps the overlap with body "${name}", but there is no such body before this feature`);
+          const entities = sketchFeatures.get(raw.sketch)?.entities ?? [];
           scoped((s) => {
-            const tool = extrudeTool(oc, s, raw, profile, partShape(oc, s, bodies));
+            const tool = extrudeTool(ctx, s, raw, profile, entities, partShape(oc, s, bodies));
+            if (raw.intersect) {
+              // Keeps what the extrusion and the body share: nothing for a pattern to repeat.
+              commit(new Map([[name, commonWith(oc, s, name, into!, tool, "extrusion")]]));
+              intersected.add(raw.id);
+              return;
+            }
             commit(new Map([[name, fuseInto(oc, s, into, tool, "extrusion")]]));
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", into: raw.newBody ? undefined : name, newBody: raw.newBody });
           });
@@ -386,8 +410,9 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           const profile = profiles.get(raw.sketch);
           if (!profile) throw new OpError(`${missing(raw.sketch, "sketch")}, so there is no profile to ${raw.op}`);
           const on = targets(raw.bodies);
+          const entities = sketchFeatures.get(raw.sketch)?.entities ?? [];
           scoped((s) => {
-            const tool = extrudeTool(oc, s, raw, profile, partShape(oc, s, on.map(([, b]) => b)));
+            const tool = extrudeTool(ctx, s, raw, profile, entities, partShape(oc, s, on.map(([, b]) => b)));
             commit(removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "cut", missed: cutMissed(raw, profile) }));
             tools.set(raw.id, { tool: copyOut(tool), kind: "cut", bodies: raw.bodies ?? null });
           });
@@ -423,11 +448,15 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           if (bodies.size === 0) throw new OpError(`nothing to ${raw.op}: there is no solid before this feature`);
           scoped((s) => {
             const part = describePart(oc, s, bodies);
-            const chosen = selectTreatedEdges(raw, part);
+            // The faces a named feature made, as it left them: the edges of those are "the edges it made".
+            const made = (id: string, path: string) => {
+              const sigs = madeFaces.get(id);
+              if (!sigs) throw new OpError(`${path}: ${missing(id, "feature")}, so it made no edges to ${raw.op}`);
+              return sigs;
+            };
             const changed = new Map<string, TopoDS_Shape>();
-            for (const r of part.ranges) {
-              const mine = chosen.filter((i) => i >= r.edges[0] && i < r.edges[1]).map((i) => part.edges[i]);
-              if (mine.length) changed.set(r.name, treatEdges(oc, s, raw, bodies.get(r.name)!, mine, bodies.size > 1 ? r.name : null));
+            for (const { name, list } of byBody(part, treatments(raw, part, made))) {
+              changed.set(name, treatBody(oc, s, raw, part, bodies.get(name)!, list, bodies.size > 1 ? name : null));
             }
             commit(changed);
           });
@@ -436,6 +465,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         case "linearPattern":
         case "circularPattern": {
           const seed = tools.get(raw.feature);
+          if (!seed && intersected.has(raw.feature)) throw new OpError(`"${raw.feature}" is an intersecting extrude: it keeps an overlap and adds no tool to repeat; pattern the bodies instead`);
           if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
           if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
           scoped((s) => commit(...repeat(s, patternInstances(oc, s, raw), seed, (k) => `${seed.newBody}_${k + 2}`)));
@@ -589,6 +619,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           // An op of the registry (src/features/<op>/kernel.ts); one that validates but has no kernel fails here, never silently.
           runKernelOp(ctx, raw);
       }
+      if (facesBefore) madeFaces.set(raw.id, new Set([...signatures()].filter((sig) => !facesBefore.has(sig))));
       features.push({ id: raw.id, op, ok: true });
     } catch (e) {
       const messages = e instanceof OpError ? e.message.split("\n") : [`kernel error: ${kernelMessage(oc, e)}`];

@@ -3,7 +3,7 @@
 // flip after a parameter change when it chooses the largest of two faces of
 // nearly equal area, or picks by position. validate reports both.
 
-import type { EdgeSelector, FaceSelector } from "../doc/types";
+import type { EdgeChoice, EdgeSelector, FaceSelector } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { datumSelectors, featureDatumRefs } from "../features/datum";
 import { defOf } from "../features/defs";
@@ -33,9 +33,12 @@ export function selectorHealth(doc: unknown, oc: OC): SelectorHealth[] {
     let selectors: { path: string; face?: FaceSelector; edge?: EdgeSelector; many?: boolean }[] = [];
     if (f.op === "hole") selectors = [{ path: "face", face: f.face }];
     else if (f.op === "fillet" || f.op === "chamfer") {
-      selectors = Array.isArray(f.edges)
-        ? f.edges.map((edge, k) => ({ path: `edges[${k}]`, edge, many: true }))
-        : [{ path: "edges", edge: f.edges, many: true }];
+      // Its edges and faces, and those of a fillet's other radius sets.
+      const choices: { path: string; ch: EdgeChoice }[] = [{ path: "", ch: f }, ...(f.op === "fillet" ? (f.sets ?? []).map((ch, k) => ({ path: `sets[${k}].`, ch })) : [])];
+      selectors = choices.flatMap(({ path, ch }) => [
+        ...(Array.isArray(ch.edges) ? ch.edges.map((edge, k) => ({ path: `${path}edges[${k}]`, edge, many: true })) : ch.edges ? [{ path: `${path}edges`, edge: ch.edges, many: true }] : []),
+        ...(ch.faces ?? []).map((face, k) => ({ path: `${path}faces[${k}]`, face, many: true })),
+      ]);
     }
     // A registry op's own selectors, and those inside any reference (a sketch on a face: one face).
     const d = defOf(f.op);

@@ -1,18 +1,29 @@
-// Fillet and Chamfer: on the edges picked in the view.
+// Fillet and Chamfer: on the edges and faces picked in the view.
 
-import { edgesSelectorFor } from "../../../kernel/synthesize";
+import { edgesSelectorFor, facesSelectorFor } from "../../../kernel/synthesize";
 import type { Raw, ToolCtx, ToolDef } from "../ToolContext";
 
-/** The new fillet or chamfer on the selected edges, or what to click first. */
+/**
+ * The new fillet or chamfer on the selected edges and (SOLIDWORKS-like) every
+ * edge of the selected faces; or what to click first.
+ */
 export function edgeFeature(ctx: ToolCtx, op: "fillet" | "chamfer"): Raw | string {
   const { view, selection } = ctx;
-  if (!ctx.doc || !view || selection.edges.length === 0) {
-    return `Click one or more edges (shift-click for more), then ${op === "fillet" ? "Fillet" : "Chamfer"}.`;
+  if (!ctx.doc || !view || (selection.edges.length === 0 && selection.faces.length === 0)) {
+    return `Click one or more edges (shift-click for more), or faces to treat all their edges, then ${op === "fillet" ? "Fillet" : "Chamfer"}.`;
   }
-  const s = edgesSelectorFor(view.edges, view.faces, selection.edges);
-  if (!s.ok) return s.error;
-  const id = ctx.nextId(op);
-  return op === "fillet" ? { id, op, edges: s.selector, radius: 1 } : { id, op, edges: s.selector, distance: 1 };
+  const out: Raw = { id: ctx.nextId(op), op };
+  if (selection.edges.length) {
+    const s = edgesSelectorFor(view.edges, view.faces, selection.edges);
+    if (!s.ok) return s.error;
+    out.edges = s.selector;
+  }
+  if (selection.faces.length) {
+    const s = facesSelectorFor(view.faces, selection.faces);
+    if (!s.ok) return s.error;
+    out.faces = s.selector;
+  }
+  return { ...out, ...(op === "fillet" ? { radius: 1 } : { distance: 1 }) };
 }
 
 const run = (op: "fillet" | "chamfer") => (ctx: ToolCtx) => {

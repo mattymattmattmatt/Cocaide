@@ -11,13 +11,14 @@ import { describeWanted } from "../kernel/selectors";
 import { faceSelectorFor } from "../kernel/synthesize";
 import type { RebuildView } from "../worker/protocol";
 import { UI_OPS, type EditorProps } from "../features/uiDefs";
-import { Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
+import { Field, NumberInput, Select, TextInput, type NumberValue } from "./fields";
 import { DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import { nextBodyName } from "./model/names";
 import { FeatureForm } from "./props/FeatureForm";
+import { CUT_FIELDS, EXTRUDE_FIELDS } from "./props/ExtrudeForm";
 import type { FieldSpec } from "./props/spec";
-import { sketchFrameIn, sketchNormal } from "./model/sketchPlane";
+import { sketchFrameIn } from "./model/sketchPlane";
 import { referenceName } from "./sketcher/names";
 import type { Selection } from "./Viewport";
 
@@ -131,7 +132,7 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         {op === "endCap" && <EndCapProps f={f} doc={doc} update={update} />}
         {op === "gusset" && <GussetProps f={f} doc={doc} update={update} />}
         {(op === "endCap" || op === "gusset") && <BodyNameField f={f} rename={rename} />}
-        {(op === "extrude" || op === "cut") && <ExtrudeProps f={f} before={before} view={view} update={update} />}
+        {(op === "extrude" || op === "cut") && <FeatureForm fields={op === "extrude" ? EXTRUDE_FIELDS : CUT_FIELDS} {...editorProps} />}
         {op === "extrude" && <BodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
         {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
         {(op === "cut" || op === "hole") && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
@@ -354,60 +355,6 @@ export function planeName(normal: Vec3, origin: Vec3): string {
   if (n[0] === 0 && n[2] === 0) return `Front (XZ${n[1] > 0 ? ", flipped" : ""})${at(1)}`;
   if (n[1] === 0 && n[2] === 0) return `Right (YZ${n[0] < 0 ? ", flipped" : ""})${at(0)}`;
   return `normal [${n.join(", ")}] through [${origin.map((v) => Math.round(v * 1e4) / 1e4).join(", ")}]`;
-}
-
-function ExtrudeProps({ f, before, view, update }: { f: Raw; before: Raw[]; view: RebuildView | null; update(p: Raw): void }) {
-  const sketches = before.filter((g) => g.op === "sketch").map((g) => String(g.id));
-  const sketch = before.find((g) => g.id === f.sketch);
-  // The sketch's normal where the rebuild placed it (a sketch on a face or a plane feature has none written out).
-  const normal = sketchNormal(sketch, view) ?? ([0, 0, 1] as Vec3);
-  const extent = (f.extent as string) ?? "blind";
-  const dir = f.direction as Vec3 | undefined;
-  const reversed = dir && dir.every((c, i) => Math.abs(c + normal[i]) < 1e-9);
-  const mode = !dir ? "normal" : reversed ? "reversed" : "custom";
-  return (
-    <>
-      <Field label="Sketch">
-        <Select value={String(f.sketch)} options={sketches.map((s) => [s, s])} onChange={(v) => update({ sketch: v })} testId="prop-sketch" />
-      </Field>
-      <Field label="End">
-        <Select
-          value={extent as "blind" | "midplane" | "throughAll"}
-          testId="prop-extent"
-          options={[
-            ["blind", "Blind"],
-            ["midplane", "Mid-plane"],
-            ["throughAll", "Through all"],
-          ]}
-          onChange={(v) =>
-            update(v === "throughAll" ? { extent: v, distance: null } : { extent: v === "blind" ? null : v, distance: (f.distance as number) ?? 10 })
-          }
-        />
-      </Field>
-      {extent !== "throughAll" && (
-        <Field label={extent === "midplane" ? "Total depth" : "Depth"} unit="mm">
-          <NumberInput value={(f.distance as number) ?? 10} min={0} onCommit={(v) => update({ distance: v })} testId="prop-distance" />
-        </Field>
-      )}
-      <Field label="Direction">
-        <Select
-          value={mode}
-          testId="prop-direction-mode"
-          options={[
-            ["normal", "Sketch normal"],
-            ["reversed", "Reversed"],
-            ["custom", "Custom"],
-          ]}
-          onChange={(v) => update({ direction: v === "normal" ? null : v === "reversed" ? normal.map((c) => -c) : normal })}
-        />
-      </Field>
-      {mode === "custom" && dir && (
-        <Field label="Vector">
-          <Vec3Input value={dir} onCommit={(v) => update({ direction: v })} />
-        </Field>
-      )}
-    </>
-  );
 }
 
 function HoleProps({

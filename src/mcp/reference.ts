@@ -145,8 +145,36 @@ entities with what each references ("reference": ...).
 
 ## extrude / cut
 { "id": "ext_1", "op": "extrude", "sketch": "sketch_1", "distance": 6, "direction": [0,0,1] }
-"cut" removes material with the same fields. "extent": "blind" (default) | "midplane" | "throughAll" (no distance).
-direction defaults to the sketch normal.
+"cut" removes material with the same fields. direction defaults to the sketch normal (reverse: its negative).
+In DESIGN's operation terms: extrude = "add" (or "new" with newBody), extrude with "intersect": true = "intersect",
+cut = "remove" (from "bodies", default every body it reaches).
+End condition, "extent" (what else each needs; anything it does not need is an error):
+  "blind" (default, "distance") | "midplane" ("distance" in all, half each way) | "throughAll" | "throughAllBoth" |
+  "upToNext" (a boss stops at the material it meets; a cut where the material ends) |
+  "upToFace" ("upTo": { "face": <selector> } a flat or curved face, or { "datum": "Top" | "<plane feature>" }) |
+  "upToVertex" ("upTo": a point: { "edge": <selector>, "at": "end" }, { "datum": "<point feature>" }, { "point": [x,y,z] };
+               it ends on the plane through it parallel to the sketch) |
+  "offsetFromFace" ("upTo" a flat face or plane, "offset" mm short of it toward the sketch; negative: past it).
+  A flat face counts as its whole plane, so a slanted face gives a slanted end. A curved face must cover the profile.
+{ "id": "boss", "op": "extrude", "sketch": "sk", "extent": "upToFace", "upTo": { "face": { "type": "planar", "normal": [0,0,-1], "pick": "largest", "body": "lid" } } }
+{ "id": "pocket", "op": "cut", "sketch": "sk2", "extent": "offsetFromFace", "upTo": { "datum": "floor" }, "offset": 2 }
+Second direction: "direction2": { "extent": "blind" | "throughAll" | "upToNext" | "upToFace" | "upToVertex" | "offsetFromFace",
+  "distance"?, "upTo"?, "offset"?, "draft"? } goes the other way from the start with its own end (not with midplane or
+  throughAllBoth): { ..., "distance": 5, "direction2": { "extent": "blind", "distance": 3 } } spans 3 below to 5 above.
+Start: "startOffset": 4 (mm along the sketch normal; negative: behind) or "from": a plane, flat face or point
+  ({ "datum": "<plane>" }, { "face": <selector> }, { "point": [0,0,12] }); not both.
+Draft: "draft": { "angle": 5, "outward"?: true } tapers the sides (degrees, under 90; inward unless outward; midplane:
+  both halves from the middle). Per direction: "direction2": { ..., "draft": { "angle": 3 } }. A 20x20 blind 10 with
+  5° inward draft is a frustum: top side 20 - 2*10*tan5° = 18.25.
+Thin: "thin": { "thickness": 2, "side"?: "outside" (default) | "inside" | "mid" } thickens the sketch's lines into a wall
+  first. An open sketch (a chain of lines and arcs) may be used: an open L makes an L-shaped wall (outside = its convex
+  side); a closed loop makes a tube (outside: the wall is outside the loop). No draft with thin.
+Regions: "regions": [[x, y], ...] (points in sketch coordinates) uses only the closed regions those points lie in (the
+  innermost loop around each, less the loops in it), so one sketch drives several features: a plate sketch with a
+  circle in it extrudes the ring with [[x in the ring]] and the disc with [[the circle centre]]. Default: every region.
+extrude "intersect": true keeps only where the extrusion and the body ("body", default main) overlap.
+cut "flipSide": true removes what lies outside the profile instead (keeps what is inside it).
+Measurements in the packet: extent, distance, offset, startOffset, draftAngle, thickness and direction2.
 
 ## hole
 { "id": "hole_1", "op": "hole", "face": <face selector>, "center": [30,0], "diameter": 6.6, "depth": "through" }
@@ -156,6 +184,20 @@ depth: a number or "through". Optional "counterbore": { "diameter", "depth" } or
 ## fillet / chamfer
 { "id": "fillet_1", "op": "fillet", "edges": <edge selector or list of them>, "radius": 2 }
 { "id": "chamfer_1", "op": "chamfer", "edges": <edge selector or list>, "distance": 1 }
+Which edges (any mix, at least one): "edges" (selectors), "faces": [<face selector>, ...] (every edge of those faces),
+"features": ["boss_1"] (every edge of the faces that feature made: its sides, its top and where it meets the part).
+Tangent edges are followed (OCCT default). A failure names the edge: "edge 3 (straight, +Z, length 6, at [10, 10, 3]): radius 4 is
+too large for the 3 mm face beside it".
+Variable fillet: "radius2": 4 with "radius": 2 varies the radius linearly from 2 at each edge's start to 4 at its end.
+Radius sets: "sets": [{ "edges" | "faces" | "features", "radius", "radius2"? }, ...] give other edges radii of their own
+in the same fillet; the feature's own edges and radius may then be left out:
+{ "id": "fillet_2", "op": "fillet", "faces": [{ "type": "planar", "normal": [0,0,1], "pick": "largest" }], "radius": 1,
+  "sets": [{ "edges": { "type": "edge", "direction": [0,0,1], "pick": "all" }, "radius": 3 }] }
+Chamfer kinds: equal ("distance" on both faces), two distances ("distance" and "distance2"), or distance-angle
+("distance" on one face, "angle" degrees from it, under 90; the other leg is distance*tan(angle)). The face that takes
+"distance" is the one facing most up (+Z, then +Y, then +X); "flip": true swaps the faces (only with distance2 or angle):
+{ "id": "chamfer_2", "op": "chamfer", "edges": <selector>, "distance": 2, "distance2": 1, "flip": true }
+{ "id": "chamfer_3", "op": "chamfer", "edges": <selector>, "distance": 2, "angle": 30 }
 
 ## linearPattern / circularPattern (repeat one earlier extrude, cut or hole)
 { "id": "pat_1", "op": "linearPattern", "feature": "hole_1", "direction": [-1,0,0], "spacing": 60, "count": 2,

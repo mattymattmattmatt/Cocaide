@@ -46,7 +46,7 @@ describe("validation", () => {
     const doc = base();
     doc.features[1].distnace = 6;
     expect(allErrors(validateDocument(doc))).toEqual([
-      'ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction, body, newBody)',
+      'ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction, body, newBody, upTo, offset, direction2, startOffset, from, draft, thin, regions, intersect)',
     ]);
   });
 

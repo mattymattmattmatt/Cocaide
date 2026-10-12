@@ -1201,3 +1201,9 @@ svg.icon { flex: none; display: block; }
 .sketch-toolbar .flyout.small > .tool.small { width: 36px; min-width: 36px; padding: 0 10px 0 0; }
 .sketch-toolbar .flyout.small .flyout-arrow { right: 1px; bottom: 3px; width: 11px; height: 17px; }
 .sketch-tool-strip .strip-option-label { color: var(--muted); margin-right: 2px; }
+/* Wave 3B: the extrude, cut, fillet and chamfer panels group their fields under small headings (From, Direction 1, ...). */
+.prop-section { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+/* A fillet's radius sets: each set's words, then its radius in a narrow field. */
+.selector-line .set-text { flex: 1; min-width: 0; }
+.selector-line .set-radius { flex: none; width: 64px; }
+.selector-line .set-radius input { width: 100%; }

@@ -547,6 +547,16 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
     if (f.face) f.face = selector(f.face);
     if (f.edges) f.edges = Array.isArray(f.edges) ? f.edges.map(selector) : selector(f.edges);
     if (Array.isArray(f.faces)) f.faces = f.faces.map(selector);
+    // A fillet's other radius sets have edges and faces of their own.
+    if (f.op === "fillet" && Array.isArray(f.sets)) {
+      f.sets = f.sets.map((set) => {
+        if (!isObject(set)) return set;
+        const out: Record<string, unknown> = { ...set };
+        if (out.edges) out.edges = Array.isArray(out.edges) ? out.edges.map(selector) : selector(out.edges);
+        if (Array.isArray(out.faces)) out.faces = out.faces.map(selector);
+        return out;
+      });
+    }
     // Selectors inside references (a sketch on a face, an axis from an edge), on this feature's own copy.
     const d = defOf(f.op);
     if (featureDatumRefs(f, d?.datumRefs).length) {
@@ -770,6 +780,11 @@ export function dependants(features: unknown[], id: string): string[] {
 export function references(f: Record<string, unknown>): string[] {
   const refs: string[] = [];
   if ((f.op === "extrude" || f.op === "cut") && typeof f.sketch === "string") refs.push(f.sketch);
+  // A fillet or chamfer may treat the edges an earlier feature made (its own, or one of its sets).
+  if (f.op === "fillet" || f.op === "chamfer") {
+    const sets = Array.isArray(f.sets) ? f.sets.filter(isObject) : [];
+    for (const ch of [f, ...sets]) if (Array.isArray(ch.features)) for (const id of ch.features) if (typeof id === "string" && !refs.includes(id)) refs.push(id);
+  }
   if ((f.op === "linearPattern" || f.op === "circularPattern" || f.op === "mirror") && typeof f.feature === "string") refs.push(f.feature);
   // Joints, gussets and end caps work on members.
   if ((f.op === "joint" || f.op === "gusset") && Array.isArray(f.members)) refs.push(...f.members.filter((m): m is string => typeof m === "string"));

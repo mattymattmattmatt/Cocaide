@@ -4,17 +4,13 @@
 // it is accepted.
 
 import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
-import type { TopoDS_Edge } from "replicad-opencascadejs";
 import type {
-  ChamferFeature,
   CircularPatternFeature,
   CombineFeature,
   EndCapFeature,
   GussetFeature,
   MemberFeature,
   ProfileDef,
-  ExtrudeFeature,
-  FilletFeature,
   HoleFeature,
   LinearPatternFeature,
   MoveFeature,
@@ -25,11 +21,11 @@ import { facePlaneFrame, to3D, type Frame } from "../geom/frame";
 import { reach, placeSection, type PlacedSection } from "../geom/member";
 import { arcMid, buildProfile, type Loop, type Region } from "../geom/profile";
 import type { CutPlane, MemberEnds } from "../weldment/joints";
-import { add3, cross3, dot3, formatDirection, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
+import { add3, cross3, dot3, len3, normalize3, roundTo, scale3, sub3 } from "../geom/vec";
 import { boundingBoxOf, isValidShape, volumeOf } from "./measure";
 import { type OC, type Scope } from "./oc";
 import type { DescribedPart } from "./bodies";
-import { edgeSelectionError, selectEdges, selectFaces, selectionError } from "./selectors";
+import { selectFaces, selectionError } from "./selectors";
 import { countSubShapes } from "./topology";
 
 export class OpError extends Error {}
@@ -168,44 +164,11 @@ export function reachAlong(oc: OC, s: Scope, shape: TopoDS_Shape, from: Vec3, d:
 
 // ------------------------------------------------------- extrude and cut
 
-/**
- * The extrude or cut's tool: the profile swept along its direction. `reach`
- * is what throughAll goes through (the bodies the feature works on).
- */
-export function extrudeTool(oc: OC, s: Scope, f: ExtrudeFeature, profile: SketchProfile, reach: TopoDS_Shape | null): TopoDS_Shape {
-  if (profile.regions.length === 0) throw new OpError(noClosedProfile(f.sketch, profile, f.op));
-  const { frame } = profile;
-  const d = normalize3(f.direction ?? frame.z);
-  if (Math.abs(dot3(d, frame.z)) < 1e-6) {
-    throw new OpError(`direction ${formatDirection(d)} lies in the sketch plane; it must leave the plane`);
-  }
-  if (f.op === "cut" && !reach) throw new OpError("nothing to cut: there is no solid before this feature");
-
-  const extent = f.extent ?? "blind";
-  let offset: Vec3 = [0, 0, 0];
-  let length: number;
-  if (extent === "throughAll") {
-    if (!reach) throw new OpError("throughAll needs an existing solid to go through");
-    length = reachAlong(oc, s, reach, frame.origin, d);
-    if (length <= 1e-6) {
-      throw new OpError(`the solid is entirely behind the sketch plane in direction ${formatDirection(d)}`);
-    }
-  } else {
-    length = f.distance!;
-    if (extent === "midplane") offset = scale3(d, -length / 2);
-  }
-  return prism(oc, s, profileFaces(oc, s, profile), offset, scale3(d, length));
-}
+// The extrude or cut's tool (its end conditions, draft, thin walls, regions) is in extrude.ts.
 
 /** `sketch "s1" has no closed profile to extrude: profile is open at ...` */
 export function noClosedProfile(sketch: string, profile: SketchProfile, verb: string): string {
   return `sketch "${sketch}" has no closed profile to ${verb}${profile.open ? `: ${profile.open}` : ""}`;
-}
-
-/** Why a cut removed nothing, in the cut's own terms. */
-export function cutMissed(f: ExtrudeFeature, profile: SketchProfile): string {
-  const d = normalize3(f.direction ?? profile.frame.z);
-  return `the cut does not reach the solid in direction ${formatDirection(d)}` + ((f.extent ?? "blind") === "throughAll" ? "" : "; check direction and distance, or use extent throughAll");
 }
 
 /** The body with the tool added, or the tool itself as a new body. In scope `s`. */
@@ -348,43 +311,7 @@ export function holeTool(oc: OC, s: Scope, f: HoleFeature, entry: Vec3, into: Ve
   return s.track(revol.Shape());
 }
 
-// ---------------------------------------------------- fillet and chamfer
-
-/** The edges a fillet or chamfer selects across the part, by index. */
-export function selectTreatedEdges(f: FilletFeature | ChamferFeature, part: DescribedPart): number[] {
-  const selectors = Array.isArray(f.edges) ? f.edges : [f.edges];
-  const chosen = new Set<number>();
-  selectors.forEach((sel, i) => {
-    const path = Array.isArray(f.edges) ? `edges[${i}]` : "edges";
-    const result = selectEdges(part.edgeInfos, part.faceInfos, sel, path);
-    const problem = edgeSelectionError(sel, result, path);
-    if (problem) throw new OpError(problem);
-    for (const e of result.matches) chosen.add(e.index);
-  });
-  return [...chosen];
-}
-
-/** One body with a fillet or chamfer on some of its edges. In scope `s`. */
-export function treatEdges(oc: OC, s: Scope, f: FilletFeature | ChamferFeature, body: TopoDS_Shape, edges: TopoDS_Edge[], name: string | null): TopoDS_Shape {
-  const size = f.op === "fillet" ? f.radius : f.distance;
-  const builder = s.track(f.op === "fillet" ? new oc.BRepFilletAPI_MakeFillet(body) : new oc.BRepFilletAPI_MakeChamfer(body));
-  for (const e of edges) builder.Add(size, e);
-  builder.Build(s.track(new oc.Message_ProgressRange()));
-  const n = edges.length;
-  const where = name ? ` of body "${name}"` : "";
-  if (!builder.IsDone()) {
-    throw new OpError(
-      `the ${f.op} failed in the kernel on ${n} edge${n === 1 ? "" : "s"}${where}; ${f.op === "fillet" ? "radius" : "distance"} ${size} is probably too large for them`,
-    );
-  }
-  const result = s.track(builder.Shape());
-  if (!isValidShape(oc, s, result)) throw new OpError(`the ${f.op} produced an invalid solid${where}`);
-  const before = volumeOf(oc, s, body);
-  if (Math.abs(volumeOf(oc, s, result) - before) <= VOLUME_EPS * Math.max(1, before)) {
-    throw new OpError(`the ${f.op} changed nothing${where}`);
-  }
-  return result;
-}
+// Fillet and chamfer are in edgeTreat.ts.
 
 // -------------------------------------------------------------- patterns
 

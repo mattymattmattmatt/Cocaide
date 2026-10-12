@@ -6,7 +6,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { RawDocument } from "../src/doc/commands";
 import { loadOC, type OC } from "../src/kernel";
-import { edgesSelectorFor } from "../src/kernel/synthesize";
+import { edgesSelectorFor, facesSelectorFor } from "../src/kernel/synthesize";
 import { ICON_NAMES } from "../src/ui/icons";
 import { COMMANDS } from "../src/ui/input";
 import { contextTools, MODEL_TOOLS, toolbarGroups, toolById, visibleTabs, type ToolbarEntry } from "../src/ui/model/registry";
@@ -243,7 +243,30 @@ describe("Hole, Fillet, Chamfer", () => {
     ]);
     const none = harness(doc, view);
     run("tool.fillet", none.ctx);
-    expect(none.out.notices).toEqual([["error", "Click one or more edges (shift-click for more), then Fillet."]]);
+    expect(none.out.notices).toEqual([["error", "Click one or more edges (shift-click for more), or faces to treat all their edges, then Fillet."]]);
+  });
+
+  it("with only faces picked, fillets every edge of them (faces)", () => {
+    const doc = example("bracket");
+    const view = viewOf(oc, doc);
+    const top = view.faces.findIndex((f) => f.type === "plane" && f.normal![2] > 0.99);
+    const s = facesSelectorFor(view.faces, [top]);
+    expect(s.ok).toBe(true);
+    const { ctx, out } = harness(doc, view, { selection: { faces: [top], edges: [] } });
+    run("tool.chamfer", ctx);
+    expect(out.created).toEqual([{ id: "chamfer_1", op: "chamfer", faces: (s as { selector: unknown }).selector, distance: 1 }]);
+  });
+
+  it("with edges and faces picked, treats both (the edges, and every edge of the faces)", () => {
+    const doc = example("bracket");
+    const view = viewOf(oc, doc);
+    const top = view.faces.findIndex((f) => f.type === "plane" && f.normal![2] > 0.99);
+    const edge = view.edges.findIndex((e) => e.kind === "line" && Math.abs(e.direction![2]) > 0.99);
+    const faces = facesSelectorFor(view.faces, [top]);
+    const edges = edgesSelectorFor(view.edges, view.faces, [edge]);
+    const { ctx, out } = harness(doc, view, { selection: { faces: [top], edges: [edge] } });
+    run("tool.fillet", ctx);
+    expect(out.created).toEqual([{ id: "fillet_1", op: "fillet", edges: (edges as { selector: unknown }).selector, faces: (faces as { selector: unknown }).selector, radius: 1 }]);
   });
 });
 
