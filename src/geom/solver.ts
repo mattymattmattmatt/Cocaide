@@ -662,6 +662,13 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
     if (maxAbs(evaluate(base, x)) > ACCEPT) continue;
     return done(x);
   }
+  if (!pins.length) {
+    // Started exactly where two dimensions coincide (a level line's length and width): Newton can't see which
+    // way to go. A nudge off that place, the same every time, lets it.
+    const nudged = Float64Array.from(l.x, (v, j) => (l.frozen[j] ? v : v + 1e-4 * Math.max(1, Math.abs(v)) * Math.sin(1 + 7 * j)));
+    const x = newton(nudged, base, l.frozen);
+    if (x && maxAbs(evaluate(base, x)) <= ACCEPT) return done(x);
+  }
   if (pins.length) {
     // The pointer is somewhere the constraints don't let the handle reach (a polygon's corner off its
     // centre's line once a side is level): go as near as they allow, as SOLIDWORKS slides it along.
@@ -804,8 +811,9 @@ export function redundantConstraints(entities: SketchEntity[], constraints: Cons
 export function conflictSet(entities: SketchEntity[], constraints: Constraint[]): number[] {
   const bad = (keep: number[]): boolean => {
     const ks = keep.map((i) => constraints[i]);
-    if (redundantConstraints(entities, ks).some(Boolean)) return true;
-    return !solveSketch(entities, ks).ok;
+    const r = solveSketch(entities, ks);
+    // Repeats are judged where the constraints put the geometry, not where it was (a level line's length and width only coincide while it is level).
+    return !r.ok || redundantConstraints(r.entities, ks).some(Boolean);
   };
   let keep = constraints.map((_, i) => i).filter((i) => !isDriven(constraints[i]));
   if (!bad(keep)) return [];
