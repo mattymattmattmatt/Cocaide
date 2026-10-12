@@ -15,6 +15,9 @@ import { ui as revolve } from "./revolve/ui";
 import { ui as shell } from "./shell/ui";
 import { ui as draft } from "./draft/ui";
 import { ui as scale } from "./scale/ui";
+import { ui as sweep } from "./sweep/ui";
+import { ui as loft } from "./loft/ui";
+import { ui as rib } from "./rib/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -28,4 +31,7 @@ export const UI_OP_LIST: UiOp[] = [
   shell,
   draft,
   scale,
+  sweep,
+  loft,
+  rib,
 ];

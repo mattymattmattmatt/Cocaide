@@ -512,6 +512,28 @@ const ICONS = {
       <path d="M13.5 15.5l2.5 2.5 5-5.5" />
     </>
   ),
+  // Phase O wave 4: a swept cut (the path's groove, dashed), a lofted cut, a helix (a spring's coils)
+  sweepCut: (
+    <>
+      <path d="M2 19C2 11 8 4 19 4 M7 19c0-5.5 4-10 12-10" style={dash} />
+      <ellipse cx="4.5" cy="19" rx="2.5" ry="1.1" />
+      <path d="M14 13.5h6" />
+    </>
+  ),
+  loftCut: (
+    <>
+      <path d="M3 17l9-3 9 3-9 3z" style={dash} />
+      <ellipse cx="12" cy="6" rx="4" ry="1.6" />
+      <path d="M3 17 8 6 M21 17 16 6" style={dash} />
+      <path d="M15.5 21h6" />
+    </>
+  ),
+  helix: (
+    <>
+      <path d="M12 2v20" style={{ strokeDasharray: "5 2.2 1 2.2" }} />
+      <path d="M5 19c0-2 14-1 14-3S5 14 5 12s14-1 14-3S5 7 5 5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

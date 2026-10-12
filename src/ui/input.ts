@@ -93,9 +93,12 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.scale", label: "Scale bodies", group: "Model tools", key: null },
   { id: "tool.revolveCut", label: "Revolved cut", group: "Model tools", key: null },
 
-  { id: "tool.sweep", label: "Sweep", group: "Model tools", key: null, planned: true },
-  { id: "tool.loft", label: "Loft", group: "Model tools", key: null, planned: true },
-  { id: "tool.rib", label: "Rib", group: "Model tools", key: null, planned: true },
+  { id: "tool.sweep", label: "Sweep", group: "Model tools", key: null },
+  { id: "tool.loft", label: "Loft", group: "Model tools", key: null },
+  { id: "tool.rib", label: "Rib", group: "Model tools", key: null },
+  { id: "tool.sweepCut", label: "Swept cut", group: "Model tools", key: null },
+  { id: "tool.loftCut", label: "Lofted cut", group: "Model tools", key: null },
+  { id: "tool.helix", label: "Helix (spring)", group: "Model tools", key: null },
 
   { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null, planned: true },
 

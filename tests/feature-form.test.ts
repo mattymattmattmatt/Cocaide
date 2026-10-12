@@ -221,7 +221,7 @@ describe("the feature ops' UI registry", () => {
       expect(ICON_NAMES, u.op).toContain(u.icon);
       expect(u.fields || u.Editor, u.op).toBeTruthy();
     }
-    expect(Object.keys(UI_OPS)).toEqual(["fillet", "chamfer", "linearPattern", "circularPattern", "plane", "axis", "point", "revolve", "shell", "draft", "scale"]);
+    expect(Object.keys(UI_OPS)).toEqual(["fillet", "chamfer", "linearPattern", "circularPattern", "plane", "axis", "point", "revolve", "shell", "draft", "scale", "sweep", "loft", "rib"]);
   });
 
   it("keeps the old editors' test ids", () => {
