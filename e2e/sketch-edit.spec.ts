@@ -344,3 +344,33 @@ test("Q turns any selection construction as one, and back; with nothing selected
   await expect(page.locator("[data-entity=l3].construction")).toHaveCount(1);
   await page.getByTestId("cancel-sketch").click();
 });
+
+test("an undo while an edit tool holds picks drops the picks it took away; Undo after an edit is one step", async ({ page }) => {
+  await sketchOnTop(page);
+  await page.keyboard.press("r");
+  await sketchClick(page, 0, 0);
+  await sketchClick(page, 40, 30);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  // Fillet one corner from its right-click menu, with Enter: one undo puts the corner back.
+  const [cx, cy] = await toScreen(page, [40, 0]);
+  await page.mouse.click(cx, cy, { button: "right" });
+  await page.getByTestId("ctx-fillet").click();
+  await pressed(page, "tool-fillet");
+  await expect(page.getByTestId("tool-prompt")).toContainText("1 pick");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-entity=a1]")).toHaveCount(1);
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("[data-entity=a1]")).toHaveCount(0);
+  await expect(page.locator("[data-entity^=l]")).toHaveCount(4);
+  // Offset picks the top side; undoing the rectangle takes that pick with it, and Apply has nothing stale to say.
+  await page.getByTestId("tool-offset").click();
+  await sketchClick(page, 20, 30);
+  await expect(page.getByTestId("tool-prompt")).toContainText("1 entity picked");
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("[data-entity]")).toHaveCount(0);
+  await expect(page.getByTestId("tool-prompt")).toHaveText("Click a line, arc or circle: its chain is offset");
+  await expect(page.getByTestId("tool-problem")).toHaveCount(0);
+  await expect(page.getByTestId("tool-apply")).toBeDisabled();
+  await page.getByTestId("cancel-sketch").click();
+});

@@ -26,6 +26,7 @@ import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from 
 import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
 import type { SketchToolDef } from "./tools/types";
 import { EDIT_TOOLS, editByName } from "./edit";
+import { livePicks } from "./edit/picks";
 import { NO_PICKS, type EditInput, type EditPicks, type EditToolDef } from "./edit/types";
 import type { Edit } from "../../geom/sketchEdit/relations";
 import { explodable, explodeAll } from "../../geom/sketchEdit/explode";
@@ -395,6 +396,9 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     setEditPicks(def.start?.(items, draft) ?? NO_PICKS);
     setToolState(name);
   };
+
+  // An undo or redo can take away what the edit tool picked: those picks go with it.
+  useEffect(() => setEditPicks((p) => livePicks(p, draft)), [draft]);
 
   /** The edit tool's picks after an edit: what it would start with on an empty selection. */
   const restartEdit = () => setEditPicks(editTool?.start?.([], draft) ?? NO_PICKS);

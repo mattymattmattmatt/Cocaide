@@ -19,11 +19,11 @@ const MOVE: FlyoutDef = { id: "move", label: "Move" };
 const KEEP: ToolOption = { kind: "toggle", key: "keep", label: "Keep relations", title: "Keep the relations to entities that were not picked: they move along (or hold these back)", default: "off" };
 
 /** Picking: a click on an entity adds or drops it; a click elsewhere (or Enter) ends the picking. */
-function pickOrPlace(state: SketchState, picks: EditPicks, input: Parameters<EditToolDef["click"]>[2], placesWanted: number, done: (picks: EditPicks) => EditStep | null): EditStep {
+function pickOrPlace(state: SketchState, picks: EditPicks, input: Parameters<EditToolDef["click"]>[2], placesWanted: number, verb: string, done: (picks: EditPicks) => EditStep | null): EditStep {
   if (picks.picking !== false) {
     const e = pickedEntity(state, input);
     if (e) return { picks: { ...picks, entities: toggle(picks.entities, e.id) } };
-    if (!picks.entities.length) return { message: "click the entities to move first" };
+    if (!picks.entities.length) return { message: `click the entities to ${verb} first` };
     return { picks: { ...picks, picking: false } };
   }
   const next = { ...picks, places: [...picks.places, { p: input.p, ref: input.ref }].slice(-placesWanted) };
@@ -94,7 +94,7 @@ function def(name: "move" | "copy" | "rotate" | "scale"): EditToolDef {
       return n === 0 ? "Click the centre (or Apply to scale about the origin)" : "Type the factor and Apply";
     },
     click: (state, picks, input, o) =>
-      pickOrPlace(state, picks, input, places, (next) => {
+      pickOrPlace(state, picks, input, places, label.toLowerCase(), (next) => {
         // The last place clicked finishes a move or a rotation by clicks.
         if (kind === "scale") return null;
         const r = run(state, next, o, false);

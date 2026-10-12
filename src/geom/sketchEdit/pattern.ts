@@ -223,8 +223,11 @@ export function circularPattern(stateIn: SketchState, ids: string[], opts: Circu
     rel.push({ type: "coincident", points: [`${id}.start`, `${spokes[k - 1].id}.end`] }, { type: "coincident", points: [`${id}.end`, `${spokes[k].id}.end`] });
     if (k > 1) rel.push({ type: "equal", entities: [id, chords[0].id] });
   }
-  const angle = Math.abs(stepDeg);
-  if (angle < 180 - 1e-9) rel.push({ type: "angle", entities: [spokes[0].id, spokes[1].id], value: Math.round(angle * 1e9) / 1e9 });
+  // The angle between the first two spokes as an angle relation reads it (0° to 180°: a step over 180° is 360° less it); a half turn holds them in line.
+  const turned = Math.abs(stepDeg);
+  const angle = turned > 180 ? 360 - turned : turned;
+  if (Math.abs(angle - 180) < 1e-9) rel.push({ type: "collinear", entities: [spokes[0].id, spokes[1].id] });
+  else if (angle > 1e-9) rel.push({ type: "angle", entities: [spokes[0].id, spokes[1].id], value: Math.round(angle * 1e9) / 1e9 });
   // Hold the spokes where they are against the centre spinning the pattern: nothing; the seed's own position does that.
   return finish(state, [...c.made, ...spokes, ...chords], [...c.hard, ...rel], c.soft);
 }

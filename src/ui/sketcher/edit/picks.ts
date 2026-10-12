@@ -47,6 +47,24 @@ export function lineAt(state: SketchState, input: EditInput): string | null {
   return state.entities.find((e) => e.id === item.id)?.type === "line" ? item.id : null;
 }
 
+/**
+ * The picks without what is no longer in the sketch (an undo or redo took it
+ * away): entities, points and the mirror line that name a missing entity
+ * go (a placed point stays: where it is still means something). The same
+ * object back when nothing went.
+ */
+export function livePicks(picks: EditPicks, state: SketchState): EditPicks {
+  const ids = new Set(state.entities.map((e) => e.id));
+  const live = (ref: string) => ref === "origin" || isAxisId(ref) || ids.has(ref.split(".")[0]);
+  const entities = picks.entities.filter(live);
+  const points = picks.points.filter(live);
+  const about = picks.about && !live(picks.about) ? undefined : picks.about;
+  if (entities.length === picks.entities.length && points.length === picks.points.length && about === picks.about) return picks;
+  // A move that lost every entity it was moving goes back to picking them.
+  const picking = picks.picking === false && !entities.length && picks.entities.length ? true : picks.picking;
+  return { ...picks, entities, points, about, ...(picking !== undefined ? { picking } : {}) };
+}
+
 export function toggle(list: string[], id: string): string[] {
   return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
 }

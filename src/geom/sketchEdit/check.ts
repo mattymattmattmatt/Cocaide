@@ -7,11 +7,11 @@
 // extrude even while something else in the sketch is still wrong. Pure.
 
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
-import { constraintTargets } from "../axes";
+import { constraintTargets, isAxisId } from "../axes";
 import { buildProfile, sampleSeg, type Region } from "../profile";
 import { dist2 } from "../vec";
 import { curveOf, curvesOf, distanceTo, meet, sameCarrier, TOL, type Curve } from "./curve";
-import { mapRefs, pointAtRef, settle, type Edit, type SketchState } from "./relations";
+import { mapRefs, pointAtRef, pointNames, relationKey, settle, type Edit, type SketchState } from "./relations";
 
 export type ProblemKind = "open" | "gap" | "branch" | "cross" | "touch" | "overlap" | "zero" | "duplicate";
 
@@ -278,7 +278,34 @@ function buildSeg(e: Extract<SketchEntity, { type: "line" | "arc" }>): Vec2[] | 
  * delete removes the entity and its relations. Null when it has none.
  */
 export function fixProblem(state: SketchState, problem: SketchProblem): Edit | null {
-  if ((problem.kind === "zero" || problem.kind === "duplicate") && problem.refs?.[0]) {
+  if (problem.kind === "duplicate" && problem.refs?.[0] && problem.entities.length === 2) {
+    // The doubled entity goes; what was related or dimensioned to it is offered to the one it lay on (kept where it adds something).
+    const id = problem.refs[0];
+    const keepId = problem.entities.find((x) => x !== id)!;
+    const kept = state.entities.find((e) => e.id === keepId);
+    if (!kept || !state.entities.some((e) => e.id === id)) return null;
+    const entities = state.entities.filter((e) => e.id !== id);
+    const samePoint = (ref: string): string | null => {
+      const [owner] = ref.split(".");
+      if (owner !== id) return ref;
+      const p = pointAtRef(state.entities, ref);
+      return (p && pointNames(kept).map((n) => `${keepId}.${n}`).find((r) => dist2(pointAtRef(state.entities, r) ?? [Infinity, Infinity], p) <= 10 * TOL)) ?? null;
+    };
+    const constraints: Constraint[] = [];
+    const moved: Constraint[] = [];
+    for (const k of state.constraints) {
+      if (!constraintTargets(k).includes(id)) constraints.push(k);
+      else if (k.type === "offset") constraints.push(...dropFrom(k, id));
+      else {
+        const m = mapRefs(k, samePoint, (x) => (x === id ? keepId : x));
+        if (m) moved.push(m);
+      }
+    }
+    const have = new Set(constraints.map(relationKey));
+    const soft = settle(entities, [...constraints, ...moved], [keepId]).filter((k) => moved.includes(k) && !have.has(relationKey(k)));
+    return { entities, constraints, soft, made: [], note: `${id} deleted` };
+  }
+  if (problem.kind === "zero" && problem.refs?.[0]) {
     const id = problem.refs[0];
     return {
       entities: state.entities.filter((e) => e.id !== id),
@@ -317,16 +344,19 @@ function dropFrom(k: Constraint, id: string): Constraint[] {
 /** Every fix there is at once: merges and deletes (each problem's fix applied in turn, where it still applies). */
 export function fixAll(state: SketchState): Edit | null {
   let s: SketchState = state;
+  let soft: Constraint[] = [];
   let changed = false;
   for (let i = 0; i < 50; i++) {
     const p = checkSketch(s.entities).problems.find((x) => x.fix);
     if (!p) break;
     const r = fixProblem(s, p);
     if (!r) break;
-    s = r;
+    s = { entities: r.entities, constraints: r.constraints };
+    // What a later fix deletes takes its offered relations with it.
+    soft = [...soft, ...(r.soft ?? [])].filter((k) => constraintTargets(k).every((id) => isAxisId(id) || s.entities.some((e) => e.id === id)));
     changed = true;
   }
-  return changed ? { ...s, made: [] } : null;
+  return changed ? { ...s, soft, made: [] } : null;
 }
 
 /** The first problem as the status line puts it, and how many more there are. */

@@ -3,19 +3,25 @@
 // as an expression keeps the scaled number; Check sketch names the right end;
 // a chamfer's angle dimension reads as typed at every corner; offset
 // relations are validated strictly; the edit strip hides options that do not
-// apply.
+// apply; picks an undo took away are dropped; a split line keeps its length
+// dimension; power trim goes on through a rectangle it exploded; a two-place
+// or wide circular pattern is still driven; deleting a duplicate hands its
+// relations to the entity it lay on.
 
 import { describe, expect, it } from "vitest";
 import type { Constraint, SketchEntity, Vec2 } from "../src/doc/types";
 import { allErrors, validateDocument } from "../src/doc/validate";
 import { checkConstraints } from "../src/geom/constraints";
 import { sketchDof, solveSketch } from "../src/geom/solver";
-import { checkSketch } from "../src/geom/sketchEdit/check";
+import { checkSketch, fixAll, fixProblem } from "../src/geom/sketchEdit/check";
+import { circularPattern } from "../src/geom/sketchEdit/pattern";
 import { chamferCorners, cornersOf } from "../src/geom/sketchEdit/fillet";
 import { offsetEntities } from "../src/geom/sketchEdit/offset";
 import type { Edit, SketchState } from "../src/geom/sketchEdit/relations";
 import { transformEntities } from "../src/geom/sketchEdit/transform";
-import { trimAt } from "../src/geom/sketchEdit/trim";
+import { powerTrim, splitAt, trimAt } from "../src/geom/sketchEdit/trim";
+import { livePicks } from "../src/ui/sketcher/edit/picks";
+import { NO_PICKS } from "../src/ui/sketcher/edit/types";
 import { renamed } from "../src/ui/sketcher/model";
 import { editByName } from "../src/ui/sketcher/edit";
 import { optionValues } from "../src/ui/sketcher/tools/run";
@@ -173,5 +179,113 @@ describe("the edit strip shows the options that apply", () => {
   it("offset: the end caps only with both directions", () => {
     expect(shown("offset", {})).not.toContain("cap");
     expect(shown("offset", { both: "on" })).toContain("cap");
+  });
+});
+
+describe("picks an undo took away", () => {
+  it("drop the entities, points and mirror line that are gone; keep the rest, and the same object when nothing went", () => {
+    const s = rectangle();
+    const picks = { ...NO_PICKS, entities: ["l1", "l9"], points: ["l2.end", "l9.start", "origin"], about: "l9", picking: false };
+    expect(livePicks(picks, s)).toEqual({ ...NO_PICKS, entities: ["l1"], points: ["l2.end", "origin"], about: undefined, picking: false });
+    const fine = { ...NO_PICKS, entities: ["l1"], about: "Y" };
+    expect(livePicks(fine, s)).toBe(fine);
+    // A move whose entities all went is picking them again.
+    expect(livePicks({ ...NO_PICKS, entities: ["l9"], picking: false }, s).picking).toBe(true);
+  });
+
+  it("the move tools say what they are waiting for in their own words", () => {
+    for (const name of ["copy", "rotate", "scale"]) {
+      const t = editByName(name)!;
+      const step = t.click(rectangle(), t.start!([], rectangle()), { p: [100, 100], item: null, ref: null, tol: 0.5 }, optionValues(t, {}));
+      expect(step).toEqual({ message: `click the entities to ${name} first` });
+    }
+  });
+});
+
+describe("split keeps the whole length", () => {
+  it("a line's length dimension becomes the distance across both pieces, and the sketch stays as defined", () => {
+    const s = rectangle();
+    const dimmed: SketchState = { entities: s.entities, constraints: [...s.constraints, { type: "coincident", points: ["l1.start", "origin"] }, { type: "distance", entity: "l1", value: 40 }, { type: "distance", entity: "l2", value: 30 }] };
+    expect(sketchDof(dimmed.entities, dimmed.constraints)).toBe(0);
+    const r = ok(splitAt(dimmed, "l1", [10, 0]));
+    expect(r.made).toEqual(["l1", "l5"]);
+    expect(r.constraints).toContainEqual({ type: "distance", points: ["l1.start", "l5.end"], value: 40 });
+    // Only where the split is along the line is free.
+    expect(sketchDof(r.entities, r.constraints)).toBe(1);
+    expect(checkConstraints(r.entities, r.constraints)).toEqual([]);
+  });
+});
+
+describe("power trim through a rectangle entity", () => {
+  it("trims both sides one stroke crosses, though the first crossing exploded it", () => {
+    const s: SketchState = {
+      entities: [{ id: "r1", type: "rect", center: [0, 0], w: 20, h: 10 }, line("l9", [0, -20], [0, 20])],
+      constraints: [],
+    };
+    // Down through the top side and the bottom one, right of l9.
+    const r = powerTrim(s, [[5, 10], [5, -10]]);
+    expect(r.entities.some((e) => e.type === "rect")).toBe(false);
+    expect(r.trimmed).toHaveLength(2);
+    const ys = (y: number) => r.entities.filter((e) => e.type === "line" && Math.abs(e.start[1] - y) < 1e-9 && Math.abs(e.end[1] - y) < 1e-9);
+    // Each side is left from x = -10 to the crossing at 0 only.
+    for (const y of [-5, 5]) {
+      const [side] = ys(y);
+      expect(side?.type === "line" && [Math.min(side.start[0], side.end[0]), Math.max(side.start[0], side.end[0])]).toEqual([-10, 0]);
+    }
+  });
+});
+
+describe("circular patterns that are still driven", () => {
+  const seed = (): SketchState => ({
+    entities: [{ id: "c1", type: "circle", center: [20, 0], radius: 3 }],
+    constraints: [
+      { type: "radius", entity: "c1", value: 3 },
+      { type: "distanceX", points: ["origin", "c1.center"], value: 20 },
+      { type: "distanceY", points: ["origin", "c1.center"], value: 0 },
+    ],
+  });
+  it("two places all the way round: the spokes held in line, the copy fully defined", () => {
+    const r = ok(circularPattern(seed(), ["c1"], { count: 2, center: "origin", total: 360 }));
+    expect(r.constraints).toContainEqual({ type: "collinear", entities: ["l1", "l2"] });
+    expect(sketchDof(r.entities, [...r.constraints, ...(r.soft ?? [])])).toBe(0);
+    expect(checkConstraints(r.entities, r.constraints)).toEqual([]);
+  });
+  it("a step over 180°: the angle the relation reads (360° less it)", () => {
+    const r = ok(circularPattern(seed(), ["c1"], { count: 2, center: "origin", total: 270 }));
+    expect(r.constraints).toContainEqual({ type: "angle", entities: ["l1", "l2"], value: 90 });
+    const c2 = r.entities.find((e) => e.id === "c2");
+    expect(c2?.type === "circle" && c2.center.map((v) => Math.round(v * 1e9) / 1e9 + 0)).toEqual([0, -20]);
+    expect(sketchDof(r.entities, [...r.constraints, ...(r.soft ?? [])])).toBe(0);
+    // Editing it to 60° keeps the copy on the side it is: clockwise of the seed.
+    const solved = solveSketch(r.entities, r.constraints.map((k) => (k.type === "angle" ? { ...k, value: 60 } : k)));
+    if (!solved.ok) throw new Error(solved.error);
+    const moved = solved.entities.find((e) => e.id === "c2");
+    expect(moved?.type === "circle" && moved.center.map((v) => Math.round(v * 1e6) / 1e6)).toEqual([10, -17.320508]);
+  });
+});
+
+describe("deleting a duplicate", () => {
+  it("offers its relations and dimensions to the entity it lay on, by where its points are", () => {
+    const state: SketchState = {
+      entities: [line("l1", [0, 0], [10, 0]), line("l2", [10, 0], [0, 0]), line("l3", [10, 0], [10, 10])],
+      constraints: [
+        { type: "coincident", points: ["l2.start", "l3.start"] },
+        { type: "distance", entity: "l2", value: 10 },
+        { type: "horizontal", entity: "l1" },
+        { type: "horizontal", entity: "l2" },
+      ],
+    };
+    const dup = checkSketch(state.entities).problems.find((p) => p.kind === "duplicate")!;
+    expect(dup.text).toBe("l2 lies on top of l1");
+    const r = fixProblem(state, dup)!;
+    expect(r.entities.map((e) => e.id)).toEqual(["l1", "l3"]);
+    expect(r.constraints).toEqual([{ type: "horizontal", entity: "l1" }]);
+    // l2's start was at [10, 0]: l1's end is there. Its level relation l1 has already.
+    expect(r.soft).toEqual([
+      { type: "coincident", points: ["l1.end", "l3.start"] },
+      { type: "distance", entity: "l1", value: 10 },
+    ]);
+    const all = fixAll(state)!;
+    expect(all.soft).toEqual(r.soft);
   });
 });

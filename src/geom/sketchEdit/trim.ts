@@ -250,7 +250,9 @@ export function powerTrim(state: SketchState, path: Vec2[]): Edit & { trimmed: s
   const soft: Constraint[] = [];
   const trimmed: string[] = [];
   for (let i = 1; i < path.length; i++) {
-    for (const x of crossings(s.entities, path[i - 1], path[i])) {
+    for (const c of crossings(s.entities, path[i - 1], path[i])) {
+      // A rectangle or slot an earlier crossing exploded is lines and arcs now: the piece there is the one to trim.
+      const x = s.entities.some((y) => y.id === c.id) ? c : { ...c, id: editableAt(s.entities, c.p, 1e-6) ?? c.id };
       const e = s.entities.find((y) => y.id === x.id);
       // An earlier crossing of this stroke may have trimmed it already.
       if (!e || !curvesOf(e).some((c) => distanceTo(c, x.p) <= 1e-7)) continue;
@@ -330,7 +332,19 @@ export function splitAt(state: SketchState, id: string, p: Vec2): Edit | string 
   }
   const eps = (10 * TOL) / lengthOf(c);
   if (!(u > eps && u < 1 - eps)) return `click inside ${id}, away from its ends: an end is already where it divides`;
-  const r = cutInto(state, id, [{ from: 0, to: u }, { from: u, to: 1 }], (pieces) => [{ type: "coincident", points: [`${pieces[0]}.end`, `${pieces[1]}.start`] }]);
+  // A line's length dimension still measures the whole: from the first piece's start to the second's end.
+  const whole: SketchState =
+    c.kind === "line"
+      ? {
+          ...state,
+          constraints: state.constraints.map((k): Constraint => {
+            if (k.type !== "distance" || k.entity !== id) return k;
+            const { entity: _line, ...rest } = k;
+            return { ...rest, points: [`${id}.start`, `${id}.end`] };
+          }),
+        }
+      : state;
+  const r = cutInto(whole, id, [{ from: 0, to: u }, { from: u, to: 1 }], (pieces) => [{ type: "coincident", points: [`${pieces[0]}.end`, `${pieces[1]}.start`] }]);
   return { ...r.state, made: r.pieces };
 }
 
