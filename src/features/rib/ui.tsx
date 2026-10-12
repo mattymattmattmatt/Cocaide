@@ -13,7 +13,7 @@ export const RIB_FIELDS: FieldSpec[] = [
   {
     kind: "select",
     key: "side",
-    label: "Thickness",
+    label: "Side",
     testId: "prop-rib-side",
     options: (f) =>
       f.normal
