@@ -794,7 +794,9 @@ function validateConstraint(
       if (k.type === "angle") {
         const value = c.num(k, "value", label, {});
         const dim = dimension();
-        if (value !== undefined && !(value > 0 && value < 180)) c.fail(label, `value must be over 0 and under 180 degrees (got ${value}); for 0 use parallel`);
+        // A driven angle only measures: lines that have come parallel read 0 (or 180) and are still a valid sketch.
+        const measured = dim.driven === true && value !== undefined && value >= 0 && value <= 180;
+        if (value !== undefined && !(value > 0 && value < 180) && !measured) c.fail(label, `value must be over 0 and under 180 degrees (got ${value}); for 0 use parallel`);
         return pair && value !== undefined && c.errors.length === before ? { type: "angle", entities: pair, value, ...(k.supplement === true ? { supplement: true } : {}), ...dim } : null;
       }
       return pair && c.errors.length === before ? { type: k.type, entities: pair } : null;

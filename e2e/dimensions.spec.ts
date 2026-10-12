@@ -200,15 +200,67 @@ test("Smart Dimension: Shift-click a circle for its near or far side; two points
   await expect(page.getByTestId("modify-value")).toHaveValue("50");
   await page.keyboard.press("Escape");
 
-  // Two points dropped above them: the horizontal distance comes first; beside them, the vertical.
+  // Two points: the dimension follows the pointer until a click drops it. Above them, the horizontal distance;
+  // beside them, the vertical; off to a corner, aligned.
+  for (const [drop, kind, label, value] of [
+    [[20, 25], "c-distance-x", "Horizontal distance 40", "40"],
+    [[55, 0], "c-distance-y", "Vertical distance 20", "20"],
+    [[60, 30], "c-distance", "Distance 44.721", "44.72136"],
+  ] as const) {
+    await sketchClick(page, 0, -10);
+    await sketchClick(page, 40, 10);
+    await expect(page.getByTestId("modify-box")).toHaveCount(0);
+    const [x, y] = await screenAt(page, drop[0], drop[1]);
+    await page.mouse.move(x, y);
+    await expect(page.getByTestId("dimension-placing")).toHaveText(label);
+    await expect(page.locator('[data-testid^="dim-proposed-"]')).toHaveCount(1);
+    await page.mouse.click(x, y);
+    await expect(page.getByTestId("modify-box")).toBeVisible();
+    await expect(page.getByTestId(`modify-${kind}`)).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("modify-value")).toHaveValue(new RegExp(`^${value.replace(".", "\\.")}`));
+    await page.keyboard.press("Escape");
+  }
+  // Esc while it follows the pointer drops it: nothing is added.
   await sketchClick(page, 0, -10);
   await sketchClick(page, 40, 10);
-  await expect(page.getByTestId("modify-value")).toHaveValue(/.+/);
   await page.keyboard.press("Escape");
-  await sketchClick(page, 0, -10);
-  await sketchClick(page, 40, 10);
-  await expect(page.getByTestId("modify-box")).toBeVisible();
+  await expect(page.locator('[data-testid^="dim-proposed-"]')).toHaveCount(0);
+  await sketchClick(page, 20, 25);
+  await expect(page.getByTestId("modify-box")).toHaveCount(0);
+});
+
+test("two lines that meet: the angle where it is dropped, its supplement in the quadrants beside", async ({ page }) => {
+  await page.getByTestId("tool-line").click();
+  await sketchClick(page, 0, 0);
+  await sketchClick(page, 40, 0);
   await page.keyboard.press("Escape");
+  await sketchClick(page, 0, 10);
+  await sketchClick(page, 40, 50);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("d");
+  // Between the lines (inside the 45° they make): the angle.
+  await sketchClick(page, 20, 0);
+  await sketchClick(page, 20, 30);
+  let [x, y] = await screenAt(page, 40, 20);
+  await page.mouse.move(x, y);
+  await expect(page.getByTestId("dimension-placing")).toHaveText("Angle 45°");
+  // Above the slanted line, on the other side: 135°, its supplement.
+  [x, y] = await screenAt(page, 0, 40);
+  await page.mouse.move(x, y);
+  await expect(page.getByTestId("dimension-placing")).toHaveText("Supplementary angle 135°");
+  await page.mouse.click(x, y);
+  await expect(page.getByTestId("modify-value")).toHaveValue("135");
+  await page.getByTestId("modify-value").fill("120");
+  await page.getByTestId("modify-value").press("Enter");
+  await expect(page.getByTestId("constraint-list")).toContainText("l1 ∠ l2 (other side)");
+  await page.getByTestId("finish-sketch").click();
+  const sketch = ((await savedDocument(page)).features as { constraints: Record<string, unknown>[]; entities: { id: string; start: number[]; end: number[] }[] }[])[0];
+  expect(sketch.constraints.find((k) => k.type === "angle")).toMatchObject({ type: "angle", entities: ["l1", "l2"], value: 120, supplement: true });
+  // 120° on the other side is 60° between the directions.
+  const [l1, l2] = sketch.entities;
+  const dir = (l: { start: number[]; end: number[] }) => Math.atan2(l.end[1] - l.start[1], l.end[0] - l.start[0]);
+  expect(Math.abs(((dir(l2) - dir(l1)) * 180) / Math.PI)).toBeCloseTo(60, 6);
 });
 
 test("Fully Define previews what it adds, then the sketch is fully defined and nothing moved", async ({ page }) => {

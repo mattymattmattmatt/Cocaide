@@ -9,7 +9,7 @@ import type { Constraint, SketchEntity, Vec2 } from "../src/doc/types";
 import { filterRelations, sketchHealth } from "../src/ui/sketcher/status";
 import { readValue, shownValue, spinValue } from "../src/ui/sketcher/modify";
 import { draftCycle, draftParameters, measureDriven, reexpress, withOldNames } from "../src/ui/sketcher/dimdraft";
-import { dropKind, smartDimension } from "../src/ui/sketcher/draft";
+import { describeConstraint, dropKind, dropMatters, smartDimension } from "../src/ui/sketcher/draft";
 import { CIRCLE_TYPED, LINE_TYPED, rectTyped } from "../src/ui/sketcher/tools/typed";
 import { placeTyped, toolByName } from "../src/ui/sketcher/tools/run";
 import { checkConstraints } from "../src/geom/constraints";
@@ -218,6 +218,38 @@ describe("Smart Dimension: what the picks and the drop call for", () => {
     const outside = smartDimension(es, picks, [-10, 3]);
     expect(outside[0].value).toBeCloseTo(135, 9);
     expect(outside[0].make(135)).toEqual({ type: "angle", entities: ["l1", "l2"], value: 135, supplement: true });
+    // Two choices, told apart: the supplement says so.
+    expect(outside.map((o) => [o.label, o.testId])).toEqual([
+      ["Supplementary angle", "c-angle-supplement"],
+      ["Angle", "c-angle"],
+    ]);
+  });
+
+  it("follows the pointer to be dropped only when where it is dropped changes what it is", () => {
+    const es = [line("l1", [0, 0], [10, 5]), line("l2", [0, 0], [10, 0]), line("l3", [0, 3], [10, 3]), { ...line("cl", [0, -5], [0, 5]), construction: true }, circle("c1", [20, 0], 2)];
+    const pt = (ref: string) => ({ kind: "point" as const, ref });
+    const ent = (id: string) => ({ kind: "entity" as const, id });
+    // Two points apart in X and Y: aligned, horizontal or vertical by the drop.
+    expect(dropMatters(es, [pt("l1.start"), pt("l1.end")])).toBe(true);
+    // Two points level: there is only the one distance.
+    expect(dropMatters(es, [pt("l2.start"), pt("l2.end")])).toBe(false);
+    // Two lines that meet: angle or supplement. Parallel lines: their distance only.
+    expect(dropMatters(es, [ent("l1"), ent("l2")])).toBe(true);
+    expect(dropMatters(es, [ent("l2"), ent("l3")])).toBe(false);
+    // A point and a centreline or sketch axis: distance or diameter across. A point and a plain line: distance only.
+    expect(dropMatters(es, [pt("c1.center"), ent("cl")])).toBe(true);
+    expect(dropMatters([...es, line("Y", [0, -1], [0, 1])], [pt("c1.center"), ent("Y")])).toBe(true);
+    expect(dropMatters(es, [pt("c1.center"), ent("l2")])).toBe(false);
+    // A model edge is construction but no centreline.
+    const edge = { ...line("m:3", [0, -5], [0, 5]), construction: true, ref: { edge: { type: "line" } } } as unknown as SketchEntity;
+    expect(dropMatters([...es, edge], [pt("c1.center"), ent("m:3")])).toBe(false);
+    // One pick: it is placed by the click after it, as before.
+    expect(dropMatters(es, [ent("l1")])).toBe(false);
+  });
+
+  it("names a supplementary angle as the other side", () => {
+    expect(describeConstraint({ type: "angle", entities: ["l1", "l2"], value: 120, supplement: true })).toBe("l1 ∠ l2 (other side)");
+    expect(describeConstraint({ type: "angle", entities: ["l1", "l2"], value: 60 })).toBe("l1 ∠ l2");
   });
 
   it("two parallel lines: the distance between them", () => {

@@ -144,6 +144,26 @@ describe("names follow renames", () => {
     expect(pinReferencedNames(d)).toBe(false);
   });
 
+  it("refuses deleting a dimension something reads, rather than letting its name fall to another", () => {
+    let d = plate();
+    d = run(d, { type: "updateFeature", id: "ext_1", patch: { distance: "=sketch_1.d2 / 2" } });
+    // d2 is the rectangle's height; deleting it would hand d2 to the circle's radius, and the depth would silently change.
+    const del = apply(d, { type: "deleteConstraint", sketch: "sketch_1", index: 1 });
+    expect(del).toEqual({ ok: false, error: "deleteConstraint: dimension sketch_1.d2 is used by ext_1; change what reads it first" });
+    // The same from the sketcher: a replaced sketch without it.
+    const sketch = structuredClone(feature(d, "sketch_1"));
+    sketch.constraints.splice(1, 1);
+    const rep = apply(d, { type: "replaceFeature", id: "sketch_1", feature: sketch });
+    expect(rep.ok).toBe(false);
+    if (!rep.ok) expect(rep.error).toMatch(/dimension sketch_1\.d2 is used by ext_1/);
+    // Deleting the entity it dimensions takes it too: refused alike.
+    const ent = apply(d, { type: "deleteEntity", sketch: "sketch_1", id: "r1" } as Command);
+    expect(ent.ok).toBe(false);
+    // One nothing reads goes, and the names read keep their dimensions.
+    d = run(d, { type: "deleteConstraint", sketch: "sketch_1", index: 2 });
+    expect(resolvedDocument(d).features[1].distance).toBe(10);
+  });
+
   it("renameDimension renames it, and every expression that read the old name", () => {
     let d = withSecond("=sketch_1.d3 * 2");
     feature(d, "ext_1").distance = "=sketch_1.d3 + 1";
@@ -202,6 +222,16 @@ describe("names follow renames", () => {
 });
 
 describe("driven dimensions", () => {
+  it("a driven angle whose lines have come parallel is still valid (it measures 0)", () => {
+    const d = plate();
+    feature(d, "sketch_1").entities.push({ id: "l1", type: "line", start: [0, 30], end: [10, 30] });
+    feature(d, "sketch_1").constraints.push({ type: "angle", entities: ["l1", "X"], value: 0, driven: true });
+    expect(allErrors(validateDocument(d))).toEqual([]);
+    // Driving, 0 is still refused: that is a parallel relation.
+    feature(d, "sketch_1").constraints[3] = { type: "angle", entities: ["l1", "X"], value: 0 };
+    expect(allErrors(validateDocument(d)).join()).toMatch(/value must be over 0 and under 180 degrees/);
+  });
+
   it("adds an over-defining dimension as driven: it measures, and nothing moves", () => {
     const d = plate();
     // The rect's width is already 40: a second width over-defines it.

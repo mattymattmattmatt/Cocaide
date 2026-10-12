@@ -410,7 +410,7 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
       const x = meetPoint(a, b);
       if (x && !inAngle(unitOf(a), unitOf(b), sub2(at, x))) {
         const pair: [string, string] = [a.id, b.id];
-        return [{ ...angle, value: round6(180 - angle.value!), make: (v) => ({ type: "angle", entities: pair, value: v, supplement: true }) }, angle];
+        return [{ ...angle, label: "Supplementary angle", value: round6(180 - angle.value!), make: (v) => ({ type: "angle", entities: pair, value: v, supplement: true }), testId: "c-angle-supplement" }, angle];
       }
     }
     return valued.slice(0, 1);
@@ -423,7 +423,7 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
     const d = offsetFrom(line, p);
     const across: Suggestion = { label: "Diameter across", icon: "diameter", value: round6(2 * d), make: (v) => ({ type: "distance", point: pt.ref, line: line.id, value: v, doubled: true }), testId: "c-linear-diameter" };
     // Only across a centreline (construction) or a sketch axis, as SOLIDWORKS offers it: a revolve profile's diameter.
-    const centreline = line.construction === true || isAxisId(line.id);
+    const centreline = isCentreline(line);
     const base = withCondition(valued.slice(0, 1));
     if (!centreline) return base;
     const off = (q: Vec2) => unitOf(line)[0] * (q[1] - line.start[1]) - unitOf(line)[1] * (q[0] - line.start[0]);
@@ -432,6 +432,41 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
     return beyond ? [across, ...base] : [...base, across];
   }
   return withCondition(valued.slice(0, 1));
+}
+
+/**
+ * Whether where a two-pick dimension is dropped changes what it is, so it
+ * follows the pointer until a click places it, as SOLIDWORKS does: two
+ * points apart in X and in Y (aligned, horizontal or vertical), two lines
+ * that meet (the angle or its supplement), a point and a centreline or
+ * sketch axis (its distance, or the diameter across). Any other pair opens
+ * the Modify box at once.
+ */
+export function dropMatters(entities: SketchEntity[], picksIn: SketchItem[]): boolean {
+  if (picksIn.length !== 2) return false;
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const picks = asPoints(picksIn, byId);
+  if (picks.every((p) => p.kind === "point")) {
+    try {
+      const [p, q] = picks.map((x) => pointOf((x as { ref: string }).ref, byId));
+      return Math.abs(p[0] - q[0]) > 1e-9 && Math.abs(p[1] - q[1]) > 1e-9;
+    } catch {
+      return false;
+    }
+  }
+  const ents = picks.map((p) => (p.kind === "entity" ? byId.get(p.id) : undefined));
+  if (ents.every((e) => e?.type === "line")) {
+    const a = angleBetween(ents[0] as Line, ents[1] as Line);
+    return Math.min(a, 180 - a) > 1e-6;
+  }
+  const line = ents.find((e) => e?.type === "line") as Line | undefined;
+  const pt = picks.find((p) => p.kind === "point") as { kind: "point"; ref: string } | undefined;
+  return !!line && !!pt && pt.ref.split(".")[0] !== line.id && isCentreline(line);
+}
+
+/** A centreline (a construction line of the sketch's own, not a model edge) or a sketch axis: what a diameter is measured across. */
+function isCentreline(line: Line): boolean {
+  return (line.construction === true && !line.ref) || isAxisId(line.id);
 }
 
 /** Smart Dimension's modifiers. */
@@ -620,7 +655,7 @@ export function describeConstraint(k: Constraint, names: Namer = RAW): string {
     case "diameter":
       return `${e(k.entity)} diameter`;
     case "angle":
-      return `${e(k.entities[0])} ∠ ${e(k.entities[1])}`;
+      return `${e(k.entities[0])} ∠ ${e(k.entities[1])}${k.supplement ? " (other side)" : ""}`;
     case "equal":
       return `${e(k.entities[0])} = ${e(k.entities[1])}`;
     case "parallel":

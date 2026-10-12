@@ -191,3 +191,33 @@ export function dependentNames(entries: Map<string, SymbolEntry>, names: Iterabl
   }
   return out;
 }
+
+/** The dimensions (full names) that carry a name of their own: what a pinned reference reads. */
+export function namedDimensions(doc: Raw): Set<string> {
+  const out = new Set<string>();
+  for (const f of Array.isArray(doc.features) ? doc.features : []) {
+    if (!isObject(f) || f.op !== "sketch" || typeof f.id !== "string" || !Array.isArray(f.constraints)) continue;
+    for (const k of f.constraints) if (isDimension(k) && typeof k.name === "string") out.add(qualified(f.id, k.name));
+  }
+  return out;
+}
+
+/** What reads a name: the features, parameters and nodes whose expressions use it. */
+export function readersOf(doc: Raw, name: string): string[] {
+  const out: string[] = [];
+  for (const f of Array.isArray(doc.features) ? doc.features : []) {
+    let reads = false;
+    visitExpressions(f, (e) => ((reads ||= namesIn(e).includes(name)), e));
+    if (reads && isObject(f)) out.push(String(f.id));
+  }
+  for (const home of ["parameters", "nodes"] as const) {
+    const v = doc[home];
+    if (!isObject(v)) continue;
+    for (const [k, x] of Object.entries(v)) {
+      let reads = false;
+      visitExpressions(x, (e) => ((reads ||= namesIn(e).includes(name)), e));
+      if (reads) out.push(home === "parameters" ? `parameter ${k}` : `node ${k}`);
+    }
+  }
+  return out;
+}

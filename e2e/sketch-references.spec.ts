@@ -70,6 +70,8 @@ test("dimension a circle to a model edge: the hole follows the edge when the pla
   await sketchClick(page, 28, 10);
   const [ax, ay] = await screenAt(page, -20, 0);
   await page.mouse.click(ax, ay);
+  // A point and an axis: dropped on the point's side, its distance (beyond the axis it would be a diameter across it).
+  await sketchClick(page, -10, 6);
   await page.getByTestId("modify-value").fill("10");
   await page.getByTestId("modify-value").press("Enter");
   await expect(list).toContainText("c1 centre ↔ X axis");

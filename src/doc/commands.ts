@@ -9,7 +9,7 @@
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
 import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, rawParameters, resolveExpressions, type Parameters } from "./parameters";
-import { dependentNames, DIMENSION_NAME, dimensionNames, documentSymbols, isDimension, pinReferencedNames, renameInDocument, symbolEntries } from "./dimensions";
+import { dependentNames, DIMENSION_NAME, dimensionNames, documentSymbols, isDimension, namedDimensions, pinReferencedNames, readersOf, referencedNames, renameInDocument, symbolEntries } from "./dimensions";
 import { measureConstraint } from "../geom/constraints";
 import { isDriven } from "../geom/axes";
 import { mmPerPixel, photoOf, rescaled } from "./photo";
@@ -121,6 +121,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
   const doc = structuredClone(input) as RawDocument;
   // A dimension an expression reads by its default name keeps that name, whatever this command deletes.
   pinReferencedNames(doc);
+  /** The dimensions expressions read, each now with a name of its own. */
+  const readBefore = [...referencedNames(doc)].filter((n) => namedDimensions(doc).has(n));
   const features = doc.features;
   const indexOf = (id: string) => features.findIndex((f) => isObject(f) && f.id === id);
   const need = (id: string): number | string => {
@@ -567,6 +569,15 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       return { ok: false, error: `unknown command ${JSON.stringify((cmd as { type?: unknown }).type)}` };
   }
 
+  // A dimension something reads can't go: its name would fall to another dimension (or to nothing) and what read it would silently change.
+  {
+    const named = namedDimensions(doc);
+    const still = referencedNames(doc);
+    const gone = readBefore.find((n) => still.has(n) && !named.has(n));
+    if (gone) {
+      return { ok: false, error: `${cmd.type}: dimension ${gone} is used by ${readersOf(doc, gone).join(", ")}; change what reads it first` };
+    }
+  }
   // A reference this command wrote to a default dimension name pins it too.
   pinReferencedNames(doc);
   const was = validateDocument(input);

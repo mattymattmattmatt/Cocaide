@@ -1271,3 +1271,5 @@ svg.icon { flex: none; display: block; }
 .parameters .param-dims .dim-value { color: var(--muted); }
 .parameters .param-dims-title { margin: 6px 0 2px; }
 .sketch-panel .fully-define-button { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
+/* Smart Dimension being dropped: what it is where the pointer is (horizontal, vertical, aligned; angle or its supplement). */
+.sketch-canvas .infer.dropping text { fill: var(--accent); font-family: var(--mono); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }

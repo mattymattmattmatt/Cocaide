@@ -101,6 +101,13 @@ interface Props {
   onEditDimension?(index: number, clientX: number, clientY: number): void;
   /** Smart Dimension: the picks are made (two, or one and a click in space); `at` is where it was placed; `opts.arcs`, the circles Shift-clicked (min or max) and where. */
   onDimension?(picks: SketchItem[], at: Vec2, clientX: number, clientY: number, opts?: SmartOptions): void;
+  /**
+   * Two picks whose dimension depends on where it is dropped (two points: aligned, horizontal or vertical; two
+   * lines: the angle or its supplement; a point and a centreline: distance or diameter): the dimension follows
+   * the pointer, shown by `dimensionAt`, until a click places it. Without these, two picks place it at once.
+   */
+  dropMatters?(picks: SketchItem[]): boolean;
+  dimensionAt?(picks: SketchItem[], at: Vec2, opts?: SmartOptions): { constraint: Constraint; label: string; value: number; unit?: string } | null;
   /** Dimensions Fully Define would add, drawn faded until applied. */
   proposed?: Constraint[];
   /** Constraint indices of the smallest set that over-defines the sketch: drawn red. */
@@ -146,6 +153,8 @@ export function SketchCanvas(props: Props) {
   const [stroke, setStroke] = useState<Vec2[] | null>(null);
   /** Smart Dimension's picks so far. */
   const [picks, setPicks] = useState<SketchItem[]>([]);
+  /** Two picks made, the dimension following the pointer until a click drops it (where it goes says which). */
+  const [placing, setPlacing] = useState<{ picks: SketchItem[]; opts?: SmartOptions } | null>(null);
   /** Circles and arcs Shift-clicked among them, and where: measured to their near or far side. */
   const shiftArcs = useRef<Record<string, Vec2>>({});
   /** On-screen numeric input: the values typed for the last click (a line's length and angle), and the field in use. */
@@ -196,6 +205,7 @@ export function SketchCanvas(props: Props) {
   useEffect(() => {
     setClicks([]);
     setPicks([]);
+    setPlacing(null);
     shiftArcs.current = {};
     setArcNext(false);
     setTyped(null);
@@ -419,6 +429,11 @@ export function SketchCanvas(props: Props) {
     }
     if (tool === "dimension") {
       // Smart Dimension: pick one or two things; a second pick, or a click in space after one, places it.
+      if (placing) {
+        // The dimension was following the pointer: this click drops it, and where says which it is.
+        setPlacing(null);
+        return props.onDimension?.(placing.picks, p, e.clientX, e.clientY, placing.opts);
+      }
       const hit = itemAt(p);
       // A click on a sketch axis after a line across it places that line's dimension (the axes run through
       // where dimensions go); after a point, a circle or a line along the axis, it dimensions to the axis.
@@ -437,6 +452,7 @@ export function SketchCanvas(props: Props) {
         const next = [...picks, item];
         if (next.length < 2) return setPicks(next);
         setPicks([]);
+        if (props.dropMatters?.(next)) return setPlacing({ picks: next, opts: arcs() });
         return props.onDimension?.(next, p, e.clientX, e.clientY, arcs());
       }
       if (!item && picks.length === 1) {
@@ -547,9 +563,10 @@ export function SketchCanvas(props: Props) {
         e.stopPropagation();
         return;
       }
-      if (e.key === "Escape" && !typing && (clicks.length || picks.length)) {
+      if (e.key === "Escape" && !typing && (clicks.length || picks.length || placing)) {
         setClicks([]);
         setPicks([]);
+        setPlacing(null);
         setArcNext(false);
         e.stopPropagation();
         return;
@@ -578,7 +595,10 @@ export function SketchCanvas(props: Props) {
     return previewOf(def, [...clicks, snap(cursor)], options, toolContext(), construction);
   }, [def, cursor, clicks, construction, options, entities, typed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const chosen = props.edit ? props.edit.chosen : tool === "dimension" ? picks : selection;
+  const chosen = props.edit ? props.edit.chosen : tool === "dimension" ? (placing?.picks ?? picks) : selection;
+  /** The dimension being placed, as it would be dropped where the pointer is. */
+  const dropping = useMemo(() => (placing && cursor ? (props.dimensionAt?.(placing.picks, cursor, placing.opts) ?? null) : null), [placing, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const proposed = useMemo(() => (dropping ? [...(props.proposed ?? NONE), dropping.constraint] : (props.proposed ?? NONE)), [dropping?.constraint, props.proposed]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedIds = new Set(chosen.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
   const selectedPoints = new Set(chosen.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
   const hoverItem = cursor && (tool === "select" || tool === "dimension" || tool === "convert" || (props.edit?.tool.kind === "collect" && !props.edit.places)) && !gesture.current ? itemAt(cursor) : null;
@@ -753,7 +773,7 @@ export function SketchCanvas(props: Props) {
         onEdit={(i, x, y) => props.onEditDimension?.(i, x, y)}
         onContext={(i, x, y) => props.onContext?.({ kind: "constraint", index: i }, x, y)}
         interactive={tool === "select" || tool === "dimension"}
-        proposed={props.proposed ?? NONE}
+        proposed={proposed}
         overDefining={props.overDefining ?? NO_INDICES}
       />
       {(props.problems ?? []).map((w, i) => (
@@ -762,6 +782,13 @@ export function SketchCanvas(props: Props) {
           <Icon name="alert" size={14 * unit} x={w.at[0] - 7 * unit} y={-w.at[1] - 20 * unit} />
         </g>
       ))}
+      {cursor && dropping && (
+        <g className="infer dropping" data-testid="dimension-placing" pointerEvents="none">
+          <text x={cursor[0] + 14 * unit} y={-cursor[1] + 22 * unit} fontSize={12 * unit}>
+            {`${dropping.label} ${Math.round(dropping.value * 1000) / 1000}${dropping.unit === "°" ? "°" : ""}`}
+          </text>
+        </g>
+      )}
       {cursor && inferIcon && (
         <g className="infer" data-testid={`infer-${inferIcon}`} pointerEvents="none">
           <rect x={cursor[0] + 10 * unit} y={-cursor[1] + 8 * unit} width={18 * unit} height={18 * unit} rx={3 * unit} />

@@ -17,7 +17,7 @@ import { filterRelations, sketchHealth, type Fix, type RelationFilter } from "./
 import { loadSpin, readValue, shownValue, spinValue } from "./modify";
 import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
-import { constraintSentence, describeConstraint, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type SmartOptions, type Suggestion } from "./draft";
+import { constraintSentence, describeConstraint, dropMatters, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type SmartOptions, type Suggestion } from "./draft";
 import { convertEdges, danglingRefs, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, renamed, type ModelView } from "./model";
 import { namer, referenceName, shapeWords } from "./names";
 import { dimensionText, RELATION } from "./annotate";
@@ -202,10 +202,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   const setConstraints = (constraintsIn: Constraint[], entitiesIn = draft.entities): boolean => {
     const constraints = reexpress(constraintsIn, docParams, session.id);
     const r = solveSketch(entitiesIn, constraints);
-    if (!r.ok) {
-      setMessage(r.error);
-      return false;
-    }
+    if (!r.ok) return refuse(r.error);
     setMessage(null);
     commit({ entities: r.entities, constraints });
     return true;
@@ -246,10 +243,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
    */
   const addConstraint = (raw: Constraint, at?: { x: number; y: number }): boolean | "ask" => {
     const lifted = lift([raw]);
-    if (typeof lifted === "string") {
-      setMessage(lifted);
-      return false;
-    }
+    if (typeof lifted === "string") return refuse(lifted);
     const k = lifted.constraints[0];
     if (overDefines(lifted.entities, k)) {
       if ("value" in k) {
@@ -257,8 +251,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         setMessage(null);
         return "ask";
       }
-      setMessage("that would over-define the sketch: other relations or dimensions already fix it");
-      return false;
+      return refuse("that would over-define the sketch: other relations or dimensions already fix it");
     }
     return setConstraints([...draft.constraints, k], lifted.entities);
   };
@@ -319,10 +312,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     }
     return setConstraints(list);
   };
-  const refuse = (text: string): false => {
+  /** Why the last change was refused, for the Modify box to say in place (the sketch's message line says it too). */
+  const refusal = useRef<string | null>(null);
+  function refuse(text: string): false {
+    refusal.current = text;
     setMessage(text);
     return false;
-  };
+  }
 
   /** Sets dimension `i` to a number or an "=expression" (kept beside its value, written back on Finish). */
   const setDimension = (i: number, v: number | string): boolean => {
@@ -695,9 +691,17 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
    * (which kind by the picks and where it was dropped; a Shift-clicked circle
    * to its near or far side). One that would over-define asks to be driven.
    */
-  const onDimension = (picks: SketchItem[], at: Vec2, x: number, y: number, opts?: SmartOptions) => {
+  const dimensionOptions = (picks: SketchItem[], at?: Vec2, opts?: SmartOptions) => {
     const have = new Set(draft.constraints.map((k) => constraintKey(k)));
-    const options = smartDimension(pool, picks, at, opts).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
+    return smartDimension(pool, picks, at, opts).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
+  };
+  /** The dimension being dropped, as it would be where the pointer is: what follows the pointer before the click that places it. */
+  const dimensionAt = (picks: SketchItem[], at: Vec2, opts?: SmartOptions) => {
+    const o = dimensionOptions(picks, at, opts)[0];
+    return o ? { constraint: o.make(o.value ?? 0), label: o.label, value: o.value ?? 0, unit: o.unit } : null;
+  };
+  const onDimension = (picks: SketchItem[], at: Vec2, x: number, y: number, opts?: SmartOptions) => {
+    const options = dimensionOptions(picks, at, opts);
     if (!options.length)
       return setMessage(
         picks.every((p) => p.kind !== "face" && !draft.entities.some((e) => !e.ref && e.id === (p.kind === "entity" ? p.id : p.ref.split(".")[0])))
@@ -1070,6 +1074,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             setSelection([]);
           }}
           onEditDimension={(index, x, y) => setModify({ x, y, index })}
+          dropMatters={(picks) => dropMatters(pool, picks)}
+          dimensionAt={dimensionAt}
           onDimension={onDimension}
           edit={canvasEdit}
           regions={check.loops}
@@ -1147,9 +1153,10 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             sketch={session.id}
             params={params}
             onApply={(change) => {
-              if ("index" in modify) return changeDimension(modify.index, change);
+              refusal.current = null;
+              if ("index" in modify) return changeDimension(modify.index, change) || (refusal.current ?? false);
               const k = modify.options[modify.choice].make(change.value);
-              return addConstraint(change.expr ? ({ ...k, expr: change.expr } as unknown as Constraint) : k, modify) !== false;
+              return addConstraint(change.expr ? ({ ...k, expr: change.expr } as unknown as Constraint) : k, modify) !== false || (refusal.current ?? false);
             }}
           />
         )}
@@ -1568,7 +1575,8 @@ function ModifyBox({
   /** The names expressions read: the document's, with this sketch's dimensions as the draft has them. */
   params: NameValues;
   onChoose(choice: number): void;
-  onApply(change: DimensionChange): boolean;
+  /** True when applied; else why not (shown in the box), or false. */
+  onApply(change: DimensionChange): boolean | string;
   onClose(): void;
 }) {
   const existing = "index" in state ? (constraints[state.index] as Dimension | undefined) : undefined;
@@ -1612,14 +1620,18 @@ function ModifyBox({
     if (existing && n !== ownName && !DIMENSION_NAME.test(n)) return setProblem(`"${n}" is not a name: letters, digits and _, starting with a letter`);
     if (existing && driven) {
       // Measured: the value is the geometry's.
-      if (onApply({ value: "value" in existing ? existing.value : 0, ...renamed, ...(isDriven(existing) ? {} : { driven: true }) })) onClose();
-      return;
+      return done(onApply({ value: "value" in existing ? existing.value : 0, ...renamed, ...(isDriven(existing) ? {} : { driven: true }) }));
     }
     const r = readValue(text, params);
     if (!r.ok) return setProblem(r.error);
     if (r.value < 0) return setProblem("a dimension is 0 or more");
     const change: DimensionChange = { value: r.value, ...(r.expr ? { expr: r.expr } : {}), ...renamed, ...(existing && isDriven(existing) ? { driven: false } : {}) };
-    if (onApply(change)) onClose();
+    done(onApply(change));
+  };
+  /** Applied: the box closes. Refused: why, in the box. */
+  const done = (r: boolean | string) => {
+    if (r === true) onClose();
+    else if (typeof r === "string") setProblem(r);
   };
   const evaluated = driven ? null : shownValue(text, params, unit);
   const label = existing ? RELATION[existing.type].label : option?.label;
