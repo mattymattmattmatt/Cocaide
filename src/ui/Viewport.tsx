@@ -1113,7 +1113,7 @@ export function Viewport({
         },
         /** The section on now: the plane's normal (into the part kept) and constant, and whether the cap is drawn. */
         section() {
-          return sectionState ? { normal: clip.normal.toArray(), constant: clip.constant, capped: caps.group.visible } : null;
+          return sectionState ? { normal: clip.normal.toArray().map((x) => x + 0), constant: clip.constant + 0, capped: caps.group.visible } : null;
         },
         /** Where a drag handle's arrow is (client pixels), to grab it. */
         handlePoint(id: string): [number, number] | null {

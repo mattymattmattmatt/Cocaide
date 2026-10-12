@@ -254,15 +254,18 @@ export function SectionPanel({
 /** A value edited where it is shown (a dimension on the model, a handle's depth): Enter applies, Escape closes. */
 export function ValueBox({ x, y, title, value, onCommit, onClose, testId }: { x: number; y: number; title: string; value: NumberValue; onCommit(v: NumberValue): void; onClose(): void; testId: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  // The newest onClose, so the box is focused once (not again each time the app re-renders while you type).
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     const input = ref.current?.querySelector("input");
     input?.focus();
     input?.select();
     const away = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
+      if (!ref.current?.contains(e.target as Node)) close.current();
     };
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close.current();
     };
     window.addEventListener("pointerdown", away, true);
     window.addEventListener("keydown", key);
@@ -270,7 +273,7 @@ export function ValueBox({ x, y, title, value, onCommit, onClose, testId }: { x:
       window.removeEventListener("pointerdown", away, true);
       window.removeEventListener("keydown", key);
     };
-  }, [onClose]);
+  }, []);
   return (
     <div ref={ref} className="value-box" style={{ left: Math.min(x, window.innerWidth - 240), top: Math.min(y, window.innerHeight - 90) }} data-testid={testId} role="dialog" aria-label={title}>
       <div className="value-box-title">{title}</div>

@@ -95,7 +95,7 @@ export function isRound(item: MeasureItem): boolean {
   return (item.kind === "face" && !!item.face.cylinder) || (item.kind === "edge" && item.edge.kind === "circle");
 }
 
-/** The item's centre: a point (vertex, point, circle centre) or a line (a round face's axis, a datum axis). */
+/** The item's centre: a point (vertex, point, circle centre) or a line (a round face's axis, a datum axis, a straight edge). */
 export function centreOf(item: MeasureItem): { point: Vec3 } | { line: { point: Vec3; direction: Vec3 } } | null {
   if (item.kind === "vertex") return { point: item.at };
   if (item.kind === "datum" && item.datum.kind === "point") return { point: item.datum.at };
@@ -107,6 +107,8 @@ export function centreOf(item: MeasureItem): { point: Vec3 } | { line: { point: 
     return { line: { point: add3(c.origin, scale3(c.axis, mid)), direction: c.axis } };
   }
   if (item.kind === "datum" && item.datum.kind === "axis") return { line: { point: item.datum.origin, direction: item.datum.direction } };
+  // A straight edge measured to something round: from the round thing's centre square to the edge's line.
+  if (item.kind === "edge" && item.edge.kind === "line" && item.edge.direction) return { line: { point: item.edge.start, direction: item.edge.direction } };
   return null;
 }
 

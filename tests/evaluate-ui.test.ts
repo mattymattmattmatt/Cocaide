@@ -114,6 +114,14 @@ describe("measure", () => {
     expect(r.rows.find((x) => x.key === "centre")!.value).toBeCloseTo(Math.hypot(50, 30), 9);
   });
 
+  it("a straight edge to a circular edge: the centre's distance to the edge's line", () => {
+    const long = plate.edges.findIndex((e) => e.kind === "line" && Math.abs(e.length - 100) < 1e-9 && e.start[1] === -30 && e.start[2] === 8);
+    const circle = plate.edges.findIndex((e) => e.kind === "circle" && !e.seam && e.center![2] === 8);
+    const r = measure(measureItems({ faces: [], edges: [long, circle] }, plate.faces, plate.edges));
+    expect(r.rows.find((x) => x.key === "centre")!.value).toBeCloseTo(30, 9);
+    expect(r.rows.find((x) => x.key === "diameter2")!.value).toBeCloseTo(20, 9);
+  });
+
   it("two perpendicular faces are 90° apart; the Right plane to the Z axis is 0°", () => {
     const side = faceWhere((f) => f.type === "plane" && f.normal![0] > 0.99);
     expect(measure(measureItems({ faces: [top(), side], edges: [] }, plate.faces, plate.edges)).rows.find((x) => x.key === "angle")!.value).toBeCloseTo(90, 9);
