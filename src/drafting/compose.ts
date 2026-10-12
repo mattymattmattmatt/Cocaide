@@ -650,16 +650,18 @@ class Composer {
   }
 
   /** A point outside the view's box, along the direction from its centre through `from`. */
-  private outside(cv: ComposedView, from: Vec2, clear: number, dir?: Vec2): Vec2 {
+  private outside(cv: ComposedView, from: Vec2, clear: number, dir?: Vec2, nearest = false): Vec2 {
     let d = dir ?? ([from[0] - cv.centre[0], from[1] - cv.centre[1]] as Vec2);
     const len = Math.hypot(d[0], d[1]);
     d = len < 1e-9 ? [Math.SQRT1_2, Math.SQRT1_2] : [d[0] / len, d[1] / len];
     const box = grow(cv.box!, clear);
-    let t = 0;
+    // Past both sides of the box the way it goes (clear of its corner), or, `nearest`, out through the first side it meets.
+    const exits: number[] = [];
     for (const i of [0, 1]) {
-      if (d[i] > 1e-9) t = Math.max(t, (box.max[i] - from[i]) / d[i]);
-      if (d[i] < -1e-9) t = Math.max(t, (box.min[i] - from[i]) / d[i]);
+      if (d[i] > 1e-9) exits.push((box.max[i] - from[i]) / d[i]);
+      if (d[i] < -1e-9) exits.push((box.min[i] - from[i]) / d[i]);
     }
+    const t = Math.max(0, nearest ? Math.min(...exits) : Math.max(...exits));
     return [from[0] + d[0] * t, from[1] + d[1] * t];
   }
 
@@ -766,7 +768,8 @@ class Composer {
     const m = r + 2;
     this.prims.push({ k: "line", pts: [[c[0] - m, c[1]], [c[0] + m, c[1]]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
     this.prims.push({ k: "line", pts: [[c[0], c[1] - m], [c[0], c[1] + m]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
-    const at: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.outside(cv, [c[0] + 1, c[1] + 1], 8, [1, 1]);
+    // Up and right of the hole, just out of the view (through its nearer side: a hole mid-view keeps its callout on the sheet).
+    const at: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.outside(cv, [c[0] + 1, c[1] + 1], 8, [1, 1], true);
     const right = at[0] >= c[0];
     const w = Math.max(...lines.map((l) => calloutWidth(l, TEXT.dimension)));
     // Leader from the hole's edge to a landing under the text.

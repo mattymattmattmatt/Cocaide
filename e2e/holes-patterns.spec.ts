@@ -123,6 +123,9 @@ test("Hole Wizard: a tapped M8 blind hole, called out M8×1.25 - 6H ⌴11.25 on 
   await page.getByTestId("drawing-new-empty").click();
   await expect(page.getByTestId("sheet")).toBeVisible();
   await expect.poll(async () => (await page.getByTestId("sheet").locator("text").allTextContents()).join("|")).toMatch(/M8×1\.25 - 6H \|11\.25\|Ø6\.8 \|15/);
+  // The callout leaves the view through its nearer side: it stays on the sheet.
+  await expect(page.getByTestId("drawing-checks")).toContainText("Every hole is called out");
+  await expect(page.getByTestId("drawing-checks")).toContainText(/runs off the sheet\s*:\s*clear/);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/tapped-callout.png` });
 });
 
