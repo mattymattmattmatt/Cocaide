@@ -1286,3 +1286,7 @@ svg.icon { flex: none; display: block; }
 .inline-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
 .hole-centres .selector-line input { width: 70px; }
 .instance-checks label { min-width: 52px; }
+/* A grid pattern's instances: one line per row; the positions table's row numbers stay on one line. */
+.instance-checks.instance-grid { flex-direction: column; align-items: flex-start; }
+.instance-row { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.hole-centres .set-text { flex: none; }

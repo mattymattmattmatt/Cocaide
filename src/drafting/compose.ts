@@ -768,10 +768,10 @@ class Composer {
     const m = r + 2;
     this.prims.push({ k: "line", pts: [[c[0] - m, c[1]], [c[0] + m, c[1]]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
     this.prims.push({ k: "line", pts: [[c[0], c[1] - m], [c[0], c[1] + m]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
-    // Up and right of the hole, just out of the view (through its nearer side: a hole mid-view keeps its callout on the sheet).
-    const at: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.outside(cv, [c[0] + 1, c[1] + 1], 8, [1, 1], true);
-    const right = at[0] >= c[0];
     const w = Math.max(...lines.map((l) => calloutWidth(l, TEXT.dimension)));
+    // Just out of the view, near the hole, on the sheet and clear of everything placed so far (other callouts too).
+    const at: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.calloutSpot(cv, c, w, lines.length);
+    const right = at[0] >= c[0];
     // Leader from the hole's edge to a landing under the text.
     const d: Vec2 = [at[0] - c[0], at[1] - c[1]];
     const len = Math.hypot(d[0], d[1]) || 1;
@@ -782,6 +782,59 @@ class Composer {
     lines.forEach((l, i) => this.calloutLine([at[0] + (right ? 0.5 : -0.5), at[1] + 1.2 - i * TEXT.dimension * 1.25], l, TEXT.dimension, right ? "start" : "end"));
     return { text: lines.join(" "), at };
   }
+
+  /** The box a hole callout's text (and its landing) takes with its leader's knee at `at`, the text running right or left. */
+  private calloutBox(at: Vec2, right: boolean, w: number, lines: number): Box {
+    const x0 = right ? at[0] : at[0] - w - 1;
+    return { min: [x0, at[1] + 1.2 - (lines - 1) * TEXT.dimension * 1.25 - TEXT.dimension * 0.3], max: [x0 + w + 1, at[1] + 1.2 + TEXT.dimension * CAP] };
+  }
+
+  /**
+   * Where a hole callout's leader turns: just outside its view, up and right
+   * of the hole if there is room, else as near the hole as it can be, with
+   * its text on the sheet and clear of the other views, tables, the title
+   * block, the view labels and the annotations placed before it (another
+   * hole's callout, a dimension).
+   */
+  private calloutSpot(cv: ComposedView, hole: Vec2, w: number, lines: number): Vec2 {
+    const blocked = [
+      this.titleBlock,
+      ...this.views.filter((x) => x.box).map((x) => grow(x.box!, x.id === cv.id ? 1 : 2)),
+      ...this.tableBoxes,
+      ...this.labels,
+      ...[...this.annotations.values()].filter((x) => x.box && (x.type === "hole" || x.type === "weld" || x.type === "balloon" || x.type === "dimension")).map((x) => x.box!),
+      ...this.placedCallouts,
+    ];
+    const fits = (at: Vec2) => {
+      const box = this.calloutBox(at, at[0] >= hole[0], w, lines);
+      return inside(box, this.frame) && !blocked.some((b) => overlaps(box, b));
+    };
+    // Up and right of the hole, out through the view's nearer side: the usual place.
+    const usual = this.outside(cv, [hole[0] + 1, hole[1] + 1], 8, [1, 1], true);
+    let best: { at: Vec2; cost: number } | null = fits(usual) ? { at: usual, cost: 0 } : null;
+    if (!best) {
+      for (let k = 0; k < 72; k++) {
+        const t = (k / 72) * 2 * Math.PI;
+        for (const clear of [8, 16, 24]) {
+          const at = this.outside(cv, hole, clear, [Math.cos(t), Math.sin(t)]);
+          if (!fits(at)) continue;
+          // Above the view reads best; below it, among the dimensions, least.
+          // A leader square to the sheet runs along the hole's centre line and the dimensions' extension lines: slanted reads apart.
+          const dx = Math.abs(at[0] - hole[0]);
+          const dy = Math.abs(at[1] - hole[1]);
+          const square = Math.min(dx, dy) < 0.15 * Math.max(dx, dy) ? 12 : 0;
+          const cost = Math.hypot(at[0] - hole[0], at[1] - hole[1]) + (at[1] < cv.box!.min[1] ? 30 : 0) + square;
+          if (!best || cost < best.cost) best = { at, cost };
+        }
+      }
+    }
+    const at = best?.at ?? usual;
+    this.placedCallouts.push(this.calloutBox(at, at[0] >= hole[0], w, lines));
+    return at;
+  }
+
+  /** The hole callouts' text boxes placed so far. */
+  private placedCallouts: Box[] = [];
 
   /**
    * One line of a hole callout. The depth symbol ⌴ is drawn (a box open at

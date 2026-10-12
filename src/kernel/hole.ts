@@ -10,7 +10,8 @@ import { facePlaneFrame, to3D, type Frame } from "../geom/frame";
 import { add3, dot3, roundTo, scale3, sub3 } from "../geom/vec";
 import type { DescribedPart } from "./bodies";
 import { type OC, type Scope } from "./oc";
-import { compoundOf, holeTool, OpError, pnt, reachAlong, type Drilled } from "./ops";
+import { boundingBoxOf } from "./measure";
+import { boolean, boxesMeet, compoundOf, holeTool, OpError, pnt, reachAlong, type Drilled } from "./ops";
 import { selectFaces, selectionError } from "./selectors";
 
 /** One hole of a hole feature: where it enters, which way it goes, and what to call it in a message. */
@@ -122,13 +123,20 @@ export function holeLength(oc: OC, s: Scope, f: HoleFeature, site: HoleSite, rea
 export function drillHoles(oc: OC, s: Scope, f: HoleFeature, sites: HoleSite[], reach: TopoDS_Shape, drilled?: (d: Drilled) => void): TopoDS_Shape {
   const tools = sites.map((site) => {
     const length = holeLength(oc, s, f, site, reach);
-    if (!f.face && typeof f.depth === "number" && materialAlong(oc, s, reach, site.entry, site.into, length).length === 0) {
-      throw new OpError(`the hole at ${site.label} meets no material within its depth ${f.depth}: sketch its point over the part (drilled against the sketch's normal), or flip the sketch's plane`);
+    // Started off the part (from a sketch's plane): it must meet material within its depth, through all included.
+    if (!f.face && (length <= 1e-9 || materialAlong(oc, s, reach, site.entry, site.into, length).length === 0)) {
+      const within = typeof f.depth === "number" ? `within its depth ${f.depth}` : "along its axis";
+      throw new OpError(`the hole at ${site.label} meets no material ${within}: sketch its point over the part (drilled against the sketch's normal), or flip the sketch's plane`);
     }
     drilled?.({ entry: site.entry, into: site.into, length });
     return holeTool(oc, s, f, site.entry, site.into, site.radial, length);
   });
-  return tools.length === 1 ? tools[0] : compoundOf(oc, s, tools);
+  if (tools.length === 1) return tools[0];
+  // Holes that overlap (counterbores closer than their diameter) are fused into one tool: a cut by a
+  // compound of overlapping solids is not well defined and can take the whole part with it.
+  const boxes = tools.map((t) => boundingBoxOf(oc, s, t));
+  const overlap = boxes.some((a, i) => a && boxes.some((b, j) => j > i && boxesMeet(a, b)));
+  return overlap ? tools.slice(1).reduce((all, t) => boolean(oc, s, "fuse", all, t), tools[0]) : compoundOf(oc, s, tools);
 }
 
 function fmt2(p: Vec2): string {

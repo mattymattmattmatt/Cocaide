@@ -37,15 +37,24 @@ export function InstanceChecks({ p, rows, testId }: { p: FieldProps; rows: Insta
     p.update(patch);
   };
   const skipped = rows.filter((r) => r.skipped).length;
+  const check = (r: InstanceRow) => (
+    <label key={r.n} className="check" title={r.n === 1 ? "The original feature" : r.skipped ? "Skipped" : "Made"}>
+      <input type="checkbox" checked={!r.skipped} disabled={r.n === 1} onChange={(e) => toggle(r.n, e.target.checked)} data-testid={`${testId}-${r.n}`} />
+      {r.label}
+    </label>
+  );
+  // A grid: one line per row along the second direction, so the boxes sit the way the instances do.
+  const gridRows = rows.some((r) => r.row !== undefined) ? [...new Set(rows.map((r) => r.row ?? 0))] : null;
   return (
     <Field label="Instances" block hint={skipped ? `${skipped} skipped: untick one to leave it out, tick it to bring it back` : "Untick an instance to leave it out (1 is the original)"}>
-      <span className="body-checks instance-checks" data-testid={testId}>
-        {rows.map((r) => (
-          <label key={r.n} className="check" title={r.n === 1 ? "The original feature" : r.skipped ? "Skipped" : "Made"}>
-            <input type="checkbox" checked={!r.skipped} disabled={r.n === 1} onChange={(e) => toggle(r.n, e.target.checked)} data-testid={`${testId}-${r.n}`} />
-            {r.label}
-          </label>
-        ))}
+      <span className={`body-checks instance-checks${gridRows ? " instance-grid" : ""}`} data-testid={testId}>
+        {gridRows
+          ? gridRows.map((j) => (
+              <span key={j} className="instance-row">
+                {rows.filter((r) => (r.row ?? 0) === j).map(check)}
+              </span>
+            ))
+          : rows.map(check)}
       </span>
     </Field>
   );

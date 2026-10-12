@@ -21,8 +21,8 @@ export const CIRCULAR_PATTERN_FIELDS: FieldSpec[] = [
     label: "Axis",
     testId: "prop-pattern-axis-mode",
     options: [
-      ["ref", "From the model (edge, axis, round face)"],
-      ["point", "Through a point (written out)"],
+      ["ref", "From the model"],
+      ["point", "Written out"],
     ],
     get: (f) => (pointAxis(f) ? "point" : "ref"),
     // From the model it starts on the Z axis (Use selected picks another); written out, through the origin along +Z.

@@ -12,6 +12,8 @@ export interface InstanceRow {
   label: string;
   /** Left out by `skip`. */
   skipped: boolean;
+  /** A grid's row (along the second direction, from 0): the editor sets each row on a line of its own. */
+  row?: number;
 }
 
 const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
@@ -37,7 +39,7 @@ export function patternRows(f: Raw): InstanceRow[] {
   for (let j = 0; j < count2; j++) {
     for (let i = 0; i < count; i++) {
       const n = 1 + i + j * count;
-      rows.push({ n, label: two ? `${n} [${i + 1}, ${j + 1}]` : String(n), skipped: skip.includes(n) });
+      rows.push({ n, label: two ? `${n} [${i + 1}, ${j + 1}]` : String(n), skipped: skip.includes(n), ...(two ? { row: j } : {}) });
     }
   }
   return rows;

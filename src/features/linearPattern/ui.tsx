@@ -36,6 +36,20 @@ function directionFields(n: "" | "2"): FieldSpec[] {
   ];
 }
 
+/** A second direction for a new grid: +Y, or +X when the first direction runs along Y (they must differ). */
+export function secondDirection(f: Raw): [number, number, number] {
+  const d = Array.isArray(f.direction) ? (f.direction as unknown[]).map(Number) : [1, 0, 0];
+  const n = Math.hypot(d[0] || 0, d[1] || 0, d[2] || 0) || 1;
+  return Math.abs((d[1] || 0) / n) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+}
+
+/** Turning the second direction off: the skips on the first row stay, the others go. */
+export function firstRowSkips(f: Raw): Raw {
+  const count = typeof f.count === "number" ? f.count : Infinity;
+  const kept = Array.isArray(f.skip) ? (f.skip as unknown[]).filter((n): n is number => typeof n === "number" && n <= count) : [];
+  return { skip: kept.length && kept.length < count - 1 ? kept : null };
+}
+
 export const LINEAR_PATTERN_FIELDS: FieldSpec[] = [
   seedsField("prop-pattern-features"),
   ...directionFields(""),
@@ -47,8 +61,8 @@ export const LINEAR_PATTERN_FIELDS: FieldSpec[] = [
     label: "Second direction",
     testId: "prop-pattern-second",
     get: twoWay,
-    // They go together: on, a row along +Y at the first spacing; off, all of them removed.
-    set: (on, f) => (on ? { direction2: [0, 1, 0], spacing2: f.spacing, count2: 2 } : { direction2: null, along2: null, reverse2: null, spacing2: null, count2: null, skip: null }),
+    // They go together: on, a row square to the first direction at the first spacing; off, all of them removed (and the skips of the other rows).
+    set: (on, f) => (on ? { direction2: secondDirection(f), spacing2: f.spacing, count2: 2 } : { direction2: null, along2: null, reverse2: null, spacing2: null, count2: null, ...firstRowSkips(f) }),
   },
   ...directionFields("2"),
   { kind: "number", key: "spacing2", label: "Spacing 2", unit: "mm", min: 0, when: twoWay },

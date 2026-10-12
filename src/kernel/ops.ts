@@ -234,7 +234,7 @@ export function commonWith(oc: OC, s: Scope, name: string, body: TopoDS_Shape, t
   return result;
 }
 
-function boxesMeet(a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 } | null): boolean {
+export function boxesMeet(a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 } | null): boolean {
   if (!b) return false;
   const tol = 1e-6;
   return [0, 1, 2].every((i) => a.min[i] <= b.max[i] + tol && b.min[i] <= a.max[i] + tol);

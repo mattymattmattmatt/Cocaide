@@ -51,7 +51,11 @@ function SeedAt(p: FieldProps) {
 function Places(p: FieldProps) {
   const table = Array.isArray(p.f.positions) ? (p.f.positions as NumberValue[][]) : null;
   const points = sketchPointList(p.before, p.resolved.sketch);
-  const set = (rows: NumberValue[][]) => p.update({ positions: rows });
+  // Fewer places: the skips past the new last instance go (the pattern stays valid).
+  const set = (rows: NumberValue[][]) => {
+    const places = rows.map((r) => r.map((x) => (typeof x === "number" ? x : NaN)) as Vec2);
+    p.update({ positions: rows, ...keptSkips(p.f, copyPlaces(places, fromOf(p.resolved, places)).length) });
+  };
   return (
     <>
       <Field label="Places">
@@ -62,13 +66,13 @@ function Places(p: FieldProps) {
             ["table", "A table of positions"],
           ]}
           // A new table starts from the sketch's points as they are, so nothing moves.
-          onChange={(v) => p.update(v === "table" ? { positions: points.length ? points.map(([, at]) => at) : [[0, 0], [10, 0]] } : { positions: null, from: null })}
+          onChange={(v) => p.update(v === "table" ? { positions: points.length ? points.map(([, at]) => at) : [[0, 0], [10, 0]] } : { positions: null, from: null, ...keptSkips(p.f, copyPlaces(points.map(([, at]) => at), undefined).length) })}
           testId="prop-sketch-pattern-places"
         />
       </Field>
       {table && (
         <Field label="Positions" block hint="[x, y] in the sketch's plane, mm">
-          <span className="readout" data-testid="prop-sketch-pattern-positions">
+          <span className="readout hole-centres" data-testid="prop-sketch-pattern-positions">
             {table.map((row, i) => (
               <span key={i} className="selector-line">
                 <span className="set-text">{i + 1}.</span>
@@ -89,6 +93,17 @@ function Places(p: FieldProps) {
       )}
     </>
   );
+}
+
+/**
+ * The `skip` patch for a pattern that now makes `copies` copies (instances 2 ... copies + 1):
+ * the skips that still exist, or none when they would leave no copy. Empty when nothing changes.
+ */
+export function keptSkips(f: Raw, copies: number): Raw {
+  if (!Array.isArray(f.skip)) return {};
+  const kept = (f.skip as unknown[]).filter((n): n is number => typeof n === "number" && n >= 2 && n <= copies + 1);
+  if (kept.length === f.skip.length && kept.length < copies) return {};
+  return { skip: kept.length && kept.length < copies ? kept : null };
 }
 
 /** A new table row: one step on from the last, by the step between the last two. */

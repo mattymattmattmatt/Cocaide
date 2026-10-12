@@ -23,6 +23,7 @@ import { defOf } from "../features/defs";
 import { DATUM_OPS, type Datum } from "../features/datum";
 import { holeCount, wizardSpec } from "../features/hole/wizard";
 import { threadCallout } from "../features/hole/standards";
+import { copyPlaces } from "../features/sketchPattern/doc";
 import { drawingPacket } from "./drawingPacket";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
@@ -634,9 +635,21 @@ export function holePatternMeasurements(rf: Raw, before: Raw[]): Record<string, 
     out.holes = holeCount(rf, before);
     if (typeof rf.points === "string") out.at = `the points of ${rf.points}`;
   }
-  if (rf.op === "linearPattern" || rf.op === "circularPattern" || rf.op === "mirror") {
+  if (rf.op === "linearPattern" || rf.op === "circularPattern" || rf.op === "mirror" || rf.op === "sketchPattern") {
     const seeds = seedIds(rf);
     if (seeds.length) out.seeds = seeds;
+  }
+  if (rf.op === "sketchPattern") {
+    // Its places: the table, or the sketch's points; the seed's own place gets no copy.
+    const sketch = before.find((g) => g.id === rf.sketch);
+    const points = Array.isArray(sketch?.entities) ? (sketch.entities as Raw[]).flatMap((e) => (e.type === "point" && Array.isArray(e.at) ? [e.at as [number, number]] : [])) : [];
+    const places = Array.isArray(rf.positions) ? (rf.positions as [number, number][]) : points;
+    const skip = Array.isArray(rf.skip) ? rf.skip : [];
+    const copies = copyPlaces(places, Array.isArray(rf.from) ? (rf.from as [number, number]) : undefined).length;
+    out.instances = copies + 1;
+    if (skip.length) out.skipped = skip;
+    out.copies = copies - skip.length;
+    out.at = Array.isArray(rf.positions) ? `${places.length} positions in the plane of ${String(rf.sketch)}` : `the points of ${String(rf.sketch)}`;
   }
   if (rf.op === "linearPattern" || rf.op === "circularPattern") {
     const total = Number(rf.count) * (rf.op === "linearPattern" && typeof rf.count2 === "number" ? rf.count2 : 1);
