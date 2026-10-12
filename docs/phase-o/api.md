@@ -269,3 +269,156 @@ CSS:
 - `entityMeasurements` for a circle or an arc now includes `center`.
 
 Note: the sketch toolbar is nearly full at 1500 px: new sketch tools must go in flyouts.
+
+## Wave 3 (merged): sketch edit tools + extrude/fillet/chamfer upgrades
+
+Document fields (src/doc/types.ts):
+- ExtrudeFeature gains: extent ("blind" | "midplane" | "throughAll" | "throughAllBoth" | "upToNext" | "upToFace" | "upToVertex" | "offsetFromFace"), upTo?: DatumRef, offset?, direction2?: { extent, distance?, upTo?, offset?, draft? }, startOffset?, from?: DatumRef, draft?: { angle, outward? }, thin?: { thickness, side?: "outside" | "inside" | "mid" }, regions?: Vec2[], intersect? (extrude only), flipSide? (cut only).
+- Constants EXTRUDE_EXTENTS and DIRECTION2_EXTENTS. THIN_SIDES is exported from validate.ts.
+- FilletFeature and ChamferFeature extend EdgeChoice { edges?, faces?: FaceSelector[], features?: string[] }.
+- Fillet: radius?, radius2?, sets?: FilletSet[], where FilletSet = EdgeChoice & { radius, radius2? }.
+- Chamfer: distance, distance2?, angle? (degrees), flip?.
+
+Kernel:
+- src/kernel/extrude.ts: extrudeTool(ctx, s, f, profile, entities, reach), toolRegions, cutMissed, extrudeBody.
+- src/kernel/edgeTreat.ts: treatments, byBody, treatBody.
+
+Pure 2D (src/features/extrude/regions.ts):
+- pickRegions, complementRegions, thinRegions, openOutside, areaOf, regionPoints, nestedLoops.
+- New: contours(regions): Contour[] where Contour = { seed, area, outer, holes, inDefault }; contourAt(regions, p); interiorPoint(region).
+
+UI rules (src/ui/props/extrude.ts):
+- END_LABELS, endOptions(1|2), needsUpTo, needsDepth, refKind.
+- upToFromSelection, endPatch(f, which, extent, ctx), startKind, startPatch, thinPatch, direction2Patch, isReversed.
+- sketchContours, pickedContours, contoursPatch(list, picked, i, on) (returns Raw | null), defaultContours, contourLabel.
+
+Field lists: src/ui/props/ExtrudeForm.tsx exports extrudeFields(op), EXTRUDE_FIELDS and CUT_FIELDS. PropertyPanel renders them through FeatureForm; extrude is still not a registry op.
+
+src/ui/props/edgeTreat.tsx exports SHAPE_OPS, chamferType, chamferTypePatch, variablePatch, addSetPatch, removeSetPatch, describeSet, edgeChoiceFields(prefix) and RadiusSets.
+
+src/ask/packet.ts exports extrudeMeasurements(rf).
+
+Test ids:
+- Extrude/cut panel: prop-from, prop-start-offset, prop-from-ref, prop-section-from, prop-section-dir1, prop-extent, prop-distance, prop-up-to(-use/-ref), prop-offset, prop-direction-mode, prop-direction, prop-draft, prop-draft-angle, prop-draft-outward, prop-direction2, prop-direction2-extent, prop-direction2-distance, prop-direction2-up-to, prop-direction2-offset, prop-direction2-draft, prop-direction2-draft-angle, prop-direction2-draft-outward, prop-thin, prop-thin-thickness, prop-thin-side, prop-regions, prop-regions-<i>, prop-regions-all, prop-intersect, prop-flip-side.
+- Fillet: prop-fillet-faces, prop-fillet-features, prop-radius, prop-radius2, prop-fillet-variable, prop-fillet-sets, prop-fillet-sets-add, prop-fillet-sets-remove-<i>.
+- Chamfer: prop-chamfer-faces, prop-chamfer-features, prop-chamfer-type, prop-chamfer-distance, prop-chamfer-distance2, prop-chamfer-angle, prop-chamfer-flip.
+
+CSS: one appended class, .prop-section.
+
+Edit tool registry, all under `src/ui/sketcher/edit/`:
+- `types.ts`
+  - `EditToolDef { id, name, label, icon, title, flyout?, options?: ToolOption[], kind: "click" | "collect", start?(selection, state): EditPicks, prompt(picks, options), places?(picks, options): boolean, click(state, picks, input: EditInput, options): EditStep, drag?(state, path, options), preview?(state, picks, options, hover): EditPreview, apply?(state, picks, options): Edit | string | null }`
+  - `EditPicks { entities, points, about?, places: Place[], skip?, picking? }`
+  - `NO_PICKS`
+  - `EditInput { p, item: SketchItem | null, ref, tol, additive? }`
+  - `EditStep = { picks } | { edit } | { message }`
+  - `EditPreview { add?, remove?, marks? }`
+- `index.ts`: `EDIT_TOOLS` (append one import line and one LISTS line per module) and `editByName(name)`.
+- Tool names, their commands and keys:
+  - trim (`sketch.trim`, T)
+  - extend (`sketch.extend`, E)
+  - split (`sketch.split`)
+  - fillet (`sketch.fillet`)
+  - chamfer (`sketch.chamfer`)
+  - offset (`sketch.offset`)
+  - mirror (`sketch.mirror`, M)
+  - linear-pattern (`sketch.linearPattern`)
+  - circular-pattern (`sketch.circularPattern`)
+  - move (`sketch.move`)
+  - copy (`sketch.copy`)
+  - rotate (`sketch.rotate`)
+  - scale (`sketch.scale`)
+- New commands appended to COMMANDS: `sketch.explode` and `sketch.check`. The 13 tool commands above are no longer planned.
+- `offset.ts` exports `offsetOptions(state, picks, options)`.
+
+Pure geometry, under `src/geom/sketchEdit/`:
+- `relations.ts`: `SketchState`, `Edit { entities, constraints, soft?, made?, note? }`, `settle`, `mapRefs`, `relationKey`, `freshIds`, `pointAtRef`, `PREFIX`.
+- `trim.ts`: `trimAt`, `powerTrim`, `extendAt`, `extended`, `splitAt`, `cutsOf`, `crossings`, `editableAt`, `trimPreview`.
+- `explode.ts`: `explode`, `explodeAll`, `explodable`.
+- `fillet.ts`: `cornersOf`, `filletCorners(state, corners, r, {keepCorners})`, `chamferCorners(state, corners, ChamferMode)`.
+- `offset.ts`: `chainOf`, `chainsOf`, `insideOf`, `sideOf`, `offsetEntities(state, ids, OffsetOptions)`.
+- `mirror.ts`: `mirrorEntities(state, ids, about, {copy})`, `reflectPoint`.
+- `pattern.ts`: `linearPattern`, `circularPattern`, `patternPlaces`.
+- `transform.ts`: `transformEntities(state, ids, Transform, {copy, keepRelations, count})`, `angleBetween`.
+- `check.ts`: `checkSketch(entities) -> { problems: SketchProblem[], loops }`, `fixProblem`, `fixAll`, `problemSummary`, `gapTolerance`.
+
+Document and solver:
+- New relation `OffsetConstraint { type: "offset", entities: string[] /* bases, or point refs for a round corner or arc cap */, offsets: string[], value }`. This is how the offset stays driven: one distance relation the solver understands, rather than a separate dimension per pair.
+- `SymmetricConstraint` now takes exactly one of `points` or `entities` (two lines, two arcs or two circles about `line`).
+- Both are validated in `src/doc/validate.ts`, solved in `src/geom/solver.ts` and checked in `src/geom/constraints.ts`.
+- `removeEntities` (`src/doc/sketch.ts`) drops only the offset pairs that name a deleted entity.
+
+Shared UI pieces:
+- `DrawTools.tsx`:
+  - `Flyout` is generic over `ToolLike` and takes `small`.
+  - `IconTool` takes `small`.
+  - New `ToolStack` (small tools stacked two high).
+  - New `OptionControls`.
+- `ToolOption` gains `step?` and `unit?` on numbers, and a `{ kind: "toggle", default: "on" | "off" }` option.
+- `toolbarEntries<T>(tools)` and `optionValues(def: {options?})` are generic; `flyoutChoice` and `remember` accept edit tools.
+- `SketchCanvas` props gain `edit?: CanvasEdit`, `regions?: Vec2[][]` and `problems?: {at, text}[]`. Relation glyphs and dimensions take clicks only with Select and Smart Dimension.
+
+Test ids:
+- Options strip: `tool-apply`, `tool-clear`, `tool-problem`, `tool-mirror-about`.
+- Toolbar: `tool-check`, plus `tool-<name>`, `tool-trim-flyout`, `tool-fillet-flyout`, `tool-pattern-flyout`, `tool-move-flyout`, and `flyout-<name>` items.
+- Canvas: `sketch-regions` (`data-count`), `sketch-warning`, `edit-mark` (`data-off`), `trim-stroke`.
+- Status line: `sketch-problems`.
+- Check panel: `sketch-check`, `check-problem-<i>`, `check-fix-<i>`, `check-fix-all`, `check-clean`.
+- Right-click menu: `ctx-check`, `ctx-fillet`, `ctx-chamfer`, `ctx-explode`, `ctx-offset`, `ctx-mirror`, `ctx-linear-pattern`, `ctx-circular-pattern`, `ctx-move`, `ctx-rotate`.
+
+New icons: `explodeEntity`, `checkSketch`. New CSS tokens: `--sketch-region`, `--sketch-warning`, `--sketch-goes`.
+
+The datumRef FieldSpec gains an optional pick?: (f, c) => DatumRef. It replaces the default Use selected and throws an Error that says what to select. The 'edges' FieldSpec gains optional?: boolean, which shows x (test id <tid>-remove-<i>). upToFromSelection(extent, c, then?) has a new third argument, the words after 'click it in the view first, then'. src/ui/props/edgeTreat.tsx exports setRadiusPatch(f, i, "radius" | "radius2", value). New test id prop-fillet-sets-radius-<i>. edgeFeature now returns edges and faces together when both are selected. Appended CSS: .selector-line .set-text and .selector-line .set-radius.
+
+- FieldSpec kind "datumRef" gains `pick?: (f, ctx) => DatumRef`. When set, FeatureForm's Use selected calls it; it throws an Error that says what to select.
+- FieldSpec kind "edges" gains `optional?: boolean`. An optional edge list shows a remove button per selector (`<testId>-remove-<i>`) and can be emptied to null.
+- upToFromSelection(extent, ctx, then?) takes an optional wording for the end of its error message.
+- src/ui/props/edgeTreat.tsx exports setRadiusPatch(f, i, "radius" | "radius2", value).
+- New test ids: prop-fillet-sets-radius-<i>, and prop-edges-remove-<i> (the generic edges field's remove buttons).
+- CSS appended: .selector-line .set-text and .set-radius.
+
+New export from src/ui/sketcher/edit/picks.ts:
+- livePicks(picks: EditPicks, state: SketchState): EditPicks. It returns the same object when nothing is gone. SketchMode calls it in an effect on draft.
+
+fixProblem in src/geom/sketchEdit/check.ts:
+- For a 'duplicate' problem it now returns `soft` relations (the doubled entity's relations, moved onto the kept one).
+- fixAll returns the gathered `soft` as well.
+- The sketcher's applyEdit keeps these only where they don't over-define.
+
+splitAt (line):
+- Rewrites `{type: "distance", entity: id}` to `{type: "distance", points: [id.start, <second piece>.end]}`.
+
+circularPattern:
+- May now write 'collinear' between the first two spokes (half-turn step).
+- Angle values are always between 0° and 180°.
+
+Open follow-ups from Wave 3:
+- Up to surface on a face picked in the view can stop following that face after other edits. The face selector made from a pick (faceSelectorFor) records the face's offset, so when the face moves (for example, a taller block) the extrude fails with 'selector matched 0 faces'. Synthesis owned outside this task could prefer a selector that does not depend on position.
+- 'Use regions clicked in the view' is offered as a tick list of the sketch's regions in Properties, not as clicks in the 3D view.
+- Not done (optional in the brief): a right-click 'Extrude up to this face' entry, and icons for the end conditions in the select.
+- Draft only works with a start parallel to the sketch plane; a slanted 'from' with a draft gives a clear error. A thin feature cannot have a draft.
+- An intersecting extrude leaves no tool for a pattern to repeat; patterning one says so.
+- Dynamic mirror (draw on one side of a centreline, mirrored live) is not done; it was optional.
+- Shift-drag in power trim to extend, and SOLIDWORKS's trim modes 'corner' and 'trim away inside/outside', are not done.
+- Patterns: only the seed's key point is placed, so a patterned line or arc can still turn (each copy is equal to and, for a line, parallel to its seed, but the circular pattern does not fix copy orientation). There is no second direction for linear patterns.
+- Offset uses one side for all picked chains: closed chains drawn in opposite directions picked together could go opposite ways.
+- Relation glyphs crowd the sketch after fillets, offsets and patterns. This is the existing Wave 1 follow-up, made more visible by these tools; grouping coincident and tangent glyphs per joint would help.
+- Edit tool icons in the stacked toolbar group have no text labels (they have tooltips and aria-labels); the sketch toolbar has no room for labels at 1500 px.
+- Check sketch reports problems but does not try to repair crossings or overlaps automatically (trimming them is left to the user).
+- Up to surface on a face picked in the view uses faceSelectorFor, which may record the face's offset when it needs to tell faces apart. If that face later moves, the extrude can fail. faceSelectorFor (src/kernel/synthesize.ts) is outside this task and is shared by holes and sketches on faces; this follow-up is the engineer's.
+- Selected contours stores a seed point for each region. If a later sketch edit moves a region away from its seed, that feature fails with 'outside every closed loop'. This is how the seed-point design in the brief works. Picking regions by clicking in the 3D view is still not done (the editor offers a tick list).
+- Optional items still not done: a right-click 'Extrude up to this face' entry, and icons for the end conditions.
+- Draft needs a start parallel to the sketch plane, and a thin feature cannot have a draft. Both give clear errors.
+- The fillet summary chip in the tree is cut off when the row is selected (existing tree layout).
+- Up to surface on a face picked in the view uses a position-dependent face selector (faceSelectorFor), so if that face moves later the extrude fails with 'selector matched 0 faces'. Selector synthesis is outside this task's scope.
+- Selected contours are a tick list of the sketch's regions in Properties, not clicks in the 3D view (the brief said 'if feasible').
+- Not done (optional in the brief): a right-click 'Extrude up to this face' entry, and icons for the end conditions.
+- Draft needs a start parallel to the sketch plane, and a thin feature cannot have a draft. Both give clear errors.
+- An intersecting extrude leaves no tool for a pattern to repeat. Patterning one says so.
+- Patterns: a patterned line or arc copy can still turn about its key point, so it is not fully defined. This is the engineer's follow-up; it needs extra construction geometry per copy and is a design change.
+- Offset: the side is not taken from the pointer (outward for closed chains, left for open ones, Reverse flips). With several chains picked, one side is used for all. Engineer follow-up.
+- When editing an offset value on an under-defined base, the solver may move the base as well as the offset (seen: a rectangle's undimensioned height shrank). This comes from the existing least-movement solver; it is fine once the base is dimensioned.
+- Visual clutter: relation glyphs crowd joints after fillets, offsets and patterns. An offset's dimension label can sit on top of a nearby dimension. A warning triangle can overlap a relation glyph. This is the existing Wave 1 glyph-layout follow-up.
+- Check sketch lists two crossings of the same pair at two places with identical text, and reports tangent-touching circles as 'cross'. Wording only, not changed.
+- Splitting a line leaves 'pointOn' relations to it on the first piece, even when the point lies on the second piece. These still hold because pointOn uses the line's infinite carrier.
+- Dynamic mirror, shift-drag extend in power trim, and two-direction linear patterns are not done (the engineer listed them as optional or follow-ups).
