@@ -1,13 +1,18 @@
 // Document parameters: named numbers any number field can use as "=name".
+// A parameter may itself be an "=expression" over the others and the
+// sketches' named dimensions ("=sketch_1.width / 2"): SOLIDWORKS's equations.
 // Changing one is one setParameter command, so it is one undo step and the
-// sketches that use it are re-solved.
+// sketches that use it are re-solved. Double-click a name to rename it (every
+// expression that reads it follows). The named dimensions are listed beneath,
+// as expressions read them.
 
 import { useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
-import { documentParameters, PARAMETER_NAME, parameterRefs } from "../doc/parameters";
+import { evaluate, isExpression, PARAMETER_NAME, parameterRefs, parameterValues, rawParameters } from "../doc/parameters";
+import { documentSymbols } from "../doc/dimensions";
 import { photoOf } from "../doc/photo";
-import { NumberInput } from "./fields";
+import { NumberInput, TextInput } from "./fields";
 import { Section } from "./Section";
 import { Icon } from "./icons";
 
@@ -27,10 +32,23 @@ const MARK_TITLE = {
 export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
   if (!doc) return null;
-  const params = documentParameters(doc);
+  const params = rawParameters(doc);
+  const values = parameterValues(doc);
+  const symbols = documentSymbols(doc);
+  /** The sketch dimensions given a name of their own: what expressions read as <sketch>.<name>. */
+  const named = [...symbols.entries].filter(([full, e]) => {
+    if (e.kind !== "dimension") return false;
+    const f = doc.features.find((x) => x.id === e.sketch) as { constraints?: { name?: unknown }[] } | undefined;
+    return typeof f?.constraints?.[e.index!]?.name === "string" && full in symbols.values;
+  });
   const photo = photoOf(doc);
-  const usedBy = (p: string) => doc.features.filter((f) => parameterRefs(f).has(p)).map((f) => String(f.id));
+  /** The features, and the other parameters, whose expressions read p. */
+  const usedBy = (p: string) => [
+    ...doc.features.filter((f) => parameterRefs(f).has(p)).map((f) => String(f.id)),
+    ...Object.entries(params).flatMap(([q, raw]) => (q !== p && parameterRefs(raw).has(p) ? [q] : [])),
+  ];
   const run = (cmd: Command) => {
     const problem = dispatch(cmd);
     if (problem) onError(problem);
@@ -38,10 +56,16 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
   };
   const add = () => {
     const n = name.trim();
-    const v = Number(value);
+    const t = value.trim();
     if (!PARAMETER_NAME.test(n)) return onError(`"${n}" is not a parameter name: use letters, digits and _, starting with a letter`);
     if (n in params) return onError(`there is already a parameter "${n}"`);
-    if (value.trim() === "" || !Number.isFinite(v)) return onError("a parameter's value is a number");
+    // A number, or "=expression" (kept, so it follows what it reads).
+    const v = isExpression(t) ? t : Number(t);
+    if (t === "" || (typeof v === "number" && !Number.isFinite(v))) return onError('a parameter\'s value is a number, or "=expression" such as =sketch_1.width / 2');
+    if (typeof v === "string") {
+      const r = evaluate(v, { ...symbols.values });
+      if (!r.ok) return onError(r.error);
+    }
     if (!run({ type: "setParameter", name: n, value: v })) {
       setName("");
       setValue("");
@@ -68,7 +92,23 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
                 onAsk({ kind: "parameter", name: p }, e.clientX, e.clientY);
               }}
             >
-              <span className="param-name" title={users.length ? `used by ${users.join(", ")}` : "not used yet"}>
+              {renaming === p ? (
+                <span className="param-name">
+                  <TextInput
+                    value={p}
+                    testId={`param-rename-${p}`}
+                    onCommit={(to) => {
+                      setRenaming(null);
+                      if (to !== p) run({ type: "renameParameter", from: p, to });
+                    }}
+                  />
+                </span>
+              ) : (
+              <span
+                className="param-name"
+                title={`${users.length ? `used by ${users.join(", ")}` : "not used yet"} · double-click to rename`}
+                onDoubleClick={() => setRenaming(p)}
+              >
                 {p}
                 {mark && (
                   <span className="param-mark" data-testid={`param-mark-${p}`} title={MARK_TITLE[mark]}>
@@ -76,17 +116,17 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
                   </span>
                 )}
               </span>
+              )}
               <NumberInput
                 value={v}
                 ariaLabel={p}
                 testId={`param-value-${p}`}
                 onCommit={(next) => {
-                  if (typeof next === "number") run({ type: "setParameter", name: p, value: next });
-                  else onError("a parameter's value is a number, not an expression");
+                  run({ type: "setParameter", name: p, value: next });
                 }}
               />
               {mark ? (
-                <button className="icon keep" aria-label={`Keep ${p}`} title="Keep this value: it becomes yours, not the photo's" onClick={() => run({ type: "setParameter", name: p, value: v })}>
+                <button className="icon keep" aria-label={`Keep ${p}`} title="Keep this value: it becomes yours, not the photo's" onClick={() => run({ type: "setParameter", name: p, value: values[p] ?? v })}>
                   <Icon name="check" size={14} />
                 </button>
               ) : (
@@ -104,6 +144,19 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
           );
         })}
       </ul>
+      {named.length > 0 && (
+        <>
+          <p className="muted small param-dims-title">Named dimensions (read as =sketch.name)</p>
+          <ul className="param-dims" data-testid="named-dimensions">
+            {named.map(([full, e]) => (
+              <li key={full} data-testid={`named-dim-${full}`} title={e.driven ? "Driven: measured from the sketch" : `Set in ${e.sketch}, or by an expression`}>
+                <span className="param-name">{full}</span>
+                <span className="dim-value">{e.driven ? `(${Math.round(symbols.values[full] * 1e6) / 1e6})` : Math.round(symbols.values[full] * 1e6) / 1e6}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <form
         className="param-add"
         onSubmit={(e) => {
@@ -113,7 +166,7 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
       >
         <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} aria-label="New parameter name" data-testid="param-new-name" />
         <input
-          placeholder="value"
+          placeholder="value or =expr"
           inputMode="decimal"
           value={value}
           onChange={(e) => setValue(e.target.value)}

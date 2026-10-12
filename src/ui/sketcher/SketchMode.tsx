@@ -776,7 +776,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       return setMenu({
         x,
         y,
-        title: `${RELATION[k.type].label}${isDim ? ` ${dimensionNames(draft.constraints)[target.index]} = ${dimensionText(k)}` : ""}`,
+        title: `${RELATION[k.type].label}${isDim ? ` ${dimensionText(k)} · ${session.id}.${dimensionNames(draft.constraints)[target.index]}` : ""}`,
         items: [
           ...(isDim
             ? [
@@ -994,15 +994,6 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               title={`Check sketch for feature: open ends, gaps, crossings, overlaps, duplicates, with one-click fixes${keyHint("sketch.check", prefs)}`}
               testId="tool-check"
             />
-            <IconTool
-              small
-              icon="fullyDefine"
-              label="Fully define"
-              pressed={!!define}
-              onClick={() => (define ? setDefine(null) : openFullyDefine())}
-              title={`Fully Define Sketch: add the relations and dimensions that leave it fully defined, previewed before they are applied${keyHint("sketch.fullyDefine", prefs)}`}
-              testId="tool-fully-define"
-            />
             <IconTool small icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
             <IconTool small icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
           </ToolStack>
@@ -1186,15 +1177,18 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             )}
           </Popup>
         )}
-        <div className={`sketch-status ${health.state}`} data-testid="sketch-status" title="Blue: can still move. Black: fully defined. Red: over defined. Brown: a reference lost its model geometry">
-          {health.text}
+        {/* The status line: how defined the sketch is, then what keeps it from a clean profile. */}
+        <div className="sketch-statusbar">
+          <div className={`sketch-status ${health.state}`} data-testid="sketch-status" title="Blue: can still move. Black: fully defined. Red: over defined. Brown: a reference lost its model geometry">
+            {health.text}
+          </div>
+          {check.problems.length > 0 && (
+            <button className="sketch-problems" onClick={() => setShowCheck(true)} title="Check sketch for feature: what is wrong, and fixes" data-testid="sketch-problems">
+              <Icon name="alert" size={13} />
+              {problemSummary(check)}
+            </button>
+          )}
         </div>
-        {check.problems.length > 0 && (
-          <button className="sketch-problems" onClick={() => setShowCheck(true)} title="Check sketch for feature: what is wrong, and fixes" data-testid="sketch-problems">
-            <Icon name="alert" size={13} />
-            {problemSummary(check)}
-          </button>
-        )}
         <div className="sketch-plane-label">{planeName(session.plane.normal, session.plane.origin)}</div>
       </section>
       <aside className="side right sketch-panel" data-testid="sketch-panel">
@@ -1205,6 +1199,19 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           <div className={`dof ${health.state}`} data-testid="sketch-dof" title="Blue geometry can still move; black is fully defined; red is over defined; brown has lost a reference">
             {health.state === "under" ? `Under defined: ${dof} degree${dof === 1 ? "" : "s"} of freedom` : health.text}
           </div>
+          {health.state === "under" && (
+            <div className="row-buttons">
+              <button
+                onClick={() => (define ? setDefine(null) : openFullyDefine())}
+                aria-pressed={!!define}
+                title={`Fully Define Sketch: add the relations and dimensions that leave it fully defined, previewed before they are applied${keyHint("sketch.fullyDefine", prefs)}`}
+                data-testid="tool-fully-define"
+              >
+                <Icon name="fullyDefine" size={14} />
+                Fully define…
+              </button>
+            </div>
+          )}
           {health.fixes.length > 0 && (
             <div className="over-fixes" data-testid="over-fixes">
               <p className="small muted">These conflict; any one of these fixes it:</p>

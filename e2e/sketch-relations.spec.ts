@@ -61,7 +61,7 @@ test("relations: inferred while drawing, added from a selection, shown as glyphs
   await page.getByTestId("c-fix").click();
   await expect(page.locator('[data-entity="l1"]')).toHaveClass(/\bdefined\b/);
   await expect(page.locator('[data-entity="l2"]')).toHaveClass(/\bfree\b/);
-  await expect(page.getByTestId("sketch-status")).toHaveText("Under defined");
+  await expect(page.getByTestId("sketch-status")).toHaveText(/^Under defined · \d+ DOF$/);
 
   // Hide the glyphs, show them again.
   await page.getByTestId("tool-relations").click();

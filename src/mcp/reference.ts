@@ -12,19 +12,38 @@ How edits work:
 - writeScope (set by the host, shown by listFeatures) limits what you may change: a feature id lets you edit that feature, "<sketch>/*" that sketch's entities and constraints, "<sketch>/<entity>" one entity and its constraints, "+" lets you add features, "param:<name>" lets you set that parameter, "*" is everything. Features you add are yours to edit. A call outside the scope is rejected.
 
 Start with listFeatures. Read the resource cocaide://reference for every op, field and selector. Faces and edges are chosen by selector queries (e.g. the largest planar face with normal +Z), never by index; use measure with a selector, or screenshot with highlight, to check what a selector picks before you use it.
-Units are millimetres. Numeric fields may be expressions over document parameters: "=plate_t * 2".`;
+Units are millimetres. Numeric fields may be expressions over document parameters and sketch dimensions: "=plate_t * 2", "=sketch_1.width / 2 + 1in".`;
 
 export const REFERENCE = `# Cocaide document reference
 
 A document:
 {
   "version": 1, "units": "mm", "name": "bracket",
-  "parameters": { "plate_t": 6 },              // optional named numbers
+  "parameters": { "plate_t": 6, "lip": "=sketch_1.width / 4" },   // optional named numbers or "=expressions"
   "material": { "name": "steel", "densityKgPerM3": 7850 },   // optional
   "features": [ ...in build order... ]
 }
 Every feature has "id" (letters, digits, _; unique) and "op", and may have "suppressed": true.
-Unknown fields are errors. Any numeric field may be "=expression" using + - * / ( ) and parameter names.
+Unknown fields are errors. Any numeric field may be "=expression".
+
+### Expressions
+"=<expression>" in any numeric field, a parameter's value, or a sketch dimension's value. They read:
+  parameter names ("plate_t"), and sketch dimensions as <sketch id>.<dimension name> ("sketch_1.width", "sketch_1.d3").
+  numbers, + - * / ( ), unary -, comparisons < <= > >= == != (1 or 0), && ||.
+  functions: sqrt, abs, min, max, round, floor, ceil, pow, hypot, sin, cos, tan (degrees), asin, acos, atan, atan2
+    (degrees), if(condition, then, else) (only the branch taken is worked out); constant pi.
+  units on literals, converted to mm and degrees: mm cm m in ft, deg (or °) rad ("=1in + 3mm" is 28.4).
+A name that goes round (a parameter reading a dimension that reads it) is refused, saying which names go round.
+
+### Dimension names, driven dimensions
+Every sketch dimension (a constraint with "value") has a name: its "name" field if set, else d<n>, n its place among
+the sketch's dimensions (d1, d2 …, constraints without a value not counted). Expressions read it as "sketch_1.d2".
+Once an expression reads a default name, the name is written into the dimension ("name": "d2") so deleting an earlier
+dimension can't move it onto another. renameDimension renames one and every expression that read it; renaming a
+sketch (its id) renames <old id>.<name> everywhere too.
+"driven": true makes a dimension a reference (SOLIDWORKS's driven dimension): never solved, never over-defining,
+its value kept equal to what the geometry measures (so expressions can read it). Add a dimension that would
+over-define the sketch as driven; setDriven turns one driving again only if the sketch stays solvable.
 
 A part estimated from a photo also has "photo": the image it was read from, its "scale" (two points on the photo
 and the real length between them, "confirmed" only when the user has checked it in the app) and "estimated" (the
@@ -61,11 +80,19 @@ outlines from lines and arcs with relations, as the app's tools do:
   slot: 2 lines and 2 arcs joined by coincident ends, each line "tangent" to both arcs, the arcs "equal", their centres
     coincident with the ends of a construction centreline.
 Constraints are SOLIDWORKS's sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2, point at) or "origin".
-Dimensions (mm; angles in degrees):
+Dimensions (mm; angles in degrees). Each may carry "name" and "driven": true (see Dimension names, driven dimensions).
   { "type": "distanceX" | "distanceY" | "distance", "entity": "r1", "value": 80 }   (or "points": ["l1.start","l1.end"])
-  { "type": "distance", "point": "c1.center", "line": "l1", "value": 12 }   (square to the line, extended)
+  { "type": "distance", "point": "c1.center", "line": "l1", "value": 12 }   (square to the line, extended; "X"/"Y" are the sketch axes)
+  { "type": "distance", "lines": ["l1", "l2"], "value": 12 }     (two parallel lines: l2's middle from l1, extended)
+  { "type": "distance", "point": "l3.end", "line": "cl", "doubled": true, "value": 40 }   (a linear diameter: twice the
+                                                                 distance to a centreline, shown Ø: a revolve profile's diameter)
+  "condition": "min" | "max" on a distance, distanceX or distanceY whose point is a circle's or arc's "center": measured
+    to its nearest (min) or farthest (max) side instead ("center", the default). SOLIDWORKS: Shift-click the circle.
   { "type": "radius" | "diameter", "entity": "c1", "value": 5 }
-  { "type": "angle", "entities": ["l1", "l2"], "value": 30 }     (between their directions, start to end; over 0, under 180)
+  { "type": "arcLength", "entity": "a1", "value": 25 }          (along the arc)
+  { "type": "angle", "entities": ["l1", "l2"], "value": 30 }     (between their directions, start to end; over 0, under 180;
+                                                                 "supplement": true measures the other quadrant, 180 − that;
+                                                                 "X" or "Y" as the second entity: the angle to a sketch axis)
 Relations:
   { "type": "horizontal" | "vertical", "entity": "l1" }          (or "points": ["l1.end", "c1.center"]: level / above each other)
   { "type": "coincident", "points": ["l1.end", "l2.start"] }     ("origin" is the sketch origin)
@@ -74,6 +101,8 @@ Relations:
   { "type": "parallel" | "perpendicular" | "collinear", "entities": ["l1", "l2"] }
   { "type": "tangent", "entities": ["l1", "a1"] }               (a line and a circle or arc, or two circles or arcs)
   { "type": "concentric", "entities": ["c1", "a1"] }
+  { "type": "coradial", "entities": ["c1", "a1"] }               (concentric and the same radius, as one relation)
+  { "type": "intersection", "point": "p1.at", "entities": ["l1", "l2"] }   (the point where two lines, extended, cross)
   { "type": "equal", "entities": ["c1", "c2"] }                  (two lines' lengths, or two radii)
   { "type": "symmetric", "points": ["l1.start", "l2.start"], "line": "l3" }
   { "type": "symmetric", "entities": ["l1", "l4"], "line": "l3" }   (two lines, two arcs or two circles that are each
@@ -86,7 +115,8 @@ Relations:
       ref ("l1.end"): its offset is an arc centred there, of radius "value" (a round corner, an arc cap). Change the value
       (setDimension) and the whole offset moves; the offset pieces are joined to each other by coincident (and tangent,
       where an arc runs on smoothly) relations. Deleting an offset piece drops only its pair.
-A relation that repeats or contradicts what the sketch already fixes is refused.
+A relation that repeats or contradicts what the sketch already fixes is refused (a dimension: add it with "driven": true).
+validate and the sketch status report an over-defined sketch with the smallest set of constraints that conflict.
 
 ### Sketch edits the app makes (do the same with addEntity / updateEntity / deleteEntity / addConstraint)
 The sketcher's edit tools (Trim, Extend, Split, Fillet, Chamfer, Offset, Mirror, Linear and Circular pattern, Move,
@@ -321,7 +351,9 @@ Every given filter must hold.
 listFeatures, getFeature(id) - read the document and each feature's rebuild status.
 addFeature(feature, index?) - id is optional (one is made from the op). updateFeature(id, patch) - shallow merge; null removes a field.
 deleteFeature(id), reorderFeature(id, index), suppressFeature(id, suppressed).
-setParameter(name, value), deleteParameter(name), setDimension(sketch, index, value) - index into the sketch's constraints.
+setParameter(name, value), deleteParameter(name), renameParameter(from, to) - a value is a number or "=expression".
+setDimension(sketch, index | name, value) - index into the sketch's constraints, or the dimension's name ("d2", "width").
+renameDimension(sketch, index | name, to), setDriven(sketch, index | name, driven) - name a dimension (expressions follow), make it driven or driving.
 renameBody(from, to) - every feature and selector that names the body follows.
 addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.

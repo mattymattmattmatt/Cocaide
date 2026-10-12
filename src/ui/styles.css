@@ -1260,3 +1260,13 @@ svg.icon { flex: none; display: block; }
 .typed-box label.active span:first-child { color: var(--text); font-weight: 600; }
 .typed-box input { font-family: var(--mono); height: 24px; }
 .typed-box .expr-error { color: var(--bad); }
+/* The status line and the profile warning side by side, however long the status reads. */
+.sketch-statusbar { position: absolute; left: 12px; bottom: 12px; right: 200px; display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.sketch-statusbar .sketch-status, .sketch-statusbar .sketch-problems { position: static; max-width: none; flex: none; }
+.sketch-statusbar .sketch-problems { pointer-events: auto; min-width: 0; flex: 0 1 auto; }
+/* A dimension's halo in proportion to its text at any zoom. */
+.sketch-canvas .dimensions text { stroke-width: 0.25em; stroke-linejoin: round; }
+.parameters .param-dims { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.parameters .param-dims li { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); }
+.parameters .param-dims .dim-value { color: var(--muted); }
+.parameters .param-dims-title { margin: 6px 0 2px; }

@@ -313,7 +313,42 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
     const tries = (e.type === "circle" ? [0, 1, 3, 2] : [0]).map((q) => leader(a + (q * Math.PI) / 2));
     out.push(tries.find((t) => out.every((o) => dist2(o.at, t.at) > 28 * px)) ?? tries[0]);
   }
+  unstack(out, px);
   return out;
+}
+
+/**
+ * Linear dimensions that would sit on top of one another (a line's length
+ * and the width between its ends, a driven one beside the driving one) step
+ * further out, one row each, so every value can be read and clicked.
+ */
+function unstack(shapes: DimensionShape[], px: number): void {
+  const placed: DimensionShape[] = [];
+  for (const d of shapes) {
+    // Only straight dimensions (two extension lines and the dimension line) move; leaders and arcs keep their place.
+    if (!d.arc && d.lines.length === 3) {
+      const [a, b] = d.lines[2];
+      const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      // Every point moved is a new array: the arrows share the dimension line's ends.
+      const off = sub2(d.at, mid);
+      const n = Math.hypot(off[0], off[1]);
+      if (n > 1e-12) {
+        const u: Vec2 = [off[0] / n, off[1] / n];
+        for (let row = 0; row < 6 && placed.some((o) => dist2(o.at, d.at) < 14 * px); row++) {
+          const step: Vec2 = [u[0] * 18 * px, u[1] * 18 * px];
+          const move = (p: Vec2): Vec2 => [p[0] + step[0], p[1] + step[1]];
+          d.lines = [
+            [d.lines[0][0], move(d.lines[0][1])],
+            [d.lines[1][0], move(d.lines[1][1])],
+            [move(d.lines[2][0]), move(d.lines[2][1])],
+          ];
+          d.arrows = d.arrows.map((x) => ({ ...x, at: move(x.at) }));
+          d.at = move(d.at);
+        }
+      }
+    }
+    placed.push(d);
+  }
 }
 
 export interface Glyph {
