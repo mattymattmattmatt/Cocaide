@@ -6,7 +6,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../icons";
 import { keyFor, keyHint, useInputPrefs } from "../input";
-import type { FlyoutDef, SketchToolDef, ToolOptions } from "./tools/types";
+import type { FlyoutDef, SketchToolDef, ToolOption, ToolOptions } from "./tools/types";
+
+/** What a toolbar button needs of a tool: drawing tools and edit tools alike. */
+export type ToolLike = Pick<SketchToolDef, "id" | "name" | "label" | "icon" | "title">;
 
 const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
@@ -14,7 +17,7 @@ const keepFocus = (e: React.MouseEvent) => e.preventDefault();
  * One flyout: the button shows the tool picked from it last (and runs it); its
  * arrow opens the list. Pressed while any of its tools is the active one.
  */
-export function Flyout({ flyout, tools, shown, active, onPick }: { flyout: FlyoutDef; tools: SketchToolDef[]; shown: SketchToolDef; active: string; onPick(t: SketchToolDef): void }) {
+export function Flyout<T extends ToolLike>({ flyout, tools, shown, active, onPick, small }: { flyout: FlyoutDef; tools: T[]; shown: T; active: string; onPick(t: T): void; small?: boolean }) {
   const prefs = useInputPrefs();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -37,17 +40,18 @@ export function Flyout({ flyout, tools, shown, active, onPick }: { flyout: Flyou
     };
   }, [open]);
   return (
-    <div className="menu flyout" ref={ref}>
+    <div className={`menu flyout${small ? " small" : ""}`} ref={ref}>
       <button
-        className="tool"
+        className={small ? "tool compact small" : "tool"}
         onMouseDown={keepFocus}
         onClick={() => onPick(shown)}
         aria-pressed={tools.some((t) => t.name === active)}
+        aria-label={small ? shown.label : undefined}
         title={`${shown.title}${keyHint(shown.id, prefs)}`}
         data-testid={`tool-${shown.name}`}
       >
-        <Icon name={shown.icon} size={18} />
-        <span className="tool-label">{flyout.label}</span>
+        <Icon name={shown.icon} size={small ? 16 : 18} />
+        {!small && <span className="tool-label">{flyout.label}</span>}
       </button>
       <button
         className="flyout-arrow"
@@ -87,11 +91,20 @@ export function Flyout({ flyout, tools, shown, active, onPick }: { flyout: Flyou
 }
 
 /** A toolbar toggle or action shown as its icon alone; its name is its label for screen readers and its tooltip. */
-export function IconTool({ icon, label, title, pressed, disabled, onClick, testId }: { icon: IconName; label: string; title: string; pressed?: boolean; disabled?: boolean; onClick(): void; testId?: string }) {
+export function IconTool({ icon, label, title, pressed, disabled, onClick, testId, small }: { icon: IconName; label: string; title: string; pressed?: boolean; disabled?: boolean; onClick(): void; testId?: string; small?: boolean }) {
   return (
-    <button className="tool compact" onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-label={label} title={title} aria-pressed={pressed} data-testid={testId}>
-      <Icon name={icon} size={18} />
+    <button className={`tool compact${small ? " small" : ""}`} onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-label={label} title={title} aria-pressed={pressed} data-testid={testId}>
+      <Icon name={icon} size={small ? 16 : 18} />
     </button>
+  );
+}
+
+/** Small tools stacked two high, SOLIDWORKS's CommandManager way: a group that takes the width of one big button per two. */
+export function ToolStack({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="tool-stack" role="group" aria-label={label}>
+      {children}
+    </div>
   );
 }
 
@@ -127,26 +140,60 @@ export function ToolStrip({
       <span className="strip-prompt" title={prompt} data-testid="tool-prompt">
         {prompt}
       </span>
-      {(tool.options ?? []).map((o) =>
+      <OptionControls options={tool.options ?? []} values={options} onOption={onOption} />
+    </div>
+  );
+}
+
+/** A tool's options, changed on the spot: numbers with − and +, choices as pressed buttons, toggles as tick boxes. */
+export function OptionControls({
+  options,
+  values,
+  onOption,
+  choiceLabels,
+}: {
+  options: ToolOption[];
+  values: ToolOptions;
+  onOption(key: string, value: number | string): void;
+  /** Name each group of choices ("Cap ends: Open Arcs Lines"), where the choices alone don't say what they choose. */
+  choiceLabels?: boolean;
+}) {
+  return (
+    <>
+      {options.filter((o) => o.shown?.(values) ?? true).map((o) =>
         o.kind === "number" ? (
           <label key={o.key} className="strip-option" title={o.title}>
             {o.label}
             <NumberStepper
-              value={Number(options[o.key] ?? o.default)}
+              value={Number(values[o.key] ?? o.default)}
               min={o.min}
               max={o.max}
+              step={o.step ?? 1}
+              integer={o.integer}
               testId={`tool-option-${o.key}`}
               onChange={(v) => onOption(o.key, o.integer ? Math.round(v) : v)}
             />
+            {o.unit && <span className="unit">{o.unit}</span>}
+          </label>
+        ) : o.kind === "toggle" ? (
+          <label key={o.key} className="strip-option strip-toggle" title={o.title}>
+            <input
+              type="checkbox"
+              checked={(values[o.key] ?? o.default) === "on"}
+              onChange={(e) => onOption(o.key, e.target.checked ? "on" : "off")}
+              data-testid={`tool-option-${o.key}`}
+            />
+            {o.label}
           </label>
         ) : (
           <span key={o.key} className="strip-option" title={o.title} role="radiogroup" aria-label={o.label}>
+            {choiceLabels && <span className="strip-option-label">{o.label}</span>}
             {o.choices.map((c) => (
               <button
                 key={c.value}
                 type="button"
                 role="radio"
-                aria-checked={(options[o.key] ?? o.default) === c.value}
+                aria-checked={(values[o.key] ?? o.default) === c.value}
                 title={c.title}
                 data-testid={`tool-option-${o.key}-${c.value}`}
                 onMouseDown={keepFocus}
@@ -158,12 +205,12 @@ export function ToolStrip({
           </span>
         ),
       )}
-    </div>
+    </>
   );
 }
 
-/** A whole number with − and + beside it; typed values outside min..max are pulled back in. */
-function NumberStepper({ value, min, max, onChange, testId }: { value: number; min: number; max: number; onChange(v: number): void; testId: string }) {
+/** A number with − and + beside it (by `step`); typed values outside min..max are pulled back in. */
+function NumberStepper({ value, min, max, step, integer, onChange, testId }: { value: number; min: number; max: number; step: number; integer?: boolean; onChange(v: number): void; testId: string }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   const commit = (raw: string) => {
@@ -173,14 +220,15 @@ function NumberStepper({ value, min, max, onChange, testId }: { value: number; m
     setText(String(clamped));
     onChange(clamped);
   };
+  const stepped = (v: number) => Math.round(v * 1e9) / 1e9;
   return (
     <span className="stepper">
-      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min} aria-label="Fewer" data-testid={`${testId}-down`}>
+      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.max(min, stepped(value - step)))} disabled={value <= min} aria-label="Less" data-testid={`${testId}-down`}>
         −
       </button>
       <input
         type="text"
-        inputMode="numeric"
+        inputMode={integer ? "numeric" : "decimal"}
         value={text}
         aria-label="Value"
         data-testid={testId}
@@ -196,7 +244,7 @@ function NumberStepper({ value, min, max, onChange, testId }: { value: number; m
           }
         }}
       />
-      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.min(max, value + 1))} disabled={value >= max} aria-label="More" data-testid={`${testId}-up`}>
+      <button type="button" onMouseDown={keepFocus} onClick={() => onChange(Math.min(max, stepped(value + step)))} disabled={value >= max} aria-label="More" data-testid={`${testId}-up`}>
         +
       </button>
     </span>

@@ -302,12 +302,59 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         break;
       }
       case "symmetric": {
-        // The midpoint of the two points is on the line, and the line between them crosses it square.
-        const [px, py] = pointOf(l, k.points[0]);
-        const [qx, qy] = pointOf(l, k.points[1]);
-        const [ux, uy] = direction(l, k.line);
-        const mid = offsetFrom(l, k.line, [(x) => (px(x) + qx(x)) / 2, (x) => (py(x) + qy(x)) / 2]);
-        push(i, mid, (x) => ((qx(x) - px(x)) * ux(x) + (qy(x) - py(x)) * uy(x)) / Math.hypot(ux(x), uy(x)));
+        if (!k.entities) {
+          push(i, ...mirrored(l, k.line, pointOf(l, k.points![0]), pointOf(l, k.points![1])));
+          break;
+        }
+        // Mirror images: the centres mirrored (and a circle's radius the same), and the ends paired as they lie now.
+        const [a, b] = k.entities.map((id) => entityById(l, id));
+        if (a.type !== "line") push(i, ...mirrored(l, k.line, pointOf(l, `${a.id}.center`), pointOf(l, `${b.id}.center`)));
+        if (a.type === "circle") {
+          const ra = radiusOf(l, a.id);
+          const rb = radiusOf(l, b.id);
+          push(i, (x) => ra(x) - rb(x));
+        }
+        if (a.type !== "circle") {
+          const near = (p: string, q: string) => {
+            const [f, g] = mirrored(l, k.line, pointOf(l, p), pointOf(l, q));
+            return Math.hypot(f(x0), g(x0));
+          };
+          const crossed = near(`${a.id}.start`, `${b.id}.end`) + near(`${a.id}.end`, `${b.id}.start`) < near(`${a.id}.start`, `${b.id}.start`) + near(`${a.id}.end`, `${b.id}.end`);
+          const [s, e] = crossed ? ["end", "start"] : ["start", "end"];
+          push(i, ...mirrored(l, k.line, pointOf(l, `${a.id}.start`), pointOf(l, `${b.id}.${s}`)), ...mirrored(l, k.line, pointOf(l, `${a.id}.end`), pointOf(l, `${b.id}.${e}`)));
+        }
+        break;
+      }
+      case "offset": {
+        // Each pair at the distance on the side it is on now: one value drives them all.
+        k.entities.forEach((base, n) => {
+          const off = k.offsets[n];
+          if (base.includes(".") || base === "origin") {
+            const ro = radiusOf(l, off);
+            const [px, py] = pointOf(l, base);
+            const [cx, cy] = pointOf(l, `${off}.center`);
+            push(i, (x) => cx(x) - px(x), (x) => cy(x) - py(x), (x) => ro(x) - k.value);
+            return;
+          }
+          if (entityById(l, base).type === "line") {
+            const [ux, uy] = direction(l, base);
+            const [vx, vy] = direction(l, off);
+            const d = offsetFrom(l, base, pointOf(l, `${off}.start`));
+            const s = sign(d);
+            push(
+              i,
+              (x) => (ux(x) * vy(x) - uy(x) * vx(x)) / (Math.hypot(ux(x), uy(x)) * Math.hypot(vx(x), vy(x))),
+              (x) => s * d(x) - k.value,
+            );
+            return;
+          }
+          const [px, py] = pointOf(l, `${base}.center`);
+          const [qx, qy] = pointOf(l, `${off}.center`);
+          const rb = radiusOf(l, base);
+          const ro = radiusOf(l, off);
+          const s = sign((x) => ro(x) - rb(x));
+          push(i, (x) => qx(x) - px(x), (x) => qy(x) - py(x), (x) => s * (ro(x) - rb(x)) - k.value);
+        });
         break;
       }
       case "fix": {
@@ -395,6 +442,13 @@ function radiiInLine(l: Layout, a: string, endA: string, b: string, endB: string
     const r2y = qy(x) - by(x);
     return (r1x * r2y - r1y * r2x) / (Math.hypot(r1x, r1y) * Math.hypot(r2x, r2y));
   };
+}
+
+/** Two points mirrored about a line: their midpoint on it, and the segment between them square to it. */
+function mirrored(l: Layout, line: string, [px, py]: [Fn, Fn], [qx, qy]: [Fn, Fn]): [Fn, Fn] {
+  const [ux, uy] = direction(l, line);
+  const mid = offsetFrom(l, line, [(x) => (px(x) + qx(x)) / 2, (x) => (py(x) + qy(x)) / 2]);
+  return [mid, (x) => ((qx(x) - px(x)) * ux(x) + (qy(x) - py(x)) * uy(x)) / Math.hypot(ux(x), uy(x))];
 }
 
 /** A line's direction, end minus start. */

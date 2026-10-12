@@ -33,12 +33,12 @@ export function saveMemory(m: ToolMemory): void {
 }
 
 /** The tool a flyout shows: the one remembered if it is still one of its tools, else its first. */
-export function flyoutChoice(m: ToolMemory, flyout: string, tools: SketchToolDef[]): SketchToolDef {
+export function flyoutChoice<T extends Pick<SketchToolDef, "name" | "flyout">>(m: ToolMemory, flyout: string, tools: T[]): T {
   const mine = tools.filter((t) => t.flyout?.id === flyout);
   return mine.find((t) => t.name === m.flyouts[flyout]) ?? mine[0];
 }
 
 /** The memory after a tool is picked: its flyout shows it from now on. */
-export function remember(m: ToolMemory, tool: SketchToolDef): ToolMemory {
+export function remember(m: ToolMemory, tool: Pick<SketchToolDef, "name" | "flyout">): ToolMemory {
   return tool.flyout ? { ...m, flyouts: { ...m.flyouts, [tool.flyout.id]: tool.name } } : m;
 }

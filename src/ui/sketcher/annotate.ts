@@ -30,6 +30,7 @@ export const RELATION: Record<ConstraintType, { label: string; icon: IconName }>
   pointOn: { label: "Coincident", icon: "pointOn" },
   symmetric: { label: "Symmetric", icon: "symmetric" },
   fix: { label: "Fix", icon: "fix" },
+  offset: { label: "Offset", icon: "offset" },
 };
 
 /** A dimension's text: R and Ø for radii and diameters, ° for angles, at most three decimals. */
@@ -168,6 +169,31 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         // Laid out after the rest, so their leaders can keep clear of the other dimensions.
         round.push(index);
         return;
+      case "offset": {
+        // One dimension for the whole offset: across its first pair, from the base to the offset.
+        const base = k.entities[0];
+        const o = byId.get(k.offsets[0]);
+        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot") return;
+        let p: Vec2 | null = null;
+        let q: Vec2 | null = null;
+        if (o.type === "line") {
+          const b = byId.get(base);
+          if (b?.type !== "line") return;
+          p = [(b.start[0] + b.end[0]) / 2, (b.start[1] + b.end[1]) / 2];
+          q = foot(o.start, o.end, p);
+        } else {
+          const r = o.type === "circle" ? o.radius : dist2(o.start, o.center);
+          const b = base.includes(".") ? null : byId.get(base);
+          const rb = b?.type === "circle" ? b.radius : b?.type === "arc" ? dist2(b.start, b.center) : 0;
+          const a = o.type === "arc" ? angleOf(sub2(anchorOf(o), o.center)) : Math.PI / 4;
+          const u: Vec2 = [Math.cos(a), Math.sin(a)];
+          p = [o.center[0] + u[0] * rb, o.center[1] + u[1] * rb];
+          q = [o.center[0] + u[0] * r, o.center[1] + u[1] * r];
+        }
+        if (dist2(p, q) < 1e-9) return;
+        aligned(index, text, p, q, [p[0] - q[0], p[1] - q[1]]);
+        return;
+      }
       case "angle": {
         const [a, b] = k.entities.map((id) => byId.get(id));
         if (a?.type !== "line" || b?.type !== "line") return;
@@ -353,7 +379,7 @@ export function relationGlyphs(entities: SketchEntity[], constraints: Constraint
       case "pointOn":
         return onPoint(k.point, index, icon);
       case "symmetric":
-        return k.points.forEach((r) => onPoint(r, index, icon));
+        return k.entities ? k.entities.forEach((id) => onEntity(id, index, icon)) : k.points!.forEach((r) => onPoint(r, index, icon));
       case "fix":
         return k.entity ? onEntity(k.entity, index, icon) : onPoint(k.point!, index, icon);
     }

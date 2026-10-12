@@ -478,9 +478,14 @@ export function describeConstraint(k: Constraint, names: Namer = RAW): string {
     case "pointOn":
       return `${p(k.point)} on ${e(k.entity)}`;
     case "symmetric":
-      return `${p(k.points[0])}, ${p(k.points[1])} symmetric about ${e(k.line)}`;
+      return k.entities ? `${e(k.entities[0])}, ${e(k.entities[1])} symmetric about ${e(k.line)}` : `${p(k.points![0])}, ${p(k.points![1])} symmetric about ${e(k.line)}`;
     case "fix":
       return `${k.entity ? e(k.entity) : p(k.point!)} fixed`;
+    case "offset": {
+      const what = (x: string) => (x.includes(".") ? `round ${p(x)}` : e(x));
+      const offsets = k.offsets.length > 3 ? `${k.offsets.slice(0, 3).map(e).join(", ")} … (${k.offsets.length})` : k.offsets.map(e).join(", ");
+      return `${offsets} offset from ${k.entities.length > 3 ? `${k.entities.slice(0, 3).map(what).join(", ")} …` : k.entities.map(what).join(", ")}`;
+    }
   }
 }
 

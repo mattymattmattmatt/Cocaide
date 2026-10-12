@@ -28,12 +28,25 @@ export function constraintEntities(k: Constraint): string[] {
 /** The entity ids and sketch axes a constraint refers to. */
 export { constraintTargets };
 
-/** Removes entities and every constraint that refers to one of them. */
+/**
+ * Removes entities and every constraint that refers to one of them. An offset
+ * relation only loses the pairs that name one (the rest of the offset stays
+ * driven by its distance); it goes when none is left.
+ */
 export function removeEntities(entities: SketchEntity[], constraints: Constraint[], ids: string[]): { entities: SketchEntity[]; constraints: Constraint[] } {
   const gone = new Set(ids);
+  const owner = (x: string) => x.split(".")[0];
   return {
     entities: entities.filter((e) => !gone.has(e.id)),
-    constraints: constraints.filter((k) => !constraintEntities(k).some((id) => gone.has(id))),
+    constraints: constraints.flatMap((k): Constraint[] => {
+      if (k.type === "offset") {
+        const keep = k.entities.map((b, i) => !gone.has(owner(b)) && !gone.has(k.offsets[i]));
+        if (keep.every(Boolean)) return [k];
+        if (!keep.some(Boolean)) return [];
+        return [{ ...k, entities: k.entities.filter((_, i) => keep[i]), offsets: k.offsets.filter((_, i) => keep[i]) }];
+      }
+      return constraintEntities(k).some((id) => gone.has(id)) ? [] : [k];
+    }),
   };
 }
 

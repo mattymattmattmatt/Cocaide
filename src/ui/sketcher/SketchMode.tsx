@@ -16,15 +16,21 @@ import { constraintEntities, constraintSentence, describeConstraint, itemEntitie
 import { convertEdges, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, renamed, type ModelView } from "./model";
 import { namer, referenceName, shapeWords } from "./names";
 import { dimensionText, RELATION } from "./annotate";
-import { SketchCanvas, type CanvasTarget, type DefinedState, type DrawProgress, type Tool } from "./SketchCanvas";
+import { SketchCanvas, type CanvasEdit, type CanvasTarget, type DefinedState, type DrawProgress, type Tool } from "./SketchCanvas";
 import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "../ContextMenu";
-import { Flyout, IconTool, ToolStrip } from "./DrawTools";
+import { Flyout, IconTool, OptionControls, ToolStack, ToolStrip } from "./DrawTools";
 import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from "./tools/memory";
 import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
 import type { SketchToolDef } from "./tools/types";
+import { EDIT_TOOLS, editByName } from "./edit";
+import { livePicks } from "./edit/picks";
+import { NO_PICKS, type EditInput, type EditPicks, type EditToolDef } from "./edit/types";
+import type { Edit } from "../../geom/sketchEdit/relations";
+import { explodable, explodeAll } from "../../geom/sketchEdit/explode";
+import { checkSketch, fixAll, fixProblem, problemSummary, type SketchProblem } from "../../geom/sketchEdit/check";
 
 export interface SketchSession {
   /** Existing feature id, or the id the new sketch will get. */
@@ -91,9 +97,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   };
   /** Picks a tool; a drawing tool becomes what its flyout shows. What the last tool said (a click it refused) goes. */
   const setTool = (t: Tool) => {
-    const def = toolByName(t);
+    const def = toolByName(t) ?? editByName(t);
     if (def) keep(remember(memory, def));
     if (t !== tool) setMessage(null);
+    // An edit tool starts with what was selected before it (the entities to offset, the corners to round).
+    const edit = editByName(t);
+    setEditPicks(edit?.start?.(selection, draft) ?? NO_PICKS);
+    if (edit) setPicked(null);
     // Convert Entities with model edges or faces picked converts them at once; with none, it picks them first.
     if (t === "convert" && tool !== "convert" && convertible(selection)) {
       convert(selection, false);
@@ -102,9 +112,18 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     setToolState(t);
   };
   const drawing = toolByName(tool);
-  const toolOptions = drawing ? optionValues(drawing, memory.options[drawing.name]) : {};
+  /** The edit stack's order, two high: Trim ▾ over Convert, then the rest of the edit tools. */
+  const editToolbar = useMemo(() => {
+    const [first, ...rest] = toolbarEntries(EDIT_TOOLS);
+    return [first, "convert" as const, ...rest];
+  }, []);
+  /** The edit tool in use (trim, fillet, offset ...), and what it has picked. */
+  const editTool: EditToolDef | undefined = editByName(tool);
+  const [editPicks, setEditPicks] = useState<EditPicks>(NO_PICKS);
+  const optionsOf = drawing ?? editTool;
+  const toolOptions = useMemo(() => (optionsOf ? optionValues(optionsOf, memory.options[optionsOf.name]) : {}), [optionsOf, memory]);
   const setOption = (key: string, value: number | string) => {
-    if (drawing) keep({ ...memory, options: { ...memory.options, [drawing.name]: { ...toolOptions, [key]: value } } });
+    if (optionsOf) keep({ ...memory, options: { ...memory.options, [optionsOf.name]: { ...toolOptions, [key]: value } } });
   };
   const [construction, setConstruction] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(true);
@@ -283,19 +302,29 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   };
 
   /**
-   * Turns the selected (or given) entities to construction geometry and back;
-   * with none, the next ones drawn. A reference is construction unless it says
-   * otherwise, so turning it to profile geometry writes construction: false.
+   * Turns the selected (or given) entities to construction geometry and back
+   * (Q), as one: all construction when any is not, else all back to profile
+   * geometry. A point picked on a line, arc or circle stands for it. With
+   * nothing selected, it turns construction on or off for the next ones drawn.
+   * A reference is construction unless it says otherwise, so turning it to
+   * profile geometry writes construction: false.
    */
   const toggleConstruction = (items = selection) => {
-    const ids = new Set(lineworkIds(items));
-    if (!ids.size) return setConstruction((c) => !c);
+    const owners = items.flatMap((i) => (i.kind === "point" ? [i.ref.split(".")[0]] : [])).filter((id) => {
+      const e = draft.entities.find((x) => x.id === id);
+      return !!e && e.type !== "point";
+    });
+    const ids = new Set([...lineworkIds(items), ...owners]);
+    if (!ids.size) {
+      if (items.length) return setMessage("construction is for the sketch's own lines, arcs, circles and slots: a model edge or an axis is already a reference");
+      return setConstruction((c) => !c);
+    }
+    const next = !draft.entities.filter((e) => ids.has(e.id)).every(isConstruction);
     commit({
       ...draft,
       entities: draft.entities.map((e) => {
         if (!ids.has(e.id)) return e;
         const { construction: _was, ...rest } = e;
-        const next = !isConstruction(e);
         // Whichever way, write only what differs from the entity's default.
         return (next === !!e.ref ? rest : { ...rest, construction: next }) as SketchEntity;
       }),
@@ -322,6 +351,129 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     }
   };
 
+  /**
+   * An edit tool's result into the sketch, as one undo step: its relations,
+   * then each relation it would like (where a trimmed end landed) that adds
+   * something without over-defining, solved. If the sketch can't be solved
+   * with those, without them; else nothing changes and the reason shows.
+   */
+  const applyEdit = (r: Edit | string | null | undefined): boolean => {
+    if (!r) return false;
+    if (typeof r === "string") {
+      setMessage(r);
+      return false;
+    }
+    const withSoft = [...r.constraints];
+    for (const k of r.soft ?? []) {
+      try {
+        if (!wouldOverDefine(r.entities, withSoft, k)) withSoft.push(k);
+      } catch {
+        // A relation the solver can't read here is one it doesn't need.
+      }
+    }
+    let error = "";
+    for (const constraints of withSoft.length === r.constraints.length ? [withSoft] : [withSoft, r.constraints]) {
+      const solved = solveSketch(r.entities, constraints);
+      if (solved.ok) {
+        commit({ entities: solved.entities, constraints });
+        setSelection([]);
+        setPicked(null);
+        setMessage(r.note ?? null);
+        return true;
+      }
+      error = solved.error;
+    }
+    setMessage(error);
+    return false;
+  };
+
+  /** An edit tool started on the given items (from the right-click menu), whatever was selected before. */
+  const startEdit = (name: string, items: SketchItem[]) => {
+    const def = editByName(name);
+    if (!def) return;
+    keep(remember(memory, def));
+    setMessage(null);
+    setEditPicks(def.start?.(items, draft) ?? NO_PICKS);
+    setToolState(name);
+  };
+
+  // An undo or redo can take away what the edit tool picked: those picks go with it.
+  useEffect(() => setEditPicks((p) => livePicks(p, draft)), [draft]);
+
+  /** The edit tool's picks after an edit: what it would start with on an empty selection. */
+  const restartEdit = () => setEditPicks(editTool?.start?.([], draft) ?? NO_PICKS);
+
+  const onEditClick = (input: EditInput) => {
+    if (!editTool) return;
+    const step = editTool.click(draft, editPicks, input, toolOptions);
+    if ("picks" in step) {
+      setEditPicks(step.picks);
+      setMessage(null);
+    } else if ("message" in step) setMessage(step.message);
+    else if (applyEdit(step.edit)) restartEdit();
+  };
+
+  const onEditStroke = (path: Vec2[]) => {
+    const r = editTool?.drag?.(draft, path, toolOptions);
+    if (r === null || r === undefined) return setMessage("the stroke crossed nothing to trim: drag across the pieces to trim");
+    applyEdit(r);
+  };
+
+  /** Apply (Enter): a collecting tool makes its edit; a move still picking its entities goes on to its base point. */
+  const applyCollect = () => {
+    if (editTool?.kind !== "collect") return;
+    if (editPicks.picking === true && editPicks.entities.length) return setEditPicks({ ...editPicks, picking: false });
+    const r = editTool.apply?.(draft, editPicks, toolOptions);
+    if (r === null || r === undefined) return setMessage(`${editTool.label}: ${editTool.prompt(editPicks, toolOptions).replace(/^./, (c) => c.toLowerCase())} first`);
+    if (applyEdit(r)) restartEdit();
+  };
+
+  /** What the edit tool would make now (null: not enough picked; a string: why it can't). */
+  const pending = useMemo(
+    () => (editTool?.kind === "collect" ? (editTool.apply?.(draft, editPicks, toolOptions) ?? null) : null),
+    [editTool, draft, editPicks, toolOptions],
+  );
+
+  /** The canvas's side of the edit tool: its picks as selected items, its preview, its clicks. */
+  const canvasEdit = useMemo((): CanvasEdit | undefined => {
+    if (!editTool) return undefined;
+    const chosen = [
+      ...editPicks.entities.map((id) => ({ kind: "entity" as const, id })),
+      ...editPicks.points.map((ref) => ({ kind: "point" as const, ref })),
+      ...(editPicks.about ? [{ kind: "entity" as const, id: editPicks.about }] : []),
+    ];
+    const places = editTool.places?.(editPicks, toolOptions) ?? false;
+    return {
+      tool: editTool,
+      picks: editPicks,
+      chosen,
+      places,
+      follows: editTool.kind === "click" || places,
+      preview: (hover) => {
+        try {
+          return editTool.preview?.(draft, editPicks, toolOptions, hover) ?? {};
+        } catch {
+          return {};
+        }
+      },
+      onClick: onEditClick,
+      onStroke: onEditStroke,
+    };
+  }, [editTool, editPicks, toolOptions, draft]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Explode: the picked rectangle and slot entities become lines and arcs, held in shape (so they trim and fillet). */
+  const explodeItems = (items = selection) => {
+    const ids = entityIds(items).filter((id) => explodable(draft.entities.find((e) => e.id === id)));
+    if (!ids.length) return setMessage("select a rectangle or slot entity to explode (lines and arcs already are)");
+    const r = explodeAll(draft, ids);
+    applyEdit({ ...r.state, made: r.ids });
+  };
+
+  /** Check sketch for feature: what keeps the profile from being clean, for the status line, the marks and the check panel. */
+  const check = useMemo(() => checkSketch(entities), [entities]);
+  const [showCheck, setShowCheck] = useState(false);
+  const fix = (p: SketchProblem | "all") => applyEdit(p === "all" ? fixAll(draft) : fixProblem(draft, p));
+
   const finish = () => {
     const f: SketchFeature = { id: session.id, op: "sketch", plane: session.plane, entities: draft.entities };
     // A dimension typed as an expression goes into the document as one, so a parameter keeps driving it.
@@ -339,12 +491,16 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     undo,
     redo,
     delete: () => deleteSelection(),
-    repeat: () => tool === "convert" && convert(selection, false),
+    repeat: () => (tool === "convert" ? convert(selection, false) : applyCollect()),
     shortcutBar: () => setBar({ x: pointer.x, y: pointer.y }),
-    "sketch.construction": () => toggleConstruction(),
+    // Q: the selection, or while an edit tool is in use, what it has picked.
+    "sketch.construction": () => toggleConstruction(editTool && editPicks.entities.length ? editPicks.entities.map((id) => ({ kind: "entity" as const, id })) : selection),
+    "sketch.explode": () => explodeItems(),
+    "sketch.check": () => setShowCheck((v) => !v),
     "sketch.finish": finish,
     ...Object.fromEntries(MODES.map(([t, , id]) => [id, () => setTool(t)])),
     ...Object.fromEntries(SKETCH_TOOLS.map((t) => [t.id, () => setTool(t.name)])),
+    ...Object.fromEntries(EDIT_TOOLS.map((t) => [t.id, () => setTool(t.name)])),
   });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -355,7 +511,9 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         redo();
       } else if (e.key === "Escape") {
         if (modify || menu) return;
-        if (tool !== "select") setTool("select");
+        // An edit tool drops what it picked first, then itself.
+        if (editTool && (editPicks.entities.length || editPicks.points.length || editPicks.places.length || editPicks.about)) restartEdit();
+        else if (tool !== "select") setTool("select");
         else {
           setSelection([]);
           setPicked(null);
@@ -437,6 +595,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         const t = entry.kind === "flyout" ? flyoutChoice(memory, entry.flyout.id, SKETCH_TOOLS) : entry.tool;
         return { label: t.label, icon: t.icon, shortcut: keyFor(t.id, prefs) ?? undefined, onClick: () => setTool(t.name), testId: `ctx-tool-${t.name}` };
       }),
+      "sep",
+      // The edit tools, each flyout's as it shows.
+      ...toolbarEntries(EDIT_TOOLS).map((entry): MenuEntry => {
+        const t = entry.kind === "flyout" ? flyoutChoice(memory, entry.flyout.id, EDIT_TOOLS) : entry.tool;
+        return { label: t.label, icon: t.icon, shortcut: keyFor(t.id, prefs) ?? undefined, onClick: () => setTool(t.name), testId: `ctx-tool-${t.name}` };
+      }),
+      { label: "Check sketch", icon: "checkSketch", onClick: () => setShowCheck(true), testId: "ctx-check" },
     ];
     if (!target) {
       setPicked(null);
@@ -538,6 +703,36 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         ...(ids.length
           ? [{ label: ids.length > 1 ? `Delete ${ids.length} entities` : "Delete", icon: "trash", shortcut: "Delete", onClick: () => deleteSelection(items), testId: "ctx-delete" } as MenuEntry]
           : []),
+        // The edit tools on what the menu is for: a corner rounds; entities explode, offset, mirror, pattern, move.
+        ...(() => {
+          const own = ids.filter((id) => !draft.entities.find((x) => x.id === id)?.ref);
+          const corner = target.kind === "point" && draft.entities.filter((x) => (x.type === "line" || x.type === "arc") && !x.ref).filter((x) => {
+            const p = draft.entities.find((y) => y.id === owner);
+            const at = p ? (p as unknown as Record<string, Vec2>)[target.ref.split(".")[1]] : undefined;
+            return !!at && ["start", "end"].some((n) => {
+              const q = (x as unknown as Record<string, Vec2>)[n];
+              return Math.hypot(q[0] - at[0], q[1] - at[1]) < 1e-6;
+            });
+          }).length === 2;
+          const entries: MenuEntry[] = [];
+          if (corner) {
+            entries.push({ label: "Fillet corner…", icon: "sketchFillet", onClick: () => startEdit("fillet", [item]), testId: "ctx-fillet" });
+            entries.push({ label: "Chamfer corner…", icon: "sketchChamfer", onClick: () => startEdit("chamfer", [item]), testId: "ctx-chamfer" });
+          }
+          if (own.some((id) => explodable(draft.entities.find((x) => x.id === id)))) entries.push({ label: "Explode into lines and arcs", icon: "explodeEntity", onClick: () => explodeItems(items), testId: "ctx-explode" });
+          if (own.length && !corner) {
+            const on = own.map((id) => ({ kind: "entity" as const, id }));
+            entries.push(
+              { label: "Offset entities…", icon: "offset", onClick: () => startEdit("offset", on), testId: "ctx-offset" },
+              { label: "Mirror entities…", icon: "mirrorEntities", onClick: () => startEdit("mirror", on), testId: "ctx-mirror" },
+              { label: "Linear pattern…", icon: "linearSketchPattern", onClick: () => startEdit("linear-pattern", on), testId: "ctx-linear-pattern" },
+              { label: "Circular pattern…", icon: "circularSketchPattern", onClick: () => startEdit("circular-pattern", on), testId: "ctx-circular-pattern" },
+              { label: "Move entities…", icon: "moveEntities", onClick: () => startEdit("move", on), testId: "ctx-move" },
+              { label: "Rotate entities…", icon: "rotateEntities", onClick: () => startEdit("rotate", on), testId: "ctx-rotate" },
+            );
+          }
+          return entries.length ? (["sep", ...entries] as MenuEntry[]) : [];
+        })(),
         "sep",
         ...(e ? ask({ kind: "entity", entity: e.id }) : []),
       ],
@@ -548,7 +743,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     <>
       <section className="center sketch-center">
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
-          {MODES.map(([t, label, id, icon]) => (
+          {MODES.filter(([t]) => t !== "convert").map(([t, label, id, icon]) => (
             <ToolButton key={t} icon={icon} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${TOOL_TITLE[t] ?? label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
           ))}
           <span className="sep" />
@@ -575,26 +770,77 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             ),
           )}
           <span className="sep" />
-          <IconTool
-            icon="construction"
-            label="Construction"
-            pressed={construction}
-            onClick={() => toggleConstruction()}
-            title={`Construction geometry: guides that are not part of the profile (toggles new or selected entities)${keyHint("sketch.construction", prefs)}`}
-            testId="tool-construction"
-          />
-          <IconTool icon="grid" label="Grid" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Grid: snap new points to it" testId="tool-grid" />
-          <IconTool
-            icon={showRelations ? "eye" : "eyeOff"}
-            label="Relations"
-            pressed={showRelations}
-            onClick={() => setShowRelations((v) => !v)}
-            title="Relations: show or hide the glyphs beside the geometry"
-            testId="tool-relations"
-          />
+          {/* The edit tools and Convert, small and two high: Trim ▾ over Convert, Offset over Fillet ▾, Mirror over Pattern ▾, Move ▾. */}
+          <ToolStack label="Edit tools">
+            {editToolbar.map((entry) =>
+              entry === "convert" ? (
+                <IconTool
+                  key="convert"
+                  small
+                  icon="convertEntities"
+                  label="Convert"
+                  pressed={tool === "convert"}
+                  onClick={() => setTool("convert")}
+                  title={`${TOOL_TITLE.convert}${keyHint("sketch.convert", prefs)}`}
+                  testId="tool-convert"
+                />
+              ) : entry.kind === "flyout" ? (
+                <Flyout
+                  key={entry.flyout.id}
+                  small
+                  flyout={entry.flyout}
+                  tools={entry.tools}
+                  shown={flyoutChoice(memory, entry.flyout.id, EDIT_TOOLS)}
+                  active={tool}
+                  onPick={(t: EditToolDef) => setTool(t.name)}
+                />
+              ) : (
+                <IconTool
+                  key={entry.tool.name}
+                  small
+                  icon={entry.tool.icon}
+                  label={entry.tool.label}
+                  pressed={tool === entry.tool.name}
+                  onClick={() => setTool(entry.tool.name)}
+                  title={`${entry.tool.title}${keyHint(entry.tool.id, prefs)}`}
+                  testId={`tool-${entry.tool.name}`}
+                />
+              ),
+            )}
+          </ToolStack>
           <span className="sep" />
-          <IconTool icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
-          <IconTool icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
+          <ToolStack label="Display and history">
+            <IconTool
+              small
+              icon="construction"
+              label="Construction"
+              pressed={construction}
+              onClick={() => toggleConstruction()}
+              title={`Construction geometry: guides that are not part of the profile (toggles new or selected entities)${keyHint("sketch.construction", prefs)}`}
+              testId="tool-construction"
+            />
+            <IconTool small icon="grid" label="Grid" pressed={snapToGrid} onClick={() => setSnapToGrid((v) => !v)} title="Grid: snap new points to it" testId="tool-grid" />
+            <IconTool
+              small
+              icon={showRelations ? "eye" : "eyeOff"}
+              label="Relations"
+              pressed={showRelations}
+              onClick={() => setShowRelations((v) => !v)}
+              title="Relations: show or hide the glyphs beside the geometry"
+              testId="tool-relations"
+            />
+            <IconTool
+              small
+              icon="checkSketch"
+              label="Check sketch"
+              pressed={showCheck}
+              onClick={() => setShowCheck((v) => !v)}
+              title={`Check sketch for feature: open ends, gaps, crossings, overlaps, duplicates, with one-click fixes${keyHint("sketch.check", prefs)}`}
+              testId="tool-check"
+            />
+            <IconTool small icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
+            <IconTool small icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
+          </ToolStack>
           {bar && (
             <Popup x={bar.x} y={bar.y} bar onClose={() => setBar(null)} label="Shortcut bar" testId="shortcut-bar">
               {(close) => (
@@ -612,7 +858,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
                       }}
                     />
                   ))}
-                  {SKETCH_TOOLS.map((t) => (
+                  {[...SKETCH_TOOLS, ...EDIT_TOOLS].map((t) => (
                     <ToolButton
                       key={t.name}
                       icon={t.icon}
@@ -666,8 +912,49 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           }}
           onEditDimension={(index, x, y) => setModify({ x, y, index })}
           onDimension={onDimension}
+          edit={canvasEdit}
+          regions={check.loops}
+          problems={check.problems}
         />
         {drawing && <ToolStrip tool={drawing} placed={progress.placed} arcNext={progress.arcNext} options={toolOptions} onOption={setOption} />}
+        {editTool && (
+          <div className="sketch-tool-strip edit-strip" data-testid="tool-strip">
+            <span className="strip-name">
+              <Icon name={editTool.icon} size={14} />
+              {editTool.label}
+            </span>
+            <span className="strip-prompt" title={editTool.prompt(editPicks, toolOptions)} data-testid="tool-prompt">
+              {editTool.prompt(editPicks, toolOptions)}
+            </span>
+            <OptionControls options={editTool.options ?? []} values={toolOptions} onOption={setOption} choiceLabels />
+            {editTool.kind === "collect" && (
+              <span className="strip-option strip-actions">
+                {editTool.name === "mirror" && (
+                  <button
+                    type="button"
+                    aria-pressed={editPicks.picking === false}
+                    onClick={() => setEditPicks({ ...editPicks, picking: false })}
+                    title="The next line clicked is the line to mirror about"
+                    data-testid="tool-mirror-about"
+                  >
+                    {editPicks.about ? `About ${names.entity(editPicks.about)}` : "Mirror about…"}
+                  </button>
+                )}
+                {typeof pending === "string" && (
+                  <span className="strip-problem" title={pending} data-testid="tool-problem">
+                    {pending}
+                  </span>
+                )}
+                <button type="button" className="primary" disabled={pending === null && editPicks.picking !== true} onClick={applyCollect} title="Apply (Enter)" data-testid="tool-apply">
+                  {editPicks.picking === true ? "Next" : "Apply"}
+                </button>
+                <button type="button" onClick={restartEdit} title="Drop what is picked (Esc)" data-testid="tool-clear">
+                  Clear
+                </button>
+              </span>
+            )}
+          </div>
+        )}
         {tool === "convert" && (
           <div className="sketch-tool-strip convert-strip" data-testid="convert-strip">
             <span className="strip-name">
@@ -708,6 +995,12 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         <div className={`sketch-status ${status?.conflicts.size ? "over" : dof === 0 ? "full" : "under"}`} data-testid="sketch-status">
           {status?.conflicts.size ? "Over defined" : dof === 0 ? "Fully defined" : "Under defined"}
         </div>
+        {check.problems.length > 0 && (
+          <button className="sketch-problems" onClick={() => setShowCheck(true)} title="Check sketch for feature: what is wrong, and fixes" data-testid="sketch-problems">
+            <Icon name="alert" size={13} />
+            {problemSummary(check)}
+          </button>
+        )}
         <div className="sketch-plane-label">{planeName(session.plane.normal, session.plane.origin)}</div>
       </section>
       <aside className="side right sketch-panel" data-testid="sketch-panel">
@@ -735,6 +1028,44 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             </div>
           )}
         </section>
+        {showCheck && (
+          <section className="panel sketch-check" data-testid="sketch-check">
+            <h2>
+              Check sketch
+              <button className="icon" aria-label="Close" title="Close" onClick={() => setShowCheck(false)}>
+                <Icon name="x" size={14} />
+              </button>
+            </h2>
+            {check.problems.length === 0 ? (
+              <p className="muted small" data-testid="check-clean">
+                {check.loops.length ? `Ready for a feature: ${check.loops.length} closed contour${check.loops.length === 1 ? "" : "s"}, nothing open, crossing or doubled.` : "No profile geometry yet."}
+              </p>
+            ) : (
+              <>
+                <ol className="check-list">
+                  {check.problems.map((p, i) => (
+                    <li key={i} data-testid={`check-problem-${i}`} data-kind={p.kind}>
+                      <Icon name="alert" size={14} />
+                      <span>{p.text}</span>
+                      {p.fix && (
+                        <button onClick={() => fix(p)} data-testid={`check-fix-${i}`}>
+                          {p.fix}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+                {check.problems.some((p) => p.fix) && (
+                  <div className="row-buttons">
+                    <button onClick={() => fix("all")} data-testid="check-fix-all">
+                      Fix all that can be fixed
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
         <section className="panel">
           <h2>Add relations</h2>
           {offers.length === 0 ? (
@@ -1013,7 +1344,7 @@ function round(x: number): number {
 function constraintKey(k: Constraint): string {
   const { value: _ignored, expr: _expr, ...rest } = k as Dimension & { value?: number };
   if (k.type === "coincident" || (k.type === "horizontal" || k.type === "vertical") && k.points) return `${k.type}:${[...k.points!].sort().join("|")}`;
-  if ("entities" in k && k.type !== "angle") return `${k.type}:${[...k.entities].sort().join("|")}`;
+  if ("entities" in k && k.entities && k.type !== "angle" && k.type !== "offset") return `${k.type}:${[...k.entities].sort().join("|")}${k.type === "symmetric" ? `@${k.line}` : ""}`;
   return JSON.stringify(rest);
 }
 

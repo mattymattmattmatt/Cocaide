@@ -116,16 +116,61 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
       return { label, actual: dist2(p, centre(e)), expected: radius(e) };
     }
     case "symmetric": {
-      const [p, q] = k.points.map(pt);
       const line = get(k.line);
+      if (k.entities) {
+        const [a, b] = k.entities.map(get);
+        return { label: `symmetric ${k.entities[0]} ${k.entities[1]} about ${k.line}`, actual: mirrorError(a, b, line), expected: 0 };
+      }
+      const [p, q] = k.points!.map(pt);
       const u = unit(line);
       const mid: Vec2 = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
       const along = Math.abs((q[0] - p[0]) * u[0] + (q[1] - p[1]) * u[1]);
-      return { label: `symmetric ${k.points[0]} ${k.points[1]} about ${k.line}`, actual: Math.max(Math.abs(offset(line, mid)), along), expected: 0 };
+      return { label: `symmetric ${k.points![0]} ${k.points![1]} about ${k.line}`, actual: Math.max(Math.abs(offset(line, mid)), along), expected: 0 };
+    }
+    case "offset": {
+      // The worst pair: how far its offset is from the value, plus how far off concentric it is.
+      let worst = 0;
+      k.entities.forEach((b, i) => {
+        const o = get(k.offsets[i]);
+        let miss: number;
+        if (b.includes(".") || b === "origin") miss = dist2(centre(o), pt(b)) + Math.abs(radius(o) - k.value);
+        else {
+          const base = get(b);
+          if (base.type === "line" && o.type === "line") miss = Math.max(Math.abs(Math.abs(offset(base, o.start)) - k.value), Math.abs(Math.abs(offset(base, o.end)) - k.value));
+          else miss = dist2(centre(o), centre(base)) + Math.abs(Math.abs(radius(o) - radius(base)) - k.value);
+        }
+        if (!(miss <= worst)) worst = miss;
+      });
+      return { label: `offset ${k.offsets.join(" ")} from ${k.entities.join(" ")} = ${fmt(k.value)}`, actual: k.value + worst, expected: k.value };
     }
     case "fix":
       return { label: `fix ${k.entity ?? k.point}`, actual: 0, expected: 0 };
   }
+}
+
+/** p mirrored about the line (extended). */
+function reflect(line: SketchEntity, p: Vec2): Vec2 {
+  const [a] = entitySpan(line);
+  const u = unit(line);
+  const t = (p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1];
+  const f: Vec2 = [a[0] + t * u[0], a[1] + t * u[1]];
+  return [2 * f[0] - p[0], 2 * f[1] - p[1]];
+}
+
+/**
+ * How far b is from a's mirror image about the line: the worst point, with
+ * the ends paired the nearer way (a copy's ends may run either way), and a
+ * radius off by as much counts as much.
+ */
+function mirrorError(a: SketchEntity, b: SketchEntity, line: SketchEntity): number {
+  const m = (p: Vec2) => reflect(line, p);
+  const ends = (e: SketchEntity): Vec2[] => (e.type === "line" || e.type === "arc" ? [e.start, e.end] : []);
+  let err = a.type === b.type ? 0 : Infinity;
+  if (a.type !== "line") err = Math.max(err, dist2(m(centre(a)), centre(b)), Math.abs(radius(a) - radius(b)));
+  const [p, q] = ends(a);
+  const [r, s] = ends(b);
+  if (p && q && r && s) err = Math.max(err, Math.min(Math.max(dist2(m(p), r), dist2(m(q), s)), Math.max(dist2(m(p), s), dist2(m(q), r))));
+  return err;
 }
 
 /** Degrees off for an angle relation to fail: 1e-6 of a degree. */

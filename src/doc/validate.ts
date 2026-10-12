@@ -730,10 +730,46 @@ function validateConstraint(
       return point && entity && c.errors.length === before ? { type: k.type, point, entity } : null;
     }
     case "symmetric": {
-      c.keys(k, label, ["type", "points", "line"]);
-      const points = pointPair(k.points);
+      c.keys(k, label, ["type", "points", "entities", "line"]);
+      if ((k.points !== undefined) === (k.entities !== undefined)) {
+        c.fail(label, "needs exactly one of points (two point refs) or entities (two lines, arcs or circles)");
+        return null;
+      }
       const line = entityRef("line", k.line, ["line"], true);
+      if (k.entities !== undefined) {
+        const pair = entityPair(["line", "arc", "circle"]);
+        if (pair && entities.get(pair[0]) !== entities.get(pair[1])) c.fail(label, `mirrors a ${entities.get(pair[0])} onto a ${entities.get(pair[1])}; a line mirrors a line, an arc an arc, a circle a circle`);
+        if (pair && line && pair.includes(line)) c.fail(label, `"${line}" is the line they mirror about; it can't be one of the pair`);
+        return pair && line && c.errors.length === before ? { type: "symmetric", entities: pair, line } : null;
+      }
+      const points = pointPair(k.points);
       return points && line && c.errors.length === before ? { type: "symmetric", points, line } : null;
+    }
+    case "offset": {
+      c.keys(k, label, ["type", "entities", "offsets", "value"]);
+      const value = c.num(k, "value", label, { positive: true });
+      if (!Array.isArray(k.entities) || !Array.isArray(k.offsets) || k.entities.length === 0 || k.entities.length !== k.offsets.length) {
+        c.fail(label, `entities (the bases) and offsets (one offset each) must be arrays of the same length, at least one (got ${describe(k.entities)} and ${describe(k.offsets)})`);
+        return null;
+      }
+      const bases: string[] = [];
+      const offsets: string[] = [];
+      const seen = new Set<string>();
+      k.entities.forEach((b, i) => {
+        const o = (k.offsets as unknown[])[i];
+        // A base point ref ("l1.end") has an arc or circle round it; a line has a line beside it; an arc or circle one round it.
+        const base = typeof b === "string" && b.includes(".") ? pointRef(b) : entityRef(`entities[${i}]`, b, ["line", "arc", "circle"]);
+        if (!base) return;
+        const kind = base.includes(".") ? "round" : entities.get(base) === "line" ? "line" : "round";
+        const off = entityRef(`offsets[${i}]`, o, kind === "line" ? ["line"] : ["arc", "circle"]);
+        if (!off) return;
+        if (off === base || off === base.split(".")[0]) c.fail(label, `offsets[${i}] "${off}" is its own base`);
+        if (seen.has(off)) c.fail(label, `offsets[${i}] "${off}" is the offset of two bases`);
+        seen.add(off);
+        bases.push(base);
+        offsets.push(off);
+      });
+      return value !== undefined && c.errors.length === before ? { type: "offset", entities: bases, offsets, value } : null;
     }
     case "fix": {
       c.keys(k, label, ["type", "entity", "point"]);
@@ -777,6 +813,7 @@ export const CONSTRAINT_TYPES = [
   "pointOn",
   "symmetric",
   "fix",
+  "offset",
 ] as const;
 
 // ------------------------------------------------------- extrude and cut

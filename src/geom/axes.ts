@@ -59,7 +59,9 @@ export function constraintTargets(k: Constraint): string[] {
     case "pointOn":
       return [...fromRef(k.point), k.entity];
     case "symmetric":
-      return [...k.points.flatMap(fromRef), k.line];
+      return [...(k.entities ? [...k.entities] : k.points!.flatMap(fromRef)), k.line];
+    case "offset":
+      return [...new Set([...k.entities.flatMap((b) => (b.includes(".") || b === "origin" ? fromRef(b) : [b])), ...k.offsets])];
     case "fix":
       return k.entity ? [k.entity] : fromRef(k.point!);
   }

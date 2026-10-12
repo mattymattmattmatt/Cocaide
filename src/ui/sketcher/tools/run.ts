@@ -9,7 +9,7 @@ import type { Constraint, SketchEntity, Vec2 } from "../../../doc/types";
 import { inferOrientation, inferPoint } from "../draft";
 import { SKETCH_TOOLS } from "./index";
 import { asConstruction } from "./shapes";
-import type { Click, ClickRole, FlyoutDef, IdMaker, SketchToolDef, ToolContext, ToolOptions } from "./types";
+import type { Click, ClickRole, FlyoutDef, IdMaker, SketchToolDef, ToolContext, ToolOption, ToolOptions } from "./types";
 
 export { SKETCH_TOOLS };
 
@@ -18,13 +18,13 @@ export function toolByName(name: string, tools: SketchToolDef[] = SKETCH_TOOLS):
 }
 
 /** One place on the toolbar: a tool's own button, or a flyout of the tools that share one. */
-export type SketchToolbarEntry = { kind: "tool"; tool: SketchToolDef } | { kind: "flyout"; flyout: FlyoutDef; tools: SketchToolDef[] };
+export type SketchToolbarEntry<T extends { flyout?: FlyoutDef } = SketchToolDef> = { kind: "tool"; tool: T } | { kind: "flyout"; flyout: FlyoutDef; tools: T[] };
 
-/** The toolbar's buttons in registry order; tools that share a flyout become one where the first of them is. */
-export function toolbarEntries(tools: SketchToolDef[] = SKETCH_TOOLS): SketchToolbarEntry[] {
-  const out: SketchToolbarEntry[] = [];
+/** The toolbar's buttons in registry order; tools that share a flyout become one where the first of them is. Edit tools (../edit) go the same way. */
+export function toolbarEntries<T extends { flyout?: FlyoutDef } = SketchToolDef>(tools: T[] = SKETCH_TOOLS as unknown as T[]): SketchToolbarEntry<T>[] {
+  const out: SketchToolbarEntry<T>[] = [];
   for (const t of tools) {
-    const shared = t.flyout ? out.find((e): e is Extract<SketchToolbarEntry, { kind: "flyout" }> => e.kind === "flyout" && e.flyout.id === t.flyout!.id) : undefined;
+    const shared = t.flyout ? out.find((e): e is Extract<SketchToolbarEntry<T>, { kind: "flyout" }> => e.kind === "flyout" && e.flyout.id === t.flyout!.id) : undefined;
     if (shared) shared.tools.push(t);
     else out.push(t.flyout ? { kind: "flyout", flyout: t.flyout, tools: [t] } : { kind: "tool", tool: t });
   }
@@ -32,7 +32,7 @@ export function toolbarEntries(tools: SketchToolDef[] = SKETCH_TOOLS): SketchToo
 }
 
 /** A tool's options: each one stored if it is valid, else its default. Numbers are clamped (and rounded where whole). */
-export function optionValues(def: SketchToolDef, stored: ToolOptions = {}): ToolOptions {
+export function optionValues(def: { options?: ToolOption[] }, stored: ToolOptions = {}): ToolOptions {
   const out: ToolOptions = {};
   for (const o of def.options ?? []) {
     const v = stored[o.key];
@@ -40,6 +40,8 @@ export function optionValues(def: SketchToolDef, stored: ToolOptions = {}): Tool
       const n = typeof v === "number" && Number.isFinite(v) ? v : o.default;
       const clamped = Math.min(o.max, Math.max(o.min, n));
       out[o.key] = o.integer ? Math.round(clamped) : clamped;
+    } else if (o.kind === "toggle") {
+      out[o.key] = v === "on" || v === "off" ? v : o.default;
     } else {
       out[o.key] = typeof v === "string" && o.choices.some((c) => c.value === v) ? v : o.default;
     }

@@ -76,8 +76,38 @@ Relations:
   { "type": "concentric", "entities": ["c1", "a1"] }
   { "type": "equal", "entities": ["c1", "c2"] }                  (two lines' lengths, or two radii)
   { "type": "symmetric", "points": ["l1.start", "l2.start"], "line": "l3" }
+  { "type": "symmetric", "entities": ["l1", "l4"], "line": "l3" }   (two lines, two arcs or two circles that are each
+                                                                 other's mirror images about l3 (or "X", "Y"): ends paired
+                                                                 as they lie, centres and radii mirrored; Mirror makes these)
   { "type": "fix", "entity": "l1" }                              (or "point": "l1.end", or a point entity: held where it is)
+  { "type": "offset", "entities": ["l1", "a1", "l2"], "offsets": ["l5", "a3", "l6"], "value": 3 }
+      Offset Entities' one driving distance: each offsets[i] lies "value" mm from entities[i], on the side it is on now
+      (a line parallel to its base; an arc or circle concentric, its radius "value" more or less). A base may be a point
+      ref ("l1.end"): its offset is an arc centred there, of radius "value" (a round corner, an arc cap). Change the value
+      (setDimension) and the whole offset moves; the offset pieces are joined to each other by coincident (and tangent,
+      where an arc runs on smoothly) relations. Deleting an offset piece drops only its pair.
 A relation that repeats or contradicts what the sketch already fixes is refused.
+
+### Sketch edits the app makes (do the same with addEntity / updateEntity / deleteEntity / addConstraint)
+The sketcher's edit tools (Trim, Extend, Split, Fillet, Chamfer, Offset, Mirror, Linear and Circular pattern, Move,
+Copy, Rotate, Scale, Explode, Check sketch) only ever write plain entities and the relations above:
+  trim / split: a line or arc shortened (its end's relations dropped), a piece cut out of the middle leaves two, the
+    second collinear with the first (an arc: coincident centres and equal); a trimmed circle becomes an arc; each new
+    end coincident with the end it landed on, or pointOn the entity it landed on. A split line's length dimension
+    becomes a "distance" between the outer ends of its two pieces.
+  fillet: both lines (or arcs) shortened, an arc between them with coincident ends and tangent to both; one "radius"
+    dimension, the other fillets made with it "equal" to the first. "Keep constrained corners" leaves a construction
+    point at the old corner, pointOn both entities, carrying what was related or dimensioned to the corner.
+  chamfer: a line across the corner, coincident with both shortened lines, two "distance" dimensions (or a distance and
+    an "angle") from a construction point left at the old corner.
+  linear pattern: copies "equal" to the seed (lines also parallel), on a chain of construction lines, collinear and
+    "equal" to the first, whose "distance" is the spacing (and "horizontal"/"vertical" or an "angle" to "X").
+  circular pattern: copies "equal" to the seed; construction spokes from the centre, "equal"; equal construction chords
+    between neighbouring places; one "angle" dimension between the first two spokes (as the relation reads it, 0-180°;
+    "collinear" spokes for two places half a turn apart).
+  explode: a rect becomes 4 lines (corner rectangle relations); a slot 2 lines, 2 arcs and a construction centreline.
+A profile must be clean to extrude: no open ends, no ends that nearly meet, no crossings or overlaps, no zero-length or
+doubled entities (the sketcher's Check sketch lists these and fixes the simple ones).
 
 ### The sketch axes, and references to the model (dimension to model edges; they follow the model)
 Every sketch has two axis lines, "X" and "Y" (through its origin along its x and y), usable wherever a line id is, as
