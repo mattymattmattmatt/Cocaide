@@ -2,7 +2,8 @@
 // the prompt; this file is the fixed part around it.
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { REFERENCE } from "../mcp/reference";
+import { coreReference } from "../mcp/sections";
+import { anthropicTool } from "./tools/specs";
 import type { AskTarget, Packet, PacketKind } from "./packet";
 
 export type AskMode = "explain" | "edit";
@@ -41,6 +42,8 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Fully define this sketch", prompt: "Fully define this sketch: add the dimensions and constraints it is missing, keeping the geometry where it is.", submit: true },
         { label: "Close the profile", prompt: "Close the profile so it can be extruded.", submit: true },
         { label: "Make it symmetric about the origin", prompt: "Make this sketch symmetric about the sketch origin.", submit: true },
+        { label: "Revolve this profile", prompt: "Revolve this sketch's profile into a solid, about ", submit: false },
+        { label: "Make this a spring", prompt: "Make a spring along a helix from this sketch: wire diameter ", submit: false },
         { label: "Change its shape", prompt: "Change this sketch so that ", submit: false },
         { label: "Explain it", prompt: "What does this sketch draw, and what holds it?", submit: true },
       ];
@@ -67,6 +70,10 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Fillet the boundary", prompt: "Fillet the edges around this face, radius ", submit: false },
         { label: "Boss on it", prompt: "Extrude a boss out of this face: ", submit: false },
         { label: "Pocket in it", prompt: "Cut a pocket into this face: ", submit: false },
+        { label: "Shell this body 2 mm", prompt: "Shell this body with 2 mm walls, leaving this face open.", submit: true },
+        { label: "Add a rib here", prompt: "Add a stiffening rib on this face, 3 mm thick, ", submit: false },
+        { label: "Draft this face", prompt: "Draft this face 3° so the part releases from a mould, neutral plane ", submit: false },
+        { label: "Make this a spring", prompt: "Wind a spring around this round face: a round wire swept along a helix, wire diameter ", submit: false },
         { label: "What is this face?", prompt: "What is this face?", submit: true },
       ];
     case "edge":
@@ -85,6 +92,7 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
       return [
         { label: "What is this body?", prompt: "What is this body, and which features make it?", submit: true },
         { label: "Does it clash?", prompt: "Does this body overlap any other body? Do not change anything.", submit: true },
+        { label: "Shell this body 2 mm", prompt: "Shell this body with 2 mm walls, open at its top face.", submit: true },
         { label: "Rename it", prompt: "Rename this body to ", submit: false },
       ];
     case "member":
@@ -122,6 +130,8 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
     case "part":
       return [
         { label: "New part from a description", prompt: "", submit: false },
+        { label: "Revolve a turned part", prompt: "Build a turned part by revolving its half section: ", submit: false },
+        { label: "Make a spring", prompt: "Make a compression spring: wire diameter 2 mm, coil diameter 20 mm, pitch 6 mm, 8 turns.", submit: false },
         { label: "Explain this part", prompt: "What is this part, and how is it built?", submit: true },
         { label: "Check it", prompt: "Does this part rebuild cleanly, and is anything fragile?", submit: true },
         { label: "Change it", prompt: "Change this part: ", submit: false },
@@ -155,10 +165,13 @@ Rules:
 - Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>") or the drawing ("drawing"); the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", or a side of the view "@left", "@right", "@top", "@bottom"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
+- Look before you write: listFaces and listEdges give a selector for every face and edge (never guess one), facePlane a face's frame, getSketch what holds a sketch, measureBetween any distance or angle, screenshot a picture. reference("<op>") gives an op's full section before you first use it.
+- Several related edits go in one batch call (a sketch, its extrude, its holes): all are kept or none, and the result tells you what each step made. sketchProfile draws a fully defined sketch; holes lays out a bolt circle or grid.
+- Building or reworking a whole part (the ask says so, or the part is empty): call plan first (the feature tree and the checks), build in batches, then verify with partSummary, measureBetween and a screenshot, and fix what disagrees (see strategy below).
 - Finish with one or two plain sentences for the user: what you changed and the result, or the answer, or why you stopped. No markdown headings.
 
-Document reference:
-${REFERENCE}`;
+Document reference (the core; the reference tool gives the rest):
+${coreReference()}`;
 
 const obj = (properties: Record<string, unknown>, required: string[]) => ({ type: "object" as const, properties, required, additionalProperties: false });
 const any = { type: "object", description: "JSON object" };
@@ -180,6 +193,31 @@ const READ_TOOLS: Anthropic.Tool[] = [
     input_schema: obj({ reason: { type: "string" } }, ["reason"]),
   },
 ];
+
+/** Looking at the part closely: every face and edge with its selector, distances, sketches, frames, pictures, the reference. */
+const INSPECT_TOOLS: Anthropic.Tool[] = [
+  ...["partSummary", "listFaces", "listEdges", "measureBetween", "getSketch", "facePlane", "listDatums"].map(anthropicTool),
+  {
+    name: "screenshot",
+    description:
+      "A picture of the part as it is now (your edits included): a named view (iso, front, back, right, left, top, bottom, isoBack) or a direction from the part toward the eye; highlight paints what a selector picks (zoom: true frames it). Use it to check a build looks right.",
+    input_schema: obj(
+      {
+        view: { type: "string" },
+        direction: { type: "array", items: { type: "number" } },
+        up: { type: "array", items: { type: "number" } },
+        highlight: { ...any, description: "Optional face or edge selector" },
+        zoom: { type: "boolean" },
+        hiddenEdges: { type: "boolean" },
+      },
+      [],
+    ),
+  },
+  anthropicTool("reference"),
+];
+
+/** Building: several edits as one transaction, and the helpers that write sketches and holes. */
+const BUILD_TOOLS: Anthropic.Tool[] = ["batch", "sketchProfile", "fullyDefine", "holes"].map(anthropicTool);
 
 const FEATURE_TOOLS: Anthropic.Tool[] = [
   {
@@ -297,24 +335,33 @@ const DRAWING_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS].map((t) => t.name));
+export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS, ...BUILD_TOOLS].map((t) => t.name));
+
+/** The write tools a batch step may name in the right-click agent. */
+export const BATCH_STEP_TOOLS: readonly string[] = [...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS].map((t) => t.name).concat(["sketchProfile", "fullyDefine", "holes"]);
+
+const PLAN_TOOL = anthropicTool("plan");
 
 const DRAWING_KINDS = new Set<string>(["view", "annotation", "drawing"]);
 
 /**
  * Explain-only asks get no write tools. An ask from the sheet gets the
  * drawing's, and only those. An ask that may change the whole part gets every
- * tool: the part's, the sketches', and the drawing's when there is one.
+ * tool: the part's, the sketches', and the drawing's when there is one. Every
+ * ask about the part can look at it closely (the inspection tools); a whole-part
+ * build also gets plan.
  */
-export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; drawing: boolean }): Anthropic.Tool[] {
-  if (mode === "explain") return wide?.part ? READ_TOOLS : READ_TOOLS.filter((t) => !kind || !DRAWING_KINDS.has(kind) || t.name === "escalate");
-  if (wide?.part) return [...READ_TOOLS, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
-  if (kind && DRAWING_KINDS.has(kind)) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS];
-  return [...READ_TOOLS, ...FEATURE_TOOLS, ...SKETCH_TOOLS];
+export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; drawing: boolean; build?: boolean }): Anthropic.Tool[] {
+  const drawingTarget = !!kind && DRAWING_KINDS.has(kind);
+  const read = [...READ_TOOLS, ...INSPECT_TOOLS];
+  if (mode === "explain") return wide?.part || !drawingTarget ? read : READ_TOOLS.filter((t) => t.name === "escalate");
+  if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
+  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS];
+  return [...read, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS];
 }
 
 /** The user turn: the packet, the screenshot when the prompt is visual, then the user's text, unchanged and last. */
-export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Uint8Array, wide = false): Anthropic.ContentBlockParam[] {
+export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Uint8Array, wide = false, build = false): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
   if (image) blocks.push({ type: "image", source: { type: "base64", media_type: "image/png", data: base64(image) } });
   const reach = wide
@@ -323,7 +370,7 @@ export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Ui
   const note =
     mode === "explain"
       ? `This is a question: answer it. You have no tools that change the part.${wide ? " The packet's part has the rest of it." : ""}`
-      : `Edits you make are a proposal the user accepts or discards.${reach}`;
+      : `Edits you make are a proposal the user accepts or discards.${reach}${build ? " This is a whole-part build: call plan first (the feature tree and the checks the request gives), build it in batch calls, then verify with partSummary, measureBetween and a screenshot before you finish." : ""}`;
   blocks.push({
     type: "text",
     text: `Context packet:\n${JSON.stringify(packet, null, 1)}\n\n${image ? "The image shows the part framed on the target, which is outlined in orange.\n" : ""}${note}\n\nThe user's request:\n${text}`,
@@ -331,7 +378,7 @@ export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Ui
   return blocks;
 }
 
-function base64(bytes: Uint8Array): string {
+export function base64(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);

@@ -134,7 +134,7 @@ test('"what is this face" returns text and does not write', async ({ page }) => 
 
   // An explain-only ask is offered no write tools, and gets one picture framed on the face.
   expect(sent).toHaveLength(1);
-  expect(sent[0].body.tools.map((t) => t.name)).toEqual(["measure", "getFeature", "escalate"]);
+  expect(sent[0].body.tools.map((t) => t.name)).toEqual(["measure", "getFeature", "escalate", "partSummary", "listFaces", "listEdges", "measureBetween", "getSketch", "facePlane", "listDatums", "screenshot", "reference"]);
   const content = sent[0].body.messages[0].content as { type: string }[];
   expect(content.filter((b) => b.type === "image")).toHaveLength(1);
   expect(packetOf(sent[0])).toMatchObject({ target: { kind: "face" }, writeScope: ["+"], selection: { type: "planar", normal: [0, 0, 1], pick: "largest" } });

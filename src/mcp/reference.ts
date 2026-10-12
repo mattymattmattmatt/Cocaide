@@ -3,6 +3,7 @@
 // documents itself: its def's `reference` text is part of REFERENCE.
 
 import { DOC_DEFS } from "../features/docIndex";
+import { examplesText, STRATEGY } from "./examples";
 
 export const INSTRUCTIONS = `Cocaide is parametric CAD. The part is one JSON feature document (.cocaide.json); every tool reads or edits it.
 
@@ -11,7 +12,8 @@ How edits work:
 - Each kept edit makes a new revision. undo and redo step through them.
 - writeScope (set by the host, shown by listFeatures) limits what you may change: a feature id lets you edit that feature, "<sketch>/*" that sketch's entities and constraints, "<sketch>/<entity>" one entity and its constraints, "+" lets you add features, "param:<name>" lets you set that parameter, "*" is everything. Features you add are yours to edit. A call outside the scope is rejected.
 
-Start with listFeatures. Read the resource cocaide://reference for every op, field and selector. Faces and edges are chosen by selector queries (e.g. the largest planar face with normal +Z), never by index; use measure with a selector, or screenshot with highlight, to check what a selector picks before you use it.
+Start with partSummary (or listFeatures). The reference tool gives one section of the document reference at a time (reference() lists them; the resource cocaide://reference is all of it): read an op's section before you first use it. Faces and edges are chosen by selector queries (e.g. the largest planar face with normal +Z), never by index: take them from listFaces and listEdges, which give a selector for each one; facePlane gives a flat face's frame for sketches and holes.
+Build with batch: a sketch (sketchProfile makes it fully defined), the feature made from it, its holes and patterns in one transaction, kept only if everything rebuilds; dryRun tries without keeping. For a whole part: plan first, build in batches, then verify with partSummary, measureBetween and screenshot.
 Units are millimetres. Numeric fields may be expressions over document parameters and sketch dimensions: "=plate_t * 2", "=sketch_1.width / 2 + 1in".`;
 
 export const REFERENCE = `# Cocaide document reference
@@ -388,7 +390,23 @@ A feature needing one face fails if the selector picks 0 or several.
   "onFace": <face selector>, "between": [<face selector>, <face selector>], "near": [x,y,z] }
 Every given filter must hold.
 
+${examplesText()}
+
+${STRATEGY}
+
 ## Tools
+Inspect (read only): partSummary - the part at a glance (features with status, bodies, volume, size, mass, holes).
+listFaces(type?, normal?, madeBy?, body?, near?) / listEdges(kind?, direction?, radius?, onFace?, madeBy?, corner?, near?) -
+  every face or edge with a selector that picks it alone, the feature that made it, a flat face's sketch frame, an edge's
+  corner (convex / concave / smooth) and, for several edges, one allSelector for them all.
+measureBetween(a, b) - distance, closest points, angle, axis distance between faces, edges, points, datums, sketch points.
+getSketch(id) - entities, constraints (index, name, label, measured), status (DOF, free points, conflicts), profile, frame.
+facePlane(face, offset?, points?) - a flat face's frame and the sketch plane spec that follows it. listDatums - planes, axes, points.
+reference(section?) - one section of this reference. plan(features, checks?) - the build plan and its checks (whole parts).
+Build: batch(commands, dryRun?) - several steps as ONE transaction (all or none, one undo step); dryRun reports without keeping.
+sketchProfile(sketch, plane?, shapes, dimensions?, datum?) - a fully defined sketch from a compact description.
+fullyDefine(sketch, datum?) - adds the missing relations and dimensions. holes(face, at, size?, kind?, ...) - holes on a bolt
+  circle, a grid, the face's corners or points (a hole and its pattern).
 listFeatures, getFeature(id) - read the document and each feature's rebuild status.
 addFeature(feature, index?) - id is optional (one is made from the op). updateFeature(id, patch) - shallow merge; null removes a field.
 deleteFeature(id), reorderFeature(id, index), suppressFeature(id, suppressed).

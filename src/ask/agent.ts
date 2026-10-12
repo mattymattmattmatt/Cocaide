@@ -18,14 +18,40 @@ import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 import type { AskModel } from "./model";
 import { composeFor } from "./drawingPacket";
 import { buildPacket, extrudeMeasurements, isDrawingTarget, partOutline, type AskTarget, type Packet } from "./packet";
-import { classify, isVisual, SYSTEM, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
+import { base64, BATCH_STEP_TOOLS, classify, isVisual, SYSTEM, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
+import type { Effort } from "./models";
+import { commandMade, expandTool, planBatch, toolCommand, type StepResult } from "./tools/batch";
+import { featureInfo, facePlane, getSketch, listDatums, listEdges, listFaces, measureBetween, partSummary, shotRequest } from "./tools/inspect";
+import { planReply, readPlan, runChecks, type Plan } from "./tools/plan";
+import { referenceSection, sectionIndex } from "../mcp/sections";
 
 const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "setView", "setAnnotation"]);
 
-/** Model turns per ask. */
-const MAX_TURNS = 8;
-/** Edit turns allowed after the first kept edit: one correction pass (spec 6.2). */
-const CORRECTIONS = 1;
+/** Tools that only look: calling one after the last edit counts as checking it. */
+const LOOK_TOOLS = new Set(["measure", "partSummary", "measureBetween", "screenshot", "listFaces", "listEdges", "getSketch"]);
+
+/**
+ * How much room an ask gets. Surgical (one thing, its own scope): a few turns
+ * and one correction pass (spec 6.2). Wide (the whole part may change from
+ * where the user pointed): more turns and edits. Build (a whole part, from
+ * empty space or a description): many turns, edits not counted, longer
+ * turns, at least medium effort, and a plan with a self-check at the end.
+ */
+export interface Budget {
+  kind: "surgical" | "wide" | "build";
+  /** Model turns per ask. */
+  maxTurns: number;
+  /** Edit turns allowed after the first kept edit. */
+  corrections: number;
+  maxTokens: number;
+  minEffort?: Effort;
+}
+
+export function budgetFor(opts: { target: AskTarget; reach?: AskReach; mode: AskMode; build?: boolean }): Budget {
+  if (opts.mode === "edit" && (opts.build ?? opts.target.kind === "part")) return { kind: "build", maxTurns: 40, corrections: 40, maxTokens: 16000, minEffort: "medium" };
+  if (opts.reach === "part") return { kind: "wide", maxTurns: 20, corrections: 8, maxTokens: 12000 };
+  return { kind: "surgical", maxTurns: 8, corrections: 1, maxTokens: 8000 };
+}
 
 export interface AskRequest {
   doc: RawDocument;
@@ -39,6 +65,11 @@ export interface AskRequest {
    * the user pointed, and the packet carries the part's outline beside it.
    */
   reach?: AskReach;
+  /**
+   * A whole-part build (a new part from a description): the build budget, a plan and a self-check. The default
+   * is a build for an edit from empty space; false keeps such an ask to one correction pass (the planner's fix-up).
+   */
+  build?: boolean;
   model: AskModel;
   kernel: KernelPort;
   signal?: AbortSignal;
@@ -127,16 +158,24 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
     packet.writeScope = ["*"];
     packet.part = partOutline(req.doc, sandbox.baseCheck);
   }
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image, wide) }];
-  const tools = toolsFor(mode, packet.target.kind, wide ? { part: true, drawing: isObject(req.doc.drawing) } : undefined);
+  const budget = budgetFor({ target: req.target, reach: req.reach, mode, build: req.build });
+  const build = budget.kind === "build";
+  const MAX_TURNS = budget.maxTurns;
+  const CORRECTIONS = budget.corrections;
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image, wide, build) }];
+  const whole = wide || req.target.kind === "part";
+  const tools = toolsFor(mode, packet.target.kind, whole ? { part: true, drawing: wide && isObject(req.doc.drawing), build } : undefined);
   const texts: string[] = [];
   let corrections = 0;
   let judged = false;
+  let reviewed = false;
+  /** Whether the agent has looked at the part since its last kept edit. */
+  let looked = true;
 
   try {
     for (let turn = 1; turn <= MAX_TURNS; turn++) {
       req.onEvent?.({ type: "thinking", turn });
-      const msg = await req.model.next({ system: SYSTEM, messages, tools }, req.signal);
+      const msg = await req.model.next({ system: SYSTEM, messages, tools, maxTokens: budget.maxTokens, ...(budget.minEffort ? { minEffort: budget.minEffort } : {}) }, req.signal);
       result.turns = turn;
       messages.push({ role: "assistant", content: msg.content });
       const said = msg.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text.trim()).filter(Boolean);
@@ -157,6 +196,15 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
           });
           continue;
         }
+        // A whole-part build checks itself once before it ends: the plan's checks on the result, and a look at it.
+        if (build && !reviewed && sandbox.commands.length && turn < MAX_TURNS) {
+          reviewed = true;
+          const review = sandbox.selfCheck(looked);
+          if (review) {
+            messages.push({ role: "user", content: [{ type: "text", text: review }] });
+            continue;
+          }
+        }
         break;
       }
       if (msg.stop_reason === "max_tokens") {
@@ -168,13 +216,25 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
       if (editsThisTurn && sandbox.commands.length > 0) corrections++;
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const u of uses) {
+        const before = sandbox.revision;
         const out =
           WRITE_TOOL_NAMES.has(u.name) && corrections > CORRECTIONS
-            ? { ok: false, error: "no more edits in this ask: one correction pass only. Stop and tell the user where it stands." }
+            ? { ok: false, error: CORRECTIONS === 1 ? "no more edits in this ask: one correction pass only. Stop and tell the user where it stands." : `no more edits in this ask (${CORRECTIONS} correction turns used). Stop and tell the user where it stands.` }
             : await sandbox.run(u.name, u.input);
+        if (sandbox.revision !== before) looked = false;
+        else if (out.ok && LOOK_TOOLS.has(u.name)) looked = true;
+        const png = out.png instanceof Uint8Array ? out.png : null;
+        if (png) delete out.png;
         result.calls.push({ tool: u.name, input: u.input, ok: out.ok, ...(out.error ? { error: out.error } : {}), revision: sandbox.revision, hash: sandbox.hash });
         req.onEvent?.({ type: "tool", name: u.name, ok: out.ok, ...(out.error ? { error: out.error } : {}) });
-        results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(out), ...(out.ok ? {} : { is_error: true }) });
+        // A screenshot comes back as the picture itself, beside what it shows.
+        const content: Anthropic.ToolResultBlockParam["content"] = png
+          ? [
+              { type: "text", text: JSON.stringify(out) },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: base64(png) } },
+            ]
+          : JSON.stringify(out);
+        results.push({ type: "tool_result", tool_use_id: u.id, content, ...(out.ok ? {} : { is_error: true }) });
       }
       messages.push({ role: "user", content: results });
       if (sandbox.escalated) break;
@@ -248,6 +308,8 @@ class Sandbox {
   private addedSketch: string | null = null;
   private addedFeature: string | null = null;
   private baseTopology: PartTopology | null | undefined;
+  /** A whole-part build's plan: its checks are run on the result before the ask ends. */
+  private plan: Plan | null = null;
 
   private constructor(
     readonly base: RawDocument,
@@ -299,17 +361,55 @@ class Sandbox {
       case "getFeature": {
         const id = String(a.id);
         if (!this.context().has(id)) return { ok: false, error: `${id} is outside this ask's context (the packet's target, parent and children)` };
-        const f = this.doc.features.find((x) => x.id === id);
-        return f ? { ok: true, feature: f } : { ok: false, error: `no feature "${id}"` };
+        const info = featureInfo(this.doc, this.check, id);
+        if (!info.ok) return { ok: false, error: `no feature "${id}"` };
+        const topo = await this.kernel.topology(this.doc);
+        const measured = localMeasurements(this.doc, id, topo);
+        return { ...info, ...(Object.keys(measured).length ? { measurements: measured } : {}) };
       }
       case "measure":
         return this.measure(a.selector);
+      case "partSummary":
+        return partSummary(this.doc, this.kernel);
+      case "listFaces":
+        return listFaces(this.doc, this.kernel, a);
+      case "listEdges":
+        return listEdges(this.doc, this.kernel, a);
+      case "measureBetween":
+        return measureBetween(this.doc, this.kernel, a);
+      case "getSketch":
+        return getSketch(this.doc, this.kernel, a);
+      case "facePlane":
+        return facePlane(this.doc, this.kernel, a);
+      case "listDatums":
+        return listDatums(this.doc, this.kernel);
+      case "screenshot":
+        return this.screenshot(a);
+      case "reference": {
+        const section = typeof a.section === "string" ? a.section : "";
+        const text = section ? referenceSection(section) : null;
+        return text ? { ok: true, section, text } : { ok: !section, ...(section ? { error: `no section "${section}"` } : {}), sections: sectionIndex() };
+      }
+      case "plan": {
+        const p = readPlan(a);
+        if (typeof p === "string") return { ok: false, error: p };
+        this.plan = p;
+        return planReply(p, this.check.measurements);
+      }
     }
     if (!WRITE_TOOL_NAMES.has(name)) return { ok: false, error: `unknown tool "${name}"` };
     if (this.mode === "explain") return { ok: false, error: "this ask is a question; it cannot change the part" };
-    const cmd = toCommand(name, a);
+    if (name === "batch") return this.batch(a.commands, a.dryRun === true);
+    if (name === "sketchProfile" || name === "fullyDefine" || name === "holes") {
+      const x = await expandTool(this.doc, this.kernel, name, a);
+      if (typeof x === "string") return { ok: false, error: x };
+      if (!x.commands.length) return { ok: true, ...x.info, changed: false };
+      const out = await this.editMany(x.commands);
+      return out.ok ? { ...x.info, ...out } : out;
+    }
+    const cmd = toolCommand(name, a);
     if (typeof cmd === "string") return { ok: false, error: cmd };
-    return this.edit(cmd);
+    return this.editMany([cmd]);
   }
 
   private async measure(selector: unknown): Promise<Outcome> {
@@ -324,49 +424,139 @@ class Sandbox {
       : { ok: true, matched: r.edges.length, edges: r.edges.slice(0, 20).map(edgeSummary) };
   }
 
-  private async edit(cmd: Command): Promise<Outcome> {
-    if (cmd.type === "addFeature") {
-      const f = cmd.feature as Record<string, unknown>;
-      if (f.id === undefined) f.id = nextFree(this.doc, String(f.op));
-      const problem = await this.addRule(cmd.feature as Record<string, unknown>);
-      if (problem) return { ok: false, error: problem };
+  private async screenshot(a: Record<string, unknown>): Promise<Outcome> {
+    const q = await shotRequest(this.doc, this.kernel, a);
+    if (typeof q === "string") return { ok: false, error: q };
+    try {
+      const shot = await this.kernel.screenshot(this.doc, { camera: q.camera, width: q.width, height: q.height, highlightFaces: q.highlightFaces, highlightEdges: q.highlightEdges, hiddenEdges: q.hiddenEdges, frame: q.frame });
+      return { ok: true, view: q.view, width: shot.width, height: shot.height, ...(q.highlightFaces || q.highlightEdges ? { highlighted: (q.highlightFaces ?? q.highlightEdges)!.length } : {}), png: shot.png };
+    } catch (e) {
+      return { ok: false, error: `screenshot: ${(e as Error).message}` };
     }
-    const applied = apply(this.doc, cmd, { writeScope: this.scope });
-    if (!applied.ok) return { ok: false, error: applied.error };
-    const next = await this.kernel.check(applied.doc);
+  }
+
+  /** The plan's checks on the part now, and whether it has been looked at: what a whole-part build is asked before it ends. */
+  selfCheck(looked: boolean): string | null {
+    const failing = this.plan ? runChecks(this.plan.checks, this.check.measurements).filter((c) => !c.ok) : [];
+    const lines: string[] = [];
+    if (failing.length) lines.push(`These checks from your plan fail on the part as it is now:\n${failing.map((c) => `- ${c.label}: expected ${c.expected}, measured ${c.actual ?? "nothing (no solid)"}`).join("\n")}\nFix the features so they pass (or, if the check itself was wrong, say why).`);
+    if (this.check.errors.length) lines.push(`The part does not rebuild cleanly: ${this.check.errors.join("; ")}.`);
+    // A new part is looked at before it is handed over; an edit's own result already measures what it changed.
+    if (!looked && this.base.features.length === 0) lines.push("You have not looked at the result since your last edit: check it with partSummary (and measureBetween for the sizes that matter) and a screenshot, compare it with the request, and fix what disagrees.");
+    return lines.length ? `Before you finish, a self-check of the build:\n\n${lines.join("\n\n")}` : null;
+  }
+
+  /** Several steps as one transaction: planned on a copy (scope and schema per command), rebuilt once, all kept or none. */
+  private async batch(steps: unknown, dryRun: boolean): Promise<Outcome> {
+    // The one-feature rule from a face or an edge applies to each feature the batch adds, as it would one by one.
+    const saved = { sketch: this.addedSketch, feature: this.addedFeature };
+    const planned = await planBatch(this.doc, this.kernel, steps, {
+      scope: this.scope,
+      allowed: BATCH_STEP_TOOLS,
+      check: async (cmd) => {
+        if (cmd.type !== "addFeature") return null;
+        const problem = await this.addRule(cmd.feature as Record<string, unknown>);
+        if (problem) return problem;
+        const f = cmd.feature as Record<string, unknown>;
+        if (f.op === "sketch") this.addedSketch = String(f.id);
+        else this.addedFeature = String(f.id);
+        return null;
+      },
+    });
+    const restore = () => {
+      this.addedSketch = saved.sketch;
+      this.addedFeature = saved.feature;
+    };
+    if (!planned.ok) {
+      restore();
+      return { ok: false, error: planned.error, results: planned.results };
+    }
+    const out = await this.editMany(planned.commands, { dryRun, results: planned.results });
+    if (!out.ok || dryRun) restore();
+    return out;
+  }
+
+  /**
+   * The transaction: apply the commands in order (write scope and schema
+   * checked), rebuild once, keep them all only if nothing newly fails. With
+   * dryRun the result is reported and nothing is kept.
+   */
+  private async editMany(cmds: Command[], opts: { dryRun?: boolean; results?: StepResult[] } = {}): Promise<Outcome> {
+    let doc = this.doc;
+    const made: Record<string, unknown>[] = [];
+    const addedHere: string[] = [];
+    for (const cmd of cmds) {
+      if (cmd.type === "addFeature") {
+        const f = cmd.feature as Record<string, unknown>;
+        if (f.id === undefined) f.id = nextFree(doc, String(f.op));
+        // A batch already checked its features against the rule.
+        if (!opts.results) {
+          const problem = await this.addRule(f);
+          if (problem) return { ok: false, error: problem };
+        }
+      }
+      // A feature an earlier command of this edit added is this ask's to change.
+      const applied = apply(doc, cmd, { writeScope: [...this.scope, ...addedHere] });
+      if (!applied.ok) return { ok: false, error: applied.error };
+      made.push(commandMade(doc, applied.doc, cmd));
+      if (cmd.type === "addFeature") addedHere.push(String((cmd.feature as Record<string, unknown>).id));
+      doc = applied.doc;
+    }
+    const what = cmds.length === 1 ? cmds[0].type : "batch";
+    const next = await this.kernel.check(doc);
     const broke = newFailures(this.check, next);
-    if (broke.length) return { ok: false, error: `${cmd.type} rolled back: ${broke.join("; ")}` };
+    if (broke.length) return { ok: false, error: `${what} rolled back: ${broke.join("; ")}`, ...(opts.results ? { results: opts.results } : {}) };
     // On the sheet: an annotation that can't be drawn (a member seen end-on, a hole not seen as a circle) is not kept.
     let drawn: Awaited<ReturnType<Sandbox["drawingNow"]>> = null;
-    if (DRAWING_COMMANDS.has(cmd.type)) {
+    if (cmds.some((c) => DRAWING_COMMANDS.has(c.type))) {
       const before = await this.drawingNow(this.doc, this.check);
-      drawn = await this.drawingNow(applied.doc, next);
+      drawn = await this.drawingNow(doc, next);
       const had = new Set((before?.state.sheet.annotations ?? []).filter((a) => a.problem).map((a) => `${a.id}: ${a.problem}`));
       const fresh = (drawn?.state.sheet.annotations ?? []).filter((a) => a.problem && !had.has(`${a.id}: ${a.problem}`));
-      if (fresh.length) return { ok: false, error: `${cmd.type} rolled back: ${fresh.map((a) => `${a.id}: ${a.problem}`).join("; ")}` };
+      if (fresh.length) return { ok: false, error: `${what} rolled back: ${fresh.map((a) => `${a.id}: ${a.problem}`).join("; ")}` };
     }
-    this.doc = applied.doc;
+    if (opts.dryRun) {
+      return {
+        ok: true,
+        dryRun: true,
+        kept: false,
+        volume: next.measurements ? round6(next.measurements.volume) : null,
+        ...(next.measurements?.boundingBox ? { size: next.measurements.boundingBox.size.map(round6) } : {}),
+        ...(next.errors.length ? { errors: next.errors } : {}),
+        ...(opts.results ? { results: opts.results } : {}),
+        note: "a dry run: it rebuilds as reported, and nothing was kept; run the batch without dryRun to keep it",
+      };
+    }
+    const before = this.doc;
+    this.doc = doc;
     this.check = next;
-    this.commands.push(cmd);
-    if (cmd.type === "addFeature") {
+    this.commands.push(...cmds);
+    for (const cmd of cmds) {
+      if (cmd.type !== "addFeature") continue;
       const f = cmd.feature as Record<string, unknown>;
       this.owned.add(String(f.id));
-      if (f.op === "sketch") this.addedSketch = String(f.id);
-      else this.addedFeature = String(f.id);
+      if (!opts.results) {
+        if (f.op === "sketch") this.addedSketch = String(f.id);
+        else this.addedFeature = String(f.id);
+      }
     }
     this.revision++;
     this.hash = await hashDoc(this.doc);
-    const touched = touchedIds(this.base, this.doc);
-    const topo = await this.kernel.topology(this.doc);
     if (drawn) {
       // What the drawing now reads, and what it still lacks.
-      const id = "id" in cmd ? cmd.id : null;
+      const last = cmds[cmds.length - 1];
+      const id = "id" in last ? last.id : null;
       const a = id ? drawn.state.sheet.annotations.find((x) => x.id === id) : undefined;
       return { ok: true, ...(a ? { annotation: { id: a.id, type: a.type, reads: a.text } } : {}), checks: drawn.checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.actual}`) };
     }
+    const topo = await this.kernel.topology(this.doc);
     const out: Outcome = { ok: true, volume: next.measurements ? round6(next.measurements.volume) : null };
     if (next.errors.length) out.errors = next.errors;
-    out.features = touched.filter((t) => !t.startsWith("drawing:")).map((id) => ({ id, ...localMeasurements(this.doc, id, topo) }));
+    if (opts.results) out.results = opts.results;
+    else if (cmds.length === 1) Object.assign(out, made[0]);
+    // What changed in this edit, measured: the features it touched.
+    const changed = touchedIds(before, this.doc).filter((t) => !t.startsWith("drawing:"));
+    out.features = changed.map((id) => ({ id, ...localMeasurements(this.doc, id, topo) }));
     return out;
   }
 
@@ -477,56 +667,6 @@ class Sandbox {
   }
 }
 
-function toCommand(name: string, a: Record<string, unknown>): Command | string {
-  const str = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
-  const obj = (k: string) => (isObject(a[k]) ? { ...(a[k] as Record<string, unknown>) } : null);
-  switch (name) {
-    case "updateFeature":
-      return obj("patch") ? { type: "updateFeature", id: str("id"), patch: obj("patch")! } : "updateFeature: patch must be an object";
-    case "addFeature":
-      return obj("feature") ? { type: "addFeature", feature: obj("feature")!, ...(typeof a.index === "number" ? { index: a.index } : {}) } : "addFeature: feature must be an object";
-    case "suppressFeature":
-      return { type: "suppressFeature", id: str("id"), suppressed: a.suppressed !== false };
-    case "deleteFeature":
-      return { type: "deleteFeature", id: str("id") };
-    case "setParameter":
-      return { type: "setParameter", name: str("name"), value: a.value as number | string };
-    case "renameParameter":
-      return { type: "renameParameter", from: str("from"), to: str("to") };
-    case "renameBody":
-      return { type: "renameBody", from: str("from"), to: str("to") };
-    case "setNode":
-      return { type: "setNode", name: str("name"), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null };
-    case "setWeld":
-      return { type: "setWeld", id: str("id"), weld: obj("weld") };
-    case "setBodyMaterial":
-      return { type: "setBodyMaterial", body: str("body"), material: obj("material") };
-    case "setAnnotation":
-      return { type: "setAnnotation", id: str("id"), annotation: obj("annotation") };
-    case "setView":
-      return { type: "setView", id: str("id"), view: obj("view") };
-    case "setSheet":
-      return obj("patch") ? { type: "setSheet", patch: obj("patch")! } : "setSheet: patch must be an object";
-    case "setDimension":
-      return { type: "setDimension", sketch: str("sketch"), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), value: a.value as number | string };
-    case "renameDimension":
-      return { type: "renameDimension", sketch: str("sketch"), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), to: str("to") };
-    case "setDriven":
-      return { type: "setDriven", sketch: str("sketch"), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), driven: a.driven !== false };
-    case "addEntity":
-      return obj("entity") ? { type: "addEntity", sketch: str("sketch"), entity: obj("entity")! } : "addEntity: entity must be an object";
-    case "updateEntity":
-      return obj("patch") ? { type: "updateEntity", sketch: str("sketch"), id: str("id"), patch: obj("patch")! } : "updateEntity: patch must be an object";
-    case "deleteEntity":
-      return { type: "deleteEntity", sketch: str("sketch"), id: str("id") };
-    case "addConstraint":
-      return obj("constraint") ? { type: "addConstraint", sketch: str("sketch"), constraint: obj("constraint")! } : "addConstraint: constraint must be an object";
-    case "deleteConstraint":
-      return { type: "deleteConstraint", sketch: str("sketch"), index: a.index as number };
-    default:
-      return `unknown tool "${name}"`;
-  }
-}
 
 /** After an edit: what the agent needs to check it did what was asked, for one touched feature. */
 function localMeasurements(doc: RawDocument, id: string, topo: PartTopology | null): Record<string, unknown> {
