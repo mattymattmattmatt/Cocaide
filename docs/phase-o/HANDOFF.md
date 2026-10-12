@@ -20,9 +20,13 @@ Done and pushed on ccr-851589c3-2dh2fn:
   closed, pointed ends, holes), rib; driven and named dimensions, expressions with functions/units/conditionals,
   arc length, min/max/centre conditions, linear diameter, intersection/coradial relations, status line, relations
   panel, conflict diagnosis with one-click fixes, Fully Define, typed values while drawing.
+- Wave 5: Hole Wizard (ISO sizes and fits, counterbore/countersink/tapped with thread callouts, several centres or a
+  sketch's points, through all, up to next); patterns of several features with skipped instances and directions from
+  edges/axes/faces; mirror of several features about a face; sketch-driven pattern; face selectors that survive the
+  face moving; rollback bar, measure, mass properties, section view, display styles, drag handles, command palette.
+- Every mention of a commercial CAD product was removed from the repo; the mouse scheme is now "standard".
 
 Next (briefs in docs/phase-o/briefs/, contract in DESIGN.md, APIs in api.md, wave list in waves.md):
-- Wave 5: Hole Wizard + pattern/mirror upgrades ∥ rollback, measure, mass props, section view, display styles, Instant3D.
 - Wave 6: AI tools ∥ ellipse and spline.
 - Wave 7: whole-diff review, README/roadmap, regenerate docs screenshots, final verification.
 

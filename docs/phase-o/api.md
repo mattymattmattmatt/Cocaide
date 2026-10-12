@@ -522,3 +522,80 @@ Open follow-ups from Wave 4:
 - A cycle that runs through document parameters (not just this sketch's dimensions) is still caught only on Finish, by the document command. While the sketcher is open, the document's parameters that depend on this sketch read their document values, not the draft values.
 - The applyRef rename-keeping fix is in SketchMode and is covered by tsc and the ask/context-menu e2e specs only. There is no dedicated unit test, because the logic is inline and uses SketchMode's constraintKey.
 - Items the engineer already listed are unchanged: merge points (optional); dangling detection for edge references only; Fully Define has no baseline/chain/ordinate scheme options; tests/model-tools.test.ts may have a small merge conflict with the sweep/loft/rib branch.
+
+## Wave 5 (merged): Hole Wizard, patterns, mirror, sketch-driven pattern + evaluate and view
+
+**Document fields**
+- `hole`:
+  - Where (exactly one): `center` | `centers: Vec2[]` | `points: "<sketch id>"`. `face` is optional only with `points`.
+  - What: `size` (`HOLE_SIZES` "M3".."M24"), `kind` (`HOLE_KINDS`: simple, counterbore, countersink, tapped), `fit` (`HOLE_FITS`: close, normal, loose).
+  - `depth`: number | "through" | "upToNext".
+  - `thread?: {pitch?, depth?}`. After validation it is the full `ThreadSpec` `{designation, major, pitch, class, depth}`.
+  - After validation `diameter` and `counterbore`/`countersink` always hold the numbers used.
+- `HoleRecord` gains `size?` and `thread?: ThreadSpec`.
+- `linearPattern`: `feature?` | `features?`, `direction?` | `along?: DatumRef`, `reverse?`, `direction2?` | `along2?`, `reverse2?`, `spacing2?`, `count2?`, `skip?: number[]`. Instance n = 1 + i + j*count; 1 is the original.
+- `circularPattern`: `features?`, `axis: {origin, direction} | {ref: DatumRef}`, `angle?` (spanned; equally spaced), `reverse?`, `skip?`.
+- `mirror`: `features?`; `plane` may be `{type: "ref", ref}`.
+- `sketchPattern` (registry op): `{feature? | features?, sketch, from?: Vec2, positions?: Vec2[], skip?}`.
+- `PlanarFaceSelector.rank?: number` (1 = outermost level along the normal, -1 = innermost; not with `offset`).
+
+**Exports**
+- `src/doc/types.ts`: `seedIds(f)`, `instanceNumbers(total, skip)`, `HOLE_DEPTHS`.
+- `src/features/hole/standards.ts`: `ISO_METRIC`, `HOLE_SIZES`, `HOLE_KINDS`, `HOLE_FITS`, `THREAD_CLASS`, `COUNTERSINK_ANGLE`, `screwSize`, `holeKind`, `holeSpec(HoleAsk): HoleSpec | string`, `threadCallout(ThreadSpec)`, `holeVolume(spec, depth)`, `defaultThreadDepth`.
+- `src/features/hole/wizard.ts` (pure editor rules): `holeAsk`, `wizardSpec`, `kindPatch`, `sizePatch`, `fitPatch`, `endPatch`, `blindDepth`, `holeEnd`, `calloutPreview`, `placement`, `centresOf`, `centresPatch`, `addCentrePatch`, `removeCentrePatch`, `setCentrePatch`, `clickedCentre(face, point, normal)`, `pointsPatch`, `holeCount(f, before)`, `pointSketches(before)`, `rememberedHole(features)`, `holeSummary`, `SIZE_OPTIONS`.
+- `src/features/linearPattern/instances.ts`: `patternRows(f)`, `placeRows(places, skip)`, `skipPatch(f, rows, n, on)`, `countPatch(f, key, v)`, `seedsOf(f)`, `seedsPatch(list)`.
+- `src/features/linearPattern/fields.tsx`: `seedsField(testId, label?)`, `InstanceChecks`, `skipField(rowsOf, testId?)`. Reusable by any op that repeats features.
+- `src/features/sketchPattern/ui.tsx`: `sketchPointList(before, id)`, `placesOf(f, before)`, `SKETCH_PATTERN_FIELDS`.
+- `src/features/sketchPattern/doc.ts`: `copyPlaces(places, from)`.
+- Kernel:
+  - `src/kernel/hole.ts`: `holeSites`, `materialAlong`, `holeLength`, `drillHoles`.
+  - `src/kernel/pattern.ts`: `patternInstances(oc, s, ctx, f)`, `offsetInstances`, `lineDirection`, `patternAxis`.
+  - `src/kernel/selectors.ts`: `rankLevels`, `rankWords`.
+  - `RebuildCtx.repeat(..., changed?)` accumulates over several seeds.
+  - `ValidateKit` gains `seeds(raw)` and `skip(raw, total)`.
+- Tools and AI:
+  - `src/ui/model/tools/pattern.ts`: `sketchPatternFeature(ctx)`.
+  - `src/ask/packet.ts`: `holePatternMeasurements(rf, before)`.
+  - `src/drafting/compose.ts`: `holeText(h, count?)`.
+
+**Test ids**
+- Hole editor:
+  - Type and numbers: `prop-hole-kind` group, `prop-hole-kind-<simple|counterbore|countersink|tapped>` (aria-pressed), `prop-hole-size`, `prop-hole-fit`, `prop-diameter`, `prop-counterbore-diameter`, `prop-counterbore-depth`, `prop-countersink-diameter`, `prop-countersink-angle`, `prop-thread`, `prop-thread-pitch`, `prop-thread-depth`. Each number has a `<id>-table` reset button.
+  - Depth and face: `prop-hole-end`, `prop-depth`, `prop-hole-face` (+ `-use`).
+  - Position: `prop-hole-position`, `prop-hole-points`, `prop-center-x` / `prop-center-y` (row i > 0: `prop-center-x-<i>` / `prop-center-y-<i>`), `prop-hole-centres`, `prop-center-remove-<i>`, `prop-hole-add-clicked`, `prop-hole-add`.
+  - Other: `prop-hole-callout`, `prop-hole-problem`, `prop-bodies` (+ `-<body>`).
+- Patterns:
+  - Seeds and direction: `prop-pattern-features` (+ `-<id>`), `prop-pattern-direction`, `prop-pattern-along` (+ `-use`, `-ref`), `prop-pattern-reverse`, `prop-pattern-direction2`, `prop-pattern-along2`, `prop-pattern-reverse2`, `prop-pattern-second`.
+  - Axis: `prop-pattern-axis-mode`, `prop-pattern-axis` (+ `-use`).
+  - Instances: `prop-pattern-skip` (+ `-<n>`).
+- Sketch-driven pattern: `prop-sketch-pattern-sketch`, `prop-sketch-pattern-places`, `prop-sketch-pattern-positions`, `prop-position-x-<i>`, `prop-position-y-<i>`, `prop-position-remove-<i>`, `prop-position-add`, `prop-sketch-pattern-from`.
+- Mirror: `prop-mirror-features` (+ `-<id>`); `prop-mirror-feature` is gone.
+- Tools: `tool-sketch-pattern` (in the `tool-pattern` menu).
+
+**Registry additions**
+- Icons: `holeSimple`, `holeCounterbore`, `holeCountersink`, `holeTapped`.
+- CSS (appended): `.hole-kinds`, `.hole-kind`, `.link-button`, `.inline-buttons`, `.hole-centres`, `.instance-checks`.
+- UI ops: `sketchPattern`, `hole`.
+
+Document: optional top-level "rollback": "<feature id>", naming the first feature below the bar. Command: { type: "setRollback"; before: string | null }; write-scope token "rollback" (or "+"). addFeature without an index inserts at the bar. deleteFeature moves the bar to the next feature or to the end; a rename in replaceFeature/updateFeature carries the bar's name with it. src/doc/rollback.ts exports rollbackId, rollbackIndex, isRolledBack, rolledBack(doc) (the truncated document the view builds; the same object when there is nothing to drop), rolledBackIds, rollbackAt, rollbackPrevious, rollbackNext. documentBefore() drops "rollback".
+Kernel: src/kernel/evaluate.ts exports minDistance(oc, solid, a: MeasureRef, b: MeasureRef): Closest and massProperties(oc, bodies, material, bodyMaterials): { bodies: MassBody[]; total }. MeasureRef is face, edge, point, plane or axis. Worker: request { type: "evaluate"; doc; query: EvaluateQuery }, served from the cached rebuild. KernelClient.distance(doc, a, b) and KernelClient.massProperties(doc).
+src/geom/inertia.ts: tensorFromMoments, combine, shifted, principal, boxInertia, momentAbout.
+ToolCtx.evaluate?(panel: "measure" | "mass" | "section"). Tools tool.measure, tool.massProperties and tool.section are on the Evaluate tab.
+New COMMANDS: palette (Ctrl+K), view.zoomSelection, view.previous, view.perspective, view.display.{shadedEdges,shaded,hiddenRemoved,hiddenVisible,wireframe}, select.{faces (X), edges (E), vertices (V), planes, clear}, rollback.{previous,next,end}.
+Viewport props: display/onDisplay, memoryKey, section, overlay, dims/onDimension, handles/onHandle/onHandleLabel, filter/onFilter, onBox, onDoubleClick. The e2e hook window.__cocaideViewport gains display(), section(), handlePoint(id) and pick(x, y).
+Test ids: rollback-bar, rollback-banner, rollback-banner-end, ctx-rollback-here/previous/next/end, measure-panel, measure-value-<key>, measure-label, mass-<key>, com-label, section-panel, section-plane, section-offset, section-flip, display-style, display-<style>, view-perspective, view-zoom-selection, view-previous, filter-<kind>, handle-label-<feature>:<key>, dim3d-<id>, dim-box-value, dims-chip, palette, palette-input, palette-item-<id>.
+
+Open follow-ups from Wave 5 (its two reviews were cut short by a usage limit after committing their fixes):
+- Item 4 (instance index variable i in seed expressions) not done: it needs the seed rebuilt once per instance, a deep kernel change. The reference says there is no instance variable.
+- Linear pattern 'up to reference' (spacing worked out from a reference) was optional and is not done.
+- Instances are skipped with tick boxes in Properties, not by clicking instances in the 3D view.
+- The tree chip for a hole at sketch points cannot show the hole count (UiOp.summary gets only the feature), so it reads 'M6 counterbore' rather than '3 × M6 counterbore'. The editor shows the count and the callout.
+- Hole tool: a sketch of points selected in the tree takes precedence over 'click a face, Hole' (the face is then used as the face the points drop onto). This is documented in the tool title.
+- Mirror tool: one flat face or plane selected together with a feature in the tree means 'mirror about it'. With nothing selected it still uses the part's middle YZ plane.
+- Hole sizes are ISO metric coarse only (M3 to M24). No inch sizes and no thread forms beyond metric 6H. The thread is cosmetic only (recorded, not modelled).
+- The 'Add a position' button in a sketch pattern's table steps on by the last spacing, which can land off the part. The rebuild then reports that copy's error.
+- Parent/child highlight comes from explicit references only (sketch, feature ids, expressions). Features that act on a face or edge selector (a hole on a face) do not show as children of the feature that made the face.
+- Drag handles cover blind or midplane extrude/cut depths (both directions) and offset-plane distances. Revolve angle, fillet radius and similar have none yet.
+- Box select runs only with the standard mouse scheme (the trackpad scheme's left drag turns the view). With no filter it selects faces only; planes are never boxed.
+- In the dimensions-on-model view the depth handle's label can overlap the depth dimension's label.
+- The full e2e run rewrites some docs/*.png screenshots (existing specs do it); those were reverted, so docs screenshots do not show the new UI yet.
