@@ -373,6 +373,31 @@ describe("sweep: the operations and model edges", () => {
     expect(apart.errors).toEqual(["wire: path.edges: the edges do not join end to end into one chain (1 of them are apart from the rest); pick edges that follow on from each other"]);
   });
 
+  it("a helix about a cylinder face or a circular edge runs along the cylinder, whichever way OCCT's axis points; reverse climbs back", () => {
+    // A thread groove: Ø2 wire centred on the r = 20 surface, pitch 5, 4 turns: half the wire (to first order) is cut away.
+    const L = 4 * Math.hypot(2 * PI * 20, 5);
+    const full = PI * 400 * 40;
+    const cut = (axis: Raw, h: Raw = {}) => built(doc(...CYL, { id: "thread", op: "sweep", circle: { diameter: 2 }, path: { helix: { axis, radius: 20, pitch: 5, turns: 4, ...h } }, operation: "remove" }));
+    const face = { face: { type: "cylindrical", radius: 20, pick: "largest" } };
+    const top = { edge: { type: "edge", onFace: { type: "planar", normal: [0, 0, 1], pick: "largest" }, pick: "all" } };
+    const bottom = { edge: { type: "edge", onFace: { type: "planar", normal: [0, 0, -1], pick: "largest" }, pick: "all" } };
+    for (const [axis, h, inside] of [
+      [face, {}, true],
+      [face, { reverse: true }, true],
+      [top, {}, true],
+      [bottom, {}, true],
+      [bottom, { reverse: true }, false],
+    ] as [Raw, Raw, boolean][]) {
+      const b = cut(axis, h);
+      expect(b.errors).toEqual([]);
+      const removed = full - b.volume;
+      // Inside the part all the way: about half the wire's volume. Reversed off the bottom edge it climbs away from
+      // the part and cuts only a nick where it starts.
+      if (inside) expect(removed / ((PI * L) / 2)).toBeCloseTo(1, 1);
+      else expect(removed).toBeLessThan(15);
+    }
+  });
+
   it("adds to the body by default, and leaves a seed a pattern can repeat", () => {
     const b = built(
       doc(...CYL, sketch("p", FRONT, [{ id: "l1", type: "line", start: [0, 40], end: [0, 60] }]), sketch("d", { type: "datum", normal: [0, 0, 1], origin: [0, 0, 40] }, [{ id: "c", type: "circle", center: [0, 0], radius: 3 }]), {

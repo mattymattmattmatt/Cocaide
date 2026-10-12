@@ -89,6 +89,33 @@ describe("Sweep tool", () => {
     expect(errorsOf({ ...d, features: [...d.features, f] })).toEqual([]);
   });
 
+  it("edges picked in the view win over an unused path sketch (unless that sketch is the selected feature)", () => {
+    const d = doc(...BOX, PATH);
+    const view = viewOf(oc, d);
+    const edge = view.edges.findIndex((e) => e.kind === "line" && Math.abs(e.direction![0]) > 0.99 && e.mid[2] > 19);
+    const picked = sweepFeature(harness(d, view, { selection: { faces: [], edges: [edge] } }).ctx, false) as Raw;
+    expect(Object.keys(picked.path as Raw)).toEqual(["edges"]);
+    const selected = sweepFeature(harness(d, view, { selection: { faces: [], edges: [edge] }, selected: PATH }).ctx, false) as Raw;
+    expect(selected.path).toEqual({ sketch: "path" });
+  });
+
+  it("two closed sketches: the smaller is the profile, swept round the longer (an O-ring round a ring), and that builds", () => {
+    const ring = sketch("ring", TOP, [{ id: "c", type: "circle", center: [0, 0], radius: 20 }]);
+    const section = sketch("section", FRONT, [{ id: "s", type: "circle", center: [20, 0], radius: 2 }]);
+    for (const d of [doc(ring, section), doc(section, ring)]) {
+      const f = sweepFeature(harness(d, null).ctx, false) as Raw;
+      expect(f).toEqual({ id: "sweep_1", op: "sweep", profile: "section", path: { sketch: "ring" } });
+      const r = rebuild({ ...d, features: [...d.features, f] }, oc);
+      try {
+        expect(r.errors).toEqual([]);
+        // Pappus: π·2² x 2π·20.
+        expect(r.measurements!.volume / (Math.PI * 4 * 2 * Math.PI * 20)).toBeCloseTo(1, 4);
+      } finally {
+        r.dispose();
+      }
+    }
+  });
+
   it("says what to draw when there is nothing to sweep", () => {
     expect(sweepFeature(harness(doc(), null).ctx, false)).toBe("Sketch the path (a chain of lines and arcs) and the profile on a plane across its start, or select model edges, then Sweep.");
   });

@@ -5,10 +5,11 @@
 // between squares on Top and on a plane feature 30 above it (ruled: the
 // frustum formula), its sections reordered; a rib in an L-bracket's corner
 // (triangle area x thickness), its thickness changed. Each result is looked
-// at in a screenshot when SHOTS_DIR is set.
+// at in a screenshot when SHOTS_DIR is set. A helix about a picked cylinder runs
+// along it (a thread grooved into a rod, from either end).
 
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, waitForRebuild } from "./helpers";
+import { commit, expectVolume, openApp, savedDocument, viewportClick, waitForRebuild } from "./helpers";
 
 const SHOTS = process.env.SHOTS_DIR;
 const PI = Math.PI;
@@ -144,4 +145,27 @@ test("adds a rib in an L-bracket's corner (triangle area x thickness) and thicke
   await expectVolume(page, shown(bracket + 800 * 5));
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/rib-gusset.png` });
+});
+
+test("Helix on a picked cylinder runs along it: as a swept cut it grooves a thread into the rod, and Reverse direction climbs from the other end", async ({ page }) => {
+  // A rod of radius 10, 30 tall, standing on Top.
+  await openDocument(page, [sketch("c", TOP, [{ id: "c1", type: "circle", center: [0, 0], radius: 10 }]), { id: "rod", op: "extrude", sketch: "c", distance: 30 }]);
+  const rod = PI * 100 * 30;
+  await viewportClick(page, [10, 0, 15]);
+  await page.getByTestId("tool-sweep-menu").click();
+  await page.getByTestId("tool-helix").click();
+  const f = await lastFeature(page);
+  expect(f).toMatchObject({ op: "sweep", circle: { diameter: 2 }, path: { helix: { radius: 10, pitch: 5, turns: 4 } } });
+  expect((f.path as { helix: Raw }).helix.axis).toHaveProperty("face");
+  await page.getByTestId("prop-operation").selectOption("remove");
+  // The wire's centre runs on the surface: about half of it, π·1²·L/2 with L = 4·√((20π)² + 5²), is cut from the rod
+  // (a little less, as the rod curves away; were the helix to climb off the rod's end, only a nick would go).
+  const half = (PI * 4 * Math.hypot(20 * PI, 5)) / 2;
+  await expect.poll(async () => Math.abs((rod - (await volumeOf(page))) / half - 1), { timeout: 60_000 }).toBeLessThan(0.1);
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/sweep-thread.png` });
+  await page.getByTestId("prop-helix-reverse").check();
+  expect(((await lastFeature(page)).path as { helix: Raw }).helix).toMatchObject({ reverse: true });
+  await expect.poll(async () => Math.abs((rod - (await volumeOf(page))) / half - 1), { timeout: 60_000 }).toBeLessThan(0.1);
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
 });

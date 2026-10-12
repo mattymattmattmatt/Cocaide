@@ -119,6 +119,7 @@ export const SWEEP_FIELDS: FieldSpec[] = [
   { kind: "number", key: "path.helix.turns", label: "Turns", min: 0, testId: "prop-helix-turns", when: hasHelix("turns") },
   { kind: "number", key: "path.helix.height", label: "Height", unit: "mm", min: 0, testId: "prop-helix-height", when: hasHelix("height") },
   { kind: "bool", key: "path.helix.leftHanded", label: "Left-handed", testId: "prop-helix-left", when: kind("helix") },
+  { kind: "bool", key: "path.helix.reverse", label: "Reverse direction", testId: "prop-helix-reverse", when: kind("helix"), hint: "Climb the other way along the axis" },
   { kind: "number", key: "path.helix.taper", label: "Taper", unit: "°", default: 0, omitDefault: true, testId: "prop-helix-taper", when: kind("helix"), hint: "Wider along the axis (negative: narrower): a conical spring" },
   { kind: "number", key: "path.helix.startAngle", label: "Start angle", unit: "°", default: 0, omitDefault: true, testId: "prop-helix-start", when: (f) => kind("helix")(f) && isCircle(f), hint: "Where it starts round the axis (a profile sketch sets this itself)" },
   { kind: "number", key: "twist", label: "Twist", unit: "°", default: 0, omitDefault: true, testId: "prop-twist", when: (f) => f.orientation !== "fixed", hint: "How far the profile turns about the path, start to end" },

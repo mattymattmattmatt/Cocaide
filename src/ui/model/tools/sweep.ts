@@ -6,9 +6,11 @@
 //   - Sweep: the path is the selected sketch when it is a chain of lines and
 //     arcs, else the newest unused such sketch, else model edges selected in
 //     the view; the profile is the selected (or newest unused) closed
-//     sketch, else a round section (a circle sweep: a pipe, a wire). A lone
-//     closed sketch with nothing else to sweep becomes the path of a pipe
-//     round it (an O-ring groove, as a swept cut).
+//     sketch, else a round section (a circle sweep: a pipe, a wire). Edges
+//     picked in the view win over a path sketch that is not selected. With
+//     only closed sketches, two of them are a profile swept round the longer
+//     (an O-ring round a ring), and a lone one is the path of a round section
+//     (an O-ring groove, as a swept cut).
 //   - Helix: a coil about the selected axis, cylinder or circular edge (its
 //     radius taken from it), else about Z; a round wire, or the selected
 //     closed sketch swept along it.
@@ -93,11 +95,13 @@ export function sweepFeature(ctx: ToolCtx, cut: boolean): Raw | string {
   const verb = cut ? "swept cut" : "sweep";
   let path: Raw | undefined;
   let length = 100;
-  const pathSketch = candidates(ctx, (s) => s.use === "path" && s.open)[0];
+  // Edges picked in the view are what the user means, unless a path sketch is the selected feature.
+  const pickedEdges = ctx.selection.edges.length > 0 && !!ctx.view;
+  const pathSketch = candidates(ctx, (s) => s.use === "path" && s.open).find((s) => !pickedEdges || s.id === ctx.selected?.id);
   if (pathSketch) {
     path = { sketch: pathSketch.id };
     length = chainLength(sketchChain(entitiesOf(pathSketch.f), "a path"));
-  } else if (ctx.selection.edges.length > 0 && ctx.view) {
+  } else if (pickedEdges && ctx.view) {
     const s = edgesSelectorFor(ctx.view.edges, ctx.view.faces, ctx.selection.edges);
     if (!s.ok) return s.error;
     path = { edges: Array.isArray(s.selector) ? s.selector : [s.selector] };
@@ -105,16 +109,26 @@ export function sweepFeature(ctx: ToolCtx, cut: boolean): Raw | string {
   }
   const profile = candidates(ctx, (s) => s.use === "profile", [pathSketch?.id])[0];
   if (!path) {
-    // Only closed sketches: the one there is (or the one selected) is the path of a round section.
-    const ring = candidates(ctx, (s) => s.use === "profile")[0];
-    if (!ring) return `Sketch the path (a chain of lines and arcs) and the profile on a plane across its start, or select model edges, then ${cut ? "Swept cut" : "Sweep"}.`;
-    const entities = entitiesOf(ring.f) as SketchEntity[];
-    try {
-      length = chainLength(sketchChain(entities, "a path"));
-    } catch {
-      return `Sketch "${ring.id}" is not one closed chain to sweep round: sketch the path (a chain of lines and arcs), then ${cut ? "Swept cut" : "Sweep"}.`;
+    // Only closed sketches. Two of them: the longer one closed chain is the path (an O-ring's ring), the other the
+    // profile swept round it; one: it is the path of a round section.
+    const closed = candidates(ctx, (s) => s.use === "profile");
+    if (closed.length === 0) return `Sketch the path (a chain of lines and arcs) and the profile on a plane across its start, or select model edges, then ${cut ? "Swept cut" : "Sweep"}.`;
+    const loopLength = (s: SketchInfo) => {
+      try {
+        return chainLength(sketchChain(entitiesOf(s.f) as SketchEntity[], "a path"));
+      } catch {
+        return null;
+      }
+    };
+    const pair = closed.slice(0, 2);
+    const lengths = pair.map(loopLength);
+    if (pair.length === 2 && (lengths[0] !== null || lengths[1] !== null)) {
+      const k = lengths[1] !== null && (lengths[0] === null || lengths[1] > lengths[0]) ? 1 : 0;
+      return withOperation(ctx, { id, op: "sweep", profile: pair[1 - k].id, path: { sketch: pair[k].id } }, cut, verb);
     }
-    return withOperation(ctx, { id, op: "sweep", circle: { diameter: diameterFor(length) }, path: { sketch: ring.id } }, cut, verb);
+    const ring = closed[0];
+    if (lengths[0] === null) return `Sketch "${ring.id}" is not one closed chain to sweep round: sketch the path (a chain of lines and arcs), then ${cut ? "Swept cut" : "Sweep"}.`;
+    return withOperation(ctx, { id, op: "sweep", circle: { diameter: diameterFor(lengths[0]) }, path: { sketch: ring.id } }, cut, verb);
   }
   const shape = profile ? { profile: profile.id } : { circle: { diameter: diameterFor(length) } };
   return withOperation(ctx, { id, op: "sweep", ...shape, path }, cut, verb);

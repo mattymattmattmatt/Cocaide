@@ -22,6 +22,8 @@ export interface HelixSpec {
   leftHanded?: boolean;
   /** Degrees: the radius grows (or, negative, shrinks) along the axis at this angle (a conical spring). */
   taper?: number;
+  /** Climb the other way along the axis (about a cylinder: from its other end). */
+  reverse?: boolean;
   /** Degrees about the axis where it starts, from the axis frame's x direction; only for a circle sweep (a profile sketch sets the start itself). */
   startAngle?: number;
 }

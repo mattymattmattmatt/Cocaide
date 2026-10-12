@@ -6,7 +6,7 @@
 // turns about the corner); a twist turns the profile with an auxiliary spine.
 
 import type { TopoDS_Shape, TopoDS_Wire } from "replicad-opencascadejs";
-import type { Vec3 } from "../../doc/types";
+import type { DatumRef, Vec3 } from "../../doc/types";
 import { to3D } from "../../geom/frame";
 import { sampleSeg } from "../../geom/profile";
 import { dot3, len3, normalize3, roundTo, scale3, sub3, add3, cross3 } from "../../geom/vec";
@@ -16,7 +16,7 @@ import { scoped, type Scope } from "../../kernel/oc";
 import { applyOperation } from "../../kernel/operation";
 import { boolean, compoundOf, dir, loopWire, noClosedProfile, OpError, pnt, profileFaces, type SketchProfile } from "../../kernel/ops";
 import { chainEdges, edgeStarts, helixEdge, orderEdges, pathOf, reversedPath, rotatedPath, twistSpine, type PathShape } from "../../kernel/paths";
-import { edgeSelectionError, selectEdges } from "../../kernel/selectors";
+import { edgeSelectionError, selectEdges, selectFaces } from "../../kernel/selectors";
 import type { KernelOp, RebuildCtx } from "../kernelDefs";
 import { ChainError, ON_PLANE, sketchChain, startOnPlane } from "./chain";
 import type { SweepFeature } from "./doc";
@@ -128,7 +128,7 @@ function buildPath(ctx: RebuildCtx, s: Scope, f: SweepFeature, place: ProfilePla
   }
   // A helix: with a profile, it starts at the profile (its centre's angle and height about the axis).
   const h = f.path.helix;
-  const axis = resolveDatum(ctx, h.axis, "axis", "path.helix.axis");
+  const axis = helixRun(ctx, s, h.axis, resolveDatum(ctx, h.axis, "axis", "path.helix.axis"), !!h.reverse);
   const numbers = helixNumbers(h);
   if (typeof numbers === "string") throw new OpError(`path.helix: ${numbers}`);
   let frame = axisFrame(axis.origin, axis.direction, h.startAngle ?? 0);
@@ -150,6 +150,43 @@ function buildPath(ctx: RebuildCtx, s: Scope, f: SweepFeature, place: ProfilePla
     }
   }
   return { path, helixAxis: { origin: frame.origin, axis: frame.z } };
+}
+
+/**
+ * Where a helix starts and which way it climbs. About a default axis or an
+ * axis feature: from the axis's point along its direction. About a cylinder:
+ * from the end of the cylinder the axis direction leaves from, so the coil runs
+ * along the face (a thread down a shaft, a spring round a boss). About a
+ * circular edge: from the edge's centre, into the round face (or faces) the
+ * edge bounds. `reverse` climbs the other way (from the cylinder's other end).
+ */
+function helixRun(ctx: RebuildCtx, s: Scope, ref: DatumRef, axis: { origin: Vec3; direction: Vec3 }, reverse: boolean): { origin: Vec3; direction: Vec3 } {
+  let origin = axis.origin;
+  let direction = axis.direction;
+  // Where the centres of the round edges of these faces lie along the axis (mm from its point).
+  const along = (part: ReturnType<RebuildCtx["part"]>, faces: number[]) =>
+    part.edgeInfos.filter((e) => e.kind === "circle" && e.center && e.faces.some((i) => faces.includes(i))).map((e) => dot3(sub3(e.center!, origin), direction));
+  if ("face" in ref || "edge" in ref) {
+    const part = ctx.part(s, true);
+    if ("face" in ref) {
+      const face = selectFaces(part.faceInfos, ref.face).matches[0];
+      const ts = face?.type === "cylinder" ? along(part, [face.index]) : [];
+      if (ts.length > 0) {
+        const [lo, hi] = [Math.min(...ts), Math.max(...ts)];
+        origin = add3(origin, scale3(direction, reverse ? hi : lo));
+        return { origin, direction: reverse ? scale3(direction, -1) : direction };
+      }
+    } else {
+      const found = selectEdges(part.edgeInfos, part.faceInfos, ref.edge, "path.helix.axis.edge").matches[0];
+      const round = found ? found.faces.filter((i) => part.faceInfos[i]?.type === "cylinder" || part.faceInfos[i]?.type === "cone") : [];
+      const ts = along(part, round).filter((t) => Math.abs(t) > 1e-6);
+      if (ts.length > 0) {
+        const far = ts.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a));
+        if (far < 0) direction = scale3(direction, -1);
+      }
+    }
+  }
+  return { origin, direction: reverse ? scale3(direction, -1) : direction };
 }
 
 /** How far the profile reaches along a direction (its outer loops, arcs sampled). */

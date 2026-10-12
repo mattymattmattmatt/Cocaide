@@ -128,9 +128,12 @@ section placed square to the path at its start (no sketch needed: pipes, wires, 
 - { "edges": [<edge selector>, ...] }: model edges joined end to end into one chain (same rule for the profile's plane).
 - { "helix": { "axis": <DatumRef axis: { "datum": "Z" }, an axis feature, a straight or circular edge, a cylinder face>,
   "radius": mm, and two of "pitch" (mm per turn), "turns", "height" (mm along the axis), "leftHanded": true (optional),
+  "reverse": true (optional: climb the other way),
   "taper": degrees (optional: a conical helix, its radius growing along the axis; negative shrinks),
   "startAngle": degrees (circle sweeps only) } }: an exact helix starting at the axis point (for { "datum": "Z" } the
-  origin; for a circular edge its centre) and climbing along the axis direction. With "circle" it starts at "startAngle"
+  origin) and climbing along the axis direction; about a cylinder face it starts at one end of the cylinder and climbs
+  along it (reverse: from the other end); about a circular edge it starts at the edge's centre and climbs into the round
+  face the edge bounds (reverse: away from it). With "circle" it starts at "startAngle"
   from the axis frame's x (world X, or world Y for an axis along X). With a profile sketch it starts AT THE PROFILE: at its
   centre's angle and height about the axis (sketch the profile on a plane through the axis, e.g. Front for the Z axis,
   at x = radius). Spring volume = π/4 x d² x turns x sqrt((2π x radius)² + pitch²).
@@ -178,7 +181,7 @@ function validatePath(raw: Raw, c: Parameters<FeatureDef["validate"]>[1], x: Par
   }
   const at = "path.helix";
   const before = c.errors.length;
-  c.keys(h, at, ["axis", "radius", "pitch", "turns", "height", "leftHanded", "taper", "startAngle"]);
+  c.keys(h, at, ["axis", "radius", "pitch", "turns", "height", "leftHanded", "reverse", "taper", "startAngle"]);
   let axis: DatumRef | null = null;
   if (h.axis === undefined) c.fail(`${at}.axis`, 'needed: the axis it winds about ({ "datum": "Z" }, an axis feature, a straight or circular edge, a cylinder)');
   else axis = x.datumRef(h.axis, `${at}.axis`, "axis");
@@ -187,6 +190,7 @@ function validatePath(raw: Raw, c: Parameters<FeatureDef["validate"]>[1], x: Par
   const turns = h.turns === undefined ? undefined : c.num(h, "turns", at, { positive: true });
   const height = h.height === undefined ? undefined : c.num(h, "height", at, { positive: true });
   const leftHanded = x.bool(h, "leftHanded", at);
+  const reverse = x.bool(h, "reverse", at);
   const taper = h.taper === undefined ? undefined : c.num(h, "taper", at, {});
   const startAngle = h.startAngle === undefined ? undefined : c.num(h, "startAngle", at, {});
   if (taper !== undefined && Math.abs(taper) >= MAX_TAPER) c.fail(`${at}.taper`, `must be less than ${MAX_TAPER}° either way (got ${taper})`);
@@ -209,6 +213,7 @@ function validatePath(raw: Raw, c: Parameters<FeatureDef["validate"]>[1], x: Par
       ...(turns !== undefined ? { turns } : {}),
       ...(height !== undefined ? { height } : {}),
       ...(leftHanded ? { leftHanded } : {}),
+      ...(reverse ? { reverse } : {}),
       ...(taper ? { taper } : {}),
       ...(startAngle !== undefined ? { startAngle } : {}),
     },
