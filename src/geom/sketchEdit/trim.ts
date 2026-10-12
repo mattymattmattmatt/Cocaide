@@ -19,6 +19,7 @@
 // into lines and arcs first.
 
 import type { Constraint, PairConstraint, SketchEntity, Vec2 } from "../../doc/types";
+import { removeEntities } from "../../doc/sketch";
 import { constraintTargets } from "../axes";
 import { dist2 } from "../vec";
 import { arcPiece, carrierMeet, curveOf, curvesOf, distanceTo, lengthOf, meet, paramOf, pointAt, sameCarrier, TOL, within, type Curve } from "./curve";
@@ -222,13 +223,9 @@ export function trimAt(state: SketchState, id: string, p: Vec2): Edit | string {
   return { ...r.state, soft: [...landing(state.entities, `${id}.end`, a), ...landing(state.entities, `${r.pieces[1]}.start`, b)], made: r.pieces };
 }
 
+/** The entity deleted with its relations, as Delete does it (an offset relation only loses that entity's pair). */
 function removed(state: SketchState, id: string, note: string): Edit {
-  return {
-    entities: state.entities.filter((e) => e.id !== id),
-    constraints: state.constraints.filter((k) => !constraintTargets(k).includes(id)),
-    made: [],
-    note,
-  };
+  return { ...removeEntities(state.entities, state.constraints, [id]), made: [], note };
 }
 
 /** Which entities a stroke from a to b crosses, and where, in the order the stroke meets them. */

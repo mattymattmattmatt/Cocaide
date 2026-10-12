@@ -128,8 +128,8 @@ export function checkSketch(entities: SketchEntity[], opts: { gap?: number } = {
         const endB = isEndOf(B.c, p);
         if (endA && endB) continue; // joined end to end: a corner
         if (endA || endB) {
-          const [e, other] = endA ? [A.id, B.id] : [B.id, A.id];
-          problems.push({ kind: "touch", text: `${e}'s end touches ${other} part way along`, at: p, entities: [e, other] });
+          const [e, other, end] = endA ? [A.id, B.id, endA] : [B.id, A.id, endB];
+          problems.push({ kind: "touch", text: `${e}'s ${end} touches ${other} part way along`, at: p, entities: [e, other] });
         } else problems.push({ kind: "cross", text: `${A.id} and ${B.id} cross`, at: p, entities: [A.id, B.id] });
       }
     }
@@ -137,15 +137,21 @@ export function checkSketch(entities: SketchEntity[], opts: { gap?: number } = {
   return { problems: dedupe(problems), loops: loopsOf(rest) };
 }
 
-/** Is p one of the curve's ends (a line's or an arc's)? */
-function isEndOf(c: Curve, p: Vec2): boolean {
-  if (c.kind === "line") return dist2(p, c.a) <= 10 * TOL || dist2(p, c.b) <= 10 * TOL;
-  if (c.kind === "arc") {
-    const a: Vec2 = [c.c[0] + c.r * Math.cos(c.start), c.c[1] + c.r * Math.sin(c.start)];
-    const b: Vec2 = [c.c[0] + c.r * Math.cos(c.start + c.sweep), c.c[1] + c.r * Math.sin(c.start + c.sweep)];
-    return dist2(p, a) <= 10 * TOL || dist2(p, b) <= 10 * TOL;
-  }
-  return false;
+/**
+ * Which of the curve's ends p is (a line's or an arc's): "start" or "end" as
+ * its entity names them, "end" for a rectangle's or slot's side; null when p is not an end.
+ */
+function isEndOf(c: Curve, p: Vec2): "start" | "end" | null {
+  let a: Vec2;
+  let b: Vec2;
+  if (c.kind === "line") [a, b] = [c.a, c.b];
+  else if (c.kind === "arc") {
+    a = [c.c[0] + c.r * Math.cos(c.start), c.c[1] + c.r * Math.sin(c.start)];
+    b = [c.c[0] + c.r * Math.cos(c.start + c.sweep), c.c[1] + c.r * Math.sin(c.start + c.sweep)];
+  } else return null;
+  if (dist2(p, a) <= 10 * TOL) return "start";
+  if (dist2(p, b) <= 10 * TOL) return "end";
+  return null;
 }
 
 /** Where two curves on one carrier share more than a point, if they do: a point in the shared part. */

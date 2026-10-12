@@ -45,6 +45,7 @@ export const tools: EditToolDef[] = [
         label: "Cap ends",
         title: "An open chain offset both ways: close its ends",
         default: "none",
+        shown: (o) => o.both === "on",
         choices: [
           { value: "none", label: "Open", title: "Leave the ends open" },
           { value: "arcs", label: "Arcs", title: "Close each end with an arc round it" },

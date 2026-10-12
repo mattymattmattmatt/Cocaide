@@ -146,10 +146,21 @@ export function ToolStrip({
 }
 
 /** A tool's options, changed on the spot: numbers with − and +, choices as pressed buttons, toggles as tick boxes. */
-export function OptionControls({ options, values, onOption }: { options: ToolOption[]; values: ToolOptions; onOption(key: string, value: number | string): void }) {
+export function OptionControls({
+  options,
+  values,
+  onOption,
+  choiceLabels,
+}: {
+  options: ToolOption[];
+  values: ToolOptions;
+  onOption(key: string, value: number | string): void;
+  /** Name each group of choices ("Cap ends: Open Arcs Lines"), where the choices alone don't say what they choose. */
+  choiceLabels?: boolean;
+}) {
   return (
     <>
-      {options.map((o) =>
+      {options.filter((o) => o.shown?.(values) ?? true).map((o) =>
         o.kind === "number" ? (
           <label key={o.key} className="strip-option" title={o.title}>
             {o.label}
@@ -176,6 +187,7 @@ export function OptionControls({ options, values, onOption }: { options: ToolOpt
           </label>
         ) : (
           <span key={o.key} className="strip-option" title={o.title} role="radiogroup" aria-label={o.label}>
+            {choiceLabels && <span className="strip-option-label">{o.label}</span>}
             {o.choices.map((c) => (
               <button
                 key={c.value}

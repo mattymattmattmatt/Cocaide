@@ -235,7 +235,8 @@ export function renamed(k: Constraint, ids: Map<string, string>): Constraint {
   if (typeof out.point === "string") out.point = point(out.point);
   if (typeof out.entity === "string") out.entity = id(out.entity);
   if (typeof out.line === "string") out.line = id(out.line);
-  if (Array.isArray(out.entities)) out.entities = (out.entities as string[]).map(id);
+  // An offset relation's bases may be points ("m1.end": a round corner's centre).
+  if (Array.isArray(out.entities)) out.entities = (out.entities as string[]).map((x) => (k.type === "offset" && x.includes(".") ? point(x) : id(x)));
   return out as unknown as Constraint;
 }
 

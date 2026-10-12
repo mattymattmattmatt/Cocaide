@@ -62,10 +62,15 @@ function transformed(e: SketchEntity, f: (p: Vec2) => Vec2, k: number, id: strin
   }
 }
 
-/** A dimension among scaled entities scales with them (angles don't). */
+/**
+ * A dimension among scaled entities scales with them (angles don't). One
+ * typed as an expression ("=width") becomes the plain number it scales to:
+ * kept, the expression would put the old size back when the sketch is saved.
+ */
 function scaled(k: Constraint, factor: number): Constraint {
   if (factor === 1 || !("value" in k) || k.type === "angle") return k;
-  return { ...k, value: k.value * factor } as Constraint;
+  const { expr: _expr, ...rest } = k as Constraint & { expr?: string };
+  return { ...rest, value: k.value * factor } as Constraint;
 }
 
 /** The picked entities moved, turned or scaled (or copies of them, with `copy`). */

@@ -258,9 +258,13 @@ function chamferOne(state: SketchState, k: Corner, mode: ChamferMode): { state: 
         { type: "pointOn", point: `${v.id}.at`, entity: a.id },
         { type: "pointOn", point: `${v.id}.at`, entity: b.id },
       ];
-  const chamfer: SketchEntity = { id: lineId, type: "line", start: pa, end: pb };
+  // The angle dimension reads as typed: the chamfer runs whichever way makes its angle to the first line the one asked for (not 180° less it).
+  const angleTo = (from: Vec2, to: Vec2) => (Math.acos(Math.max(-1, Math.min(1, dot2(unit(sub2(to, from)), unit(sub2(a.end, a.start)))))) * 180) / Math.PI;
+  const flip = mode.kind === "angle" && Math.abs(angleTo(pb, pa) - mode.angle) < Math.abs(angleTo(pa, pb) - mode.angle);
+  const [startEnd, endEnd] = flip ? (["end", "start"] as const) : (["start", "end"] as const);
+  const chamfer: SketchEntity = { id: lineId, type: "line", start: flip ? pb : pa, end: flip ? pa : pb };
   const entities = [...replaced(state.entities, { ...a, [k.aEnd]: pa }, { ...b, [k.bEnd]: pb }), chamfer, v];
-  const between = (Math.acos(Math.max(-1, Math.min(1, dot2(unit(sub2(pb, pa)), unit(sub2(a.end, a.start)))))) * 180) / Math.PI;
+  const between = flip ? angleTo(pb, pa) : angleTo(pa, pb);
   const dims: Constraint[] =
     mode.kind === "distances"
       ? [
@@ -272,8 +276,8 @@ function chamferOne(state: SketchState, k: Corner, mode: ChamferMode): { state: 
           { type: "angle", entities: [lineId, a.id], value: Math.round(between * 1e9) / 1e9 },
         ];
   const hard: Constraint[] = [
-    { type: "coincident", points: [`${a.id}.${k.aEnd}`, `${lineId}.start`] },
-    { type: "coincident", points: [`${b.id}.${k.bEnd}`, `${lineId}.end`] },
+    { type: "coincident", points: [`${a.id}.${k.aEnd}`, `${lineId}.${startEnd}`] },
+    { type: "coincident", points: [`${b.id}.${k.bEnd}`, `${lineId}.${endEnd}`] },
     ...holdSharp,
     ...dims,
   ];

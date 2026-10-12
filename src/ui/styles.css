@@ -1200,3 +1200,4 @@ svg.icon { flex: none; display: block; }
 .sketch-toolbar .flyout.small { position: relative; }
 .sketch-toolbar .flyout.small > .tool.small { width: 36px; min-width: 36px; padding: 0 10px 0 0; }
 .sketch-toolbar .flyout.small .flyout-arrow { right: 1px; bottom: 3px; width: 11px; height: 17px; }
+.sketch-tool-strip .strip-option-label { color: var(--muted); margin-right: 2px; }

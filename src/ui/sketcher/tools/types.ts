@@ -59,7 +59,7 @@ export interface ToolContext {
 export type OptionValue = number | string;
 export type ToolOptions = Record<string, OptionValue>;
 
-export type ToolOption =
+export type ToolOption = (
   | {
       kind: "number";
       key: string;
@@ -76,7 +76,11 @@ export type ToolOption =
     }
   | { kind: "choice"; key: string; label: string; title: string; default: string; choices: { value: string; label: string; title: string }[] }
   /** A tick box: its value is "on" or "off". */
-  | { kind: "toggle"; key: string; label: string; title: string; default: "on" | "off" };
+  | { kind: "toggle"; key: string; label: string; title: string; default: "on" | "off" }
+) & {
+  /** Whether the strip shows it with the other options as they are (Distance 2 only for unequal distances); always when absent. */
+  shown?(options: ToolOptions): boolean;
+};
 
 /** A toolbar flyout: tools that share one button, which shows and runs the one used last (Line ▾: Line, Centreline, Midpoint line). */
 export interface FlyoutDef {

@@ -922,7 +922,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             <span className="strip-prompt" title={editTool.prompt(editPicks, toolOptions)} data-testid="tool-prompt">
               {editTool.prompt(editPicks, toolOptions)}
             </span>
-            <OptionControls options={editTool.options ?? []} values={toolOptions} onOption={setOption} />
+            <OptionControls options={editTool.options ?? []} values={toolOptions} onOption={setOption} choiceLabels />
             {editTool.kind === "collect" && (
               <span className="strip-option strip-actions">
                 {editTool.name === "mirror" && (
