@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { Constraint, SketchEntity, Vec2 } from "../src/doc/types";
 import { filterRelations, sketchHealth } from "../src/ui/sketcher/status";
-import { readValue, shownValue, spinValue } from "../src/ui/sketcher/modify";
+import { readValue, shownValue, spinValue, unitMismatch } from "../src/ui/sketcher/modify";
 import { draftCycle, draftParameters, measureDriven, reexpress, withOldNames } from "../src/ui/sketcher/dimdraft";
 import { describeConstraint, dropKind, dropMatters, smartDimension } from "../src/ui/sketcher/draft";
 import { CIRCLE_TYPED, LINE_TYPED, rectTyped } from "../src/ui/sketcher/tools/typed";
@@ -106,6 +106,19 @@ describe("the Modify box reads what is typed", () => {
     expect(!bad.ok && bad.error).toMatch(/sqrt\(/);
     const unknown = readValue("=nope * 2", params);
     expect(!unknown.ok && unknown.error).toMatch(/nope/);
+  });
+
+  it("refuses a unit of the other kind: an angle on a length, a length on an angle", () => {
+    expect(readValue("30deg", params, "length")).toEqual({ ok: false, error: "deg is an angle unit; this is a length (mm, cm, m, in, ft)" });
+    expect(readValue("1in", params, "angle")).toEqual({ ok: false, error: "in is a length unit; this is an angle (deg, rad)" });
+    expect(readValue("=2 * 15°", params, "length").ok).toBe(false);
+    // The right kind, and names that merely share a unit's letters, are fine.
+    expect(readValue("30deg", params, "angle")).toEqual({ ok: true, value: 30 });
+    expect(readValue("1in + 2mm", params, "length")).toEqual({ ok: true, value: 27.4 });
+    expect(readValue("=t * 2", { ...params, m: 3 }, "angle")).toEqual({ ok: true, value: 12, expr: "=t * 2" });
+    expect(unitMismatch("=2*m", "angle")).toBeNull();
+    // Nothing worked out to show for a mistaken unit.
+    expect(shownValue("30deg", params, "mm")).toBeNull();
   });
 
   it("shows what a calculation comes to, nothing for a plain number", () => {

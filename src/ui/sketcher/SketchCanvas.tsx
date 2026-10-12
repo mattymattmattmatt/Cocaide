@@ -503,7 +503,7 @@ export function SketchCanvas(props: Props) {
         out.push(undefined);
         continue;
       }
-      const r = readValue(text, params);
+      const r = readValue(text, params, def?.typed?.fields[i]?.unit === "°" ? "angle" : "length");
       if (!r.ok) return `${def?.typed?.fields[i]?.label ?? "Value"}: ${r.error}`;
       out.push(r.value);
     }

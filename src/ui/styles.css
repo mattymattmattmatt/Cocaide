@@ -1273,3 +1273,8 @@ svg.icon { flex: none; display: block; }
 .sketch-panel .fully-define-button { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
 /* Smart Dimension being dropped: what it is where the pointer is (horizontal, vertical, aligned; angle or its supplement). */
 .sketch-canvas .infer.dropping text { fill: var(--accent); font-family: var(--mono); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+/* Settings → Units: the Modify box's spin increments. */
+.spin-steps { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px 4px; margin: 12px 0 0; display: grid; gap: 6px; }
+.spin-steps legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.spin-steps .row { display: flex; align-items: center; gap: 6px; }
+.spin-steps input { width: 90px; }

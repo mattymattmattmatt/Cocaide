@@ -14,7 +14,7 @@ import { DIMENSION_NAME, dimensionNames } from "../../doc/dimensions";
 import { renameIn } from "../../doc/expr";
 import { draftCycle, draftParameters, measureDriven, reexpress, withOldNames, type Dimension } from "./dimdraft";
 import { filterRelations, sketchHealth, type Fix, type RelationFilter } from "./status";
-import { loadSpin, readValue, shownValue, spinValue } from "./modify";
+import { loadSpin, readValue, shownValue, spinValue, type ValueKind } from "./modify";
 import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
 import { constraintSentence, describeConstraint, dropMatters, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type SmartOptions, type Suggestion } from "./draft";
@@ -1609,8 +1609,8 @@ function ModifyBox({
   };
   const spin = (dir: 1 | -1) => {
     if (driven) return;
-    const next = spinValue(text, dir, step, params, 0);
-    if (next === null) return setProblem(readError(text, params));
+    const next = spinValue(text, dir, step, params, 0, angle ? "angle" : "length");
+    if (next === null) return setProblem(readError(text, params, angle ? "angle" : "length"));
     setText(next);
     setProblem(null);
   };
@@ -1622,7 +1622,7 @@ function ModifyBox({
       // Measured: the value is the geometry's.
       return done(onApply({ value: "value" in existing ? existing.value : 0, ...renamed, ...(isDriven(existing) ? {} : { driven: true }) }));
     }
-    const r = readValue(text, params);
+    const r = readValue(text, params, angle ? "angle" : "length");
     if (!r.ok) return setProblem(r.error);
     if (r.value < 0) return setProblem("a dimension is 0 or more");
     const change: DimensionChange = { value: r.value, ...(r.expr ? { expr: r.expr } : {}), ...renamed, ...(existing && isDriven(existing) ? { driven: false } : {}) };
@@ -1739,8 +1739,8 @@ function ModifyBox({
 }
 
 /** Why what is typed can't be read, for the Modify box. */
-function readError(text: string, params: NameValues): string {
-  const r = readValue(text, params);
+function readError(text: string, params: NameValues, kind: ValueKind): string {
+  const r = readValue(text, params, kind);
   return r.ok ? "" : r.error;
 }
 

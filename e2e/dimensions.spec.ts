@@ -169,6 +169,16 @@ test("the Modify box takes functions and units, spins, and a renamed dimension d
   // An equation that goes round is refused, saying so.
   await commit(page, "param-value-depth", "=depth + 1");
   await expect(page.getByTestId("notice")).toContainText("cycle");
+  // Double-click a parameter's name to rename it: what reads it follows. Esc leaves it as it is.
+  await page.getByTestId("param-depth").locator(".param-name").dblclick();
+  await page.getByTestId("param-rename-depth").fill("plate_d");
+  await page.getByTestId("param-rename-depth").press("Enter");
+  await expect(page.getByTestId("param-plate_d")).toBeVisible();
+  await page.getByTestId("param-plate_d").locator(".param-name").dblclick();
+  await page.getByTestId("param-rename-plate_d").press("Escape");
+  await expect(page.getByTestId("param-rename-plate_d")).toHaveCount(0);
+  expect(((await savedDocument(page)).features as Record<string, unknown>[])[1].distance).toBe("=plate_d");
+  await expectVolume(page, "12,700");
 });
 
 test("Smart Dimension: Shift-click a circle for its near or far side; two points by where the dimension is dropped", async ({ page }) => {
@@ -227,6 +237,29 @@ test("Smart Dimension: Shift-click a circle for its near or far side; two points
   await expect(page.locator('[data-testid^="dim-proposed-"]')).toHaveCount(0);
   await sketchClick(page, 20, 25);
   await expect(page.getByTestId("modify-box")).toHaveCount(0);
+});
+
+test("the Modify box's spin step is the one set in Settings → Units", async ({ page }) => {
+  await page.getByTestId("ask-settings-open").click();
+  await page.getByTestId("settings-tab-units").click();
+  await page.getByTestId("settings-spin-length").fill("2.5");
+  await page.getByTestId("settings-spin-angle").fill("15");
+  await page.getByTestId("ask-settings").getByRole("button", { name: "Cancel" }).click();
+  await page.getByTestId("tool-line").click();
+  await sketchClick(page, 0, 0);
+  await sketchClick(page, 30, 0);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("d");
+  await sketchClick(page, 15, 0);
+  await sketchClick(page, 15, -10);
+  await expect(page.getByTestId("modify-value")).toHaveValue("30");
+  await page.getByTestId("modify-spin-up").click();
+  await expect(page.getByTestId("modify-value")).toHaveValue("32.5");
+  await page.getByTestId("modify-value").press("ArrowDown");
+  await page.getByTestId("modify-value").press("ArrowDown");
+  await expect(page.getByTestId("modify-value")).toHaveValue("27.5");
+  await expect(page.getByTestId("modify-spin-up")).toHaveAttribute("title", /Up 2\.5 mm/);
+  await page.keyboard.press("Escape");
 });
 
 test("two lines that meet: the angle where it is dropped, its supplement in the quadrants beside", async ({ page }) => {

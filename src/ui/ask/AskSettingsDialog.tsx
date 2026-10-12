@@ -7,6 +7,7 @@ import { MODELS, type Effort } from "../../ask/models";
 import { Icon } from "../icons";
 import { bindKey, COMMAND_GROUPS, COMMANDS, keyFor, keyOf, resetInputPrefs, setInputPrefs, useInputPrefs, type MouseScheme } from "../input";
 import { logText, readLog } from "./log";
+import { loadSpin, saveSpin } from "../sketcher/modify";
 import { HAS_PROXY, type AskSettings } from "./settings";
 
 export type SettingsTab = "units" | "mouse" | "keyboard" | "assistant";
@@ -152,7 +153,47 @@ function UnitsTab() {
         </span>
       </div>
       <p className="muted small">Every length is in millimetres, angles in degrees and mass in kilograms. Parts are saved in millimetres.</p>
+      <SpinSteps />
     </>
+  );
+}
+
+/** The Modify box's spin buttons (and ↑/↓): how far one step goes, kept in this browser. */
+function SpinSteps() {
+  const [text, setText] = useState(() => {
+    const s = loadSpin();
+    return { length: String(s.length), angle: String(s.angle) };
+  });
+  const field = (key: keyof typeof text, label: string, unit: string) => (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      <span className="row">
+        <input
+          type="number"
+          min={0}
+          step="any"
+          value={text[key]}
+          aria-invalid={!(Number(text[key]) > 0) || undefined}
+          onChange={(e) => {
+            const next = { ...text, [key]: e.target.value };
+            setText(next);
+            // Saved once both are steps above zero; a field being retyped waits.
+            const length = Number(next.length);
+            const angle = Number(next.angle);
+            if (length > 0 && angle > 0 && Number.isFinite(length + angle)) saveSpin({ length, angle });
+          }}
+          data-testid={`settings-spin-${key}`}
+        />
+        <span className="unit">{unit}</span>
+      </span>
+    </label>
+  );
+  return (
+    <fieldset className="spin-steps">
+      <legend>Spin box increments (the Modify box's ▲▼ and arrow keys)</legend>
+      {field("length", "Length", "mm")}
+      {field("angle", "Angle", "°")}
+    </fieldset>
   );
 }
 

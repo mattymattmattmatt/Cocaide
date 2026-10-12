@@ -6,13 +6,13 @@
 // expression that reads it follows). The named dimensions are listed beneath,
 // as expressions read them.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import { evaluate, isExpression, PARAMETER_NAME, parameterRefs, parameterValues, rawParameters } from "../doc/parameters";
 import { documentSymbols } from "../doc/dimensions";
 import { photoOf } from "../doc/photo";
-import { NumberInput, TextInput } from "./fields";
+import { NumberInput } from "./fields";
 import { Section } from "./Section";
 import { Icon } from "./icons";
 
@@ -94,12 +94,12 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
             >
               {renaming === p ? (
                 <span className="param-name">
-                  <TextInput
+                  <RenameInput
                     value={p}
                     testId={`param-rename-${p}`}
-                    onCommit={(to) => {
+                    onDone={(to) => {
                       setRenaming(null);
-                      if (to !== p) run({ type: "renameParameter", from: p, to });
+                      if (to && to !== p) run({ type: "renameParameter", from: p, to });
                     }}
                   />
                 </span>
@@ -180,5 +180,32 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
         </button>
       </form>
     </Section>
+  );
+}
+
+/** The name being edited in place: focused and selected; Enter or leaving it renames, Esc keeps the old name. */
+function RenameInput({ value, testId, onDone }: { value: string; testId: string; onDone(to: string | null): void }) {
+  const [text, setText] = useState(value);
+  const done = useRef(false);
+  const finish = (to: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(to?.trim() || null);
+  };
+  return (
+    <input
+      value={text}
+      autoFocus
+      onFocus={(e) => e.target.select()}
+      aria-label={`Rename ${value}`}
+      spellCheck={false}
+      data-testid={testId}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => finish(text)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") finish(text);
+        if (e.key === "Escape") finish(null);
+      }}
+    />
   );
 }

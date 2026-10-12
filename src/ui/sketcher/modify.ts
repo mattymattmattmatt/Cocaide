@@ -8,10 +8,29 @@ import { evaluate, isExpression, type Parameters } from "../../doc/parameters";
 
 export type ReadValue = { ok: true; value: number; expr?: string } | { ok: false; error: string };
 
-/** The value typed: `expr` is set when it is an "=expression" to keep. */
-export function readValue(text: string, params: Parameters): ReadValue {
+/** What a value measures: a length takes length units (mm, in …), an angle angle units (deg, rad). */
+export type ValueKind = "length" | "angle";
+
+/** A unit stuck to a number ("30deg", "2 in"), not a name that happens to share its letters. */
+const UNIT_AFTER_NUMBER = /(?:\d|\.)\s*(mm|cm|m|in|ft|deg|rad|°)(?![A-Za-z0-9_])/g;
+const ANGLE_UNITS = new Set(["deg", "rad", "°"]);
+
+/** Why a unit of the other kind can't be used here (30deg for a length), or null. */
+export function unitMismatch(text: string, kind: ValueKind): string | null {
+  for (const m of text.matchAll(UNIT_AFTER_NUMBER)) {
+    const angle = ANGLE_UNITS.has(m[1]);
+    if (kind === "length" && angle) return `${m[1]} is an angle unit; this is a length (mm, cm, m, in, ft)`;
+    if (kind === "angle" && !angle) return `${m[1]} is a length unit; this is an angle (deg, rad)`;
+  }
+  return null;
+}
+
+/** The value typed: `expr` is set when it is an "=expression" to keep. `kind` refuses units of the other kind. */
+export function readValue(text: string, params: Parameters, kind?: ValueKind): ReadValue {
   const t = text.trim();
   if (t === "") return { ok: false, error: "type a value: a number, a calculation such as sqrt(2)*10 or 1in, or =expression" };
+  const wrong = kind ? unitMismatch(t, kind) : null;
+  if (wrong) return { ok: false, error: wrong };
   if (isExpression(t)) {
     const r = evaluate(t, params);
     return r.ok ? { ok: true, value: r.value, expr: t } : { ok: false, error: r.error };
@@ -24,8 +43,8 @@ export function readValue(text: string, params: Parameters): ReadValue {
 }
 
 /** The value one step up (+1) or down (−1), as text, kept to a billionth. An expression's link is let go: spinning sets a number. */
-export function spinValue(text: string, dir: 1 | -1, step: number, params: Parameters, min?: number): string | null {
-  const r = readValue(text, params);
+export function spinValue(text: string, dir: 1 | -1, step: number, params: Parameters, min?: number, kind?: ValueKind): string | null {
+  const r = readValue(text, params, kind);
   if (!r.ok) return null;
   let v = Math.round((r.value + dir * step) * 1e9) / 1e9;
   if (min !== undefined && v < min) v = min;
@@ -36,7 +55,7 @@ export function spinValue(text: string, dir: 1 | -1, step: number, params: Param
 export function shownValue(text: string, params: Parameters, unit: string): string | null {
   const t = text.trim();
   if (t === "" || Number.isFinite(Number(t))) return null;
-  const r = readValue(t, params);
+  const r = readValue(t, params, unit === "°" ? "angle" : "length");
   return r.ok ? `= ${Math.round(r.value * 1e6) / 1e6}${unit === "°" ? "°" : ` ${unit}`}` : null;
 }
 
