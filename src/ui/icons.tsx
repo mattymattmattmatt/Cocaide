@@ -532,6 +532,8 @@ const ICONS = {
     <>
       <path d="M12 2v20" style={{ strokeDasharray: "5 2.2 1 2.2" }} />
       <path d="M5 19c0-2 14-1 14-3S5 14 5 12s14-1 14-3S5 7 5 5" />
+    </>
+  ),
   // Wave 4B: dimensions, relations and sketch status
   arcLength: (
     <>

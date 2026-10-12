@@ -12,14 +12,23 @@ Done and pushed on ccr-851589c3-2dh2fn:
   rebuild solves sketches, history-correct edges); Revolve (cut, thin, two directions), Shell, Draft, Scale tool;
   fix for the flaky table-frame mirror test.
 
+- Wave 3: sketch edit tools (trim, power trim, extend, split, sketch fillet/chamfer, offset, mirror, linear/circular
+  sketch patterns, move/copy/rotate/scale, explode, shaded regions, Check sketch); extrude up to next/face/vertex,
+  offset from face, direction 2, start offset, draft, thin, intersect, regions; variable fillets, radius sets,
+  two-distance and distance-angle chamfers.
+- Wave 4: sweep (sketch path, model edges, exact helix incl. taper, circle/tube profile, twist), loft (ruled/smooth,
+  closed, pointed ends, holes), rib; driven and named dimensions, expressions with functions/units/conditionals,
+  arc length, min/max/centre conditions, linear diameter, intersection/coradial relations, status line, relations
+  panel, conflict diagnosis with one-click fixes, Fully Define, typed values while drawing.
+
 Next (briefs in docs/phase-o/briefs/, contract in DESIGN.md, APIs in api.md, wave list in waves.md):
-- Wave 3: sketch edit tools (trim/extend/split/fillet/chamfer/offset/mirror/patterns/move…, regions) ∥
-  extrude end conditions/direction 2/draft/thin/intersect + fillet/chamfer variants. Note: the sketch toolbar is
-  nearly full at 1500 px — edit tools must use flyouts.
-- Wave 4: sweep/helix/loft/rib ∥ driven/named dimensions, expressions with functions and units, status, Fully Define.
 - Wave 5: Hole Wizard + pattern/mirror upgrades ∥ rollback, measure, mass props, section view, display styles, Instant3D.
 - Wave 6: AI tools ∥ ellipse and spline.
 - Wave 7: whole-diff review, README/roadmap, regenerate docs screenshots, final verification.
+
+Resuming an interrupted wave: commit the worktrees' partial work, then `python3 mkresume.py <n> <run id prefix, e.g. wf_816890cf-bba>`
+and run wave<n>r.js. Union-merged files (icons.tsx, styles.css, index files) can come out mangled when both
+branches append at the same spot: run tsc after every merge and repair by hand.
 
 To run a wave: copy the .plan files back (cp docs/phase-o/*.md .plan/), assemble with
 `python3 build.py <n> "<description>"` in the briefs folder (it joins shared.js + w<n>-tasks.js) and run the

@@ -422,3 +422,103 @@ Open follow-ups from Wave 3:
 - Check sketch lists two crossings of the same pair at two places with identical text, and reports tangent-touching circles as 'cross'. Wording only, not changed.
 - Splitting a line leaves 'pointOn' relations to it on the first piece, even when the point lies on the second piece. These still hold because pointOn uses the line's infinite carrier.
 - Dynamic mirror, shift-drag extend in power trim, and two-direction linear patterns are not done (the engineer listed them as optional or follow-ups).
+
+## Wave 4 (merged): sweep/loft/rib + dimensions, expressions, status
+
+Ops:
+- `sweep` fields: `profile?` | `circle?: {diameter, inner?}`; `path: {sketch} | {edges: EdgeSelector[]} | {helix: {axis: DatumRef, radius, pitch?, turns?, height?, leftHanded?, taper?, startAngle?}}`; `twist?`; `orientation?: "follow"|"fixed"`; operation fields. `pathKind(path)` is exported from src/features/sweep/doc.ts.
+- `loft` fields: `profiles: string[]`, `ruled?`, `closed?`, operation fields.
+- `rib` fields: `sketch`, `thickness`, `side?: "both"|"left"|"right"`, `normal?`, `flip?`, `body?`.
+
+Kernel helpers in src/kernel/paths.ts: `chainEdges(oc,s,frame,chain)`, `helixEdge(oc,s,axisFrame,radius,pitch,turns,{leftHanded,taper})`, `orderEdges`, `pathOf`, `reversedPath`, `rotatedPath`, `samplePath`, `minimalNormals`, `squareTo`, `twistSpine`, `edgeStarts`. `loopWire(oc,s,frame,loop)` is now exported from src/kernel/ops.ts.
+
+Pure helpers:
+- src/features/sweep/chain.ts: `sketchChain(entities, what, closedOk?)`, `chainLength`, `chainSmooth`, `chainPoints`, `startOnPlane`, `reverseChain`, `ChainError`.
+- src/features/sweep/helix.ts: `helixNumbers`, `helixPoint`, `helixLength`, `axisFrame`, `endRadius`, `MAX_TAPER`.
+- src/features/sweep/fields.ts: `operationFields(cutLabel)`, `sketchUse`, `isOpenChain`, `entitiesOf`. These are reusable for any op that has the operation fields.
+- src/features/loft/align.ts: `alignLoops`, `startToward`.
+- src/features/loft/profiles.ts: `moved`, `without`, `sectionChoices`.
+- src/features/rib/region.ts: `extendedChain`, `chainLeft`, `sweptRegions`, `ribBand`.
+
+Tool builders in src/ui/model/tools/sweep.ts: `sweepFeature(ctx, cut)`, `helixFeature(ctx)`, `loftFeature(ctx, cut)`, `ribFeature(ctx)`, `sketchInfos(resolved)`.
+
+Test ids:
+- Tools: tool-sweep-menu, tool-sweep, tool-sweep-cut, tool-helix, tool-loft-menu, tool-loft, tool-loft-cut, tool-rib.
+- Sweep editor: prop-sweep-profile-kind, prop-profile, prop-circle-diameter, prop-circle-hollow, prop-circle-inner, prop-path-kind, prop-path-sketch, prop-path-edges, prop-helix-axis, prop-helix-radius, prop-helix-by, prop-helix-pitch, prop-helix-turns, prop-helix-height, prop-helix-left, prop-helix-taper, prop-helix-start, prop-twist, prop-orientation.
+- Loft editor: prop-loft-profiles, prop-loft-profile-N, prop-loft-up-N, prop-loft-down-N, prop-loft-remove-N, prop-loft-add, prop-ruled, prop-closed.
+- Rib editor: prop-sketch, prop-thickness, prop-rib-side, prop-rib-direction, prop-flip.
+
+Icons: sweepCut, loftCut, helix.
+
+- `HelixSpec` gains `reverse?: boolean`, so the DESIGN §2.6 helix field list becomes `path.helix.reverse?`.
+- New editor test id: `prop-helix-reverse`.
+- The helix start rule for face and edge axes is described in the sweep AI reference text: about a cylinder face it starts at one end and runs along the face; about a circular edge it starts at the edge's centre and climbs into the round face the edge bounds.
+- No other API changes.
+
+Commands (src/doc/commands.ts):
+- `{type:"replaceFeature", id, feature, renames?: Record<string,string>}`. `renames` maps old full names to new ones ("sketch_1.d1" → "sketch_1.width"); every expression in parameters, nodes and features is rewritten. Both sides must be dimension names of that sketch. scope.ts requires every feature that reads an old name to be in the write scope.
+- Already in place from the earlier commits: `setDimension {sketch, index?|name?, value}`, `renameDimension {sketch, index?|name?, to}`, `setDriven {sketch, index?|name?, driven}`, `renameParameter {from,to}`, and `setParameter` with a value that is a number or "=expr".
+
+Sketcher (src/ui/sketcher/):
+- **SketchMode.tsx**: `onFinish(feature, weldment, renames?)`; App.finishSketch passes `renames` into replaceFeature. Also exports `interface DimensionChange {value, expr?, name?, driven?}`.
+- **dimdraft.ts** (pure): `type Dimension` (a constraint plus `expr` and `was`), `withOldNames`, `draftParameters(docParams, sketchId, constraints)`, `reexpress(constraints, docParams, sketchId)`, `measureDriven(entities, constraints)`, `draftCycle(constraints, index, expr, sketchId)`.
+- **status.ts**: `sketchHealth(entities, constraints, dangling?)` returns `{state: "empty"|"under"|"full"|"over"|"dangling", dof, text, conflicting, dangling, fixes, free, freePoints, conflicts}`. Also exports `filterRelations(constraints, filter, health, selectedIds)` and `constraintName`.
+- **modify.ts**: `readValue`, `spinValue`, `shownValue`, `loadSpin` / `saveSpin`. The spin steps are stored in localStorage under "cocaide.spin.v1".
+- **model.ts**: `danglingRefs(entities, modelView): Set<string>`.
+- **draft.ts**: `smartDimension(entities, picks, at?, opts?: SmartOptions {arcs})`, `dropKind(p, q, at)`.
+- **SketchCanvas** props: `proposed?`, `overDefining?`, `dangling?`, and `onDimension(picks, at, x, y, opts?)`.
+
+Command `sketch.fullyDefine` is live (no longer planned). Icons added earlier: arcLength, coradial, intersection, drivenDimension, relationsList, diagnose.
+
+Test ids for e2e:
+- Driven question: driven-prompt, driven-yes, driven-cancel.
+- Modify box: modify-name, modify-spin-up, modify-spin-down, modify-evaluated, modify-error, modify-driven.
+- Menu and fixes: ctx-toggle-driven, ctx-fully-define, fix-driven-<i>, fix-delete-<i>.
+- Relations panel: relations-filter, relations-none, constraint-row-<i> (data-state = conflict | dangling | driven), constraint-name-<i>, constraint-delete-<i>.
+- Fully Define: tool-fully-define, fully-define, fully-define-list, fully-define-apply, fully-define-cancel, fully-define-datum.
+- Canvas: dim-proposed-<n>. Numeric input: typed-box, typed-<key>.
+- Parameters panel: named-dim-<full name>, param-rename-<p>.
+
+Pure helpers:
+- draft.ts: `dropMatters(entities, picks): boolean`. A supplement offer has label "Supplementary angle" and testId "c-angle-supplement". A supplement angle is described as "… (other side)".
+- modify.ts: `readValue(text, params, kind?)`, `spinValue(…, min?, kind?)` and `unitMismatch(text, kind)`, with `type ValueKind = "length" | "angle"`.
+- dimensions.ts: `namedDimensions(doc)` and `readersOf(doc, name)`.
+
+Canvas:
+- SketchCanvas has new props `dropMatters(picks)` and `dimensionAt(picks, at, opts) → {constraint, label, value, unit} | null`. The preview label's test id is `dimension-placing`.
+
+Commands:
+- apply() refuses any command that would remove a dimension an expression reads, with the error "<cmd>: dimension <sketch>.<name> is used by <readers>; change what reads it first".
+
+Validation:
+- A driven angle may be 0..180 inclusive.
+
+Settings:
+- Settings → Units has `settings-spin-length` and `settings-spin-angle`, stored in localStorage under "cocaide.spin.v1".
+
+Parameters panel:
+- The rename input `param-rename-<p>` is focused when it opens; Esc cancels.
+
+Open follow-ups from Wave 4:
+- The helix is a sweep path option, not a separate curve feature: there is no standalone Reference-tab helix curve and no reference-curve drawing in the viewport. A helix op with a viewport polyline hook could be added later if users want a helix as a construction curve.
+- Rib: an arc at either end of the chain is not extended to the walls (only end lines are). A rib whose region is not closed in by the body is refused rather than filled up to the bounding box.
+- Loft: there are no guide curves, no start/end tangency conditions, and no picking of section vertices to line sections up by hand (sections are lined up automatically).
+- Sweep: a twist needs a smooth path (no sharp corners), and twist with fixed orientation is refused. The tools pick unused sketches automatically; there is no in-view pick of which sketch is the profile and which is the path (Properties is where you change them).
+- The interface.spec smoke test rewrites docs/interface.png on every run. It was restored here, but the coordinator may want that spec to write elsewhere.
+- Task item 5, the Reference-tab helix curve drawn in the viewport, was not built. The engineer chose to make the helix a sweep path option, which the brief allowed ('decide and document'), and they documented it.
+- Which end of a cylinder the helix starts from depends on the direction of OCCT's face axis. On an extruded rod it starts at the top and runs down. 'Reverse direction' switches ends, but the default end is not chosen by the user.
+- The Helix tool sets the coil radius to the picked cylinder's radius, so a spring made as a new body sits half buried in the boss (the right default for a thread cut). Changing that default needs a rule for telling a boss from a hole; not changed.
+- The tree summary chip is cut short ('2 …' for '2 sections ruled'). This is the existing tree-layout follow-up, not in this scope.
+- Limits the engineer already listed, still open: arcs at the ends of a rib chain are not extended; the loft has no guide curves or end tangency; twist needs a smooth path.
+- Smoke run e2e/interface.spec.ts rewrites docs/interface.png on every run. I restored it before committing, as the engineer did.
+- Merge points (optional item 5) was not done.
+- Dangling detection covers only edge references (`ref.edge`). Datum and point references are left for the rebuild to report.
+- Dimension positions are computed; the place where a dimension is dropped is not stored. Overlapping straight dimensions are moved out one row each, but you cannot drag a dimension's text yet.
+- Fully Define has no options for the dimension scheme (baseline / chain / ordinate) or for choosing which relations to add. Its datum is the origin or one selected point.
+- When the sketch is replaced from an accepted AI proposal (applyRef), the old dimension names are dropped, so renames from that path do not reach expressions elsewhere.
+- A cycle that runs through document parameters (not just this sketch's dimensions) is caught only on Finish, by the document command, not live in the sketcher.
+- tests/model-tools.test.ts also lists the tools the other engineer is adding (sweep, loft, rib). I changed only its sketch line, so a merge conflict there is possible but would be small.
+- Overlapping dimension text when the dimensions are not parallel, e.g. a vertical dimension's text on a horizontal dimension line after Fully Define. unstack only separates parallel linear dimensions, and dimension positions are computed rather than stored or draggable. This is cosmetic and needs a layout pass, so it is out of scope for a review fix.
+- A cycle that runs through document parameters (not just this sketch's dimensions) is still caught only on Finish, by the document command. While the sketcher is open, the document's parameters that depend on this sketch read their document values, not the draft values.
+- The applyRef rename-keeping fix is in SketchMode and is covered by tsc and the ask/context-menu e2e specs only. There is no dedicated unit test, because the logic is inline and uses SketchMode's constraintKey.
+- Items the engineer already listed are unchanged: merge points (optional); dangling detection for edge references only; Fully Define has no baseline/chain/ordinate scheme options; tests/model-tools.test.ts may have a small merge conflict with the sweep/loft/rib branch.
