@@ -369,8 +369,12 @@ class Sandbox {
       }
       case "measure":
         return this.measure(a.selector);
-      case "partSummary":
-        return partSummary(this.doc, this.kernel);
+      case "partSummary": {
+        // With a plan, its checks on the part as it is now.
+        const out = await partSummary(this.doc, this.kernel);
+        if (this.plan?.checks.length) out.planChecks = runChecks(this.plan.checks, this.check.measurements);
+        return out;
+      }
       case "listFaces":
         return listFaces(this.doc, this.kernel, a);
       case "listEdges":
