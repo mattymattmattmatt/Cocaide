@@ -11,6 +11,7 @@ import { def as revolve } from "./revolve/doc";
 import { def as shell } from "./shell/doc";
 import { def as draft } from "./draft/doc";
 import { def as sweep } from "./sweep/doc";
+import { def as loft } from "./loft/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -21,4 +22,5 @@ export const DOC_DEFS = [
   shell,
   draft,
   sweep,
+  loft,
 ];

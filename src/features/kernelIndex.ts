@@ -11,6 +11,7 @@ import { kernel as revolve } from "./revolve/kernel";
 import { kernel as shell } from "./shell/kernel";
 import { kernel as draft } from "./draft/kernel";
 import { kernel as sweep } from "./sweep/kernel";
+import { kernel as loft } from "./loft/kernel";
 
 export const KERNEL_DEFS = [
   scale,
@@ -21,4 +22,5 @@ export const KERNEL_DEFS = [
   shell,
   draft,
   sweep,
+  loft,
 ];
