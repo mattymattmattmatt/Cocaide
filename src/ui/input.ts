@@ -102,8 +102,8 @@ export const COMMANDS: CommandDef[] = [
 
   { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null, planned: true },
 
-  { id: "tool.measure", label: "Measure", group: "Model tools", key: null, planned: true },
-  { id: "tool.section", label: "Section view", group: "Model tools", key: null, planned: true },
+  { id: "tool.measure", label: "Measure", group: "Model tools", key: null },
+  { id: "tool.section", label: "Section view", group: "Model tools", key: null },
 
   { id: "sketch.select", label: "Select", group: "Sketch", key: "V" },
   { id: "sketch.dimension", label: "Smart Dimension", group: "Sketch", key: "D" },
@@ -150,6 +150,26 @@ export const COMMANDS: CommandDef[] = [
   { id: "sketch.spline", label: "Spline", group: "Sketch", key: null, planned: true },
   { id: "sketch.explode", label: "Explode a rectangle or slot into lines and arcs", group: "Sketch", key: null },
   { id: "sketch.check", label: "Check sketch for feature", group: "Sketch", key: null },
+
+  // Phase O wave 5: evaluate and view.
+  { id: "palette", label: "Command search: run any command by name", group: "General", key: "Ctrl+K" },
+  { id: "tool.massProperties", label: "Mass properties", group: "Model tools", key: null },
+  { id: "view.zoomSelection", label: "Zoom to the selection", group: "View", key: null },
+  { id: "view.previous", label: "Previous view", group: "View", key: null },
+  { id: "view.perspective", label: "Perspective or orthographic", group: "View", key: null },
+  { id: "view.display.shadedEdges", label: "Shaded with edges", group: "View", key: null },
+  { id: "view.display.shaded", label: "Shaded", group: "View", key: null },
+  { id: "view.display.hiddenRemoved", label: "Hidden lines removed", group: "View", key: null },
+  { id: "view.display.hiddenVisible", label: "Hidden lines visible", group: "View", key: null },
+  { id: "view.display.wireframe", label: "Wireframe", group: "View", key: null },
+  { id: "select.faces", label: "Selection filter: faces", group: "Model tools", key: "X" },
+  { id: "select.edges", label: "Selection filter: edges", group: "Model tools", key: "E" },
+  { id: "select.vertices", label: "Selection filter: vertices", group: "Model tools", key: "V" },
+  { id: "select.planes", label: "Selection filter: planes, axes and points", group: "Model tools", key: null },
+  { id: "select.clear", label: "Selection filter: off (pick anything)", group: "Model tools", key: null },
+  { id: "rollback.previous", label: "Roll back one feature", group: "Model tools", key: null },
+  { id: "rollback.next", label: "Roll forward one feature", group: "Model tools", key: null },
+  { id: "rollback.end", label: "Roll to end", group: "Model tools", key: null },
 ];
 
 export interface InputPrefs {

@@ -101,7 +101,12 @@ export type Command =
   /** Adds or replaces an annotation by id, or removes it. What it points at must be in the part. */
   | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null }
   /** Gives a body its own material, or puts it back on the part's (null). */
-  | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null };
+  | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null }
+  /**
+   * Moves the rollback bar to just above feature `before` (it and the features after it are not built in the
+   * view, and new features go in there), or to the end (null). See src/doc/rollback.ts.
+   */
+  | { type: "setRollback"; before: string | null };
 
 export type ApplyResult = { ok: true; doc: RawDocument } | { ok: false; error: string };
 
@@ -136,7 +141,9 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (typeof f.id === "string" && indexOf(f.id) >= 0) {
         return { ok: false, error: `addFeature: a feature "${f.id}" already exists` };
       }
-      const at = cmd.index ?? features.length;
+      // Without an index it goes in at the rollback bar: just above the first feature below it (the end when there is none).
+      const bar = typeof doc.rollback === "string" ? indexOf(doc.rollback) : -1;
+      const at = cmd.index ?? (bar >= 0 ? bar : features.length);
       if (!Number.isInteger(at) || at < 0 || at > features.length) {
         return { ok: false, error: `addFeature: index ${at} is outside 0..${features.length}` };
       }
@@ -162,6 +169,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       }
       const prev = features[i];
       features[i] = next;
+      // The rollback bar names the feature it sits above: it follows a rename.
+      if (next.id !== cmd.id && doc.rollback === cmd.id) doc.rollback = next.id;
       if (cmd.type === "replaceFeature" && cmd.renames && Object.keys(cmd.renames).length) {
         const own = (n: string, id: string) => n.startsWith(`${id}.`) && DIMENSION_NAME.test(n.slice(id.length + 1));
         const bad = Object.entries(cmd.renames).find(([from, to]) => typeof to !== "string" || !own(from, cmd.id) || !own(to, String(next.id)));
@@ -198,6 +207,23 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         };
       }
       features.splice(i, 1);
+      // The bar sat above the deleted feature: it now sits above the one after it, or at the end.
+      if (doc.rollback === cmd.id) {
+        const after = features[i];
+        if (isObject(after) && typeof after.id === "string") doc.rollback = after.id;
+        else delete doc.rollback;
+      }
+      break;
+    }
+    case "setRollback": {
+      if (cmd.before === null) {
+        delete doc.rollback;
+        break;
+      }
+      if (typeof cmd.before !== "string" || indexOf(cmd.before) < 0) {
+        return { ok: false, error: `setRollback: no feature "${String(cmd.before)}"; name the feature the bar goes above, or null to roll to the end` };
+      }
+      doc.rollback = cmd.before;
       break;
     }
     case "reorderFeature": {
