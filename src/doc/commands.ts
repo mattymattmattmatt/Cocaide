@@ -44,7 +44,11 @@ export type Command =
   | { type: "addFeature"; feature: Record<string, unknown> | Feature; index?: number }
   /** Shallow merge into the feature; a value of null removes that field. */
   | { type: "updateFeature"; id: string; patch: Record<string, unknown> }
-  | { type: "replaceFeature"; id: string; feature: Record<string, unknown> | Feature }
+  /**
+   * `renames` (a sketch's only): its dimensions whose names changed in the edit, old full name to new
+   * ("sketch_1.d3": "sketch_1.width"); every expression that read the old name reads the new one.
+   */
+  | { type: "replaceFeature"; id: string; feature: Record<string, unknown> | Feature; renames?: Record<string, string> }
   | { type: "deleteFeature"; id: string }
   | { type: "reorderFeature"; id: string; index: number }
   | { type: "suppressFeature"; id: string; suppressed: boolean }
@@ -156,6 +160,14 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       }
       const prev = features[i];
       features[i] = next;
+      if (cmd.type === "replaceFeature" && cmd.renames && Object.keys(cmd.renames).length) {
+        const own = (n: string, id: string) => n.startsWith(`${id}.`) && DIMENSION_NAME.test(n.slice(id.length + 1));
+        const bad = Object.entries(cmd.renames).find(([from, to]) => typeof to !== "string" || !own(from, cmd.id) || !own(to, String(next.id)));
+        if (bad) return { ok: false, error: `replaceFeature: renames: "${bad[0]}" → "${String(bad[1])}" must both be dimension names of ${cmd.id} (<sketch id>.<name>)` };
+        const map = cmd.renames;
+        // Old names to new all at once, so two dimensions can swap names.
+        renameInDocument(doc, (n) => (Object.prototype.hasOwnProperty.call(map, n) ? map[n] : undefined));
+      }
       // Expressions read a sketch's dimensions as <sketch id>.<name>: they follow a renamed sketch.
       if (next.id !== cmd.id && prev.op === "sketch") {
         const from = `${cmd.id}.`;

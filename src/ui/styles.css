@@ -1207,3 +1207,56 @@ svg.icon { flex: none; display: block; }
 .selector-line .set-text { flex: 1; min-width: 0; }
 .selector-line .set-radius { flex: none; width: 64px; }
 .selector-line .set-radius input { width: 100%; }
+
+/* Wave 4B: driven dimensions, named dimensions, the status line's states, Display/Delete Relations, Fully Define, numeric input. */
+:root { --sketch-dangling: #8a5a1c; --sketch-driven: #7b8494; }
+@media (prefers-color-scheme: dark) { :root { --sketch-dangling: #d39a4f; --sketch-driven: #9aa3b2; } }
+.sketch-status.empty { color: var(--muted); }
+.sketch-status.dangling { color: var(--sketch-dangling); border-color: var(--sketch-dangling); }
+.dof.under { color: var(--sketch); }
+.dof.full { color: var(--sketch-defined); }
+.dof.dangling { color: var(--sketch-dangling); }
+.dof.empty { color: var(--muted); }
+.sketch-canvas .dim.driven .dim-line { stroke: var(--sketch-driven); stroke-dasharray: 3 2; }
+.sketch-canvas .dim.driven .dim-arrow, .sketch-canvas .dim.driven text { fill: var(--sketch-driven); }
+.sketch-canvas .dim.conflict .dim-line { stroke: var(--bad); }
+.sketch-canvas .dim.conflict .dim-arrow, .sketch-canvas .dim.conflict text { fill: var(--bad); }
+.sketch-canvas .dim.proposed { opacity: 0.55; }
+.sketch-canvas .dim.proposed .dim-line { stroke: var(--accent); stroke-dasharray: 4 3; }
+.sketch-canvas .dim.proposed .dim-arrow, .sketch-canvas .dim.proposed text { fill: var(--accent); }
+.sketch-canvas .entity.dangling { stroke: var(--sketch-dangling); stroke-dasharray: 6 3; }
+.constraint-list li.driven .dim-value, .dim-value.driven { color: var(--sketch-driven); font-family: var(--mono); }
+.constraint-list li:has(.dim-value) { grid-template-columns: minmax(0, 1fr) 72px auto 26px; }
+.constraint-list li.conflict { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.constraint-list li.conflict .constraint-label { color: var(--bad); }
+.constraint-list li.dangling .constraint-label { color: var(--sketch-dangling); }
+.constraint-list .dim-name { font-weight: 600; color: var(--text); padding: 0 4px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--border); }
+.constraint-list.proposed li { grid-template-columns: minmax(0, 1fr) auto; }
+.constraint-list.proposed .dim-value { font-family: var(--mono); color: var(--accent); }
+.constraints-panel h2 { display: flex; align-items: center; gap: 6px; }
+.constraints-panel h2 .relation-filter { margin-left: auto; font-size: 12px; height: 24px; font-weight: normal; }
+.fully-define h2 { display: flex; align-items: center; gap: 6px; }
+.fully-define h2 button.icon { margin-left: auto; }
+.fully-define .check { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 4px 0; }
+.fully-define .field select { width: 100%; }
+.over-fixes { margin-top: 6px; }
+.over-fixes .row-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+.over-fixes button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.modify-name { display: flex; align-items: center; gap: 2px; padding: 0 2px; font-family: var(--mono); font-size: 12px; }
+.modify-name input { width: 120px; font-family: var(--mono); }
+.modify-row .spin { display: flex; flex-direction: column; }
+.modify-row .spin button { width: 18px; height: 13px; font-size: 7px; line-height: 1; padding: 0; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
+.modify-row input.driven { color: var(--sketch-driven); }
+.modify-evaluated { font-family: var(--mono); padding: 0 4px; }
+.modify-driven { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 0 4px; }
+.driven-prompt { display: flex; flex-direction: column; gap: 6px; max-width: 280px; padding: 4px; }
+.driven-prompt p { margin: 0; }
+.driven-prompt .row-buttons { display: flex; gap: 6px; justify-content: flex-end; }
+.typed-box {
+  position: fixed; z-index: 50; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 7px;
+  background: var(--panel); border: 1px solid var(--accent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); font-size: 12px;
+}
+.typed-box label { display: grid; grid-template-columns: 52px 90px auto; align-items: center; gap: 4px; color: var(--muted); }
+.typed-box label.active span:first-child { color: var(--text); font-weight: 600; }
+.typed-box input { font-family: var(--mono); height: 24px; }
+.typed-box .expr-error { color: var(--bad); }

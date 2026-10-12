@@ -141,7 +141,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "sketch.scale", label: "Scale entities", group: "Sketch", key: null },
   { id: "sketch.copy", label: "Copy entities", group: "Sketch", key: null },
 
-  { id: "sketch.fullyDefine", label: "Fully define the sketch", group: "Sketch", key: null, planned: true },
+  { id: "sketch.fullyDefine", label: "Fully define the sketch", group: "Sketch", key: null },
 
   { id: "sketch.ellipse", label: "Ellipse", group: "Sketch", key: null, planned: true },
   { id: "sketch.spline", label: "Spline", group: "Sketch", key: null, planned: true },

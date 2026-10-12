@@ -52,6 +52,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       const before = doc.features.find((f) => isObject(f) && f.id === cmd.id);
       const after = cmd.type === "updateFeature" ? { ...before, ...cmd.patch } : (cmd.feature as Record<string, unknown>);
       allowed = has(cmd.id) || (has(`${cmd.id}/*`) && !!before && onlyContentsChanged(before, after));
+      // Renamed dimensions rewrite the expressions that read them: those features must be in scope too.
+      if (allowed && cmd.type === "replaceFeature" && cmd.renames) {
+        const old = new Set(Object.keys(cmd.renames));
+        allowed = doc.features.filter((f) => isObject(f) && f.id !== cmd.id && [...parameterRefs(f)].some((n) => old.has(n))).every((f) => has(String(f.id)));
+      }
       break;
     }
     case "deleteFeature":
