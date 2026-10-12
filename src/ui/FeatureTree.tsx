@@ -5,8 +5,14 @@
 // right-click offers Sketch on this plane, an offset plane, Ask AI. Plane,
 // axis and point features carry an eye too. Showing is view state, never
 // the document.
+//
+// The rollback bar sits in the list: drag it up (or press the arrow keys on
+// it) and the features below it are greyed and not built; new features go in
+// at the bar. Hovering a feature lights up what it is built on (its parents)
+// and what is built on it (its children). Double-click a feature to show its
+// dimensions on the model (a sketch opens the sketcher, as before).
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import { DATUM_OPS } from "../features/datum";
@@ -15,6 +21,7 @@ import type { RebuildView } from "../worker/protocol";
 import { Icon, type IconName } from "./icons";
 import { eyeOpen, TREE_DATUMS, type DatumView } from "./model/datumDisplay";
 import { DEFAULT_DATUM_LABEL } from "./model/selection";
+import { childrenOf, parentsOf } from "./evaluate/relations";
 import { OP_LABEL } from "./PropertyPanel";
 
 /** The picture of each kind of feature: the same one its tool has. */
@@ -60,15 +67,52 @@ interface Props {
   onToggleEye?(id: string): void;
   /** Right-click on a default plane or the origin: its menu. */
   onDatumMenu?(id: string, x: number, y: number): void;
+  /** Where the rollback bar is: the index of the first feature below it (the feature count: at the end). */
+  rollback?: number;
+  /** Moves the rollback bar to just above the feature at this index (the feature count: to the end). */
+  onRollback?(index: number): void;
+  /** Right-click on the rollback bar. */
+  onRollbackMenu?(x: number, y: number): void;
+  /** Double-click on a feature other than a sketch: show its dimensions on the model. */
+  onShowDimensions?(id: string): void;
 }
+
+/** The drag of the rollback bar, told apart from a feature's by its own type. */
+const BAR_TYPE = "application/x-cocaide-rollback";
 
 /** The icon of a default plane or the origin. */
 const DATUM_ICON: Record<string, IconName> = { Front: "plane", Top: "plane", Right: "plane", Origin: "datumPoint" };
 
-export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dispatch, onError, onAsk, pickedDatums = [], datumView, onPickDatum, onToggleEye, onDatumMenu }: Props) {
+export function FeatureTree({
+  doc,
+  view,
+  selectedId,
+  onSelect,
+  onEditSketch,
+  dispatch,
+  onError,
+  onAsk,
+  pickedDatums = [],
+  datumView,
+  onPickDatum,
+  onToggleEye,
+  onDatumMenu,
+  rollback,
+  onRollback,
+  onRollbackMenu,
+  onShowDimensions,
+}: Props) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
+  /** The rollback bar is being dragged; where it would land (an index: above that feature). */
+  const [barDrag, setBarDrag] = useState(false);
+  const [barAt, setBarAt] = useState<number | null>(null);
+  /** The feature under the pointer, for its parents and children. */
+  const [hoverId, setHoverId] = useState<string | null>(null);
   const features = (doc?.features ?? []) as Record<string, unknown>[];
+  const bar = rollback === undefined ? features.length : Math.min(rollback, features.length);
+  const parents = new Set(hoverId ? parentsOf(features, hoverId) : []);
+  const children = new Set(hoverId ? childrenOf(features, hoverId) : []);
   const status = new Map(view?.features.map((s) => [s.id, s]) ?? []);
   const headerErrors = view?.errors.filter((e) => e.startsWith("document:")) ?? [];
 
@@ -95,6 +139,48 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
       </button>
     );
   };
+
+  /** The bar: drag it, move it with the arrow keys, right-click it. */
+  const rollbackBar = onRollback ? (
+    <li
+      key="rollback-bar"
+      className={`rollback-bar${bar < features.length ? " rolled" : ""}`}
+      data-testid="rollback-bar"
+      draggable
+      tabIndex={0}
+      role="separator"
+      aria-label={bar < features.length ? `Rollback bar: ${features.length - bar} feature${features.length - bar === 1 ? "" : "s"} below it are not built` : "Rollback bar, at the end"}
+      title="Rollback bar: drag it up to see the part as it was and add features there; arrow keys move it; right-click for more"
+      onDragStart={(e) => {
+        setBarDrag(true);
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData(BAR_TYPE, "bar");
+      }}
+      onDragEnd={() => {
+        setBarDrag(false);
+        setBarAt(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowUp" && bar > 0) {
+          e.preventDefault();
+          onRollback(bar - 1);
+        } else if (e.key === "ArrowDown" && bar < features.length) {
+          e.preventDefault();
+          onRollback(bar + 1);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          onRollback(features.length);
+        }
+      }}
+      onContextMenu={(e) => {
+        if (!onRollbackMenu) return;
+        e.preventDefault();
+        onRollbackMenu(e.clientX, e.clientY);
+      }}
+    >
+      <span className="rollback-grip" aria-hidden />
+    </li>
+  ) : null;
 
   return (
     <section className="panel features" aria-label="Feature tree">
@@ -128,25 +214,40 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
         })}
       </ol>
       {features.length === 0 && <p className="muted empty-hint">Empty part. Start with <strong>Sketch</strong> in the toolbar, or right-click the view to describe a part.</p>}
-      <ol className="feature-list" onDragLeave={() => setDropAt(null)}>
+      <ol
+        className={`feature-list${barDrag ? " bar-dragging" : ""}`}
+        onDragLeave={() => {
+          setDropAt(null);
+          setBarAt(null);
+        }}
+        onMouseLeave={() => setHoverId(null)}
+      >
         {features.map((f, i) => {
           const id = String(f.id);
           const s = status.get(id);
           const suppressed = f.suppressed === true;
           const failed = s && !s.ok;
           const isDatum = Object.hasOwn(DATUM_OPS, String(f.op));
+          const rolled = i >= bar;
+          const relation = parents.has(id) ? "parent" : children.has(id) ? "child" : undefined;
           return (
+            <Fragment key={`${id}-${i}`}>
+            {i === bar && rollbackBar}
             <li
-              key={`${id}-${i}`}
               className={[
-                failed ? "failed" : "ok",
+                failed && !rolled ? "failed" : "ok",
                 suppressed ? "suppressed" : "",
+                rolled ? "rolled-back" : "",
                 selectedId === id || pickedDatums.includes(id) ? "selected" : "",
                 dropAt === i ? "drop-target" : "",
+                barAt === i ? "bar-target" : "",
+                relation ? `${relation}-of-hover` : "",
                 isDatum && datumView && !eyeOpen(id, datumView) ? "hidden-datum" : "",
               ].join(" ")}
               data-testid={`feature-${id}`}
+              data-relation={relation}
               draggable
+              onMouseEnter={() => setHoverId(id)}
               onDragStart={(e) => {
                 setDragging(id);
                 e.dataTransfer.effectAllowed = "move";
@@ -157,12 +258,23 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                 setDropAt(null);
               }}
               onDragOver={(e) => {
+                if (barDrag) {
+                  e.preventDefault();
+                  setBarAt(i);
+                  return;
+                }
                 if (!dragging) return;
                 e.preventDefault();
                 setDropAt(i);
               }}
               onDrop={(e) => {
                 e.preventDefault();
+                if (barDrag) {
+                  onRollback?.(i);
+                  setBarDrag(false);
+                  setBarAt(null);
+                  return;
+                }
                 if (dragging && dragging !== id) run({ type: "reorderFeature", id: dragging, index: i });
                 setDragging(null);
                 setDropAt(null);
@@ -172,21 +284,29 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                 <button
                   className="feature-row"
                   onClick={() => onSelect(selectedId === id ? null : id)}
-                  onDoubleClick={() => f.op === "sketch" && onEditSketch(id)}
+                  onDoubleClick={() => (f.op === "sketch" ? onEditSketch(id) : onShowDimensions?.(id))}
                   onContextMenu={(e) => {
                     if (!onAsk) return;
                     e.preventDefault();
                     onAsk({ kind: "feature", id }, e.clientX, e.clientY);
                   }}
-                  title={f.op === "sketch" ? "Double-click to edit the sketch" : undefined}
+                  title={
+                    rolled
+                      ? "Rolled back: below the rollback bar, not built. Drag the bar below it, or right-click: Roll to end"
+                      : f.op === "sketch"
+                        ? "Double-click to edit the sketch"
+                        : onShowDimensions
+                          ? "Double-click to show its dimensions on the model"
+                          : undefined
+                  }
                 >
                   {/* What it is; a failed or suppressed one says so instead. */}
                   <span
-                    className={`feature-icon ${suppressed ? "off" : failed ? "failed" : "ok"}`}
-                    aria-label={suppressed ? "suppressed" : failed ? "failed" : "rebuilt"}
-                    title={suppressed ? "Suppressed: left out of the rebuild" : failed ? "Failed: see the error below" : undefined}
+                    className={`feature-icon ${suppressed ? "off" : rolled ? "rolled" : failed ? "failed" : "ok"}`}
+                    aria-label={suppressed ? "suppressed" : rolled ? "rolled back" : failed ? "failed" : "rebuilt"}
+                    title={suppressed ? "Suppressed: left out of the rebuild" : rolled ? "Rolled back: not built" : failed ? "Failed: see the error below" : undefined}
                   >
-                    <Icon name={suppressed ? "suppress" : failed ? "alert" : (OP_ICON[String(f.op)] ?? "sketch")} />
+                    <Icon name={suppressed ? "suppress" : failed && !rolled ? "alert" : (OP_ICON[String(f.op)] ?? "sketch")} />
                   </span>
                   <span className="feature-op">{OP_LABEL[String(f.op)] ?? String(f.op)}</span>
                   <span className="feature-id">{id}</span>
@@ -254,7 +374,7 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                   </button>
                 </span>
               </div>
-              {s?.error && !suppressed && (
+              {s?.error && !suppressed && !rolled && (
                 <div
                   className="feature-error"
                   data-testid={`feature-error-${id}`}
@@ -271,8 +391,28 @@ export function FeatureTree({ doc, view, selectedId, onSelect, onEditSketch, dis
                 </div>
               )}
             </li>
+            </Fragment>
           );
         })}
+        {bar >= features.length && features.length > 0 && rollbackBar}
+        {barDrag && bar < features.length && (
+          <li
+            className={`rollback-end${barAt === features.length ? " bar-target" : ""}`}
+            data-testid="rollback-end"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setBarAt(features.length);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              onRollback?.(features.length);
+              setBarDrag(false);
+              setBarAt(null);
+            }}
+          >
+            Roll to end
+          </li>
+        )}
       </ol>
       {headerErrors.map((e) =>
         e.startsWith("document: no solid") ? null : (

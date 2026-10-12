@@ -66,7 +66,12 @@ export interface ToolCtx {
   /** Selects a feature in the tree (null: none). */
   selectFeature(id: string | null): void;
   setRightTab(tab: RightTab): void;
+  /** Opens (or, open, closes) an Evaluate panel over the view: Measure, Mass Properties, Section view. */
+  evaluate?(panel: EvaluatePanel): void;
 }
+
+/** The Evaluate tab's panels. */
+export type EvaluatePanel = "measure" | "mass" | "section";
 
 /** The CommandManager's tabs (pinned tools sit left of them, always shown). */
 export type ToolTab = "features" | "reference" | "bodies" | "weldments" | "evaluate";

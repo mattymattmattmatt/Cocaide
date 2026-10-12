@@ -1278,3 +1278,118 @@ svg.icon { flex: none; display: block; }
 .spin-steps legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
 .spin-steps .row { display: flex; align-items: center; gap: 6px; }
 .spin-steps input { width: 90px; }
+
+/* ===================================================== Phase O wave 5: evaluate and view */
+:root {
+  --rollback: #3b82c4;
+  --parent-row: #e3f0ff;
+  --child-row: #fff0d6;
+  --section-cap: #e9a23b;
+  --section-hatch: #9a5b10;
+  --measure: #c2255c;
+  --dim3d: #1c7ed6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rollback: #6aa7e0;
+    --parent-row: #18293d;
+    --child-row: #3a2a12;
+    --section-cap: #b77a22;
+    --section-hatch: #f2c27a;
+    --measure: #f06595;
+    --dim3d: #74c0fc;
+  }
+}
+/* the rollback bar: a thick line in the tree, dragged up or down; rows below it greyed (not built) */
+.feature-list .rollback-bar {
+  height: 10px; margin: 2px 4px; border-radius: 4px; cursor: grab; position: relative; outline: none;
+  background: linear-gradient(transparent 3px, var(--rollback) 3px, var(--rollback) 7px, transparent 7px);
+}
+.feature-list .rollback-bar:hover, .feature-list .rollback-bar:focus-visible { background: linear-gradient(transparent 2px, var(--rollback) 2px, var(--rollback) 8px, transparent 8px); }
+.feature-list .rollback-bar:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--rollback) 35%, transparent); }
+.feature-list .rollback-bar .rollback-grip { position: absolute; left: 50%; top: 1px; width: 22px; height: 8px; margin-left: -11px; border-radius: 3px; background: var(--rollback); }
+.feature-list li.rolled-back .feature-op, .feature-list li.rolled-back .feature-id, .feature-list li.rolled-back .feature-body { opacity: 0.42; }
+.feature-list li.rolled-back .feature-icon { opacity: 0.4; }
+.feature-list li.bar-target { box-shadow: inset 0 3px 0 var(--rollback); }
+.feature-list .rollback-end { margin: 2px 4px; padding: 4px 8px; border: 1px dashed var(--rollback); border-radius: 6px; font-size: 12px; color: var(--rollback); }
+.feature-list .rollback-end.bar-target { background: color-mix(in srgb, var(--rollback) 14%, transparent); }
+/* parents and children of the feature under the pointer */
+.feature-list li.parent-of-hover > .feature-row-wrap { background: var(--parent-row); border-radius: 6px; box-shadow: inset 3px 0 0 var(--rollback); }
+.feature-list li.child-of-hover > .feature-row-wrap { background: var(--child-row); border-radius: 6px; box-shadow: inset 3px 0 0 var(--sketch-selected); }
+.rollback-banner {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px 5px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--rollback); color: var(--text);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.1);
+}
+.rollback-banner .icon { color: var(--rollback); }
+.rollback-banner button { height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--rollback); background: var(--panel); color: var(--rollback); font-size: 12px; cursor: pointer; }
+/* the Evaluate panels, floating at the top right of the view */
+.eval-panels { position: absolute; top: 12px; right: 12px; z-index: 4; display: flex; flex-direction: column; gap: 8px; width: 300px; max-height: calc(100% - 70px); overflow: auto; }
+.eval-panel { background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px 10px; box-shadow: 0 6px 20px rgb(0 0 0 / 0.12); font-size: 12px; }
+.eval-panel header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.eval-panel header h3 { margin: 0; font-size: 13px; flex: 1; }
+.eval-panel header button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.eval-panel header button:hover { color: var(--text); background: var(--panel-2); }
+.eval-panel .link { font-size: 12px; color: var(--accent); }
+.eval-panel .eval-title { margin: 2px 0 6px; font-weight: 600; }
+.eval-panel .eval-error { color: var(--bad); margin: 6px 0 0; }
+.eval-rows { width: 100%; border-collapse: collapse; }
+.eval-rows th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 6px 2px 0; white-space: nowrap; vertical-align: top; }
+.eval-rows td.value { font-family: var(--mono); text-align: right; padding: 2px 0; }
+.eval-rows td:last-child { width: 22px; text-align: right; }
+.eval-panel .copy { border: none; background: none; color: var(--muted); cursor: pointer; padding: 1px 2px; border-radius: 4px; }
+.eval-panel .copy:hover { color: var(--accent); background: var(--panel-2); }
+.eval-panel .copy[data-copied] { color: var(--ok); }
+.eval-panel details { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 4px; }
+.eval-panel summary { cursor: pointer; font-weight: 600; }
+.eval-field { display: grid; grid-template-columns: 52px 1fr auto auto; align-items: center; gap: 6px; margin: 4px 0; }
+.eval-field select { grid-column: 2 / span 3; }
+.eval-field input[type="range"] { width: 100%; }
+.eval-field .number input { width: 64px; }
+.eval-check { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+/* labels over the view: measured distances, the centre of mass, dimensions on the model, handle values */
+.eval-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.eval-label {
+  position: absolute; left: 0; top: 0; padding: 1px 6px; border-radius: 4px; font: 12px var(--mono); white-space: nowrap;
+  background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--border);
+}
+.eval-label.measure-label { color: var(--measure); border-color: var(--measure); font-weight: 600; }
+.eval-label.com-label { font-family: inherit; color: var(--muted); }
+.eval-label.dim-label { color: var(--dim3d); border-color: color-mix(in srgb, var(--dim3d) 60%, transparent); pointer-events: auto; cursor: text; transform-origin: center; margin: -10px 0 0 -14px; }
+.eval-label.dim-label:hover { background: var(--panel); border-color: var(--dim3d); }
+.eval-label.dim-label.driven { color: var(--muted); }
+.eval-label.handle-label { pointer-events: auto; cursor: text; color: #f08c00; border-color: #f08c00; }
+.eval-label.handle-label.locked { color: var(--muted); border-color: var(--border); cursor: not-allowed; }
+.dims-chip {
+  position: absolute; top: 48px; left: 50%; transform: translateX(-50%); z-index: 4; display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 12px; border-radius: 999px; font-size: 12px; background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--dim3d);
+}
+.dims-chip button { border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px; }
+.value-box {
+  position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 7px;
+  background: var(--panel); border: 1px solid var(--accent); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); font-size: 12px;
+}
+.value-box-title { color: var(--muted); }
+.value-box input { font-family: var(--mono); height: 26px; width: 140px; }
+/* the selection filter, down the left of the view, and the box being dragged */
+.filter-buttons { position: absolute; left: 12px; top: 48px; display: flex; flex-direction: column; gap: 2px; padding: 3px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--border); }
+.filter-buttons button { width: 28px; height: 26px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+.filter-buttons button:hover { background: var(--panel-2); color: var(--text); }
+.filter-buttons button[aria-pressed="true"] { color: var(--accent); background: var(--selected-row); border-color: var(--sketch-selected); }
+.box-select { position: absolute; z-index: 3; pointer-events: none; }
+.box-select.window { border: 1.5px solid #2f7bff; background: rgb(47 123 255 / 0.1); }
+.box-select.crossing { border: 1.5px dashed #2b8a3e; background: rgb(43 138 62 / 0.1); }
+.view-buttons .label { white-space: nowrap; }
+/* the command palette */
+.palette-backdrop { position: fixed; inset: 0; z-index: 70; background: rgb(0 0 0 / 0.18); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.palette { width: min(560px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 50px rgb(0 0 0 / 0.3); overflow: hidden; }
+.palette-input { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.palette-input input { flex: 1; border: none; outline: none; background: none; font-size: 15px; color: var(--text); }
+.palette-list { list-style: none; margin: 0; padding: 4px; max-height: 50vh; overflow: auto; }
+.palette-list button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: none; border-radius: 6px; background: none; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; }
+.palette-list li[aria-selected="true"] button { background: var(--selected-row); }
+.palette-list button:disabled { color: var(--muted); cursor: default; }
+.palette-label { flex: 1; }
+.palette-group { color: var(--muted); font-size: 12px; }
+.palette-none { padding: 8px 12px; }

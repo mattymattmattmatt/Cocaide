@@ -10,8 +10,8 @@ export function documentBefore(doc: unknown, feature: string): unknown {
   if (typeof doc !== "object" || doc === null || !Array.isArray((doc as { features?: unknown }).features)) return doc;
   const features = (doc as { features: unknown[] }).features;
   const at = features.findIndex((f) => typeof f === "object" && f !== null && (f as { id?: unknown }).id === feature);
-  // The drawing describes the whole part; the part before a feature has none.
-  const { drawing: _drawing, ...rest } = doc as Record<string, unknown>;
+  // The drawing describes the whole part; the part before a feature has none. Nor a rollback bar (it may name a feature cut off here).
+  const { drawing: _drawing, rollback: _rollback, ...rest } = doc as Record<string, unknown>;
   return { ...rest, features: at < 0 ? features : features.slice(0, at) };
 }
 

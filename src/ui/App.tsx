@@ -17,6 +17,7 @@ import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
+import { rollbackAt, rollbackIndex, rollbackNext, rollbackPrevious, rolledBack } from "../doc/rollback";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
 import type { Constraint, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
@@ -55,9 +56,20 @@ import { useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
 import { Icon, type IconName } from "./icons";
-import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "./input";
+import { COMMANDS, keyFor, keyHint, pointer, useCommands, useInputPrefs } from "./input";
+import type { Closest, MassProperties } from "../kernel/evaluate";
+import { CommandPalette } from "./evaluate/CommandPalette";
+import { DEFAULT_DISPLAY, loadView, saveView, type DisplayState } from "./evaluate/display";
+import { dimensionPatch, featureDimensions, type Dimension3D } from "./evaluate/dimensions3d";
+import { MassPanel, MeasurePanel, SectionPanel, ValueBox } from "./evaluate/EvaluatePanels";
+import { FILTER_KINDS, mergeBox, NO_FILTER, toggleFilter, type SelectFilter } from "./evaluate/filter";
+import { featureHandles, handlePatch, ownerOfFace, type HandleSpec } from "./evaluate/handles";
+import { kernelRef, measure, measureItems, measurePick } from "./evaluate/measure";
+import type { PaletteEntry } from "./evaluate/palette";
+import { sectionChoices, sectionOn, type SectionState } from "./evaluate/section";
+import { TABS } from "./model/tabs";
 import { Popup, ToolButton } from "./tools";
-import { EMPTY_SELECTION, Viewport, type FrameNode, type PickTarget, type Selection, type Underlay } from "./Viewport";
+import { EMPTY_SELECTION, Viewport, type EvalOverlay, type FrameNode, type HandlePhase, type PickTarget, type Selection, type Underlay } from "./Viewport";
 import { UI_OPS } from "../features/uiDefs";
 import { CommandManager } from "./model/CommandManager";
 import { makeToolCtx } from "./model/context";
@@ -66,7 +78,7 @@ import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/reg
 import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
 import { carrySelection } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
-import type { ContextTarget, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
+import type { ContextTarget, EvaluatePanel, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
 import { deleteBody } from "./model/tools/bodies";
 import { onPlane, PLANES } from "./model/tools/sketch";
 
@@ -152,12 +164,30 @@ export function App() {
   /** The views projected for the drawing, for the geometry and view directions in `key`. */
   const [geometry, setGeometry] = useState<{ key: string; g: DrawingGeometry | null } | null>(null);
   const [drawingSel, setDrawingSel] = useState<string | null>(null);
+  // Evaluate and view (Phase O wave 5): the panels over the view, the section, the selection filter.
+  const [measuring, setMeasuring] = useState(false);
+  const [weighing, setWeighing] = useState(false);
+  const [section, setSection] = useState<SectionState | null>(null);
+  const [filter, setFilter] = useState<SelectFilter>(NO_FILTER);
+  /** A handle being dragged: its feature and the patch it makes, rebuilt live before it is written (one undo step on release). */
+  const [preview, setPreview] = useState<{ id: string; patch: Record<string, unknown> } | null>(null);
+  /** The feature whose dimensions are shown on the model (double-click it). */
+  const [dimsOf, setDimsOf] = useState<string | null>(null);
+  /** A value being typed where it is shown: a dimension on the model, or a handle's. */
+  const [valueBox, setValueBox] = useState<{ x: number; y: number; dim?: Dimension3D; handle?: HandleSpec } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const measuringRef = useRef(measuring);
+  measuringRef.current = measuring;
   const editor = useRef<EditorHandle>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef(0);
   /** The rebuild shown now: what the selection's face indices refer to. */
   const shownView = useRef<RebuildView | null>(null);
-  const needsFit = useRef(true);
+  /** The document the shown view was rebuilt from (rolled back, a drag shown live): what measuring asks the worker about. */
+  const builtDoc = useRef<unknown>(null);
+  // A part this browser remembers a view of opens at that view, not fitted.
+  const [remembered] = useState(() => typeof d.doc?.name === "string" && !!loadView(d.doc.name).camera);
+  const needsFit = useRef(!remembered);
 
   const { parsed, doc } = d;
   const params = useMemo(() => documentParameters(doc), [doc]);
@@ -166,6 +196,26 @@ export function App() {
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
   const shown = useMemo(() => ask.previewDoc ?? (parsed.ok ? parsed.value : null), [ask.previewDoc, parsed]);
+  /**
+   * What the 3D view rebuilds: in the model, the part as far as the rollback bar; with a handle's drag shown
+   * live. The drawing, export and the assistant work on the whole part.
+   */
+  const rolled = useMemo(() => (shown && mode === "model" ? rolledBack(shown) : shown), [shown, mode]);
+  const viewDoc = useMemo(() => {
+    if (!rolled || !preview) return rolled;
+    const r = rolled as RawDocument;
+    return { ...r, features: r.features.map((f) => (f.id === preview.id ? { ...f, ...preview.patch } : f)) };
+  }, [rolled, preview]);
+  /** The document's name: its view (camera, display style) is remembered under it in this browser. */
+  const docName = typeof doc?.name === "string" ? doc.name : "";
+  const [display, setDisplay] = useState<DisplayState>(() => (typeof d.doc?.name === "string" ? loadView(d.doc.name).display : undefined) ?? DEFAULT_DISPLAY);
+  useEffect(() => {
+    if (docName) setDisplay(loadView(docName).display ?? DEFAULT_DISPLAY);
+  }, [docName]);
+  const changeDisplay = (next: DisplayState) => {
+    setDisplay(next);
+    saveView(docName, { display: next });
+  };
   /** The frame's nodes, where the viewport draws them. */
   const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
   /** The drawing as shown (an open proposal's, while it is previewed), and as it is in the document. */
@@ -250,17 +300,18 @@ export function App() {
     return () => kernel.dispose();
   }, [kernel]);
 
-  // Rebuild whenever the document text parses; the newest request wins.
+  // Rebuild whenever the document text parses; the newest request wins. A handle's drag rebuilds at once.
   useEffect(() => {
-    if (shown === null) return;
+    if (viewDoc === null) return;
     const ticket = ++latest.current;
     const timer = setTimeout(async () => {
       setBusy(true);
       try {
-        const { view: v, ms } = await kernel.rebuild(shown);
+        const { view: v, ms } = await kernel.rebuild(viewDoc);
         if (ticket !== latest.current) return;
         const before = shownView.current;
         shownView.current = v;
+        builtDoc.current = viewDoc;
         setView(v);
         setRebuildMs(ms);
         // Face, edge and vertex indices belong to the previous solid; a whole body picked (Bodies panel) stays picked by name;
@@ -275,9 +326,9 @@ export function App() {
       } finally {
         if (ticket === latest.current) setBusy(false);
       }
-    }, REBUILD_DELAY_MS);
+    }, preview ? 20 : REBUILD_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [shown, kernel]);
+  }, [viewDoc, kernel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // In the drawing: project the rebuilt part for its views. The worker reuses its rebuild, so this is only the projection.
   const viewsKey = shownDrawing ? shownDrawing.views.map((v) => `${v.id}:${v.look}`).join(",") : "";
@@ -382,7 +433,9 @@ export function App() {
     download(`${fileBase(r.name)}.step`, r.text, "model/step");
     setNotice({
       kind: "info",
-      text: `Exported ${fileBase(r.name)}.step${photoOf(parsed.value) ? ". It was estimated from a photo: check every size against the part before making it." : ""}`,
+      text: `Exported ${fileBase(r.name)}.step${photoOf(parsed.value) ? ". It was estimated from a photo: check every size against the part before making it." : ""}${
+        rollbackIndex(parsed.value) < ((parsed.value as RawDocument).features?.length ?? 0) ? ". It is the whole part: only the view is rolled back." : ""
+      }`,
     });
   };
 
@@ -392,6 +445,195 @@ export function App() {
   /** The features with expressions evaluated, for anything that computes with their numbers. */
   const resolved = useMemo(() => (doc ? (resolvedDocument(doc).features as Record<string, unknown>[]) : []), [doc]);
   const selected = resolved.find((f) => f.id === selectedFeature);
+  /** Where the rollback bar is: the first feature below it (the feature count: at the end). */
+  const bar = rollbackIndex(doc);
+  const rolledCount = features.length - bar;
+
+  // ------------------------------------------------------------ rollback
+
+  /** The bar to just above the feature at `index` (the feature count: the end), as one undo step. */
+  const rollTo = (index: number) => {
+    if (!doc) return;
+    const before = rollbackAt(doc, index);
+    if (before === (typeof doc.rollback === "string" ? doc.rollback : null)) return;
+    if (run({ type: "setRollback", before }) === null) setSelection(EMPTY_SELECTION);
+  };
+  const rollPrevious = () => {
+    const p = rollbackPrevious(doc);
+    if (p === undefined) return setNotice({ kind: "info", text: "The rollback bar is already at the top: nothing is built above it." });
+    rollTo(bar - 1);
+  };
+  const rollNext = () => {
+    if (rollbackNext(doc) === undefined) return setNotice({ kind: "info", text: "The rollback bar is already at the end." });
+    rollTo(bar + 1);
+  };
+  const rollEnd = () => rollTo(features.length);
+
+  // ------------------------------------------------------------ evaluate: measure, mass properties, section
+
+  const box = view?.measurements?.boundingBox ?? null;
+  /** Opens or closes an Evaluate panel. */
+  const openEvaluate = (panel: EvaluatePanel) => {
+    if (panel === "measure") {
+      setMeasuring((m) => !m);
+      if (!measuring) setNotice(null);
+    } else if (panel === "mass") setWeighing((w) => !w);
+    else toggleSection();
+  };
+  /** A section on the selected flat face or plane, else through the middle of the part on Front; off again if on. */
+  const toggleSection = () => {
+    if (section) return setSection(null);
+    const face = selection.faces.length === 1 && selection.edges.length === 0 ? view?.faces[selection.faces[0]] : undefined;
+    const datum = selection.datums?.length === 1 && selection.faces.length === 0 ? selection.datums[0] : undefined;
+    const planeDatum = datum && (Object.hasOwn(DEFAULT_DATUMS, datum) ? DEFAULT_DATUMS[datum] : view?.datums?.[datum])?.kind === "plane" ? datum : undefined;
+    const s = face?.type === "plane" ? sectionOn("face", view?.datums ?? {}, box, face) : sectionOn(planeDatum ?? "Front", view?.datums ?? {}, box);
+    if (typeof s === "string") return setNotice({ kind: "error", text: s });
+    setSection(s);
+  };
+  const sectionPlaneTo = (on: string) => {
+    const face = selection.faces.length === 1 ? view?.faces[selection.faces[0]] : undefined;
+    const s = sectionOn(on, view?.datums ?? {}, box, face);
+    if (typeof s === "string") return setNotice({ kind: "error", text: s });
+    setSection((old) => (old && old.on === on ? old : s));
+  };
+
+  // Measure: what is picked, with the kernel's closest points for a pair.
+  const measureList = useMemo(() => (measuring && view ? measureItems(selection, view.faces, view.edges, view.datums ?? {}) : []), [measuring, view, selection]);
+  const pairKey = measureList.length === 2 ? JSON.stringify([kernelRef(measureList[0]), kernelRef(measureList[1])]) : null;
+  const [closest, setClosest] = useState<{ key: string; view: RebuildView; value: Closest | null; error: string | null } | null>(null);
+  useEffect(() => {
+    if (!pairKey || !view || !builtDoc.current) return;
+    let live = true;
+    const [a, b] = measureList;
+    kernel.distance(builtDoc.current, kernelRef(a), kernelRef(b)).then(
+      (c) => live && setClosest({ key: pairKey, view, value: c, error: null }),
+      (e: Error) => live && setClosest({ key: pairKey, view, value: null, error: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [pairKey, view]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closestNow = closest && closest.key === pairKey && closest.view === view ? closest : null;
+  const measured = useMemo(() => (measuring ? measure(measureList, closestNow?.value ?? null) : null), [measuring, measureList, closestNow]);
+
+  // Mass Properties: asked again whenever the part rebuilds while the panel is open.
+  const [mass, setMass] = useState<{ view: RebuildView; value: MassProperties | null; error: string | null } | null>(null);
+  useEffect(() => {
+    if (!weighing || !view || !builtDoc.current) return;
+    let live = true;
+    kernel.massProperties(builtDoc.current).then(
+      (m) => live && setMass({ view, value: m, error: null }),
+      (e: Error) => live && setMass({ view, value: null, error: e.message }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [weighing, view, kernel]);
+
+  /** What the Evaluate tools draw: the measured line, the picked points, the centre of mass. */
+  const overlay = useMemo<EvalOverlay | null>(() => {
+    const lines = measured?.line ? [measured.line] : [];
+    const points = measured?.points ?? [];
+    const total = weighing ? mass?.value?.total : null;
+    const centreOfMass = total && total.mass > 0 ? { at: total.centre, label: "Centre of mass" } : null;
+    return lines.length || points.length || centreOfMass ? { lines, points, centreOfMass } : null;
+  }, [measured, weighing, mass]);
+
+  // ------------------------------------------------------------ direct manipulation
+
+  /** The features with a handle's drag applied, for placing the handles while it moves. */
+  const resolvedLive = useMemo(() => (preview ? resolved.map((f) => (f.id === preview.id ? { ...f, ...preview.patch } : f)) : resolved), [resolved, preview]);
+  /** The handles shown: the selected feature's (an extrude's depth, an offset plane's distance), else those of the extrude whose end face is selected. */
+  const handles = useMemo<HandleSpec[]>(() => {
+    if (!view || mode !== "model" || ask.previewDoc) return [];
+    const at = (id: string) => features.findIndex((f) => f.id === id);
+    const of = (id: string) => {
+      const f = resolvedLive.find((g) => g.id === id);
+      const raw = features.find((g) => g.id === id);
+      if (!f || !raw || f.suppressed === true || at(id) >= bar) return [];
+      return featureHandles(f, raw, view);
+    };
+    if (selectedFeature) {
+      const h = of(selectedFeature);
+      if (h.length) return h;
+    }
+    if (selection.faces.length === 1 && selection.edges.length === 0 && !measuring) {
+      const owner = ownerOfFace(view.faces[selection.faces[0]], resolvedLive.slice(0, bar), features, view);
+      if (owner) return of(owner.feature);
+    }
+    return [];
+  }, [view, mode, ask.previewDoc, resolvedLive, features, bar, selectedFeature, selection, measuring]);
+  const onHandle = (h: HandleSpec, phase: HandlePhase, value: number) => {
+    const raw = features.find((f) => f.id === h.feature);
+    if (!raw) return;
+    if (phase === "start") {
+      // The feature stays picked through the live rebuilds (the face picked first won't survive them).
+      setSelectedFeature(h.feature);
+      setPreview({ id: h.feature, patch: handlePatch(h, raw, value) });
+    } else if (phase === "move") setPreview({ id: h.feature, patch: handlePatch(h, raw, value) });
+    else {
+      setPreview(null);
+      if (phase === "end" && value !== h.value && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }) === null) {
+        setNotice({ kind: "info", text: `${h.feature}: ${h.label.toLowerCase()} ${value} mm. Ctrl+Z puts it back.` });
+      }
+    }
+  };
+
+  /** Shows a feature's dimensions on the model, or says it has none to show. */
+  const showDimensions = (id: string | null) => {
+    if (!id) return setDimsOf(null);
+    const list = featureDimensions(id, resolved, features, view, 0.2, (f) => UI_OPS[String(f.op)]?.sketchOf?.(f) ?? null);
+    if (!list.length) return setNotice({ kind: "info", text: `${id} has no dimensions to show on the model: change its numbers in Properties.` });
+    setDimsOf(id);
+    setNotice(null);
+  };
+  const mmPerPx = box ? Math.max(...box.size) / 700 || 0.1 : 0.1;
+  const dims = useMemo(
+    () => (dimsOf && view ? featureDimensions(dimsOf, resolvedLive, features, view, mmPerPx, (f) => UI_OPS[String(f.op)]?.sketchOf?.(f) ?? null) : []),
+    [dimsOf, view, resolvedLive, features, mmPerPx],
+  );
+  // A feature gone (undo, delete) takes its dimensions and drag with it.
+  useEffect(() => {
+    if (dimsOf && !features.some((f) => f.id === dimsOf)) setDimsOf(null);
+    if (preview && !features.some((f) => f.id === preview.id)) setPreview(null);
+  }, [features, dimsOf, preview]);
+  /** A value typed where it is shown: a sketch dimension re-solves its sketch; a feature's number is its field. */
+  const commitValue = (v: number | string) => {
+    const box = valueBox;
+    if (!box) return;
+    if (box.handle) {
+      const raw = features.find((f) => f.id === box.handle!.feature);
+      if (raw) run({ type: "updateFeature", id: box.handle.feature, patch: handlePatch(box.handle, raw, v as number) });
+      return;
+    }
+    const edit = box.dim?.edit;
+    if (!edit) return;
+    if (edit.kind === "sketch") {
+      if (edit.driven) return setNotice({ kind: "info", text: `${edit.sketch}.${edit.name} is driven: the geometry sets it. Make it driving in the sketch to change it.` });
+      run({ type: "setDimension", sketch: edit.sketch, index: edit.index, value: v });
+    } else {
+      const raw = features.find((f) => f.id === edit.feature);
+      if (raw) run({ type: "updateFeature", id: edit.feature, patch: dimensionPatch(edit, raw, v) });
+    }
+  };
+  /** A double-click on the model shows the dimensions of the feature that made what was clicked. */
+  const onDoubleClick = async (target: PickTarget | null) => {
+    if (!target) return setDimsOf(null);
+    if (target.kind === "datum") return features.some((f) => f.id === target.id) ? showDimensions(target.id) : undefined;
+    const v = view;
+    const faceIndex = target.kind === "face" ? target.index : (v?.edges[target.kind === "vertex" ? target.edge : target.index]?.faces[0] ?? -1);
+    if (!v || faceIndex < 0) return;
+    // An extrude's end face is known at once; anything else from the rebuild's record of which feature made each face.
+    const quick = ownerOfFace(v.faces[faceIndex], resolved.slice(0, bar), features, v);
+    if (quick) return showDimensions(quick.feature);
+    try {
+      const topo = await kernel.port.topology(builtDoc.current);
+      const id = topo?.faceOrigins[faceIndex];
+      if (id) showDimensions(id);
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not tell which feature made that: ${(e as Error).message}` });
+    }
+  };
 
   /** A new sketch on a plane: written out, or by reference (a default plane, a plane feature, a face), which it keeps. */
   const startSketch = (spec: PlaneSpec) => {
@@ -755,7 +997,11 @@ export function App() {
   }, []);
 
   // A plain click selects one face or edge; Ctrl- or Shift-click adds one, or takes it out again.
-  const onPick = useCallback((target: PickTarget | null, additive: boolean) => setSelection((sel) => pickInto(sel, target, additive)), []);
+  // While measuring, a click adds to what is measured without Ctrl, and a third starts again.
+  const onPick = useCallback(
+    (target: PickTarget | null, additive: boolean) => setSelection((sel) => (measuringRef.current ? measurePick(sel, target) : pickInto(sel, target, additive))),
+    [],
+  );
 
   // Escape clears the selection; Ctrl+Shift+Z redoes too (Ctrl+Y is the usual one). Every other key is a command below.
   useEffect(() => {
@@ -763,7 +1009,10 @@ export function App() {
       if (sketch || e.defaultPrevented) return;
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
-      if (e.key === "Escape") setSelection(EMPTY_SELECTION);
+      if (e.key === "Escape") {
+        setSelection(EMPTY_SELECTION);
+        setDimsOf(null);
+      }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z") {
         e.preventDefault();
         d.redo();
@@ -781,7 +1030,8 @@ export function App() {
    * so a tool always sees the current state.
    */
   const toolCtx: ToolCtx = makeToolCtx(
-    { doc, view, selection, selected, resolved, features, library },
+    // Rolled back, the tools see the part as it is shown: the features above the bar (the latest sketch there, its bodies).
+    { doc, view, selection, selected, resolved: bar < features.length ? resolved.slice(0, bar) : resolved, features: bar < features.length ? features.slice(0, bar) : features, library },
     {
       run,
       create,
@@ -799,6 +1049,7 @@ export function App() {
       setSelection,
       selectFeature: setSelectedFeature,
       setRightTab,
+      evaluate: (panel: EvaluatePanel) => openEvaluate(panel),
     },
   );
   /** The newest ToolCtx, for menu entries run at the click (after the right-click's selection has landed). */
@@ -917,6 +1168,16 @@ export function App() {
         ...(sketchId ? [{ label: "Edit sketch", icon: "sketch", onClick: () => editSketch(sketchId), testId: "ctx-edit-sketch" } as MenuEntry] : []),
         { label: suppressed ? "Unsuppress" : "Suppress", icon: suppressed ? "eye" : "suppress", onClick: () => run({ type: "suppressFeature", id, suppressed: !suppressed }), testId: "ctx-suppress" },
         { label: "Rename…", icon: "note", onClick: () => renameFeature(id), testId: "ctx-rename" },
+        ...(op !== "sketch" ? [{ label: "Show dimensions", icon: "dimension", onClick: () => showDimensions(id), testId: "ctx-show-dimensions" } as MenuEntry] : []),
+        "sep",
+        { label: "Roll back to here", icon: "rollback", hint: "The rollback bar goes just above this feature: it and those after it are not built; new features go in there", onClick: () => rollTo(features.findIndex((g) => g.id === id)), testId: "ctx-rollback-here" },
+        ...(rolledCount > 0
+          ? [
+              { label: "Roll to previous", icon: "up", onClick: rollPrevious, testId: "ctx-rollback-previous" } as MenuEntry,
+              { label: "Roll to end", icon: "down", onClick: rollEnd, testId: "ctx-rollback-end" } as MenuEntry,
+            ]
+          : []),
+        "sep",
         {
           label: "Delete",
           icon: "trash",
@@ -984,6 +1245,7 @@ export function App() {
           viewCmd("view.front", "Front", "front"),
           viewCmd("view.right", "Right", "right"),
           ...(hiddenBodies.size ? [{ label: "Show all bodies", icon: "eye", onClick: () => setHiddenBodies(new Set()), testId: "ctx-show-bodies" } as MenuEntry] : []),
+          ...(rolledCount > 0 ? ["sep" as const, { label: "Roll to end", icon: "rollback", onClick: rollEnd, testId: "ctx-rollback-end" } as MenuEntry] : []),
           "sep",
           { label: "Undo", icon: "undo", shortcut: keyFor("undo", prefs) ?? undefined, disabled: !d.canUndo, onClick: d.undo },
         ];
@@ -1025,6 +1287,18 @@ export function App() {
   };
   const contextMenuRef = useRef(contextMenu);
   contextMenuRef.current = contextMenu;
+  /** Right-click on the rollback bar. */
+  const rollbackMenu = (x: number, y: number) =>
+    setMenu({
+      x,
+      y,
+      title: "Rollback bar",
+      items: [
+        { label: "Roll to previous", icon: "up", disabled: bar === 0, onClick: rollPrevious, testId: "ctx-rollback-previous" },
+        { label: "Roll forward", icon: "down", disabled: rolledCount === 0, onClick: rollNext, testId: "ctx-rollback-next" },
+        { label: "Roll to end", icon: "rollback", disabled: rolledCount === 0, onClick: rollEnd, testId: "ctx-rollback-end" },
+      ],
+    });
 
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
   /** The tab Settings opens on: the assistant's when an ask needs it set up, else Units. */
@@ -1056,6 +1330,12 @@ export function App() {
             },
             repeat: () => lastTool.current && runTool(lastTool.current),
             ...Object.fromEntries(MODEL_TOOLS.map((t) => [t.id, () => runTool(t.id)])),
+            palette: () => setPaletteOpen(true),
+            ...Object.fromEntries(FILTER_KINDS.map((f) => [f.command, () => setFilter((x) => toggleFilter(x, f.kind))])),
+            "select.clear": () => setFilter(NO_FILTER),
+            "rollback.previous": rollPrevious,
+            "rollback.next": rollNext,
+            "rollback.end": rollEnd,
           }
         : {}),
     },
@@ -1088,6 +1368,29 @@ export function App() {
     const frame = planeFrame(sketch.plane.normal, sketch.plane.origin, sketch.plane.xDir);
     return modelView(sketch.isNew ? view : before?.id === sketch.id ? before.view : null, frame);
   }, [sketch, view, before]);
+
+  /** Everything the command palette can run: the model tools, the view commands, the general ones. */
+  const paletteEntries = (): PaletteEntry[] => {
+    const label = (id: string) => COMMANDS.find((c) => c.id === id)?.label ?? id;
+    const entry = (id: string, group: string, run: () => void, extra: Partial<PaletteEntry> = {}): PaletteEntry => ({ id, label: label(id), group, key: keyFor(id, prefs), run, ...extra });
+    const tabOf = (t: ToolDef) => (t.tab === "pinned" ? "Sketch" : (TABS.find((x) => x.id === t.tab)?.label ?? "Model"));
+    return [
+      ...MODEL_TOOLS.map((t) => entry(t.id, tabOf(t), () => runTool(t.id), { label: t.label, keywords: `${label(t.id)},${t.hint ?? ""}`, disabled: t.disabled?.(toolCtx) })),
+      ...COMMANDS.filter((c) => c.group === "View" && !c.planned).map((c) => entry(c.id, "View", () => viewCommands.current?.(c.id))),
+      ...FILTER_KINDS.map((f) => entry(f.command, "Selection", () => setFilter((x) => toggleFilter(x, f.kind)))),
+      entry("select.clear", "Selection", () => setFilter(NO_FILTER)),
+      entry("rollback.previous", "History", rollPrevious, { disabled: bar === 0 ? "The bar is at the top" : undefined }),
+      entry("rollback.next", "History", rollNext, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
+      entry("rollback.end", "History", rollEnd, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
+      entry("undo", "General", d.undo, { disabled: d.canUndo ? undefined : "Nothing to undo" }),
+      entry("redo", "General", d.redo, { disabled: d.canRedo ? undefined : "Nothing to redo" }),
+      entry("save", "General", () => saveRef.current()),
+      entry("open", "General", () => fileInput.current?.click()),
+      entry("new", "General", () => replaceDocument(BLANK, "New part")),
+      entry("settings", "General", () => openSettings("units")),
+      entry("toggleTree", "General", () => setLeftHidden((h) => !h)),
+    ];
+  };
 
   const dirty = d.text !== d.savedText;
   const status =
@@ -1331,6 +1634,10 @@ export function App() {
               onPickDatum={(id, additive) => setSelection((sel) => pickInto(sel, { kind: "datum", id, point: [0, 0, 0] }, additive))}
               onToggleEye={(id) => setDatumView(toggleEye(datumView, id))}
               onDatumMenu={sketch ? undefined : datumMenu}
+              rollback={bar}
+              onRollback={sketch ? undefined : rollTo}
+              onRollbackMenu={sketch ? undefined : rollbackMenu}
+              onShowDimensions={sketch ? undefined : showDimensions}
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} />
             <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
@@ -1397,7 +1704,65 @@ export function App() {
                   commandsRef={viewCommands}
                   datumView={datumView}
                   onDatumView={setDatumView}
+                  display={display}
+                  onDisplay={changeDisplay}
+                  memoryKey={docName}
+                  section={section}
+                  overlay={overlay}
+                  dims={dims}
+                  onDimension={(dim, x, y) => setValueBox({ x, y, dim })}
+                  handles={handles}
+                  onHandle={onHandle}
+                  onHandleLabel={(handle, x, y) => setValueBox({ x, y, handle })}
+                  filter={filter}
+                  onFilter={setFilter}
+                  onBox={(sel, additive) => setSelection((prev) => mergeBox(prev, sel, additive))}
+                  onDoubleClick={(t) => void onDoubleClick(t)}
                 />
+              {rolledCount > 0 && !ask.previewDoc && (
+                <div className="rollback-banner" data-testid="rollback-banner" role="status">
+                  <Icon name="rollback" />
+                  <span>
+                    Rolled back above <strong>{String(features[bar]?.id)}</strong>: {rolledCount} feature{rolledCount === 1 ? " is" : "s are"} not built. New features go in at the bar.
+                  </span>
+                  <button onClick={rollEnd} data-testid="rollback-banner-end">
+                    Roll to end
+                  </button>
+                </div>
+              )}
+              {(measuring || weighing || section) && (
+                <div className="eval-panels">
+                  {measuring && measured && (
+                    <MeasurePanel
+                      result={measured}
+                      busy={!!pairKey && !closestNow}
+                      error={closestNow?.error ?? null}
+                      onClose={() => setMeasuring(false)}
+                      onClear={() => setSelection(EMPTY_SELECTION)}
+                    />
+                  )}
+                  {weighing && <MassPanel mass={mass?.value ?? null} error={mass?.error ?? null} busy={mass?.view !== view} onClose={() => setWeighing(false)} />}
+                  {section && (
+                    <SectionPanel
+                      section={section}
+                      choices={sectionChoices(view?.datums ?? {})}
+                      faceOk={selection.faces.length === 1 && view?.faces[selection.faces[0]]?.type === "plane"}
+                      box={box}
+                      onPlane={sectionPlaneTo}
+                      onChange={setSection}
+                      onClose={() => setSection(null)}
+                    />
+                  )}
+                </div>
+              )}
+              {dimsOf && dims.length > 0 && (
+                <div className="dims-chip" data-testid="dims-chip">
+                  Dimensions of <strong>{dimsOf}</strong>: double-click one to change it
+                  <button aria-label="Hide the dimensions" onClick={() => setDimsOf(null)} data-testid="dims-chip-close">
+                    <Icon name="x" size={13} />
+                  </button>
+                </div>
+              )}
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
                   Previewing the proposal
@@ -1489,6 +1854,18 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
+        {paletteOpen && !sketch && mode === "model" && <CommandPalette entries={paletteEntries()} onClose={() => setPaletteOpen(false)} />}
+        {valueBox && (
+          <ValueBox
+            x={valueBox.x}
+            y={valueBox.y}
+            title={valueBox.handle ? `${valueBox.handle.feature}: ${valueBox.handle.label}` : (valueBox.dim?.title ?? "Value")}
+            value={valueBox.handle ? valueBox.handle.value : (valueBox.dim?.edit.value ?? 0)}
+            onCommit={commitValue}
+            onClose={() => setValueBox(null)}
+            testId={valueBox.handle ? "handle-box" : "dim-box"}
+          />
+        )}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {shortcutBar && !sketch && (
           <Popup x={shortcutBar.x} y={shortcutBar.y} bar onClose={() => setShortcutBar(null)} label="Shortcut bar" testId="shortcut-bar">
