@@ -49,6 +49,7 @@ describe("the registry", () => {
       "tool-chamfer",
       "tool-linear-pattern",
       "tool-circular-pattern",
+      "tool-sketch-pattern",
       "tool-mirror",
       "tool-combine",
       "tool-split",
@@ -77,7 +78,7 @@ describe("the registry", () => {
     expect(ids(toolbarGroups("features"))).toEqual([
       ["tool.extrude", "tool.cut", "revolve: tool.revolve, tool.revolveCut", "sweep: tool.sweep, tool.sweepCut, tool.helix", "loft: tool.loft, tool.loftCut"],
       ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft", "tool.rib"],
-      ["pattern: tool.linearPattern, tool.circularPattern", "tool.mirror"],
+      ["pattern: tool.linearPattern, tool.circularPattern, tool.sketchPattern", "tool.mirror"],
     ]);
     expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"]]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
@@ -114,7 +115,8 @@ describe("the registry", () => {
   it("reserves a command for each tool still to come, out of Settings until it lands", () => {
     const planned = COMMANDS.filter((c) => c.planned).map((c) => c.id);
     // Sweep, Loft and Rib landed in wave 4.
-    for (const id of ["tool.measure", "tool.section", "tool.sketchPattern"]) {
+    // The sketch-driven pattern landed in wave 5.
+    for (const id of ["tool.measure", "tool.section"]) {
       expect(planned).toContain(id);
     }
     // The sketch edit tools (trim … copy) landed in wave 3, Fully Define in wave 4.
@@ -211,14 +213,15 @@ describe("Extrude and Cut", () => {
 });
 
 describe("Hole, Fillet, Chamfer", () => {
-  it("drills a 5 mm through hole where the flat face was clicked, centre in the face's frame", () => {
+  it("drills a hole where the flat face was clicked, centre in the face's frame, remembering the last hole's size and depth", () => {
     const doc = example("bracket");
     const view = viewOf(oc, doc);
     const top = faceWhere(view, (f) => f.type === "plane" && f.normal![2] > 0.99);
     const { ctx, out } = harness(doc, view, { selection: { faces: [top], edges: [], point: [10, 5, 6] } });
     run("tool.hole", ctx);
     // The top face's frame: origin (0,0,6), x along +X, y along +Y, so (10, 5, 6) is [10, 5].
-    expect(out.created).toEqual([{ id: "hole_2", op: "hole", face: { type: "planar", normal: [0, 0, 1], pick: "largest" }, center: [10, 5], diameter: 5, depth: "through" }]);
+    // The bracket's hole_1 is Ø6.6 through: the Hole Wizard remembers it.
+    expect(out.created).toEqual([{ id: "hole_2", op: "hole", face: { type: "planar", normal: [0, 0, 1], pick: "largest" }, center: [10, 5], diameter: 6.6, depth: "through" }]);
   });
 
   it("refuses a round face, two faces, or none, saying what to click", () => {

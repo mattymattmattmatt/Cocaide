@@ -221,26 +221,28 @@ describe("the feature ops' UI registry", () => {
       expect(ICON_NAMES, u.op).toContain(u.icon);
       expect(u.fields || u.Editor, u.op).toBeTruthy();
     }
-    expect(Object.keys(UI_OPS)).toEqual(["fillet", "chamfer", "linearPattern", "circularPattern", "plane", "axis", "point", "revolve", "shell", "draft", "scale", "sweep", "loft", "rib"]);
+    expect(Object.keys(UI_OPS)).toEqual(["fillet", "chamfer", "linearPattern", "circularPattern", "plane", "axis", "point", "revolve", "shell", "draft", "scale", "sweep", "loft", "rib", "sketchPattern", "hole"]);
   });
 
   it("keeps the old editors' test ids", () => {
     const tids = (op: string) => UI_OPS[op].fields!.map(fieldTestId);
     expect(tids("fillet")).toEqual(expect.arrayContaining(["prop-edges", "prop-radius"]));
     expect(tids("chamfer")).toEqual(expect.arrayContaining(["prop-edges", "prop-chamfer-distance"]));
-    expect(tids("linearPattern").slice(0, 4)).toEqual(["prop-pattern-feature", "prop-pattern-direction", "prop-spacing", "prop-count"]);
+    // Wave 5: the one feature became a list of features (ticked), with a direction from the model beside the written one.
+    expect(tids("linearPattern")).toEqual(expect.arrayContaining(["prop-pattern-features", "prop-pattern-direction", "prop-pattern-along", "prop-spacing", "prop-count"]));
   });
 
   it("a second pattern direction comes and goes with its spacing and count", () => {
     const fields = UI_OPS.linearPattern.fields!;
     const f = { id: "p", op: "linearPattern", feature: "hole_1", direction: [1, 0, 0], spacing: 20, count: 3 };
     const c = ctxOf(f);
-    const second = fields.find((s) => s.kind === "bool")!;
+    const second = fields.find((s) => s.kind === "bool" && s.key === "direction2")!;
     expect(commitPatch(second, true, f, c)).toEqual({ direction2: [0, 1, 0], spacing2: 20, count2: 2 });
-    expect(visibleFields(fields, f, c).map((s) => s.key)).toEqual(["feature", "direction", "spacing", "count", "direction2"]);
+    expect(visibleFields(fields, f, c).map((s) => s.key)).toEqual(["features", "direction", "along", "reverse", "spacing", "count", "direction2", "skip"]);
     const two = { ...f, direction2: [0, 1, 0], spacing2: 20, count2: 2 };
-    expect(visibleFields(fields, two, ctxOf(two))).toHaveLength(8);
-    expect(commitPatch(second, false, two, ctxOf(two))).toEqual({ direction2: null, spacing2: null, count2: null });
+    // Each direction: written out, from the model, reversed; then spacing 2 and count 2.
+    expect(visibleFields(fields, two, ctxOf(two))).toHaveLength(13);
+    expect(commitPatch(second, false, two, ctxOf(two))).toEqual({ direction2: null, along2: null, reverse2: null, spacing2: null, count2: null, skip: null });
   });
 
   it("a circular pattern's axis point sends the whole axis, and 360° is left out", () => {

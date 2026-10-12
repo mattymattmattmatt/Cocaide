@@ -100,7 +100,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.loftCut", label: "Lofted cut", group: "Model tools", key: null },
   { id: "tool.helix", label: "Helix (spring)", group: "Model tools", key: null },
 
-  { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null, planned: true },
+  { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null },
 
   { id: "tool.measure", label: "Measure", group: "Model tools", key: null, planned: true },
   { id: "tool.section", label: "Section view", group: "Model tools", key: null, planned: true },
@@ -277,6 +277,17 @@ function typing(e: KeyboardEvent): boolean {
 }
 const WHILE_TYPING = new Set(["save", "open"]);
 
+/** A button that has the keyboard focus (Tab), not one focused by a click. */
+function keyboardFocusedButton(target: EventTarget | null): boolean {
+  const t = target as HTMLElement | null;
+  if (!t || t.tagName !== "BUTTON") return false;
+  try {
+    return t.matches(":focus-visible");
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Runs these commands when their keys are pressed, while `enabled`. The
  * handlers may change every render: the latest are used.
@@ -295,6 +306,8 @@ export function useCommands(handlers: Record<string, (() => void) | undefined>, 
         const run = ref.current[c.id];
         if (!run || keyFor(c.id) !== key) continue;
         if (typing(e) && !WHILE_TYPING.has(c.id)) continue;
+        // A button reached with the keyboard (Tab) presses itself with Space or Enter; one just clicked leaves them to the commands.
+        if ((key === "Space" || key === "Enter") && keyboardFocusedButton(e.target)) continue;
         // A modal dialog has the keyboard to itself.
         if (document.querySelector(".modal-backdrop") && c.id !== "save") continue;
         e.preventDefault();

@@ -39,8 +39,11 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@bottom", to: "@top" });
   annotations.push({ id: id("d"), type: "dimension", view: "right", from: "@left", to: "@right" });
 
-  // Each hole, called out and placed from the view's left and bottom where it shows as a circle.
+  // Each hole feature, called out once (its first hole; the callout counts them all) and placed from the view's left and bottom where it shows as a circle.
+  const called = new Set<string>();
   for (const h of geometry?.holes ?? []) {
+    if (called.has(h.feature)) continue;
+    called.add(h.feature);
     const view = views.find((x) => x.look !== "iso" && facing(h.axis, x.look));
     if (!view) continue;
     annotations.push({ id: id("h"), type: "hole", view: view.id, hole: h.feature });

@@ -21,6 +21,7 @@ import {
   DEFAULT_BODY,
   DERIVED_SUFFIX,
   NODE_NAME,
+  seedIds,
   type Annotation,
   type Constraint,
   type Drawing,
@@ -638,7 +639,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
   }
   // A pattern of the feature that starts the body makes copies named from_2, from_3: they follow.
   const seeds = new Set(features.filter((f) => startsBody(f, from)).map((f) => f.id));
-  const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
+  const patterned = features.some((f) => isPattern(f) && seedIds(f).some((id) => seeds.has(id)));
   const derived = new RegExp(`^${from.replace(/[-]/g, "\\-")}_(\\d+)$`);
   const renamed = renamedBodies(features, from, to);
   const rename = (n: unknown) => (typeof n === "string" && renamed.has(n) ? renamed.get(n)! : n);
@@ -707,6 +708,16 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
   return null;
 }
 
+/** A linear or circular pattern (built in; a sketch-driven pattern is a registry op with hooks of its own). */
+function isPattern(f: Record<string, unknown>): boolean {
+  return f.op === "linearPattern" || f.op === "circularPattern";
+}
+
+/** How many instances a pattern has, the original included. */
+function patternTotal(f: Record<string, unknown>): number {
+  return Number(f.count) * (f.op === "linearPattern" && f.count2 !== undefined ? Number(f.count2) : 1);
+}
+
 /** The feature starts this body, and patterns or mirrors of it name their copies after it (from_2, from_mirror). */
 function startsBody(f: Record<string, unknown>, name: string): boolean {
   if (f.op === "extrude") return f.newBody === name;
@@ -722,18 +733,15 @@ function startsBody(f: Record<string, unknown>, name: string): boolean {
 export function renamedBodies(features: Record<string, unknown>[], from: string, to: string): Map<string, string> {
   const out = new Map([[from, to]]);
   const seeds = new Set(features.filter((f) => startsBody(f, from)).map((f) => f.id));
-  const patterned = features.some((f) => (f.op === "linearPattern" || f.op === "circularPattern") && seeds.has(f.feature));
-  if (patterned) {
-    for (const f of features) {
-      if ((f.op !== "linearPattern" && f.op !== "circularPattern") || !seeds.has(f.feature)) continue;
-      const total = Number(f.count) * (f.op === "linearPattern" ? Number(f.count2 ?? 1) : 1);
-      for (let k = 2; k <= total; k++) out.set(`${from}_${k}`, `${to}_${k}`);
-    }
+  for (const f of features) {
+    if (!isPattern(f) || !seedIds(f).some((id) => seeds.has(id))) continue;
+    // Copies are named by instance number (a skipped one is simply not made).
+    for (let k = 2; k <= patternTotal(f); k++) out.set(`${from}_${k}`, `${to}_${k}`);
   }
   for (const f of features) {
     if (f.newBody !== undefined) continue;
     const lists = (x: unknown) => Array.isArray(x) && x.includes(from);
-    if (f.op === "mirror" && f.merge !== true && (lists(f.bodies) || seeds.has(f.feature))) out.set(`${from}${DERIVED_SUFFIX.mirror}`, `${to}${DERIVED_SUFFIX.mirror}`);
+    if (f.op === "mirror" && f.merge !== true && (lists(f.bodies) || seedIds(f).some((id) => seeds.has(id)))) out.set(`${from}${DERIVED_SUFFIX.mirror}`, `${to}${DERIVED_SUFFIX.mirror}`);
     if (f.op === "split" && f.body === from) out.set(`${from}${DERIVED_SUFFIX.split}`, `${to}${DERIVED_SUFFIX.split}`);
     if (f.op === "move" && f.copy === true && lists(f.bodies)) out.set(`${from}${DERIVED_SUFFIX.move}`, `${to}${DERIVED_SUFFIX.move}`);
   }
@@ -753,9 +761,11 @@ function implicitMaker(features: Record<string, unknown>[], name: string): { id:
     const of = name.slice(0, -suffix.length);
     if (f.op === "split" && f.body === of) return { id: String(f.id), suffix, of };
     if (Array.isArray(f.bodies) && f.bodies.includes(of)) return { id: String(f.id), suffix, of, list: f.bodies };
-    if (f.op === "mirror" && typeof f.feature === "string") {
-      const seed = features.find((g) => g.id === f.feature);
-      if (seed && (seed.op === "member" ? (seed.newBody ?? seed.id) : seed.newBody) === of) return { id: String(f.id), suffix, of };
+    if (f.op === "mirror") {
+      for (const id of seedIds(f)) {
+        const seed = features.find((g) => g.id === id);
+        if (seed && startsBody(seed, of)) return { id: String(f.id), suffix, of };
+      }
     }
   }
   return null;
@@ -976,7 +986,9 @@ export function references(f: Record<string, unknown>): string[] {
     const sets = Array.isArray(f.sets) ? f.sets.filter(isObject) : [];
     for (const ch of [f, ...sets]) if (Array.isArray(ch.features)) for (const id of ch.features) if (typeof id === "string" && !refs.includes(id)) refs.push(id);
   }
-  if ((f.op === "linearPattern" || f.op === "circularPattern" || f.op === "mirror") && typeof f.feature === "string") refs.push(f.feature);
+  if (isPattern(f) || f.op === "mirror") for (const id of seedIds(f)) if (!refs.includes(id)) refs.push(id);
+  // A hole at a sketch's points.
+  if (f.op === "hole" && typeof f.points === "string") refs.push(f.points);
   // Joints, gussets and end caps work on members.
   if ((f.op === "joint" || f.op === "gusset") && Array.isArray(f.members)) refs.push(...f.members.filter((m): m is string => typeof m === "string"));
   if (f.op === "joint" && typeof f.through === "string") refs.push(f.through);

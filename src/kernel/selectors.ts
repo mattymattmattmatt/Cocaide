@@ -26,6 +26,7 @@ function nearest<T extends { centroid: Vec3 }>(items: T[], p: Vec3): T[] {
 
 export function selectFaces(infos: FaceInfo[], selector: FaceSelector): Selection {
   let matches = infos.filter((f) => matchesFace(f, selector));
+  if (selector.type === "planar" && selector.rank !== undefined) matches = atRank(matches, selector.rank);
   if (selector.near) {
     matches = nearest(matches, selector.near);
     if (matches.length > 1) return { matches, tie: "nearest" };
@@ -36,6 +37,34 @@ export function selectFaces(infos: FaceInfo[], selector: FaceSelector): Selectio
   const tol = AREA_REL_TOL * Math.max(1, Math.abs(best));
   const top = matches.filter((f) => Math.abs(sign * f.area - best) <= tol);
   return top.length > 1 ? { matches: top, tie: selector.pick } : { matches: top };
+}
+
+/**
+ * The planes the faces lie in, as levels along their (shared) normal, furthest
+ * out first: the faces on level `rank` (1 the furthest out, -1 the furthest in).
+ */
+function atRank(faces: FaceInfo[], rank: number): FaceInfo[] {
+  const levels = rankLevels(faces);
+  const level = levels[rank > 0 ? rank - 1 : levels.length + rank];
+  if (level === undefined) return [];
+  return faces.filter((f) => Math.abs((f.offset ?? NaN) - level) <= LENGTH_TOL);
+}
+
+/** The different plane offsets of the faces, furthest out along the normal first (within LENGTH_TOL counts as one level). */
+export function rankLevels(faces: FaceInfo[]): number[] {
+  const offsets = faces.map((f) => f.offset ?? 0).sort((a, b) => b - a);
+  const levels: number[] = [];
+  for (const o of offsets) if (!levels.length || levels[levels.length - 1] - o > LENGTH_TOL) levels.push(o);
+  return levels;
+}
+
+/** "outermost", "2nd from outermost", "innermost", "3rd from innermost". */
+export function rankWords(rank: number): string {
+  const n = Math.abs(rank);
+  const end = rank > 0 ? "outermost" : "innermost";
+  if (n === 1) return end;
+  const suffix = n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th";
+  return `${n}${suffix} from ${end}`;
 }
 
 function matchesFace(f: FaceInfo, sel: FaceSelector): boolean {
@@ -58,7 +87,7 @@ export function describeWanted(sel: FaceSelector, count: number): string {
   const near = sel.near ? ` nearest ${fmtPoint(sel.near)}` : "";
   const of = sel.body ? ` of body "${sel.body}"` : "";
   if (sel.type === "planar") {
-    const at = sel.offset === undefined ? "" : ` at offset ${sel.offset}`;
+    const at = sel.offset !== undefined ? ` at offset ${sel.offset}` : sel.rank !== undefined ? `, ${rankWords(sel.rank)} along it` : "";
     return `${count} planar ${noun} normal ${formatDirection(sel.normal)}${at}${near}${of}`;
   }
   const parts = [`${count} cylindrical ${noun}`];

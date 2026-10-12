@@ -7,7 +7,8 @@
 // every failure is reported as "<feature id>: <reason>".
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import { DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
+import type { ThreadSpec } from "../features/hole/standards";
+import { seedIds, DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
 import { expressionFields, isConstruction, isReference } from "../doc/sketch";
 import { validateDocument } from "../doc/validate";
 import type { Datum } from "../features/datum";
@@ -25,12 +26,13 @@ import { byBody, treatBody, treatments } from "./edgeTreat";
 import { cutMissed, extrudeTool } from "./extrude";
 import { interference, measure, volumeOf, type Measurements } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
+import { drillHoles, holeSites, type PointSketch } from "./hole";
+import { patternInstances } from "./pattern";
 import { getOC, type OC, type Scope, scoped } from "./oc";
 import {
   combineBodies,
   commonWith,
   copyOut,
-  drillTool,
   type Drilled,
   endCapTool,
   fuseInto,
@@ -41,7 +43,6 @@ import {
   moveTrsfs,
   noClosedProfile,
   OpError,
-  patternInstances,
   removeFrom,
   splitBody,
   transformLine,
@@ -114,6 +115,10 @@ export interface HoleRecord {
   through: boolean;
   counterbore?: { diameter: number; depth: number };
   countersink?: { diameter: number; angle: number };
+  /** The screw size the hole is for ("M6"), when it names one. */
+  size?: string;
+  /** A tapped hole's thread ("M6×1", 6H, its depth): a drawing calls it out "M6×1 - 6H ⌴12". `diameter` is its tap drill. */
+  thread?: ThreadSpec;
   /** Copies made by patterns of it. */
   copies: number;
 }
@@ -319,7 +324,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       tools.get(id)?.tool.delete();
       tools.set(id, { ...seed, tool: copyOut(seed.tool) });
     },
-    repeat: (s, instances, seed, nameOf, what) => repeat(s, instances, seed, nameOf, what),
+    repeat: (s, instances, seed, nameOf, what, changed) => repeat(s, instances, seed, nameOf, what, changed),
     holes: {
       record(h, names) {
         drilled.push(h);
@@ -343,6 +348,20 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       drop: (body) => void memberBodies.delete(body),
     },
     datums,
+  };
+  /** The sketch whose points place holes: as the rebuild solved it, on its frame. */
+  const pointSketch = (id: string): PointSketch => {
+    const profile = profiles.get(id);
+    const sketch = sketchFeatures.get(id);
+    if (!profile || !sketch) throw new OpError(`points: ${missing(id, "sketch")}, so there are no points to drill at`);
+    return { sketch, frame: profile.frame };
+  };
+  /** The tool an earlier feature left for patterns and mirrors, or why there is none. */
+  const seedOf = (id: string, verb: "repeat" | "mirror"): Seed => {
+    const seed = tools.get(id);
+    if (!seed && intersected.has(id)) throw new OpError(`"${id}" is an intersecting extrude: it keeps an overlap and adds no tool to ${verb}; ${verb === "repeat" ? "pattern" : "mirror"} the bodies instead`);
+    if (!seed) throw new OpError(`${missing(id, "feature")}, so there is nothing to ${verb}`);
+    return seed;
   };
   /** A plane as a frame: written out, or resolved by reference on the part as it is now. */
   const planeOf = (spec: PlaneSpec, path = "plane"): Frame => planeSpecFrame(ctx, spec, path);
@@ -421,6 +440,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         case "hole": {
           if (bodies.size === 0) throw new OpError("nothing to drill: there is no solid before this feature");
           const on = targets(raw.bodies);
+          const points = raw.points === undefined ? null : pointSketch(raw.points);
           scoped((s) => {
             const at = (d: Drilled) =>
               drilled.push({
@@ -429,13 +449,17 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
                 axis: d.into.map(r6) as Vec3,
                 diameter: raw.diameter,
                 depth: r6(d.length),
-                through: raw.depth === "through",
+                through: typeof raw.depth !== "number",
                 ...(raw.counterbore ? { counterbore: raw.counterbore } : {}),
                 ...(raw.countersink ? { countersink: raw.countersink } : {}),
+                ...(raw.size ? { size: raw.size } : {}),
+                // Threaded through the wall it is drilled through, up to next or through all.
+                ...(raw.thread ? { thread: { ...raw.thread, depth: typeof raw.depth === "number" ? raw.thread.depth : "through" } } : {}),
                 copies: 0,
               });
             const start = drilled.length;
-            const tool = drillTool(oc, s, raw, describePart(oc, s, bodies, false), partShape(oc, s, on.map(([, b]) => b))!, at);
+            const sites = holeSites(oc, s, raw, describePart(oc, s, bodies, false), points);
+            const tool = drillHoles(oc, s, raw, sites, partShape(oc, s, on.map(([, b]) => b))!, at);
             const cut = removeFrom(oc, s, on, tool, { listed: !!raw.bodies, what: "hole", missed: "" });
             commit(cut);
             for (const h of drilled.slice(start)) holeBodies.set(h, new Set(cut.keys()));
@@ -464,13 +488,22 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         }
         case "linearPattern":
         case "circularPattern": {
-          const seed = tools.get(raw.feature);
-          if (!seed && intersected.has(raw.feature)) throw new OpError(`"${raw.feature}" is an intersecting extrude: it keeps an overlap and adds no tool to repeat; pattern the bodies instead`);
-          if (!seed) throw new OpError(`${missing(raw.feature, "feature")}, so there is nothing to repeat`);
+          const seeds = seedIds(raw).map((id) => [id, seedOf(id, "repeat")] as const);
           if (bodies.size === 0) throw new OpError("nothing to pattern onto: there is no solid before this feature");
-          scoped((s) => commit(...repeat(s, patternInstances(oc, s, raw), seed, (k) => `${seed.newBody}_${k + 2}`)));
+          let made = 0;
+          scoped((s) => {
+            const instances = patternInstances(oc, s, ctx, raw);
+            made = instances.length;
+            // Each seed in turn, onto the bodies as the seeds before it left them.
+            const changed = new Map<string, TopoDS_Shape>();
+            for (const [id, seed] of seeds) {
+              const mine = seeds.length > 1 ? instances.map((i) => ({ ...i, label: `${id}: ${i.label}` })) : instances;
+              repeat(s, mine, seed, (k) => `${seed.newBody}_${mine[k].n}`, "pattern", changed);
+            }
+            commit(changed);
+          });
           // A patterned hole is one callout with a count.
-          for (const h of drilled.filter((x) => x.feature === raw.feature)) h.copies += raw.op === "linearPattern" ? raw.count * (raw.count2 ?? 1) - 1 : raw.count - 1;
+          for (const [id] of seeds) for (const h of drilled.filter((x) => x.feature === id)) h.copies += made;
           break;
         }
         case "member": {
@@ -550,12 +583,18 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
               copyHoles(raw.merge ? new Map(listed.map(([n]) => [n, n])) : copies);
             });
           } else {
-            const seed = tools.get(raw.feature!);
-            if (!seed) throw new OpError(`${missing(raw.feature!, "feature")}, so there is nothing to mirror`);
+            const seeds = seedIds(raw).map((id) => [id, seedOf(id, "mirror")] as const);
             if (bodies.size === 0) throw new OpError("nothing to mirror onto: there is no solid before this feature");
-            scoped((s) => commit(...repeat(s, [{ label: "the mirror", trsf: mirrorTrsf(oc, s, plane) }], seed, () => raw.newBody ?? `${seed.newBody}${DERIVED_SUFFIX.mirror}`, "mirror")));
+            scoped((s) => {
+              const t = mirrorTrsf(oc, s, plane);
+              const changed = new Map<string, TopoDS_Shape>();
+              for (const [id, seed] of seeds) {
+                repeat(s, [{ label: seeds.length > 1 ? `the mirror of ${id}` : "the mirror", trsf: t }], seed, () => raw.newBody ?? `${seed.newBody}${DERIVED_SUFFIX.mirror}`, "mirror", changed);
+              }
+              commit(changed);
+            });
             // A mirrored hole is one more of it.
-            for (const h of drilled.filter((x) => x.feature === raw.feature)) h.copies += 1;
+            for (const [id] of seeds) for (const h of drilled.filter((x) => x.feature === id)) h.copies += 1;
           }
           break;
         }
@@ -657,10 +696,10 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   /**
    * A pattern's copies of its seed, where the seed went: added to the same
    * body, as new bodies (seed_2, seed_3, ...), or cut from the same bodies.
-   * Every copy must add or remove material.
+   * Every copy must add or remove material. With `changed`, onto the bodies
+   * as an earlier seed of the same feature left them there (and into it).
    */
-  function repeat(s: Scope, instances: { label: string; trsf: Trsf }[], seed: Seed, nameOf: (k: number) => string, what = "pattern"): [Map<string, TopoDS_Shape>] {
-    const changed = new Map<string, TopoDS_Shape>();
+  function repeat(s: Scope, instances: { label: string; trsf: Trsf }[], seed: Seed, nameOf: (k: number) => string, what = "pattern", changed = new Map<string, TopoDS_Shape>()): [Map<string, TopoDS_Shape>] {
     const now = (name: string) => changed.get(name) ?? need(name);
     instances.forEach((inst, k) => {
       const copy = transformed(oc, s, seed.tool, inst.trsf);

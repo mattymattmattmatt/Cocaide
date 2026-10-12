@@ -24,6 +24,7 @@
 import type { Command, RawDocument } from "./commands";
 import { nodeUsers, references } from "./commands";
 import { isObject } from "./validate";
+import { seedIds } from "./types";
 import { documentParameters, parameterRefs } from "./parameters";
 import { dimensionNames } from "./dimensions";
 import { rawConstraintEntities } from "./sketch";
@@ -205,6 +206,18 @@ function onlyContentsChanged(before: Record<string, unknown>, after: Record<stri
  * such a feature. A sketch touches no body. Anything that would reach every
  * body (a cut with no list) does not count.
  */
+/** Every feature a pattern or mirror repeats touches only bodies in the scope. */
+function seedsOnly(doc: RawDocument, f: Record<string, unknown>, scope: WriteScope, depth: number): boolean {
+  const ids = seedIds(f);
+  return (
+    ids.length > 0 &&
+    ids.every((id) => {
+      const seed = doc.features.find((x) => isObject(x) && x.id === id);
+      return !!seed && onlyBodies(doc, seed, scope, depth + 1);
+    })
+  );
+}
+
 function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteScope, depth = 0): boolean {
   const bodies = scope.filter((t) => t.startsWith("body:")).map((t) => t.slice(5));
   if (bodies.length === 0 || depth > 8) return false;
@@ -240,14 +253,11 @@ function onlyBodies(doc: RawDocument, f: Record<string, unknown>, scope: WriteSc
       return touched.length > 0 && touched.every((x) => inScope(x.newBody ?? x.id));
     }
     case "linearPattern":
-    case "circularPattern": {
-      const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);
-      return !!seed && onlyBodies(doc, seed, scope, depth + 1);
-    }
+    case "circularPattern":
+      return seedsOnly(doc, f, scope, depth);
     case "mirror": {
       if (Array.isArray(f.bodies)) return f.bodies.length > 0 && f.bodies.every(inScope);
-      const seed = doc.features.find((x) => isObject(x) && x.id === f.feature);
-      return !!seed && onlyBodies(doc, seed, scope, depth + 1);
+      return seedsOnly(doc, f, scope, depth);
     }
     case "split":
       return inScope(f.body);

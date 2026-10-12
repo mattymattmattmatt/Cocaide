@@ -99,8 +99,10 @@ export interface RebuildCtx {
    * A seed applied once per instance: added to the body it went into, as new
    * bodies (nameOf(k) for the k-th copy), or cut from the bodies it cut. Every
    * copy must add or remove material. Returns [changed] for commit(...).
+   * With `changed` (several seeds), it works on and adds to that map: the
+   * bodies as the seeds before left them.
    */
-  repeat(s: Scope, instances: Instance[], seed: Seed, nameOf: (k: number) => string, what?: string): [Map<string, TopoDS_Shape>];
+  repeat(s: Scope, instances: Instance[], seed: Seed, nameOf: (k: number) => string, what?: string, changed?: Map<string, TopoDS_Shape>): [Map<string, TopoDS_Shape>];
   holes: HoleLedger;
   members: MemberLedger;
   /**

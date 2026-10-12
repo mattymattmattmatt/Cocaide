@@ -406,6 +406,7 @@ class Sandbox {
     }
     if (f.op === "hole") {
       if (t.kind !== "face") return "from an edge, the ask adds a fillet or chamfer of that edge";
+      if (!rf.face) return `the hole must name its face (${where}) in "face": use the packet's selection`;
       const r = await this.kernel.select(this.base, rf.face);
       if (!r.ok || r.kind !== "faces" || r.indices.length !== 1 || r.indices[0] !== t.index) {
         return `the hole's face selector must pick ${where}; use the packet's selection`;

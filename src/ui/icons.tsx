@@ -573,6 +573,16 @@ const ICONS = {
       <path d="M15 15l5 5 M10.5 7.5v3.5 M10.5 13.2v.3" />
     </>
   ),
+  // Hole Wizard types, each a section through the hole
+  holeSimple: <path d="M3 6h6.5v13H3z M14.5 6H21v13h-6.5z" fill="currentColor" fillOpacity={0.2} />,
+  holeCounterbore: <path d="M3 6h4v4h2.5v9H3z M21 6h-4v4h-2.5v9H21z" fill="currentColor" fillOpacity={0.2} />,
+  holeCountersink: <path d="M3 6h3.5l3 4v9H3z M21 6h-3.5l-3 4v9H21z" fill="currentColor" fillOpacity={0.2} />,
+  holeTapped: (
+    <>
+      <path d="M3 6h6.5v13H3z M14.5 6H21v13h-6.5z" fill="currentColor" fillOpacity={0.2} />
+      <path d="M9.5 8.5l5 1.5 M9.5 11.5l5 1.5 M9.5 14.5l5 1.5" strokeWidth={1.2} />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

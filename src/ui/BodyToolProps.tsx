@@ -5,6 +5,8 @@
 import { DERIVED_SUFFIX, type Vec3 } from "../doc/types";
 import { DirectionInput, Field, NumberInput, Select, TextInput, Vec3Input } from "./fields";
 import { FeatureForm } from "./props/FeatureForm";
+import { seedsField } from "../features/linearPattern/fields";
+import { seedsOf } from "../features/linearPattern/instances";
 import type { FieldProps } from "./props/spec";
 
 type Raw = Record<string, unknown>;
@@ -60,8 +62,9 @@ function NewBodyName({ name, rename, testId }: { name: string; rename(from: stri
 export function MirrorProps({ f, bodies, update, rename, seeds, form }: ToolProps & { seeds: { id: string; body?: string }[]; form: FieldProps }) {
   const byBodies = Array.isArray(f.bodies);
   const listed = byBodies ? (f.bodies as string[]) : [];
-  const seed = seeds.find((s) => s.id === f.feature);
-  const made = typeof f.newBody === "string" ? f.newBody : byBodies ? (listed.length === 1 && !f.merge ? `${listed[0]}${DERIVED_SUFFIX.mirror}` : null) : seed?.body ? `${seed.body}${DERIVED_SUFFIX.mirror}` : null;
+  // The seeds that start bodies of their own: each makes <body>_mirror; with just one, newBody names it.
+  const starting = seedsOf(f).flatMap((id) => seeds.find((s) => s.id === id)?.body ?? []);
+  const made = typeof f.newBody === "string" ? f.newBody : byBodies ? (listed.length === 1 && !f.merge ? `${listed[0]}${DERIVED_SUFFIX.mirror}` : null) : starting.length === 1 ? `${starting[0]}${DERIVED_SUFFIX.mirror}` : null;
   return (
     <>
       <Field label="Mirror">
@@ -71,7 +74,7 @@ export function MirrorProps({ f, bodies, update, rename, seeds, form }: ToolProp
             ["feature", "a feature"],
             ["bodies", "bodies"],
           ]}
-          onChange={(v) => update(v === "bodies" ? { feature: null, newBody: null, bodies: bodies.slice(-1) } : { bodies: null, merge: null, newBody: null, feature: seeds.at(-1)?.id ?? null })}
+          onChange={(v) => update(v === "bodies" ? { feature: null, features: null, newBody: null, bodies: bodies.slice(-1) } : { bodies: null, merge: null, newBody: null, feature: seeds.at(-1)?.id ?? null })}
           testId="prop-mirror-what"
         />
       </Field>
@@ -86,13 +89,12 @@ export function MirrorProps({ f, bodies, update, rename, seeds, form }: ToolProp
           </label>
         </>
       ) : (
-        <Field label="Feature">
-          <Select value={String(f.feature)} options={seeds.map((s): [string, string] => [s.id, s.id])} onChange={(v) => update({ feature: v, newBody: null })} testId="prop-mirror-feature" />
-        </Field>
+        <FeatureForm fields={[seedsField("prop-mirror-features")]} {...form} update={(patch) => form.update({ ...patch, newBody: null })} />
       )}
       <PlaneFields form={form} testId="prop-mirror-plane" />
       {made && <NewBodyName name={made} rename={rename} testId="prop-mirror-name" />}
       {byBodies && listed.length > 1 && !f.merge && <p className="muted small">Each makes a new body: {listed.map((b) => `${b}${DERIVED_SUFFIX.mirror}`).join(", ")}.</p>}
+      {!byBodies && starting.length > 1 && <p className="muted small">Each makes a new body: {starting.map((b) => `${b}${DERIVED_SUFFIX.mirror}`).join(", ")}.</p>}
     </>
   );
 }

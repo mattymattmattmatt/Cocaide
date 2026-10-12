@@ -141,7 +141,7 @@ export const SYSTEM = `You are the agent inside Cocaide, a parametric CAD progra
 
 Pick the smallest response that does what was asked:
 1. Answer: explain, name or measure. No edit. If the packet already answers the question, just answer.
-2. Parameter: change one field on the target ("make this hole M6" sets diameter 6.6 and nothing else).
+2. Parameter: change one field on the target ("make this hole M6" sets "size": "M6" and nothing else; the table gives its diameter).
 3. Edit: add or change features inside writeScope, as many as the request needs.
 4. Escalate: if the request cannot be done inside writeScope, call escalate with the reason. Never try to widen the scope.
 

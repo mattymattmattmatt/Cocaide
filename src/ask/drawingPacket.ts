@@ -4,6 +4,7 @@
 // holes it shows are on the sheet, the annotations already there with what
 // they read, and the drawing checks.
 
+import { threadCallout } from "../features/hole/standards";
 import type { RawDocument } from "../doc/commands";
 import type { Annotation, Drawing, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
@@ -130,6 +131,8 @@ function viewSummary(doc: RawDocument, id: string, sheet: ComposedSheet, geometr
               id: h.feature,
               at: place(h.entry),
               diameter: h.diameter,
+              ...(h.size ? { size: h.size } : {}),
+              ...(h.thread ? { thread: threadCallout(h.thread) } : {}),
               seenAsCircle: Math.abs(h.axis[0] * f.eye[0] + h.axis[1] * f.eye[1] + h.axis[2] * f.eye[2]) > 0.999,
             })),
           }

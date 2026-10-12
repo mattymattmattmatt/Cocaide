@@ -13,6 +13,7 @@ import { kernel as draft } from "./draft/kernel";
 import { kernel as sweep } from "./sweep/kernel";
 import { kernel as loft } from "./loft/kernel";
 import { kernel as rib } from "./rib/kernel";
+import { kernel as sketchPattern } from "./sketchPattern/kernel";
 
 export const KERNEL_DEFS = [
   scale,
@@ -25,4 +26,5 @@ export const KERNEL_DEFS = [
   sweep,
   loft,
   rib,
+  sketchPattern,
 ];

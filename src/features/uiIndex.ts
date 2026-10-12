@@ -18,6 +18,8 @@ import { ui as scale } from "./scale/ui";
 import { ui as sweep } from "./sweep/ui";
 import { ui as loft } from "./loft/ui";
 import { ui as rib } from "./rib/ui";
+import { ui as sketchPattern } from "./sketchPattern/ui";
+import { ui as hole } from "./hole/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -34,4 +36,6 @@ export const UI_OP_LIST: UiOp[] = [
   sweep,
   loft,
   rib,
+  sketchPattern,
+  hole,
 ];

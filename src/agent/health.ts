@@ -31,7 +31,7 @@ export function selectorHealth(doc: unknown, oc: OC): SelectorHealth[] {
     const f = vf.feature;
     if (!f || f.suppressed) return;
     let selectors: { path: string; face?: FaceSelector; edge?: EdgeSelector; many?: boolean }[] = [];
-    if (f.op === "hole") selectors = [{ path: "face", face: f.face }];
+    if (f.op === "hole") selectors = f.face ? [{ path: "face", face: f.face }] : [];
     else if (f.op === "fillet" || f.op === "chamfer") {
       // Its edges and faces, and those of a fillet's other radius sets.
       const choices: { path: string; ch: EdgeChoice }[] = [{ path: "", ch: f }, ...(f.op === "fillet" ? (f.sets ?? []).map((ch, k) => ({ path: `sets[${k}].`, ch })) : [])];
@@ -62,6 +62,7 @@ export function selectorHealth(doc: unknown, oc: OC): SelectorHealth[] {
             else if (sel.matches.length === 0) h.note = "matches no face";
             else if (!s.many && sel.matches.length > 1) h.note = `matches ${sel.matches.length} faces; it must pick one`;
             else if (s.face.near) h.note = "picks by position (near); moving geometry can change the face it picks";
+            else if (s.face.type === "planar" && s.face.offset !== undefined) h.note = "picks by offset: if the face moves along its normal it is lost; a rank (1 = the outermost level) keeps finding it";
             else if (s.face.pick !== "all") {
               const candidates = selectFaces(faces.infos, { ...s.face, pick: "all" }).matches.map((m) => m.area).sort((a, b) => b - a);
               const ratio = s.face.pick === "largest" ? candidates[1] / candidates[0] : candidates[candidates.length - 1] / candidates[candidates.length - 2];

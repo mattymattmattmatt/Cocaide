@@ -2,6 +2,7 @@
 // truth: the B-rep, the mesh and every measurement are derived from it.
 
 import { PLUGIN_OPS, type PluginFeature } from "../features/types";
+import type { HoleFit, HoleKind, ThreadSpec } from "../features/hole/standards";
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -744,21 +745,49 @@ export interface ExtrudeFeature extends FeatureBase {
 // ------------------------------------------------------------------ hole
 
 /**
- * A hole drilled into a planar face, against the face's outward normal.
- * `center` is in the face's plane frame: origin = the global origin projected
- * onto the face plane, axes from the same rule as a datum plane.
+ * Holes drilled into a planar face, against the face's outward normal (the
+ * Hole Wizard). Where: `center` (one hole) or `centers` (several), in the
+ * face's plane frame (origin = the global origin projected onto the face
+ * plane, axes from the same rule as a datum plane); or `points`, every point
+ * entity of a sketch: on the face when `face` is given (the sketch parallel
+ * to it), else on the sketch's own plane, drilled against its normal.
+ *
+ * What: `size` ("M6", ISO metric) with `kind` and `fit` takes the numbers
+ * from the table in src/features/hole/standards.ts: a clearance bore
+ * (ISO 273) for simple, counterbored (ISO 4762 heads) and countersunk
+ * (ISO 10642 heads) holes; a tap drill and a thread for tapped ones. A
+ * number the hole gives itself wins over the table. Without a size, the hole
+ * gives its diameter (and counterbore or countersink) in full.
+ *
+ * In the document `diameter` may be left out when a size gives it; once
+ * validated it is always the bore's diameter, and `counterbore`,
+ * `countersink` and `thread` hold the numbers used.
  */
 export interface HoleFeature extends FeatureBase {
   op: "hole";
-  face: FaceSelector;
-  center: Vec2;
+  /** The flat face it is drilled into. Optional with `points`: the holes then start on that sketch's plane. */
+  face?: FaceSelector;
+  center?: Vec2;
+  centers?: Vec2[];
+  /** A sketch: a hole at each of its point entities. */
+  points?: string;
+  /** "M3" ... "M24". */
+  size?: string;
+  /** Default: what its fields say (a counterbore makes it "counterbore"), else "simple". */
+  kind?: HoleKind;
+  /** The clearance for simple, counterbored and countersunk holes. Default "normal". */
+  fit?: HoleFit;
   diameter: number;
-  depth: number | "through";
+  /** Blind (mm), through all, or up to next: through the first wall it meets. */
+  depth: number | "through" | "upToNext";
   counterbore?: { diameter: number; depth: number };
   countersink?: { diameter: number; angle: number };
+  /** A tapped hole's thread. In the document { pitch?, depth? } (the size gives the rest); validated, the whole spec. */
+  thread?: ThreadSpec;
   /** The bodies to drill. Default: every body it reaches. Each listed one must lose material. */
   bodies?: string[];
 }
+export const HOLE_DEPTHS = ["through", "upToNext"] as const;
 
 // ---------------------------------------------------- fillet and chamfer
 
@@ -814,32 +843,70 @@ export interface ChamferFeature extends FeatureBase, EdgeChoice {
 /** Ops a pattern can repeat: the ones that add or remove one tool body. */
 export const PATTERNABLE_OPS = ["extrude", "cut", "hole", "member"] as const;
 
-/**
- * Repeats one earlier extrude, cut or hole. `count` includes the original;
- * the optional second direction makes a grid of count x count2.
- */
-export interface LinearPatternFeature extends FeatureBase {
-  op: "linearPattern";
-  feature: string;
-  direction: Vec3;
-  spacing: number;
-  count: number;
-  direction2?: Vec3;
-  spacing2?: number;
-  count2?: number;
+/** The features a pattern or a mirror repeats: its `features`, or its one `feature` (raw or validated). */
+export function seedIds(f: { feature?: unknown; features?: unknown }): string[] {
+  if (Array.isArray(f.features)) return f.features.filter((x): x is string => typeof x === "string");
+  return typeof f.feature === "string" ? [f.feature] : [];
+}
+
+/** The instance numbers a pattern of `total` makes copies at: 2 ... total (1 is the original), less those it skips. */
+export function instanceNumbers(total: number, skip: readonly number[] = []): number[] {
+  const out: number[] = [];
+  for (let k = 2; k <= total; k++) if (!skip.includes(k)) out.push(k);
+  return out;
 }
 
 /**
- * Repeats one earlier extrude, cut or hole about an axis. `count` includes
- * the original. `angle` is the total sweep in degrees (default 360): a full
- * turn spaces instances angle/count apart, a partial one angle/(count - 1).
+ * Repeats earlier features (an extrude, cut, hole, member, or a registry op
+ * that patterns, such as revolve) in a row, or a grid with the second
+ * direction. `count` (and `count2`) include the original.
+ *
+ * The direction is `direction`, written out, or `along`, taken from the model
+ * (a straight edge or an axis: its direction; a flat face or a plane: its
+ * normal), so it follows the model; `reverse` turns it round.
+ *
+ * Instances are numbered from 1, the original: along the first direction
+ * 1 ... count, then the next row 1 + count ... 2 count, and so on (instance
+ * i along direction 1 and j along direction 2, counting from 0, is number
+ * 1 + i + j * count). `skip` leaves those instances out. A copy of a feature
+ * that starts a body is a new body named <body>_<instance number>.
+ */
+export interface LinearPatternFeature extends FeatureBase {
+  op: "linearPattern";
+  /** One feature to repeat; or `features`, several, each repeated the same way. */
+  feature?: string;
+  features?: string[];
+  direction?: Vec3;
+  along?: DatumRef;
+  reverse?: boolean;
+  spacing: number;
+  count: number;
+  direction2?: Vec3;
+  along2?: DatumRef;
+  reverse2?: boolean;
+  spacing2?: number;
+  count2?: number;
+  skip?: number[];
+}
+
+/**
+ * Repeats earlier features about an axis: `{ origin, direction }` written out,
+ * or `{ ref }`, a straight or round edge, an axis, a cylindrical face. `count`
+ * includes the original (instance 1, then 2, 3 ... turning the right-handed
+ * way about the axis, or the other way with `reverse`). `angle` is the angle
+ * the pattern spans in degrees (default 360), with the instances spaced
+ * equally: a full turn spaces them angle/count apart, a partial one
+ * angle/(count - 1), so the last lands on the end. `skip` leaves instances out.
  */
 export interface CircularPatternFeature extends FeatureBase {
   op: "circularPattern";
-  feature: string;
-  axis: { origin: Vec3; direction: Vec3 };
+  feature?: string;
+  features?: string[];
+  axis: { origin: Vec3; direction: Vec3 } | { ref: DatumRef };
   count: number;
   angle?: number;
+  reverse?: boolean;
+  skip?: number[];
 }
 
 // ----------------------------------------------------------------- member
@@ -921,7 +988,7 @@ export interface GussetFeature extends FeatureBase {
 // ------------------------------------------------------- multibody tools
 
 /**
- * Mirrors about a plane (Phase M). Either one earlier feature, the way a
+ * Mirrors about a plane (Phase M). Either earlier features, the way a
  * pattern repeats it (a cut cuts the same bodies; an extrude adds to the same
  * body; one that starts a body, or a member, makes a new body `<body>_mirror`),
  * or whole bodies as they are here, each into a new body `<name>_mirror`, or
@@ -929,8 +996,11 @@ export interface GussetFeature extends FeatureBase {
  */
 export interface MirrorFeature extends FeatureBase {
   op: "mirror";
+  /** Written out, or by reference: a flat face of the part, a default plane or a plane feature ({ "type": "ref", "ref": ... }). */
   plane: PlaneSpec;
   feature?: string;
+  /** Several features, each mirrored as `feature` is. */
+  features?: string[];
   bodies?: string[];
   merge?: boolean;
   /** The new body's name, when the mirror makes exactly one. */
@@ -990,6 +1060,14 @@ export interface PlanarFaceSelector {
   pick: Pick;
   /** Optional: signed distance of the face plane from the origin along `normal`. */
   offset?: number;
+  /**
+   * Optional: which level along the normal, counting the different planes the
+   * matching faces lie in: 1 = the furthest out along the normal (the top face
+   * for +Z), 2 the next one in, ...; -1 = the furthest in, -2 the next one out.
+   * Unlike `offset` it keeps meaning the same face when the face moves (a
+   * taller block), as long as the levels keep their order. Not with `offset`.
+   */
+  rank?: number;
   /** Optional: of the matches, the one whose centre is nearest this point (for otherwise identical faces). */
   near?: Vec3;
   /** Optional: only faces of this body. */
