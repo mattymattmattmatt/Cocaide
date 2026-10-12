@@ -206,10 +206,29 @@ extrude "intersect": true keeps only where the extrusion and the body ("body", d
 cut "flipSide": true removes what lies outside the profile instead (keeps what is inside it).
 Measurements in the packet: extent, distance, offset, startOffset, draftAngle, thickness and direction2.
 
-## hole
-{ "id": "hole_1", "op": "hole", "face": <face selector>, "center": [30,0], "diameter": 6.6, "depth": "through" }
+## hole (the Hole Wizard)
+{ "id": "hole_1", "op": "hole", "face": <face selector>, "center": [30,0], "size": "M6", "kind": "counterbore", "depth": "through" }
 Drilled into a planar face against its outward normal. center is in that face's plane frame: origin = the global origin projected onto the plane, axes by the sketch rule above (for a +Z face: x = global X, y = global Y).
-depth: a number or "through". Optional "counterbore": { "diameter", "depth" } or "countersink": { "diameter", "angle" }.
+Where (exactly one): "center": [x, y] (one hole); "centers": [[x, y], ...] (several holes, one feature, one callout);
+  "points": "<sketch id>" (a hole at every point entity of that sketch, as the rebuild solves it: move the points and
+  the holes follow). With "face" the points are dropped onto the face along its normal (the sketch must be parallel
+  to it: sketch them on the face); without "face" the holes start on the sketch's own plane, drilled against its normal.
+What: "size": "M3" | "M4" | "M5" | "M6" | "M8" | "M10" | "M12" | "M14" | "M16" | "M20" | "M24" (ISO metric screws) with
+  "kind": "simple" | "counterbore" | "countersink" | "tapped" (default: what its fields say, else simple) and
+  "fit": "close" | "normal" | "loose" (ISO 273 clearance, default normal; not for tapped). The size gives the numbers:
+    clearance Ø (M6: close 6.4, normal 6.6, loose 7), counterbore for an ISO 4762 socket head cap screw (M6: Ø11 x 6.5
+    deep), countersink for an ISO 10642 countersunk screw at 90° (M6: Ø13.7; none for M24), tap drill (M6: 5, M8: 6.8,
+    M10: 8.5, M12: 10.2) and coarse pitch (M6: 1, M8: 1.25).
+  Any number the hole gives itself wins over the table: "diameter", "counterbore": { "diameter"?, "depth"? },
+  "countersink": { "diameter"?, "angle"? }, "thread": { "pitch"?, "depth"? } (tapped: a fine pitch, the thread depth).
+  Without a size the hole gives "diameter" (and a whole counterbore or countersink) itself, as older documents do.
+Tapped: { ..., "size": "M8", "kind": "tapped", "depth": 15 } bores the tap drill (Ø6.8) 15 deep; the thread is cosmetic,
+  recorded for drawings: major diameter, pitch, class 6H, depth (default: the drill depth less 3 pitches, 11.25 here;
+  through when the hole is). A drawing calls it out "M8×1.25 - 6H ⌴11.25" with "Ø6.8 ⌴15" under it.
+depth: a number (blind, mm), "through" (through all) or "upToNext" (through the first wall it meets, stopping in
+  the gap behind it). "bodies": ["base"] drills only those bodies.
+Validated, a hole always holds the numbers it is cut with (diameter, counterbore, countersink, thread).
+{ "id": "hole_2", "op": "hole", "face": <face selector>, "points": "sk_pts", "size": "M8", "kind": "tapped", "depth": 15 }
 
 ## fillet / chamfer
 { "id": "fillet_1", "op": "fillet", "edges": <edge selector or list of them>, "radius": 2 }
@@ -229,11 +248,26 @@ Chamfer kinds: equal ("distance" on both faces), two distances ("distance" and "
 { "id": "chamfer_2", "op": "chamfer", "edges": <selector>, "distance": 2, "distance2": 1, "flip": true }
 { "id": "chamfer_3", "op": "chamfer", "edges": <selector>, "distance": 2, "angle": 30 }
 
-## linearPattern / circularPattern (repeat one earlier extrude, cut or hole)
+## linearPattern / circularPattern (repeat earlier extrudes, cuts, holes, members, revolves ...)
 { "id": "pat_1", "op": "linearPattern", "feature": "hole_1", "direction": [-1,0,0], "spacing": 60, "count": 2,
   "direction2": [0,1,0], "spacing2": 20, "count2": 2 (optional grid) }
 { "id": "pat_2", "op": "circularPattern", "feature": "hole_1", "axis": { "origin": [0,0,0], "direction": [0,0,1] }, "count": 6, "angle": 360 }
-count includes the original.
+count (and count2) include the original.
+Seeds: "feature": "hole_1" (one) or "features": ["boss_1", "hole_1"] (several, each repeated the same way, in order).
+Instance numbers: 1 is the original. Linear: along the first direction 1 ... count, then the next row: instance i
+  along direction 1 and j along direction 2 (counting from 0) is number 1 + i + j * count. Circular: 1, 2, 3 ...
+  turning about the axis. "skip": [3, 5] leaves those instances out (never 1; at least one copy must be left).
+  A copy of a feature that starts a body is a new body <body>_<instance number> (a skipped one is not made).
+Linear direction from the model instead of written out: "along": <reference> (a straight edge or an axis: its
+  direction; a flat face or a plane: its normal), so it follows the model; "reverse": true turns it round. The second
+  direction likewise: "along2", "reverse2" (instead of "direction2").
+  { "id": "pat_3", "op": "linearPattern", "features": ["boss_1", "hole_1"], "along": { "edge": <edge selector> }, "spacing": 25, "count": 4, "skip": [3] }
+Circular axis by reference: "axis": { "ref": <reference> } (a straight or round edge, an axis feature, "X"/"Y"/"Z", a
+  cylindrical face's axis). "angle": the angle the pattern spans (default 360), instances equally spaced: a full turn
+  spaces them angle/count apart, a part turn angle/(count - 1) so the last lands on the end ("angle": 180, "count": 3:
+  0°, 90°, 180°). They turn right-handed about the axis direction; "reverse": true turns them the other way.
+  { "id": "pat_4", "op": "circularPattern", "feature": "hole_1", "axis": { "ref": { "face": { "type": "cylindrical", "radius": 20 } } }, "count": 3, "angle": 180 }
+Every copy is the seed as it is: there is no instance-number variable for expressions (no per-instance sizes).
 
 ## bodies (one part, many named solids)
 An extrude adds to the body "main" unless it says otherwise: "newBody": "upright" starts a body, "body": "upright" adds to one.
@@ -278,6 +312,10 @@ groups alike members.
 { "id": "mirror_1", "op": "mirror", "plane": { "type": "datum", "normal": [1,0,0], "origin": ["=frame_w / 2",0,0] }, "feature": "hole_1" }
   mirrors one earlier extrude, cut, hole or member like a pattern does: a cut cuts the same bodies, an extrude adds
   to the same body, one that starts a body (or a member) makes a new body "<body>_mirror" (or "newBody").
+  "features": ["boss_1", "hole_1"] mirrors several, each the same way (each that starts a body makes <body>_mirror;
+  "newBody" only when exactly one does).
+  The plane by reference follows the model: "plane": { "type": "ref", "ref": { "face": <planar face selector> } } (a
+  flat face of the part, e.g. the side face to mirror about), { "datum": "Right" } or a plane feature's id.
 { "id": "mirror_2", "op": "mirror", "plane": {...}, "bodies": ["leg_a", "leg_d"], "merge": false }
   mirrors whole bodies as they are here, each into a new body "<name>_mirror"; "merge": true fuses each mirror
   image into its own body (it must touch it).
@@ -336,9 +374,12 @@ wrong kind is an error that says so ("Top is a plane, but an axis is needed here
 Top, Right, Origin, X, Y or Z.
 
 ## Face selectors
-{ "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "near": [x,y,z] (optional) }
+{ "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "rank": 1 (optional), "near": [x,y,z] (optional) }
 { "type": "cylindrical", "radius": 3.3 (optional), "axis": [0,0,1] (optional), "pick": ..., "near": [x,y,z] (optional) }
-normal is the outward normal; offset is the plane's signed distance from the origin along it. near keeps the match whose centre is closest; it is fragile, prefer normal/offset/radius.
+normal is the outward normal; offset is the plane's signed distance from the origin along it. rank (not with offset)
+is the face's level along the normal among the planes the matching faces lie in: 1 the furthest out (the top face for
++Z), 2 the next in, -1 the furthest in; unlike offset it still finds the face when the face moves (a taller block), so
+prefer it. near keeps the match whose centre is closest; it is fragile, prefer normal/rank/radius.
 A feature needing one face fails if the selector picks 0 or several.
 
 ## Edge selectors

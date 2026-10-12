@@ -21,6 +21,8 @@ import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { fabricationChecks } from "../weldment/fabrication";
 import { defOf } from "../features/defs";
 import { DATUM_OPS, type Datum } from "../features/datum";
+import { holeCount, wizardSpec } from "../features/hole/wizard";
+import { threadCallout } from "../features/hole/standards";
 import { drawingPacket } from "./drawingPacket";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
@@ -596,6 +598,8 @@ function featureMeasurements(f: Raw, resolved: RawDocument, topo: PartTopology |
   const keys = new Set(["distance", "diameter", "depth", "radius", "count", "spacing", "angle", "radius2", "distance2", "offset", "startOffset", ...(defOf(f.op)?.measurementKeys ?? [])]);
   for (const k of keys) if (typeof rf[k] === "number" || rf[k] === "through") out[k] = rf[k];
   Object.assign(out, extrudeMeasurements(rf));
+  const index = resolved.features.findIndex((x) => x.id === f.id);
+  Object.assign(out, holePatternMeasurements(rf, index < 0 ? resolved.features : resolved.features.slice(0, index)));
   if (topo) {
     const mine = topo.faces.filter((_, i) => topo.faceOrigins[i] === f.id);
     out.faces = mine.length;
@@ -604,6 +608,42 @@ function featureMeasurements(f: Raw, resolved: RawDocument, topo: PartTopology |
       out.measuredDiameters = [...new Set(walls.map((x) => round6(2 * x.cylinder!.radius)))].sort((a, b) => a - b);
       out.measuredDepth = round6(Math.max(...walls.map((x) => x.cylinder!.axial[1] - x.cylinder!.axial[0])));
     }
+  }
+  return out;
+}
+
+/**
+ * A hole's numbers as the rebuild cuts them (from its size and the table, or
+ * its own) with its thread callout and how many holes it drills; a pattern's
+ * or mirror's seeds, the instances it makes and those it skips (none for other ops).
+ */
+export function holePatternMeasurements(rf: Raw, before: Raw[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (rf.op === "hole") {
+    const spec = wizardSpec(rf);
+    if (typeof spec !== "string") {
+      out.kind = spec.kind;
+      out.diameter = spec.diameter;
+      if (typeof rf.size === "string") out.size = rf.size;
+      if (spec.kind !== "tapped") out.fit = rf.fit ?? "normal";
+      if (spec.counterbore) out.counterbore = spec.counterbore;
+      if (spec.countersink) out.countersink = spec.countersink;
+      if (spec.thread) out.thread = threadCallout(spec.thread);
+    }
+    if (rf.depth === "upToNext") out.depth = "upToNext";
+    out.holes = holeCount(rf, before);
+    if (typeof rf.points === "string") out.at = `the points of ${rf.points}`;
+  }
+  if (rf.op === "linearPattern" || rf.op === "circularPattern" || rf.op === "mirror") {
+    const seeds = seedIds(rf);
+    if (seeds.length) out.seeds = seeds;
+  }
+  if (rf.op === "linearPattern" || rf.op === "circularPattern") {
+    const total = Number(rf.count) * (rf.op === "linearPattern" && typeof rf.count2 === "number" ? rf.count2 : 1);
+    const skip = Array.isArray(rf.skip) ? rf.skip : [];
+    out.instances = total;
+    if (skip.length) out.skipped = skip;
+    out.copies = total - 1 - skip.length;
   }
   return out;
 }
