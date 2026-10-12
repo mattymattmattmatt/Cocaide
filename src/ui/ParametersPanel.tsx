@@ -166,7 +166,8 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
       >
         <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} aria-label="New parameter name" data-testid="param-new-name" />
         <input
-          placeholder="value or =expr"
+          placeholder="value"
+          title='A number, or "=expression" over parameters and named dimensions, such as =sketch_1.width / 2'
           inputMode="decimal"
           value={value}
           onChange={(e) => setValue(e.target.value)}

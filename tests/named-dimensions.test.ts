@@ -166,6 +166,31 @@ describe("names follow renames", () => {
     expect(allErrors(validateDocument(d))).toEqual([]);
   });
 
+  it("a sketch replaced by the sketcher carries its renames: what read the old names reads the new", () => {
+    let d = withSecond("=sketch_1.d3 * 2");
+    feature(d, "ext_1").distance = "=sketch_1.d1 / 4";
+    const edited = structuredClone(feature(d, "sketch_1"));
+    // The sketcher named the first dimension and deleted the second: the radius's default name moves from d3 to d2.
+    edited.constraints = [{ ...edited.constraints[0], name: "width" }, edited.constraints[2]];
+    d = run(d, { type: "replaceFeature", id: "sketch_1", feature: edited, renames: { "sketch_1.d1": "sketch_1.width", "sketch_1.d3": "sketch_1.d2" } });
+    expect(feature(d, "ext_1").distance).toBe("=sketch_1.width / 4");
+    expect(feature(d, "sketch_2").constraints[0].value).toBe("=sketch_1.d2 * 2");
+    // Read now, the default name is pinned to the radius.
+    expect(feature(d, "sketch_1").constraints[1]).toEqual({ type: "radius", entity: "c1", value: 5, name: "d2" });
+    expect(resolvedDocument(d).features[1].distance).toBe(10);
+    expect(allErrors(validateDocument(d))).toEqual([]);
+    // Renames name the sketch's own dimensions only.
+    const bad = apply(d, { type: "replaceFeature", id: "sketch_1", feature: feature(d, "sketch_1"), renames: { "sketch_2.d1": "sketch_1.x" } });
+    expect(bad.ok).toBe(false);
+    // An agent may rename only where it may write: the extrude reads the old name, so it must be in scope too.
+    const w = structuredClone(feature(d, "sketch_1"));
+    w.constraints[0].name = "w";
+    const rename = { type: "replaceFeature", id: "sketch_1", feature: w, renames: { "sketch_1.width": "sketch_1.w" } } as const;
+    expect(apply(d, rename, { writeScope: ["sketch_1"] }).ok).toBe(false);
+    const done = apply(d, rename, { writeScope: ["sketch_1", "ext_1"] });
+    expect(done.ok && feature(done.doc, "ext_1").distance).toBe("=sketch_1.w / 4");
+  });
+
   it("renameParameter renames it everywhere", () => {
     let d = plate();
     d = run(d, { type: "setParameter", name: "t", value: 6 }, { type: "updateFeature", id: "ext_1", patch: { distance: "=t * 2" } }, { type: "setParameter", name: "t2", value: "=t + 1" });

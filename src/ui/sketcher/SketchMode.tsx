@@ -1202,6 +1202,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           {health.state === "under" && (
             <div className="row-buttons">
               <button
+                className="fully-define-button"
                 onClick={() => (define ? setDefine(null) : openFullyDefine())}
                 aria-pressed={!!define}
                 title={`Fully Define Sketch: add the relations and dimensions that leave it fully defined, previewed before they are applied${keyHint("sketch.fullyDefine", prefs)}`}

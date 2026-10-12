@@ -156,6 +156,19 @@ test("the Modify box takes functions and units, spins, and a renamed dimension d
   const ext = (doc.features as Record<string, unknown>[])[1];
   expect(ext.distance).toBe("=sketch_1.plate_w / 2");
   await expectVolume(page, "31,750");
+
+  // The Parameters panel lists the named dimension, and a parameter can be an equation over it.
+  await expect(page.getByTestId("named-dim-sketch_1.plate_w")).toContainText("50");
+  await page.getByTestId("param-new-name").fill("depth");
+  await page.getByTestId("param-new-value").fill("=sketch_1.plate_w / 5");
+  await page.getByTestId("param-add").click();
+  await expect(page.getByTestId("param-depth").locator(".expr-value")).toHaveText("= 10");
+  await page.getByTestId("feature-extrude_1").locator(".feature-row").click();
+  await commit(page, "prop-distance", "=depth");
+  await expectVolume(page, "12,700"); // 50 × 25.4 × 10
+  // An equation that goes round is refused, saying so.
+  await commit(page, "param-value-depth", "=depth + 1");
+  await expect(page.getByTestId("notice")).toContainText("cycle");
 });
 
 test("Smart Dimension: Shift-click a circle for its near or far side; two points by where the dimension is dropped", async ({ page }) => {
