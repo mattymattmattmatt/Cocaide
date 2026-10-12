@@ -122,6 +122,21 @@ describe("measure", () => {
     expect(r.rows.find((x) => x.key === "diameter2")!.value).toBeCloseTo(20, 9);
   });
 
+  it("the hole wall or its edge to a side face: the centre's distance square to the face, 50 (X) and 30 (Y)", () => {
+    const side = faceWhere((f) => f.type === "plane" && f.normal![0] > 0.99);
+    const front = faceWhere((f) => f.type === "plane" && f.normal![1] < -0.99);
+    const r = measure(measureItems({ faces: [wall(), side], edges: [] }, plate.faces, plate.edges));
+    expect(r.rows.find((x) => x.key === "centre")!.value).toBeCloseTo(50, 9);
+    // The line runs from the axis (level with the middle of the wall, Z 4) square to the face.
+    expect(r.line!.from.map((x) => +x.toFixed(9))).toEqual([0, 0, 4]);
+    expect(r.line!.to.map((x) => +x.toFixed(9))).toEqual([50, 0, 4]);
+    const circle = plate.edges.findIndex((e) => e.kind === "circle" && !e.seam && e.center![2] === 8);
+    const e = measure(measureItems({ faces: [front], edges: [circle] }, plate.faces, plate.edges));
+    expect(e.rows.find((x) => x.key === "centre")!.value).toBeCloseTo(30, 9);
+    // The top face and the hole: the axis crosses the face, so there is no one centre distance.
+    expect(measure(measureItems({ faces: [wall(), top()], edges: [] }, plate.faces, plate.edges)).rows.some((x) => x.key === "centre")).toBe(false);
+  });
+
   it("two perpendicular faces are 90° apart; the Right plane to the Z axis is 0°", () => {
     const side = faceWhere((f) => f.type === "plane" && f.normal![0] > 0.99);
     expect(measure(measureItems({ faces: [top(), side], edges: [] }, plate.faces, plate.edges)).rows.find((x) => x.key === "angle")!.value).toBeCloseTo(90, 9);

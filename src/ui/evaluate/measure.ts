@@ -241,6 +241,18 @@ export function pairRows(a: MeasureItem, b: MeasureItem, closest: { distance: nu
     const c = centreDistance(ca, cb);
     rows.push({ key: "centre", label: "Centre distance", value: c.distance, unit: "mm" });
     if (!line && c.distance > 1e-9) line = { from: c.from, to: c.to, label: `${fmt(c.distance)} mm (centres)` };
+  } else if ((isRound(a) && pb) || (isRound(b) && pa)) {
+    // Something round and a flat face or plane: from its centre (a circle's, or a hole's axis parallel to the
+    // plane) square to the plane, the hole-to-edge distance a drawing gives.
+    const c = (isRound(a) ? ca : cb)!;
+    const p = (isRound(a) ? pb : pa)!;
+    const n = normalize3(p.normal);
+    const at = "point" in c ? c.point : Math.abs(dot3(normalize3(c.line.direction), n)) < 1e-6 ? c.line.point : null;
+    if (at) {
+      const d = dot3(sub3(at, p.point), n);
+      rows.push({ key: "centre", label: "Centre distance", value: Math.abs(d), unit: "mm" });
+      if (!line && Math.abs(d) > 1e-9) line = { from: at, to: sub3(at, scale3(n, d)), label: `${fmt(Math.abs(d))} mm (centre)` };
+    }
   }
 
   if (closest) {

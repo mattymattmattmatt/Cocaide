@@ -1719,17 +1719,6 @@ export function App() {
                   onBox={(sel, additive) => setSelection((prev) => mergeBox(prev, sel, additive))}
                   onDoubleClick={(t) => void onDoubleClick(t)}
                 />
-              {rolledCount > 0 && !ask.previewDoc && (
-                <div className="rollback-banner" data-testid="rollback-banner" role="status">
-                  <Icon name="rollback" />
-                  <span>
-                    Rolled back above <strong>{String(features[bar]?.id)}</strong>: {rolledCount} feature{rolledCount === 1 ? " is" : "s are"} not built. New features go in at the bar.
-                  </span>
-                  <button onClick={rollEnd} data-testid="rollback-banner-end">
-                    Roll to end
-                  </button>
-                </div>
-              )}
               {(measuring || weighing || section) && (
                 <div className="eval-panels">
                   {measuring && measured && (
@@ -1755,14 +1744,28 @@ export function App() {
                   )}
                 </div>
               )}
-              {dimsOf && dims.length > 0 && (
-                <div className="dims-chip" data-testid="dims-chip">
-                  Dimensions of <strong>{dimsOf}</strong>: double-click one to change it
-                  <button aria-label="Hide the dimensions" onClick={() => setDimsOf(null)} data-testid="dims-chip-close">
-                    <Icon name="x" size={13} />
-                  </button>
-                </div>
-              )}
+              {/* Above the view buttons, clear of the selection chip and the Evaluate panels at the top. */}
+              <div className="view-chips">
+                {rolledCount > 0 && !ask.previewDoc && (
+                  <div className="rollback-banner" data-testid="rollback-banner" role="status">
+                    <Icon name="rollback" />
+                    <span>
+                      Rolled back above <strong>{String(features[bar]?.id)}</strong>: {rolledCount} feature{rolledCount === 1 ? " is" : "s are"} not built. New features go in at the bar.
+                    </span>
+                    <button onClick={rollEnd} data-testid="rollback-banner-end">
+                      Roll to end
+                    </button>
+                  </div>
+                )}
+                {dimsOf && dims.length > 0 && (
+                  <div className="dims-chip" data-testid="dims-chip">
+                    Dimensions of <strong>{dimsOf}</strong>: double-click one to change it
+                    <button aria-label="Hide the dimensions" onClick={() => setDimsOf(null)} data-testid="dims-chip-close">
+                      <Icon name="x" size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
               {ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
                   Previewing the proposal

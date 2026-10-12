@@ -233,6 +233,13 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         return { ok: false, error: `reorderFeature: index ${cmd.index} is outside 0..${features.length - 1}` };
       }
       const [moved] = features.splice(i, 1);
+      // The bar stays between the same features: moving the one just below it leaves the bar above the next one
+      // (or at the end), so a feature dragged up out of the rolled-back part does not take the bar with it.
+      if (doc.rollback === cmd.id) {
+        const after = features[i];
+        if (isObject(after) && typeof after.id === "string") doc.rollback = after.id;
+        else delete doc.rollback;
+      }
       features.splice(cmd.index, 0, moved);
       const problem = orderProblem(features);
       if (problem) return { ok: false, error: `reorderFeature: ${problem}` };

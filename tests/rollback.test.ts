@@ -95,6 +95,24 @@ describe("rollback: the setRollback command", () => {
     expect(run(mid, { type: "deleteFeature", id: "hole_1" }).rollback).toBe("plane_1");
   });
 
+  it("stays between the same features when one is reordered across it", () => {
+    const plane = (id: string, distance: number) => ({ id, op: "plane", mode: "offset", refs: [{ datum: "Top" }], distance });
+    const doc = run({ ...bracket(), features: [...bracket().features, plane("plane_1", 20), plane("plane_2", 30)] } as RawDocument, { type: "setRollback", before: "plane_1" });
+    expect(rolledBackIds(doc)).toEqual(["plane_1", "plane_2"]);
+    // The feature just below the bar dragged to the top: it is built now, and plane_2 is still not.
+    const up = run(doc, { type: "reorderFeature", id: "plane_1", index: 0 });
+    expect(ids(up)).toEqual(["plane_1", "sketch_1", "ext_1", "hole_1", "plane_2"]);
+    expect(up.rollback).toBe("plane_2");
+    expect(rolledBackIds(up)).toEqual(["plane_2"]);
+    // A built feature dragged below the bar is rolled back with the rest.
+    const down = run(doc, { type: "reorderFeature", id: "hole_1", index: 4 });
+    expect(ids(down)).toEqual(["sketch_1", "ext_1", "plane_1", "plane_2", "hole_1"]);
+    expect(rolledBackIds(down)).toEqual(["plane_1", "plane_2", "hole_1"]);
+    // The last feature, just below the bar, moved up: the bar goes to the end.
+    const last = run(run(doc, { type: "setRollback", before: "plane_2" }), { type: "reorderFeature", id: "plane_2", index: 0 });
+    expect("rollback" in last).toBe(false);
+  });
+
   it("follows a rename of the feature it sits above", () => {
     const rolled = run(bracket(), { type: "setRollback", before: "hole_1" });
     const hole = rolled.features.find((f) => f.id === "hole_1")!;

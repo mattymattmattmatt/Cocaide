@@ -12,7 +12,7 @@
 // and what is built on it (its children). Double-click a feature to show its
 // dimensions on the model (a sketch opens the sketcher, as before).
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { AskTarget } from "../ask/packet";
 import type { Command, RawDocument } from "../doc/commands";
 import { DATUM_OPS } from "../features/datum";
@@ -109,10 +109,18 @@ export function FeatureTree({
   const [barAt, setBarAt] = useState<number | null>(null);
   /** The feature under the pointer, for its parents and children. */
   const [hoverId, setHoverId] = useState<string | null>(null);
+  /** The bar was moved from the keyboard: it keeps the focus where it lands (it is a new element there), so the next arrow moves it again. */
+  const barKeyed = useRef(false);
+  const listRef = useRef<HTMLOListElement>(null);
   const features = (doc?.features ?? []) as Record<string, unknown>[];
   const bar = rollback === undefined ? features.length : Math.min(rollback, features.length);
   const parents = new Set(hoverId ? parentsOf(features, hoverId) : []);
   const children = new Set(hoverId ? childrenOf(features, hoverId) : []);
+  useEffect(() => {
+    if (!barKeyed.current) return;
+    barKeyed.current = false;
+    listRef.current?.querySelector<HTMLElement>("[data-testid=rollback-bar]")?.focus();
+  }, [bar]);
   const status = new Map(view?.features.map((s) => [s.id, s]) ?? []);
   const headerErrors = view?.errors.filter((e) => e.startsWith("document:")) ?? [];
 
@@ -150,7 +158,7 @@ export function FeatureTree({
       tabIndex={0}
       role="separator"
       aria-label={bar < features.length ? `Rollback bar: ${features.length - bar} feature${features.length - bar === 1 ? "" : "s"} below it are not built` : "Rollback bar, at the end"}
-      title="Rollback bar: drag it up to see the part as it was and add features there; arrow keys move it; right-click for more"
+      title="Rollback bar: drag it up to see the part as it was and add features there; the arrow keys, Home and End move it; right-click for more"
       onDragStart={(e) => {
         setBarDrag(true);
         e.dataTransfer.effectAllowed = "move";
@@ -161,16 +169,13 @@ export function FeatureTree({
         setBarAt(null);
       }}
       onKeyDown={(e) => {
-        if (e.key === "ArrowUp" && bar > 0) {
-          e.preventDefault();
-          onRollback(bar - 1);
-        } else if (e.key === "ArrowDown" && bar < features.length) {
-          e.preventDefault();
-          onRollback(bar + 1);
-        } else if (e.key === "End") {
-          e.preventDefault();
-          onRollback(features.length);
-        }
+        // Up and Down move it a feature at a time, Home to the top, End to the end.
+        const to = e.key === "ArrowUp" ? bar - 1 : e.key === "ArrowDown" ? bar + 1 : e.key === "Home" ? 0 : e.key === "End" ? features.length : null;
+        if (to === null) return;
+        e.preventDefault();
+        if (to < 0 || to > features.length || to === bar) return;
+        barKeyed.current = true;
+        onRollback(to);
       }}
       onContextMenu={(e) => {
         if (!onRollbackMenu) return;
@@ -215,6 +220,7 @@ export function FeatureTree({
       </ol>
       {features.length === 0 && <p className="muted empty-hint">Empty part. Start with <strong>Sketch</strong> in the toolbar, or right-click the view to describe a part.</p>}
       <ol
+        ref={listRef}
         className={`feature-list${barDrag ? " bar-dragging" : ""}`}
         onDragLeave={() => {
           setDropAt(null);
