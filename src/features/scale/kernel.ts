@@ -48,6 +48,11 @@ export const kernel: KernelOp<ScaleFeature> = {
       h.depth = r6(h.depth * k);
       if (h.counterbore) h.counterbore = { diameter: r6(h.counterbore.diameter * k), depth: r6(h.counterbore.depth * k) };
       if (h.countersink) h.countersink = { ...h.countersink, diameter: r6(h.countersink.diameter * k) };
+      // Scaled, it is no longer the screw size or the thread it was drilled for.
+      if (k !== 1) {
+        delete h.size;
+        delete h.thread;
+      }
     }
     // A member scaled is no longer the stock size its profile says.
     for (const n of names) ctx.members.drop(n);

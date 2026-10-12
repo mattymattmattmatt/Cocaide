@@ -7,7 +7,8 @@
 // - clearance: the through hole for the screw, ISO 273, for the three fits
 //   (close = "fine", normal = "medium", loose = "coarse").
 // - tapDrill: the drill for tapping the thread, the nominal diameter less one
-//   pitch (ISO 2306's usual choice for 6H threads).
+//   pitch, to the nearest standard drill (6.8 for M8, 10.2 for M12): the
+//   usual choice for 6H threads (ISO 2306).
 // - counterbore: diameter and depth for a socket head cap screw, ISO 4762
 //   (its head is d high and dk across): room round the head, its top a
 //   little below the face.

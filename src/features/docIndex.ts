@@ -13,6 +13,7 @@ import { def as draft } from "./draft/doc";
 import { def as sweep } from "./sweep/doc";
 import { def as loft } from "./loft/doc";
 import { def as rib } from "./rib/doc";
+import { def as sketchPattern } from "./sketchPattern/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -25,4 +26,5 @@ export const DOC_DEFS = [
   sweep,
   loft,
   rib,
+  sketchPattern,
 ];

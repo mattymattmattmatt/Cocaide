@@ -1994,6 +1994,8 @@ function validateKit(c: Checker, earlier: ReadonlyMap<string, string>, ctx: Feat
     feature,
     sketch: (v, path) => feature(v, path, ["sketch"], "a sketch"),
     direction: (obj, key, path) => c.unitVec(obj, key, path),
+    seeds: (raw) => seedList(raw, c, earlier, "pattern"),
+    skip: (raw, total) => skipList(raw, total, c),
   };
 }
 

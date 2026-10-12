@@ -64,6 +64,17 @@ export interface ValidateKit {
   sketch(v: unknown, path: string): string | undefined;
   /** A direction: three numbers, not all zero. */
   direction(obj: Record<string, unknown>, key: string, path: string): Vec3 | undefined;
+  /**
+   * What a pattern-like op repeats: "feature" (one) or "features" (several,
+   * different), each an earlier feature a pattern can repeat (an extrude, cut,
+   * hole, member, or a registry op that says it is patternable).
+   */
+  seeds(raw: Record<string, unknown>): { feature: string } | { features: string[] } | null;
+  /**
+   * The instances a pattern of `total` (the original is 1) leaves out: "skip",
+   * different whole numbers from 2 to total, sorted; undefined when absent or wrong.
+   */
+  skip(raw: Record<string, unknown>, total: number): number[] | undefined;
 }
 
 /** How an op uses and makes bodies, for the body-name checks (BodyNames in validate.ts). */
