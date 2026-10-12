@@ -93,7 +93,8 @@ The sketcher's edit tools (Trim, Extend, Split, Fillet, Chamfer, Offset, Mirror,
 Copy, Rotate, Scale, Explode, Check sketch) only ever write plain entities and the relations above:
   trim / split: a line or arc shortened (its end's relations dropped), a piece cut out of the middle leaves two, the
     second collinear with the first (an arc: coincident centres and equal); a trimmed circle becomes an arc; each new
-    end coincident with the end it landed on, or pointOn the entity it landed on.
+    end coincident with the end it landed on, or pointOn the entity it landed on. A split line's length dimension
+    becomes a "distance" between the outer ends of its two pieces.
   fillet: both lines (or arcs) shortened, an arc between them with coincident ends and tangent to both; one "radius"
     dimension, the other fillets made with it "equal" to the first. "Keep constrained corners" leaves a construction
     point at the old corner, pointOn both entities, carrying what was related or dimensioned to the corner.
@@ -102,7 +103,8 @@ Copy, Rotate, Scale, Explode, Check sketch) only ever write plain entities and t
   linear pattern: copies "equal" to the seed (lines also parallel), on a chain of construction lines, collinear and
     "equal" to the first, whose "distance" is the spacing (and "horizontal"/"vertical" or an "angle" to "X").
   circular pattern: copies "equal" to the seed; construction spokes from the centre, "equal"; equal construction chords
-    between neighbouring places; one "angle" dimension between the first two spokes.
+    between neighbouring places; one "angle" dimension between the first two spokes (as the relation reads it, 0-180°;
+    "collinear" spokes for two places half a turn apart).
   explode: a rect becomes 4 lines (corner rectangle relations); a slot 2 lines, 2 arcs and a construction centreline.
 A profile must be clean to extrude: no open ends, no ends that nearly meet, no crossings or overlaps, no zero-length or
 doubled entities (the sketcher's Check sketch lists these and fixes the simple ones).
