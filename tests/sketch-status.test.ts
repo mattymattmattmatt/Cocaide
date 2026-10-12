@@ -242,6 +242,11 @@ describe("Smart Dimension: what the picks and the drop call for", () => {
     expect(across[0].make(30)).toEqual({ type: "distance", point: "l1.start", line: "c", value: 30, doubled: true });
     // Dropped on the point's side: its distance first, the diameter offered after.
     expect(smartDimension(es, picks, [20, 0]).map((s) => s.testId)).toEqual(["c-line-distance", "c-linear-diameter"]);
+    // Clicking the centreline itself (where the pick lands) is no drop beyond it.
+    expect(smartDimension(es, picks, [0.001, 3])[0].testId).toBe("c-line-distance");
+    // A plain line (a model edge, a profile line) is no centreline: its distance only.
+    const plain = [line("c", [0, -10], [0, 10]), line("l1", [15, 0], [15, 10])];
+    expect(smartDimension(plain, picks, [-5, 0]).map((s) => s.testId)).toEqual(["c-line-distance"]);
   });
 
   it("Shift-clicking a circle measures to its near or far side by where it was clicked", () => {

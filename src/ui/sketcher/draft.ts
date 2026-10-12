@@ -422,10 +422,14 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
     const p = pointOf(pt.ref, byId);
     const d = offsetFrom(line, p);
     const across: Suggestion = { label: "Diameter across", icon: "diameter", value: round6(2 * d), make: (v) => ({ type: "distance", point: pt.ref, line: line.id, value: v, doubled: true }), testId: "c-linear-diameter" };
-    const side = (q: Vec2) => Math.sign(unitOf(line)[0] * (q[1] - line.start[1]) - unitOf(line)[1] * (q[0] - line.start[0]));
+    // Only across a centreline (construction) or a sketch axis, as SOLIDWORKS offers it: a revolve profile's diameter.
+    const centreline = line.construction === true || isAxisId(line.id);
     const base = withCondition(valued.slice(0, 1));
-    if (at && side(at) !== 0 && side(at) !== side(p)) return [across, ...base];
-    return line.construction || isAxisId(line.id) ? [...base, across] : base;
+    if (!centreline) return base;
+    const off = (q: Vec2) => unitOf(line)[0] * (q[1] - line.start[1]) - unitOf(line)[1] * (q[0] - line.start[0]);
+    // Dropped clearly beyond the centreline (not on it, where the click that picked it lands): the diameter first.
+    const beyond = at !== undefined && Math.abs(off(at)) > Math.max(1e-6, 0.05 * Math.abs(d)) && Math.sign(off(at)) !== Math.sign(off(p));
+    return beyond ? [across, ...base] : [...base, across];
   }
   return withCondition(valued.slice(0, 1));
 }
