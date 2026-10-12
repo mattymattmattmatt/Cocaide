@@ -342,9 +342,13 @@ describe("document write-back", () => {
   });
 
   it("adds a spline and dimensions it through commands", () => {
+    const done = (r: ReturnType<typeof apply>) => {
+      if (!r.ok) throw new Error(r.error);
+      return r.doc;
+    };
     let d = doc([]);
-    d = apply(d, { type: "addEntity", sketch: "s1", entity: S }).doc;
-    d = apply(d, { type: "addConstraint", sketch: "s1", constraint: { type: "coincident", points: ["sp1.p3", "origin"] } }).doc;
+    d = done(apply(d, { type: "addEntity", sketch: "s1", entity: { ...S } }));
+    d = done(apply(d, { type: "addConstraint", sketch: "s1", constraint: { type: "coincident", points: ["sp1.p3", "origin"] } }));
     const sp = (d.features[0] as { entities: SplineEntity[] }).entities[0];
     close(sp.points[3], [0, 0], 1e-6);
     expect(errorsOf(d)).toEqual([]);

@@ -1757,7 +1757,7 @@ const TOOL_TITLE: Partial<Record<Tool, string>> = {
 };
 
 /** What each entity type is called in a menu title. */
-const RELATION_NOUN: Record<SketchEntity["type"], string> = { line: "Line", circle: "Circle", arc: "Arc", rect: "Rectangle", slot: "Slot", point: "Point" };
+const RELATION_NOUN: Record<SketchEntity["type"], string> = { line: "Line", circle: "Circle", arc: "Arc", rect: "Rectangle", slot: "Slot", point: "Point", ellipse: "Ellipse", spline: "Spline" };
 
 function round(x: number): number {
   return Math.round(x * 1000) / 1000;

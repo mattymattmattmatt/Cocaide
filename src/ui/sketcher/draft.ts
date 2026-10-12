@@ -6,6 +6,8 @@ import type { IconName } from "../icons";
 import { constraintTargets, isAxisId } from "../../geom/axes";
 import { arcLength, measureConstraint, point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2, wrapAngle } from "../../geom/vec";
+import { closestOnEllipse, closestOnSpline, ellipseGeom, entityPoint, pointNames, splineOf } from "../../geom/curves";
+import { distanceToSeg, ellipseSeg, splineSeg } from "../../geom/profile";
 import type { Namer } from "./names";
 
 /** A pick: an entity (a model edge's stand-in "@e12" or a sketch axis "X" too), a point ref, or a model face (Convert Entities picks faces). */
@@ -42,6 +44,10 @@ export function handlesOf(e: SketchEntity): Handle[] {
       return [h("center1", e.center1), h("center2", e.center2)];
     case "point":
       return [h("at", e.at)];
+    case "ellipse":
+    case "spline":
+      // Every named point: an ellipse's centre, axis ends and arc ends; each point a spline passes through.
+      return pointNames(e).map((n) => h(n, entityPoint(e, n)!));
   }
 }
 
@@ -76,6 +82,18 @@ export function distanceTo(e: SketchEntity, p: Vec2): number {
     }
     case "point":
       return dist2(p, e.at);
+    case "ellipse":
+      try {
+        return distanceToSeg(ellipseSeg(e), p);
+      } catch {
+        return dist2(p, e.center);
+      }
+    case "spline":
+      try {
+        return distanceToSeg(splineSeg(e), p);
+      } catch {
+        return Math.min(...e.points.map((q) => dist2(p, q)));
+      }
   }
 }
 
@@ -201,6 +219,18 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
         ...(e.type === "circle" ? [diameter, radius] : [radius, diameter]),
       );
     }
+    if (e.type === "ellipse") {
+      const g = ellipseGeom(e);
+      out.push(
+        { label: "Centre on origin", icon: "coincident", make: () => ({ type: "coincident", points: [`${e.id}.center`, "origin"] }), testId: "c-center-origin" },
+        { label: "Horizontal", icon: "horizontal", make: () => ({ type: "horizontal", entity: e.id }), testId: "c-horizontal" },
+        { label: "Vertical", icon: "vertical", make: () => ({ type: "vertical", entity: e.id }), testId: "c-vertical" },
+        fix({ entity: e.id }),
+        { label: "Major radius", icon: "radius", value: round6(g.a), make: (v) => ({ type: "distance", points: [`${e.id}.center`, `${e.id}.major`], value: v }), testId: "c-major-radius" },
+        { label: "Minor radius", icon: "radius", value: round6(g.b), make: (v) => ({ type: "distance", points: [`${e.id}.center`, `${e.id}.minorEnd`], value: v }), testId: "c-minor-radius" },
+      );
+    }
+    if (e.type === "spline") out.push(fix({ entity: e.id }));
     if (e.type === "slot") {
       out.push(
         fix({ entity: e.id }),
@@ -229,8 +259,26 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
       } else {
         out.push({ label: "Angle", icon: "angle", unit: "°", value: round6(angle), make: (v) => ({ type: "angle", entities: pair, value: v }), testId: "c-angle" });
       }
+    } else if (a.type === "ellipse" && b.type === "ellipse") {
+      const pair: [string, string] = [a.id, b.id];
+      out.push(
+        { label: "Concentric", icon: "concentric", make: () => ({ type: "concentric", entities: pair }), testId: "c-concentric" },
+        { label: "Equal", icon: "equal", make: () => ({ type: "equal", entities: pair }), testId: "c-equal" },
+        { label: "Centre distance", icon: "smartDimension", value: round6(dist2(a.center, b.center)), make: (v) => ({ type: "distance", points: [`${a.id}.center`, `${b.id}.center`], value: v }), testId: "c-distance" },
+      );
+    } else if ((a.type === "ellipse" && isRound(b)) || (b.type === "ellipse" && isRound(a))) {
+      out.push({ label: "Concentric", icon: "concentric", make: () => ({ type: "concentric", entities: [a.id, b.id] }), testId: "c-concentric" });
+    } else if ((a.type === "spline" && !a.closed && (b.type === "line" || isRound(b) || (b.type === "spline" && !b.closed))) || (b.type === "spline" && !b.closed && (a.type === "line" || isRound(a)))) {
+      // A spline leaves (or meets) the other along it, at the end of the spline nearer it.
+      out.push({ label: "Tangent", icon: "tangent", make: () => ({ type: "tangent", entities: [a.id, b.id] }), testId: "c-tangent" });
     } else if (a.type === "line" || b.type === "line") {
       const [line, other] = (a.type === "line" ? [a, b] : [b, a]) as [Line, SketchEntity];
+      if (other.type === "ellipse") {
+        out.push(
+          { label: "Tangent", icon: "tangent", make: () => ({ type: "tangent", entities: [a.id, b.id] }), testId: "c-tangent" },
+          { label: "Centre to line", icon: "smartDimension", value: round6(offsetFrom(line, other.center)), make: (v) => ({ type: "distance", point: `${other.id}.center`, line: line.id, value: v }), testId: "c-line-distance" },
+        );
+      }
       if (isRound(other)) {
         const c = (other as { center: Vec2 }).center;
         out.push(
@@ -289,6 +337,14 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
       );
     } else if (e.type === "slot") {
       out.push({ label: "Midpoint", icon: "midpoint", make: () => ({ type: "midpoint", point: ref, entity: e.id }), testId: "c-midpoint" });
+    } else if (e.type === "ellipse") {
+      out.push(
+        { label: "Coincident", icon: "pointOn", make: () => ({ type: "pointOn", point: ref, entity: e.id }), testId: "c-on" },
+        { label: "At its centre", icon: "concentric", make: () => ({ type: "coincident", points: [ref, `${e.id}.center`] }), testId: "c-at-center" },
+        { label: "Distance to centre", icon: "smartDimension", value: round6(dist2(p, e.center)), make: (v) => ({ type: "distance", points: [ref, `${e.id}.center`], value: v }), testId: "c-distance" },
+      );
+    } else if (e.type === "spline") {
+      out.push({ label: "Coincident", icon: "pointOn", make: () => ({ type: "pointOn", point: ref, entity: e.id }), testId: "c-on" });
     }
   }
 
@@ -386,6 +442,15 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
     }
     if (e?.type === "circle") return valued.filter((s) => s.testId === "c-diameter" || s.testId === "c-radius");
     if (e?.type === "arc") return [...valued.filter((s) => s.testId === "c-radius" || s.testId === "c-diameter"), arcLengthOffer(e)];
+    if (e?.type === "ellipse") {
+      // Its radii: the one whose axis was clicked nearer first.
+      const radii = valued.filter((s) => s.testId === "c-major-radius" || s.testId === "c-minor-radius");
+      if (!at) return radii;
+      const g = ellipseGeom(e);
+      const d = sub2(at, e.center);
+      const alongMajor = Math.abs(d[0] * g.u[0] + d[1] * g.u[1]) / g.a >= Math.abs(d[0] * g.v[0] + d[1] * g.v[1]) / g.b;
+      return first(alongMajor ? "c-major-radius" : "c-minor-radius", radii);
+    }
     return valued.slice(0, 1);
   }
   // An arc and one of its own ends: its length along it.
@@ -588,11 +653,18 @@ export function inferPoint(entities: SketchEntity[], p: Vec2, tol: number, exclu
   }
   if (best) return best;
   for (const e of entities) {
-    if (e.id === exclude || (e.type !== "line" && !isRound(e))) continue;
+    if (e.id === exclude || (e.type !== "line" && !isRound(e) && e.type !== "ellipse" && e.type !== "spline")) continue;
     const d = distanceTo(e, p);
     if (d > bestD) continue;
     let q: Vec2;
-    if (e.type === "line") {
+    if (e.type === "ellipse") q = closestOnEllipse(ellipseGeom(e), p).at;
+    else if (e.type === "spline") {
+      try {
+        q = closestOnSpline(splineOf(e), p).at;
+      } catch {
+        continue;
+      }
+    } else if (e.type === "line") {
       const u = unitOf(e);
       const t = (p[0] - e.start[0]) * u[0] + (p[1] - e.start[1]) * u[1];
       q = [e.start[0] + t * u[0], e.start[1] + t * u[1]];
@@ -728,8 +800,17 @@ export function entityFromClicks(type: SketchEntity["type"], id: string, pts: Ve
     }
     case "point":
       return a ? { id, type, at: a } : null;
+    case "ellipse": {
+      // Centre, major end, then a point the minor radius passes through (its distance from the major axis).
+      if (!a || !b || !c || dist2(a, b) < 1e-9) return null;
+      const g = ellipseGeom({ center: a, major: b, minor: 1 });
+      const minor = Math.abs((c[0] - a[0]) * g.v[0] + (c[1] - a[1]) * g.v[1]);
+      return minor > 1e-9 ? { id, type, center: a, major: b, minor, ...extra } : null;
+    }
+    case "spline":
+      return pts.length >= 2 ? { id, type, points: pts, ...extra } : null;
   }
 }
 
 /** How many clicks each entity takes when placed on its own (the drawing tools are in tools/). */
-export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1 };
+export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1, ellipse: 3, spline: 2 };
