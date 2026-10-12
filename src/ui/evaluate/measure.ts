@@ -248,9 +248,12 @@ export function pairRows(a: MeasureItem, b: MeasureItem, closest: { distance: nu
     if (!line && closest.distance > 1e-9) line = { from: closest.a, to: closest.b, label: `${fmt(closest.distance)} mm` };
   }
 
-  // Angles: two planes (between their normals), two lines (0–90°: lines have no direction), a plane and a line.
-  if (pa && pb) rows.push({ key: "angle", label: "Angle", value: angleBetween(pa.normal, pb.normal), unit: "°" });
-  else if (la && lb) {
+  // Angles, 0–90° (a plane or a line has no way round: a plate's top and bottom are parallel, 0°):
+  // two planes (between their normals), two lines, a plane and a line.
+  if (pa && pb) {
+    const t = angleBetween(pa.normal, pb.normal);
+    rows.push({ key: "angle", label: "Angle", value: Math.min(t, 180 - t), unit: "°" });
+  } else if (la && lb) {
     const t = angleBetween(la.direction, lb.direction);
     rows.push({ key: "angle", label: "Angle", value: Math.min(t, 180 - t), unit: "°" });
   } else if ((pa && lb) || (la && pb)) {
