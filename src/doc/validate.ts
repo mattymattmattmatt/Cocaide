@@ -63,11 +63,12 @@ import {
   type FilletSet,
 } from "./types";
 import { validateDrawing } from "./drawing";
-import { PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
+import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
 import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, type DatumKind } from "../features/datum";
 import { isSketchAxis } from "./sketch";
-import { SKETCH_AXES } from "./types";
+import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
+import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 
 export interface ValidatedFeature {
   index: number;
@@ -182,14 +183,21 @@ export function validateDocument(input: unknown): ValidationResult {
       }
     }
   }
+  // Every name an expression may read: the parameters and the sketches' dimensions, worked out together.
+  const symbols = documentParameters(input);
   if (input.parameters !== undefined) {
     if (!isObject(input.parameters)) {
       header.fail("parameters", `must be an object of name: number (got ${describe(input.parameters)})`);
     } else {
       for (const [k, v] of Object.entries(input.parameters)) {
         if (!PARAMETER_NAME.test(k)) header.fail(`parameters.${k}`, "a parameter name is letters, digits and _ and starts with a letter");
-        else if (typeof v !== "number" || !Number.isFinite(v)) header.fail(`parameters.${k}`, `must be a number (got ${describe(v)})`);
-        else result.parameters[k] = v;
+        else if (!(typeof v === "number" && Number.isFinite(v)) && !isExpression(v)) header.fail(`parameters.${k}`, `must be a number or "=expression" (got ${describe(v)})`);
+        else if (k in symbols) result.parameters[k] = symbols[k];
+        else {
+          // An expression parameter that can't be worked out: say why (an unknown name, a cycle).
+          const r = evaluate(String(v), symbols);
+          header.fail(`parameters.${k}`, r.ok ? "can't be worked out" : r.error);
+        }
       }
     }
   }
@@ -211,7 +219,7 @@ export function validateDocument(input: unknown): ValidationResult {
           continue;
         }
         const exprErrors: string[] = [];
-        const point = resolveExpressions(at, result.parameters, exprErrors, `nodes.${name}`);
+        const point = resolveExpressions(at, symbols, exprErrors, `nodes.${name}`);
         for (const e of exprErrors) header.fail("", e);
         if (exprErrors.length) continue;
         const v = header.vec3({ [name]: point }, name, "nodes");
@@ -236,7 +244,7 @@ export function validateDocument(input: unknown): ValidationResult {
     let feature: Feature | null = null;
     // Expressions become numbers first; a bad expression fails this feature only.
     const exprErrors: string[] = [];
-    const raw = isObject(original) ? (resolveExpressions(original, result.parameters, exprErrors) as Record<string, unknown>) : original;
+    const raw = isObject(original) ? (resolveExpressions(original, symbols, exprErrors) as Record<string, unknown>) : original;
     for (const e of exprErrors) c.fail("", e);
     if (!isObject(raw)) {
       c.fail("", `must be an object (got ${describe(raw)})`);
@@ -465,6 +473,15 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
         const constraint = validateConstraint(k, `constraints[${i}]`, c, entityTypes, references);
         if (constraint) constraints.push(constraint);
       });
+      // Expressions read a dimension by its name: two of one name would be ambiguous.
+      const names = dimensionNames(raw.constraints);
+      const seen = new Map<string, number>();
+      raw.constraints.forEach((k, i) => {
+        const n = names[i];
+        if (!n || !isObject(k) || typeof k.name !== "string") return;
+        if (seen.has(n)) c.fail(`constraints[${i}]`, `name "${n}" is already constraints[${seen.get(n)}]'s; each dimension of a sketch has its own name`);
+        else seen.set(n, i);
+      });
     }
   }
 
@@ -638,6 +655,21 @@ function validateConstraint(
     return a && b ? [a, b] : undefined;
   };
 
+  /** A dimension's name and driven flag (DimensionFields), checked, to go on the constraint made. */
+  const dimension = (): { name?: string; driven?: true } => {
+    const out: { name?: string; driven?: true } = {};
+    if (k.name !== undefined) {
+      if (typeof k.name !== "string" || !DIMENSION_NAME.test(k.name)) c.fail(label, `name must be letters, digits and _, starting with a letter (got ${describe(k.name)}); expressions read it as <sketch id>.<name>`);
+      else out.name = k.name;
+    }
+    if (k.driven !== undefined) {
+      if (typeof k.driven !== "boolean") c.fail(label, `driven must be true or false (got ${describe(k.driven)})`);
+      else if (k.driven) out.driven = true;
+    }
+    return out;
+  };
+  const DIM_KEYS = ["name", "driven"];
+
   switch (k.type) {
     case "coincident": {
       c.keys(k, label, ["type", "points"]);
@@ -661,13 +693,47 @@ function validateConstraint(
     case "distance":
     case "distanceX":
     case "distanceY": {
-      c.keys(k, label, ["type", "entity", "points", "point", "line", "value"]);
+      c.keys(k, label, ["type", "entity", "points", "point", "line", "lines", "condition", "doubled", "value", ...DIM_KEYS]);
       const value = c.num(k, "value", label, { nonNegative: true });
-      const forms = [k.entity !== undefined, k.points !== undefined, k.point !== undefined || k.line !== undefined].filter(Boolean).length;
+      const dim = dimension();
+      const forms = [k.entity !== undefined, k.points !== undefined, k.point !== undefined || k.line !== undefined, k.lines !== undefined].filter(Boolean).length;
       if (forms !== 1) {
-        c.fail(label, k.type === "distance" ? "needs exactly one of entity, points, or point with line" : "needs exactly one of entity or points");
+        c.fail(label, k.type === "distance" ? "needs exactly one of entity, points, point with line, or lines" : "needs exactly one of entity or points");
         return null;
       }
+      // Measured to a circle's or arc's near or far side, where the dimension names its centre.
+      let condition: ArcCondition | undefined;
+      if (k.condition !== undefined) {
+        if (!(ARC_CONDITIONS as readonly unknown[]).includes(k.condition)) c.fail(label, `condition must be ${ARC_CONDITIONS.join(", ")} (got ${describe(k.condition)})`);
+        else {
+          condition = k.condition as ArcCondition;
+          const refs = [...(Array.isArray(k.points) ? k.points : []), k.point].filter((r): r is string => typeof r === "string");
+          const round = refs.some((r) => {
+            const [id, name] = r.split(".");
+            const t = entities.get(id);
+            return name === "center" && (t === "circle" || t === "arc");
+          });
+          if (!round) c.fail(label, `condition "${k.condition}" needs a circle's or arc's centre among its points ("c1.center"): it measures to that circle's near (min) or far (max) side`);
+        }
+      }
+      const cond = condition && condition !== "center" ? { condition } : {};
+      if (k.lines !== undefined) {
+        if (k.type !== "distance") {
+          c.fail(label, "the distance between two lines is a distance, not a distanceX or distanceY");
+          return null;
+        }
+        if (condition) c.fail(label, "condition is for a circle or arc by its centre, not two lines");
+        if (!Array.isArray(k.lines) || k.lines.length !== 2) {
+          c.fail(label, `lines must be two line ids (got ${describe(k.lines)})`);
+          return null;
+        }
+        const a = entityRef("lines[0]", k.lines[0], ["line"], true);
+        const b = entityRef("lines[1]", k.lines[1], ["line"]);
+        if (a && b && a === b) c.fail(label, `needs two different lines (got "${a}" twice)`);
+        if (value === undefined || !a || !b || c.errors.length > before) return null;
+        return { type: "distance", lines: [a, b], value, ...dim };
+      }
+      if (k.doubled !== undefined && (typeof k.doubled !== "boolean" || k.line === undefined)) c.fail(label, "doubled (true or false) is for a point's distance from a line (a diameter across a centreline)");
       if (k.point !== undefined || k.line !== undefined) {
         if (k.type !== "distance") {
           c.fail(label, "a point's distance from a line is a distance, not a distanceX or distanceY");
@@ -676,21 +742,32 @@ function validateConstraint(
         const point = pointRef(k.point);
         const line = entityRef("line", k.line, ["line"], true);
         if (point && line && point.split(".")[0] === line) c.fail(label, `"${point}" is a point of "${line}" itself`);
+        if (k.doubled === true && condition) c.fail(label, "a doubled distance measures to the point itself: it takes no condition");
         if (value === undefined || !point || !line || c.errors.length > before) return null;
-        return { type: "distance", point, line, value };
+        return { type: "distance", point, line, value, ...(k.doubled === true ? { doubled: true } : {}), ...cond, ...dim };
       }
       const allowed: SketchEntity["type"][] = k.type === "distance" ? ["line", "slot"] : ["line", "rect", "slot"];
       const entity = k.entity !== undefined ? entityRef("entity", k.entity, allowed) : undefined;
       const points = k.points !== undefined ? pointPair(k.points) : undefined;
+      if (entity && condition) c.fail(label, "condition is for a circle or arc by its centre, not a line's length");
       if (value === undefined || c.errors.length > before) return null;
-      return entity ? { type: k.type, entity, value } : { type: k.type, points: points!, value };
+      return entity ? { type: k.type, entity, value, ...dim } : { type: k.type, points: points!, value, ...cond, ...dim };
     }
     case "radius":
-    case "diameter": {
-      c.keys(k, label, ["type", "entity", "value"]);
-      const entity = entityRef("entity", k.entity, ["circle", "arc"]);
+    case "diameter":
+    case "arcLength": {
+      c.keys(k, label, ["type", "entity", "value", ...DIM_KEYS]);
+      const entity = entityRef("entity", k.entity, k.type === "arcLength" ? ["arc"] : ["circle", "arc"]);
       const value = c.num(k, "value", label, { positive: true });
-      return entity && value !== undefined && c.errors.length === before ? { type: k.type, entity, value } : null;
+      const dim = dimension();
+      return entity && value !== undefined && c.errors.length === before ? { type: k.type, entity, value, ...dim } : null;
+    }
+    case "intersection": {
+      c.keys(k, label, ["type", "point", "entities"]);
+      const point = pointRef(k.point);
+      const pair = entityPair(["line"], true);
+      if (point && pair?.includes(point.split(".")[0])) c.fail(label, `"${point}" is a point of one of the lines; an intersection relation places another point where they cross`);
+      return point && pair && c.errors.length === before ? { type: "intersection", point, entities: pair } : null;
     }
     case "equal": {
       c.keys(k, label, ["type", "entities"]);
@@ -708,13 +785,16 @@ function validateConstraint(
     case "perpendicular":
     case "collinear":
     case "concentric":
+    case "coradial":
     case "angle": {
-      c.keys(k, label, k.type === "angle" ? ["type", "entities", "value"] : ["type", "entities"]);
-      const pair = entityPair(k.type === "concentric" ? ["circle", "arc"] : ["line"], k.type !== "concentric");
+      c.keys(k, label, k.type === "angle" ? ["type", "entities", "value", ...DIM_KEYS] : ["type", "entities"]);
+      const round = k.type === "concentric" || k.type === "coradial";
+      const pair = entityPair(round ? ["circle", "arc"] : ["line"], !round);
       if (k.type === "angle") {
         const value = c.num(k, "value", label, {});
+        const dim = dimension();
         if (value !== undefined && !(value > 0 && value < 180)) c.fail(label, `value must be over 0 and under 180 degrees (got ${value}); for 0 use parallel`);
-        return pair && value !== undefined && c.errors.length === before ? { type: "angle", entities: pair, value } : null;
+        return pair && value !== undefined && c.errors.length === before ? { type: "angle", entities: pair, value, ...dim } : null;
       }
       return pair && c.errors.length === before ? { type: k.type, entities: pair } : null;
     }
@@ -753,7 +833,7 @@ function validateConstraint(
       return points && line && c.errors.length === before ? { type: "symmetric", points, line } : null;
     }
     case "offset": {
-      c.keys(k, label, ["type", "entities", "offsets", "value"]);
+      c.keys(k, label, ["type", "entities", "offsets", "value", ...DIM_KEYS]);
       const value = c.num(k, "value", label, { positive: true });
       if (!Array.isArray(k.entities) || !Array.isArray(k.offsets) || k.entities.length === 0 || k.entities.length !== k.offsets.length) {
         c.fail(label, `entities (the bases) and offsets (one offset each) must be arrays of the same length, at least one (got ${describe(k.entities)} and ${describe(k.offsets)})`);
@@ -776,7 +856,7 @@ function validateConstraint(
         bases.push(base);
         offsets.push(off);
       });
-      return value !== undefined && c.errors.length === before ? { type: "offset", entities: bases, offsets, value } : null;
+      return value !== undefined && c.errors.length === before ? { type: "offset", entities: bases, offsets, value, ...dimension() } : null;
     }
     case "fix": {
       c.keys(k, label, ["type", "entity", "point"]);
@@ -821,6 +901,9 @@ export const CONSTRAINT_TYPES = [
   "symmetric",
   "fix",
   "offset",
+  "arcLength",
+  "intersection",
+  "coradial",
 ] as const;
 
 // ------------------------------------------------------- extrude and cut

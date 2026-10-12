@@ -8,7 +8,10 @@
 
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
-import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, resolveExpressions, type Parameters } from "./parameters";
+import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, rawParameters, resolveExpressions, type Parameters } from "./parameters";
+import { dependentNames, DIMENSION_NAME, dimensionNames, documentSymbols, isDimension, pinReferencedNames, renameInDocument, symbolEntries } from "./dimensions";
+import { measureConstraint } from "../geom/constraints";
+import { isDriven } from "../geom/axes";
 import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
@@ -46,12 +49,21 @@ export type Command =
   | { type: "reorderFeature"; id: string; index: number }
   | { type: "suppressFeature"; id: string; suppressed: boolean }
   | { type: "setName"; name: string }
-  /** Sets a document parameter; sketches whose dimensions use it are re-solved. */
-  | { type: "setParameter"; name: string; value: number }
+  /** Sets a document parameter (a number, or "=expression"); sketches whose dimensions use it are re-solved. */
+  | { type: "setParameter"; name: string; value: number | string }
   /** Removes a parameter nothing uses. */
   | { type: "deleteParameter"; name: string }
-  /** Changes one dimension of a sketch (a constraint's value, or "=expr") and re-solves the sketch. */
-  | { type: "setDimension"; sketch: string; index: number; value: number | string }
+  /** Renames a parameter; every expression that reads it follows. */
+  | { type: "renameParameter"; from: string; to: string }
+  /**
+   * Changes one dimension of a sketch (a constraint's value, or "=expr") and re-solves the sketch.
+   * The dimension is picked by `index` (its constraint's place) or by `name` ("d3", "width").
+   */
+  | { type: "setDimension"; sketch: string; index?: number; name?: string; value: number | string }
+  /** Names a dimension (`to`); every expression that reads it by its old name follows. */
+  | { type: "renameDimension"; sketch: string; index?: number; name?: string; to: string }
+  /** Makes a dimension driven (measured, never solved) or driving again. */
+  | { type: "setDriven"; sketch: string; index?: number; name?: string; driven: boolean }
   // Inside one sketch. Each re-solves the sketch so its constraints still hold.
   | { type: "addEntity"; sketch: string; entity: Record<string, unknown> }
   /** Merges into the entity (null removes a field); the fields it sets are held while the sketch re-solves. */
@@ -103,6 +115,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
   const outside = scopeProblem(input as RawDocument, cmd, opts.writeScope);
   if (outside) return { ok: false, error: outside };
   const doc = structuredClone(input) as RawDocument;
+  // A dimension an expression reads by its default name keeps that name, whatever this command deletes.
+  pinReferencedNames(doc);
   const features = doc.features;
   const indexOf = (id: string) => features.findIndex((f) => isObject(f) && f.id === id);
   const need = (id: string): number | string => {
@@ -142,6 +156,16 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       }
       const prev = features[i];
       features[i] = next;
+      // Expressions read a sketch's dimensions as <sketch id>.<name>: they follow a renamed sketch.
+      if (next.id !== cmd.id && prev.op === "sketch") {
+        const from = `${cmd.id}.`;
+        renameInDocument(doc, (n) => (n.startsWith(from) ? `${String(next.id)}.${n.slice(from.length)}` : undefined));
+      }
+      // A sketch's dimensions may drive other sketches' (by expressions): those re-solve.
+      if (next.op === "sketch" && prev.op === "sketch") {
+        const problem = resolveSketchesUsing(doc, sketchDimensionNames(doc.features[i]), String(next.id));
+        if (problem) return { ok: false, error: `${cmd.type}: ${problem}` };
+      }
       // The drawing names features by id (balloons, member dimensions, hole callouts): it follows.
       if (next.id !== cmd.id && doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", cmd.id, String(next.id));
       // A member, end cap or gusset that names its body by its id renames the body: its welds and material follow.
@@ -190,10 +214,16 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (typeof cmd.name !== "string" || !PARAMETER_NAME.test(cmd.name)) {
         return { ok: false, error: `setParameter: "${String(cmd.name)}" is not a parameter name (letters, digits, _)` };
       }
-      if (typeof cmd.value !== "number" || !Number.isFinite(cmd.value)) {
-        return { ok: false, error: `setParameter: value must be a number (got ${JSON.stringify(cmd.value)})` };
+      if (!(typeof cmd.value === "number" && Number.isFinite(cmd.value)) && !isExpression(cmd.value)) {
+        return { ok: false, error: `setParameter: value must be a number or "=expression" (got ${JSON.stringify(cmd.value)})` };
       }
-      doc.parameters = { ...documentParameters(doc), [cmd.name]: cmd.value };
+      if (cmd.name.includes(".") || symbolEntries(doc).get(cmd.name)?.kind === "dimension") {
+        return { ok: false, error: `setParameter: "${cmd.name}" is a sketch dimension's name; use setDimension` };
+      }
+      doc.parameters = { ...rawParameters(doc), [cmd.name]: cmd.value };
+      // An equation reading itself, or going round through others, is refused here, plainly.
+      const own = documentSymbols(doc).problems[cmd.name];
+      if (own) return { ok: false, error: `setParameter: ${cmd.name}: ${own}` };
       const problem = resolveSketchesUsing(doc, [cmd.name]);
       if (problem) return { ok: false, error: `setParameter: ${cmd.name} = ${cmd.value}: ${problem}` };
       // A size the user sets is theirs, not an estimate from the photo.
@@ -201,15 +231,31 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       break;
     }
     case "deleteParameter": {
-      const params = documentParameters(doc);
+      const params = rawParameters(doc);
       if (!(cmd.name in params)) return { ok: false, error: `deleteParameter: no parameter "${cmd.name}"` };
       const users = features.filter((f) => isObject(f) && parameterRefs(f).has(cmd.name)).map((f) => String(f.id));
       const nodes = Object.entries(isObject(doc.nodes) ? doc.nodes : {}).filter(([, at]) => parameterRefs(at).has(cmd.name)).map(([n]) => `node ${n}`);
-      if (users.length || nodes.length) return { ok: false, error: `deleteParameter: ${cmd.name} is used by ${[...users, ...nodes].join(", ")}` };
+      const others = Object.entries(params).filter(([n, v]) => n !== cmd.name && parameterRefs(v).has(cmd.name)).map(([n]) => `parameter ${n}`);
+      if (users.length || nodes.length || others.length) return { ok: false, error: `deleteParameter: ${cmd.name} is used by ${[...users, ...nodes, ...others].join(", ")}` };
       delete params[cmd.name];
       if (Object.keys(params).length) doc.parameters = params;
       else delete doc.parameters;
       forgetEstimate(doc, cmd.name);
+      break;
+    }
+    case "renameParameter": {
+      const params = rawParameters(doc);
+      if (!(cmd.from in params)) return { ok: false, error: `renameParameter: no parameter "${cmd.from}"` };
+      if (typeof cmd.to !== "string" || !PARAMETER_NAME.test(cmd.to)) return { ok: false, error: `renameParameter: "${String(cmd.to)}" is not a parameter name (letters, digits, _)` };
+      if (cmd.to in params) return { ok: false, error: `renameParameter: there is already a parameter "${cmd.to}"` };
+      // Keep the order the parameters are listed in.
+      doc.parameters = Object.fromEntries(Object.entries(params).map(([k, v]) => [k === cmd.from ? cmd.to : k, v]));
+      renameInDocument(doc, (n) => (n === cmd.from ? cmd.to : undefined));
+      const photo = photoOf(doc);
+      if (photo && (cmd.from in photo.estimated || photo.scale.parameter === cmd.from)) {
+        const estimated = Object.fromEntries(Object.entries(photo.estimated).map(([k, v]) => [k === cmd.from ? cmd.to : k, v]));
+        doc.photo = { ...photo, estimated, scale: photo.scale.parameter === cmd.from ? { ...photo.scale, parameter: cmd.to } : photo.scale };
+      }
       break;
     }
     case "renameBody": {
@@ -405,7 +451,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const next: PhotoUnderlay = { ...photo, scale };
       doc.photo = next;
       const values = rescaled(next, mmPerPixel(scale));
-      const params = documentParameters(doc);
+      const params = rawParameters(doc);
       const changed = Object.keys(values).filter((name) => params[name] !== values[name]);
       if (changed.length) {
         doc.parameters = { ...params, ...values };
@@ -420,17 +466,77 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const f = structuredClone(features[i]);
       if (f.op !== "sketch") return { ok: false, error: `setDimension: "${cmd.sketch}" is a ${String(f.op)}, not a sketch` };
       const constraints = Array.isArray(f.constraints) ? (f.constraints as Record<string, unknown>[]) : [];
-      const k = constraints[cmd.index];
-      if (!isObject(k) || !("value" in k)) {
-        return { ok: false, error: `setDimension: ${cmd.sketch} has no dimension at index ${cmd.index} (it has ${constraints.length} constraints)` };
-      }
+      const at = findDimension(f, cmd);
+      if (typeof at === "string") return { ok: false, error: `setDimension: ${at}` };
+      const k = constraints[at];
       if (!(typeof cmd.value === "number" && Number.isFinite(cmd.value)) && !isExpression(cmd.value)) {
         return { ok: false, error: `setDimension: value must be a number or "=expression" (got ${JSON.stringify(cmd.value)})` };
       }
+      if (k.driven === true) return { ok: false, error: `setDimension: ${cmd.sketch}.${dimensionNames(constraints)[at]} is driven: the geometry sets it. Make it driving first (setDriven), or change what drives it` };
       k.value = cmd.value;
+      features[i] = f;
+      // Going round: it reads itself, or a name that reads it.
+      const full = `${cmd.sketch}.${dimensionNames(constraints)[at]}`;
+      const loop = documentSymbols(doc).problems[full];
+      if (loop?.includes("cycle")) return { ok: false, error: `setDimension: ${full}: ${loop}` };
       const r = resolveSketch(f, documentParameters(doc));
       if (!r.ok) return { ok: false, error: `setDimension: ${r.error}` };
       features[i] = r.feature;
+      // Other sketches whose dimensions read this one move with it.
+      const problem = resolveSketchesUsing(doc, sketchDimensionNames(r.feature), cmd.sketch);
+      if (problem) return { ok: false, error: `setDimension: ${problem}` };
+      break;
+    }
+    case "renameDimension":
+    case "setDriven": {
+      const i = need(cmd.sketch);
+      if (typeof i === "string") return { ok: false, error: i };
+      const f = structuredClone(features[i]);
+      if (f.op !== "sketch") return { ok: false, error: `${cmd.type}: "${cmd.sketch}" is a ${String(f.op)}, not a sketch` };
+      const at = findDimension(f, cmd);
+      if (typeof at === "string") return { ok: false, error: `${cmd.type}: ${at}` };
+      const constraints = f.constraints as Record<string, unknown>[];
+      const names = dimensionNames(constraints);
+      const k = constraints[at];
+      if (cmd.type === "renameDimension") {
+        if (typeof cmd.to !== "string" || !DIMENSION_NAME.test(cmd.to)) {
+          return { ok: false, error: `renameDimension: "${String(cmd.to)}" is not a dimension name (letters, digits and _, starting with a letter)` };
+        }
+        if (names.some((n, j) => j !== at && n === cmd.to)) return { ok: false, error: `renameDimension: ${cmd.sketch} already has a dimension "${cmd.to}"` };
+        const was = names[at]!;
+        k.name = cmd.to;
+        features[i] = f;
+        // Everything that read it by its old name reads the new one; the other dimensions keep the names they had.
+        constraints.forEach((x, j) => {
+          if (j !== at && names[j] && x.name === undefined && names[j] !== dimensionNames(constraints)[j]) x.name = names[j];
+        });
+        const from = `${cmd.sketch}.${was}`;
+        const to = `${cmd.sketch}.${cmd.to}`;
+        renameInDocument(doc, (n) => (n === from ? to : undefined));
+        break;
+      }
+      if (cmd.driven) {
+        k.driven = true;
+        // Its value is what the geometry measures: an expression has nothing to drive any more.
+        if (isExpression(k.value)) k.value = 0;
+      } else delete k.driven;
+      const r = resolveSketch(f, documentParameters(doc));
+      if (!r.ok) return { ok: false, error: `setDriven: ${r.error}` };
+      if (!cmd.driven) {
+        // Driving again: it must not over-define the sketch.
+        const resolved = resolveExpressions(r.feature, documentParameters(doc), []) as { entities: SketchEntity[]; constraints: Constraint[] };
+        const others = resolved.constraints.filter((_, j) => j !== at);
+        try {
+          if (wouldOverDefine(resolved.entities, others, resolved.constraints[at])) {
+            return { ok: false, error: `setDriven: ${cmd.sketch}.${names[at]} would over-define the sketch as a driving dimension; it stays driven` };
+          }
+        } catch (e) {
+          return { ok: false, error: `setDriven: ${(e as Error).message}` };
+        }
+      }
+      features[i] = r.feature;
+      const problem = resolveSketchesUsing(doc, sketchDimensionNames(r.feature), cmd.sketch);
+      if (problem) return { ok: false, error: `setDriven: ${problem}` };
       break;
     }
     case "addEntity":
@@ -449,6 +555,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       return { ok: false, error: `unknown command ${JSON.stringify((cmd as { type?: unknown }).type)}` };
   }
 
+  // A reference this command wrote to a default dimension name pins it too.
+  pinReferencedNames(doc);
   const was = validateDocument(input);
   let now = validateDocument(doc);
   // A body's material goes with the body: a command that removes a body (deleting the feature that makes it) drops it.
@@ -630,19 +738,55 @@ function implicitMaker(features: Record<string, unknown>[], name: string): { id:
   return null;
 }
 
-/** Re-solves the sketches that use any of these parameters. The error text, or null. */
-function resolveSketchesUsing(doc: RawDocument, names: string[]): string | null {
-  const params = documentParameters(doc);
-  for (let i = 0; i < doc.features.length; i++) {
-    const f = doc.features[i];
-    if (!isObject(f) || f.op !== "sketch") continue;
-    const refs = parameterRefs(f);
-    if (!names.some((n) => refs.has(n))) continue;
-    const r = resolveSketch(f, params);
-    if (!r.ok) return r.error;
-    doc.features[i] = r.feature;
+/**
+ * Re-solves the sketches that use any of these names (parameters or
+ * dimensions), or a name worked out from one of them, other than `skip` (the
+ * sketch just solved). A re-solved sketch's driven dimensions may change, so
+ * what reads those follows, a few rounds deep. The error text, or null.
+ */
+function resolveSketchesUsing(doc: RawDocument, names: string[], skip?: string): string | null {
+  let changed = new Set(names);
+  for (let round = 0; round < 4 && changed.size; round++) {
+    const affected = dependentNames(symbolEntries(doc), changed);
+    const next = new Set<string>();
+    for (let i = 0; i < doc.features.length; i++) {
+      const f = doc.features[i];
+      if (!isObject(f) || f.op !== "sketch" || (round === 0 && f.id === skip)) continue;
+      const refs = parameterRefs(f);
+      if (![...affected].some((n) => refs.has(n))) continue;
+      const r = resolveSketch(f, documentParameters(doc));
+      if (!r.ok) return r.error;
+      if (JSON.stringify(r.feature) === JSON.stringify(f)) continue;
+      doc.features[i] = r.feature;
+      for (const n of sketchDimensionNames(r.feature)) next.add(n);
+    }
+    changed = next;
   }
   return null;
+}
+
+/** A sketch's dimensions by their full names ("sketch_1.d1"). */
+function sketchDimensionNames(f: unknown): string[] {
+  if (!isObject(f) || typeof f.id !== "string") return [];
+  return dimensionNames(f.constraints).flatMap((n) => (n ? [`${String(f.id)}.${n}`] : []));
+}
+
+/** The constraint index of the dimension a command names (by `index` or `name`), or what is wrong. */
+function findDimension(f: Record<string, unknown>, cmd: { sketch: string; index?: number; name?: string }): number | string {
+  const constraints = Array.isArray(f.constraints) ? f.constraints : [];
+  const names = dimensionNames(constraints);
+  if (cmd.name !== undefined) {
+    // "sketch_1.d2" names the same dimension as "d2" in sketch_1.
+    const short = cmd.name.startsWith(`${cmd.sketch}.`) ? cmd.name.slice(cmd.sketch.length + 1) : cmd.name;
+    const at = names.indexOf(short);
+    if (at < 0) return `${cmd.sketch} has no dimension "${cmd.name}" (it has ${names.filter(Boolean).join(", ") || "none"})`;
+    return at;
+  }
+  const at = cmd.index;
+  if (typeof at !== "number" || !Number.isInteger(at) || !isDimension(constraints[at])) {
+    return `${cmd.sketch} has no dimension at index ${String(at)} (it has ${constraints.length} constraints)`;
+  }
+  return at;
 }
 
 /** The parameter is no longer an estimate from the photo, nor the photo's scale. */
@@ -699,8 +843,9 @@ function editSketch(raw: Record<string, unknown>, cmd: SketchCommand, params: Pa
       const resolved = resolveExpressions(f, params, []) as { entities: SketchEntity[]; constraints?: Constraint[] };
       const extra = resolveExpressions(cmd.constraint, params, []) as Constraint;
       try {
-        if (wouldOverDefine(resolved.entities, resolved.constraints ?? [], extra)) {
-          return `${cmd.sketch}: that constraint repeats or contradicts what the sketch already fixes`;
+        // A driven dimension only measures: it can never over-define.
+        if (!isDriven(extra) && wouldOverDefine(resolved.entities, resolved.constraints ?? [], extra)) {
+          return `${cmd.sketch}: that constraint repeats or contradicts what the sketch already fixes${"value" in extra ? '; add it as a driven (reference) dimension instead, with "driven": true' : ""}`;
         }
       } catch (e) {
         return `${cmd.sketch}: constraint: ${(e as Error).message}`;
@@ -741,7 +886,7 @@ export function resolveSketch(
   if (errors.length || !Array.isArray(resolved.entities)) return { ok: true, feature: raw };
   const constraints = resolved.constraints ?? [];
   try {
-    if (checkConstraints(resolved.entities, constraints).length === 0) return { ok: true, feature: raw };
+    if (checkConstraints(resolved.entities, constraints).length === 0) return { ok: true, feature: measureDriven(raw, resolved.entities, constraints) };
   } catch {
     return { ok: true, feature: raw }; // malformed: validation will say why
   }
@@ -763,7 +908,30 @@ export function resolveSketch(
       else if (Array.isArray(v)) e[field] = v.map((c, k) => (isExpression(c) ? c : clean((solved[field] as number[])[k])));
     }
   });
-  return { ok: true, feature: out };
+  return { ok: true, feature: measureDriven(out, r.entities, constraints) };
+}
+
+/**
+ * The sketch with each driven dimension's value set to what the geometry
+ * measures (they are never solved, only read). The same object when none changed.
+ */
+export function measureDriven(raw: Record<string, unknown>, entities: SketchEntity[], constraints: Constraint[]): Record<string, unknown> {
+  if (!Array.isArray(raw.constraints) || !constraints.some(isDriven)) return raw;
+  let out: Record<string, unknown> | null = null;
+  constraints.forEach((k, j) => {
+    if (!isDriven(k)) return;
+    let value: number;
+    try {
+      value = clean(measureConstraint(entities, k).actual);
+    } catch {
+      return;
+    }
+    const was = (raw.constraints as Record<string, unknown>[])[j];
+    if (!isObject(was) || was.value === value || !Number.isFinite(value)) return;
+    out ??= { ...raw, constraints: [...(raw.constraints as unknown[])] };
+    (out.constraints as unknown[])[j] = { ...was, value };
+  });
+  return out ?? raw;
 }
 
 /** Solver output for the document: a value within 1e-8 of a 6-decimal number is that number. */

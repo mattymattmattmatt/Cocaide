@@ -46,7 +46,7 @@ describe("sketch commands", () => {
   it("refuses a constraint the sketch already has", () => {
     expect(apply(withCircle(), { type: "addConstraint", sketch: "sketch_1", constraint: { type: "radius", entity: "c1", value: 3 } })).toEqual({
       ok: false,
-      error: "addConstraint: sketch_1: that constraint repeats or contradicts what the sketch already fixes",
+      error: 'addConstraint: sketch_1: that constraint repeats or contradicts what the sketch already fixes; add it as a driven (reference) dimension instead, with "driven": true',
     });
   });
 

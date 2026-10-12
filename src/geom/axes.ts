@@ -31,6 +31,11 @@ export function isConstant(e: SketchEntity): boolean {
   return (e.ref !== undefined && e.ref !== null) || isAxisId(e.id);
 }
 
+/** A driven (reference) dimension: measured from the geometry, never solved, never over-defining. */
+export function isDriven(k: Constraint): boolean {
+  return "driven" in k && k.driven === true;
+}
+
 /** The entity ids and sketch axes a constraint refers to ("origin" is no entity). */
 export function constraintTargets(k: Constraint): string[] {
   const fromRef = (ref: string) => (ref === "origin" ? [] : [ref.split(".")[0]]);
@@ -46,7 +51,12 @@ export function constraintTargets(k: Constraint): string[] {
     case "distance":
     case "distanceX":
     case "distanceY":
-      return k.entity ? [k.entity] : k.points ? k.points.flatMap(fromRef) : [...fromRef(k.point!), k.line!];
+      return k.entity ? [k.entity] : k.points ? k.points.flatMap(fromRef) : k.lines ? [...k.lines] : [...fromRef(k.point!), k.line!];
+    case "arcLength":
+      return [k.entity];
+    case "intersection":
+      return [...fromRef(k.point), ...k.entities];
+    case "coradial":
     case "equal":
     case "parallel":
     case "perpendicular":

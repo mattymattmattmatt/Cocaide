@@ -497,6 +497,22 @@ export type SketchEntityType = SketchEntity["type"];
 /** "entityId.point", e.g. "l1.end", "a2.center", "s1.center2", "p1.at", or "origin" for the sketch origin. */
 export type PointRef = string;
 
+/**
+ * What every dimension (a constraint with a value) may carry:
+ * - `name`: what expressions call it, as <sketch id>.<name> ("=sketch_1.width * 2"). Without one it is d<n>,
+ *   n its place among the sketch's dimensions; a name given is kept whatever is deleted around it.
+ * - `driven`: a reference dimension (SOLIDWORKS's driven dimension): measured from the geometry, never solved,
+ *   shown in parentheses; its value is what it measures, kept up to date by every solve.
+ */
+export interface DimensionFields {
+  name?: string;
+  driven?: boolean;
+}
+
+/** Where a distance meets a circle or arc picked by its centre: the centre, or its nearest (min) or farthest (max) point. */
+export const ARC_CONDITIONS = ["center", "min", "max"] as const;
+export type ArcCondition = (typeof ARC_CONDITIONS)[number];
+
 export interface CoincidentConstraint {
   type: "coincident";
   points: [PointRef, PointRef];
@@ -514,19 +530,49 @@ export interface OrientationConstraint {
  * or `point` with `line` (a distance only: the point's perpendicular distance from
  * the line, extended; `line` may be the sketch axis "X" or "Y").
  */
-export interface DistanceConstraint {
+export interface DistanceConstraint extends DimensionFields {
   type: "distance" | "distanceX" | "distanceY";
   entity?: string;
   points?: [PointRef, PointRef];
   point?: PointRef;
   line?: string;
+  /**
+   * Two lines (`distance` only): the parallel distance between them, from the
+   * second's middle to the first, extended. A sketch axis may be the first.
+   */
+  lines?: [string, string];
+  /**
+   * Measured to a circle's or arc's nearest (min) or farthest (max) point
+   * rather than its centre, wherever a point of the dimension is the centre
+   * of a circle or arc ("c1.center"). SOLIDWORKS: Shift-click the circle.
+   */
+  condition?: ArcCondition;
+  /**
+   * A linear diameter (`point` with `line` only): twice the point's distance
+   * from the line, shown with Ø: a revolve profile's diameter across its centreline.
+   */
+  doubled?: boolean;
   value: number;
 }
 
-export interface RadiusConstraint {
+export interface RadiusConstraint extends DimensionFields {
   type: "radius" | "diameter";
   entity: string;
   value: number;
+}
+
+/** An arc's length along it, mm. */
+export interface ArcLengthConstraint extends DimensionFields {
+  type: "arcLength";
+  entity: string;
+  value: number;
+}
+
+/** A point where two lines (extended) cross: on both. A sketch axis may be one of them. */
+export interface IntersectionConstraint {
+  type: "intersection";
+  point: PointRef;
+  entities: [string, string];
 }
 
 export interface EqualConstraint {
@@ -537,15 +583,16 @@ export interface EqualConstraint {
 /**
  * Relations between two entities, as SOLIDWORKS has them: parallel,
  * perpendicular and collinear lines; tangent (a line and a circle or arc, or
- * two circles or arcs, on whichever side they are); concentric circles or arcs.
+ * two circles or arcs, on whichever side they are); concentric circles or arcs;
+ * coradial circles or arcs (concentric and the same radius, as one relation).
  */
 export interface PairConstraint {
-  type: "parallel" | "perpendicular" | "collinear" | "tangent" | "concentric";
+  type: "parallel" | "perpendicular" | "collinear" | "tangent" | "concentric" | "coradial";
   entities: [string, string];
 }
 
 /** The angle between two lines' directions (start to end), in degrees, over 0 and under 180. */
-export interface AngleConstraint {
+export interface AngleConstraint extends DimensionFields {
   type: "angle";
   entities: [string, string];
   value: number;
@@ -580,7 +627,7 @@ export interface SymmetricConstraint {
  * centred there with the value for radius (a rounded corner, an arc cap).
  * Editing the value moves every offset at once.
  */
-export interface OffsetConstraint {
+export interface OffsetConstraint extends DimensionFields {
   type: "offset";
   /** The bases: lines, arcs and circles of the sketch, or point refs. */
   entities: string[];
@@ -607,7 +654,9 @@ export type Constraint =
   | PointOnConstraint
   | SymmetricConstraint
   | FixConstraint
-  | OffsetConstraint;
+  | OffsetConstraint
+  | ArcLengthConstraint
+  | IntersectionConstraint;
 export type ConstraintType = Constraint["type"];
 
 // ------------------------------------------------------- extrude and cut

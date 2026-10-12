@@ -449,8 +449,18 @@ export function describeConstraint(k: Constraint, names: Namer = RAW): string {
     case "horizontal":
     case "vertical":
       return k.entity ? `${e(k.entity)} ${k.type}` : `${p(k.points![0])}, ${p(k.points![1])} ${k.type}`;
-    case "distance":
-      return k.entity ? `${e(k.entity)} length` : k.points ? `${p(k.points[0])} ↔ ${p(k.points[1])}` : `${p(k.point!)} ↔ ${e(k.line!)}`;
+    case "distance": {
+      const at = k.condition && k.condition !== "center" ? ` (${k.condition})` : "";
+      if (k.lines) return `${e(k.lines[0])} ↔ ${e(k.lines[1])}`;
+      if (k.doubled) return `Ø ${p(k.point!)} across ${e(k.line!)}`;
+      return (k.entity ? `${e(k.entity)} length` : k.points ? `${p(k.points[0])} ↔ ${p(k.points[1])}` : `${p(k.point!)} ↔ ${e(k.line!)}`) + at;
+    }
+    case "arcLength":
+      return `${e(k.entity)} arc length`;
+    case "intersection":
+      return `${p(k.point)} where ${e(k.entities[0])} and ${e(k.entities[1])} cross`;
+    case "coradial":
+      return `${e(k.entities[0])}, ${e(k.entities[1])} coradial`;
     case "distanceX":
       return `${k.entity ? `${e(k.entity)} width` : `${p(k.points![0])} ↔ ${p(k.points![1])} (x)`}`;
     case "distanceY":

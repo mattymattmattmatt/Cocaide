@@ -14,7 +14,7 @@
 // degrees of freedom, never move, and what is related to them follows them.
 
 import type { Constraint, SketchEntity, Vec2 } from "../doc/types";
-import { constraintTargets, isConstant, withAxes } from "./axes";
+import { constraintTargets, isConstant, isDriven, withAxes } from "./axes";
 
 const TOL = 1e-9;
 /** Accepting tolerance; the rebuild checks constraints to 1e-6. */
@@ -152,6 +152,8 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
     // A relation between references only (converted edges meeting at a corner) holds by the model, not by a
     // solve: it gives no equation, so model tolerances never fail the sketch. The checks still measure it.
     if (betweenConstants(l, k)) return;
+    // A driven dimension is measured, never solved: no equation.
+    if (isDriven(k)) return;
     switch (k.type) {
       case "coincident": {
         const [px, py] = pointOf(l, k.points[0]);
@@ -168,12 +170,35 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
       case "distance":
       case "distanceX":
       case "distanceY": {
+        // A min or max condition measures to a circle's near or far side: its radius off or on.
+        const rim = conditionRadii(l, k.condition, k.points ?? (k.point ? [k.point] : []));
+        if (k.lines) {
+          // Two lines: the second's middle from the first, extended.
+          const [[ax, ay], [bx, by]] = span(l, k.lines[1]);
+          const d = offsetFrom(l, k.lines[0], [(x) => (ax(x) + bx(x)) / 2, (x) => (ay(x) + by(x)) / 2]);
+          const s = sign(d);
+          push(i, k.value === 0 ? d : (x) => s * d(x) - k.value);
+          break;
+        }
         if (k.line !== undefined) {
           const d = offsetFrom(l, k.line, pointOf(l, k.point!));
-          if (k.value === 0) push(i, d);
+          const f = k.doubled ? 2 : 1;
+          if (k.value === 0 && !rim) push(i, d);
           else {
             const s = sign(d);
-            push(i, (x) => s * d(x) - k.value);
+            push(i, (x) => f * s * d(x) + (rim ? rim(x) : 0) - k.value);
+          }
+          break;
+        }
+        if (rim && k.points) {
+          const [[ax, ay], [bx, by]] = [pointOf(l, k.points[0]), pointOf(l, k.points[1])];
+          if (k.type === "distance") {
+            const d = len(ax, ay, bx, by);
+            push(i, (x) => d(x) + rim(x) - k.value);
+          } else {
+            const delta: Fn = k.type === "distanceX" ? (x) => bx(x) - ax(x) : (x) => by(x) - ay(x);
+            const s = sign(delta);
+            push(i, (x) => s * delta(x) + rim(x) - k.value);
           }
           break;
         }
@@ -277,10 +302,47 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         } else push(i, (x) => D(x) - ra(x) - rb(x));
         break;
       }
-      case "concentric": {
+      case "concentric":
+      case "coradial": {
         const [px, py] = pointOf(l, `${k.entities[0]}.center`);
         const [qx, qy] = pointOf(l, `${k.entities[1]}.center`);
         push(i, (x) => px(x) - qx(x), (x) => py(x) - qy(x));
+        if (k.type === "coradial") {
+          const ra = radiusOf(l, k.entities[0]);
+          const rb = radiusOf(l, k.entities[1]);
+          push(i, (x) => ra(x) - rb(x));
+        }
+        break;
+      }
+      case "arcLength": {
+        // Radius times sweep, the sweep kept continuous from where it is now (no jump at a full turn).
+        const r = radiusOf(l, k.entity);
+        const arc = entityById(l, k.entity) as Extract<SketchEntity, { type: "arc" }>;
+        const [cx, cy] = pointOf(l, `${k.entity}.center`);
+        const [sx, sy] = pointOf(l, `${k.entity}.start`);
+        const [ex, ey] = pointOf(l, `${k.entity}.end`);
+        const turn: Fn = (x) => {
+          const ux = sx(x) - cx(x);
+          const uy = sy(x) - cy(x);
+          const vx = ex(x) - cx(x);
+          const vy = ey(x) - cy(x);
+          const t = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+          return arc.clockwise ? -t : t;
+        };
+        let s0 = turn(x0);
+        if (s0 <= 0) s0 += 2 * Math.PI;
+        const sweep: Fn = (x) => {
+          let d = turn(x) - s0;
+          while (d > Math.PI) d -= 2 * Math.PI;
+          while (d <= -Math.PI) d += 2 * Math.PI;
+          return s0 + d;
+        };
+        push(i, (x) => r(x) * sweep(x) - k.value);
+        break;
+      }
+      case "intersection": {
+        const p = pointOf(l, k.point);
+        push(i, offsetFrom(l, k.entities[0], p), offsetFrom(l, k.entities[1], p));
         break;
       }
       case "midpoint": {
@@ -374,6 +436,21 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
     }
   });
   return { fns, owners };
+}
+
+/** A min or max condition's radii (− for min, + for max) over the circles and arcs among the refs by their centres; null when none applies. */
+function conditionRadii(l: Layout, condition: string | undefined, refs: string[]): Fn | null {
+  if (condition !== "min" && condition !== "max") return null;
+  const rs = refs
+    .filter((r) => {
+      const [id, name] = r.split(".");
+      const t = entityById(l, id)?.type;
+      return name === "center" && (t === "circle" || t === "arc");
+    })
+    .map((r) => radiusOf(l, r.split(".")[0]));
+  if (!rs.length) return null;
+  const c = condition === "min" ? -1 : 1;
+  return (x) => c * rs.reduce((s, f) => s + f(x), 0);
 }
 
 /** The constraint names only constants: reference entities, the axes, the origin. */
@@ -611,6 +688,133 @@ export function wouldOverDefine(entities: SketchEntity[], constraints: Constrain
   const before = freedom(l.x, equations(l, constraints).fns, l.frozen);
   const after = freedom(l.x, equations(l, [...constraints, extra]).fns, l.frozen);
   return after === before;
+}
+
+/**
+ * The rank of a sketch's equations, grown one constraint at a time: what
+ * Fully Define and the over-definition checks ask of it. `adds(k)` is true
+ * when k would take away freedom (some row of it is independent of what is
+ * there), at the geometry as it is. Each question costs one constraint's
+ * Jacobian rows and their reduction, not a whole new rank.
+ */
+export interface RankTracker {
+  /** Degrees of freedom left. */
+  dof(): number;
+  /** How many degrees of freedom k would take away (0: it repeats or contradicts what is there). */
+  gain(k: Constraint): number;
+  adds(k: Constraint): boolean;
+  /** Takes k in; returns the freedom it took. */
+  add(k: Constraint): number;
+}
+
+export function rankTracker(entities: SketchEntity[], constraints: Constraint[]): RankTracker {
+  const l = layout(entities);
+  const n = l.x.length;
+  const unknowns = l.frozen.reduce((s, f) => s + (f ? 0 : 1), 0);
+  const list = [...constraints];
+  /** Reduced rows, each with its pivot column (1 there, 0 at every other pivot). */
+  const basis: { row: Float64Array; pivot: number }[] = [];
+  let scale = 1;
+  const rowsOf = (all: Constraint[], owner: number | null): Float64Array[] => {
+    const eq = equations(l, all);
+    const fns = eq.fns.filter((_, j) => (owner === null ? true : eq.owners[j] === owner));
+    return fns.length ? jacobian(fns, l.x, l.frozen) : [];
+  };
+  /** The part of r no basis row explains. */
+  const reduce = (r: Float64Array): Float64Array => {
+    const out = Float64Array.from(r);
+    for (const b of basis) {
+      const f = out[b.pivot];
+      if (f === 0) continue;
+      for (let c = 0; c < n; c++) out[c] -= f * b.row[c];
+    }
+    return out;
+  };
+  const independent = (r: Float64Array) => {
+    let best = -1;
+    let bestV = 1e-7 * scale;
+    for (let c = 0; c < n; c++) if (Math.abs(r[c]) > bestV) (best = c), (bestV = Math.abs(r[c]));
+    return best;
+  };
+  const take = (rows: Float64Array[]): number => {
+    let added = 0;
+    for (const raw of rows) {
+      const r = reduce(raw);
+      const p = independent(r);
+      if (p < 0) continue;
+      const pv = r[p];
+      for (let c = 0; c < n; c++) r[c] /= pv;
+      // Keep the basis reduced: no other row has anything in the new pivot's column.
+      for (const b of basis) {
+        const f = b.row[p];
+        if (f !== 0) for (let c = 0; c < n; c++) b.row[c] -= f * r[c];
+      }
+      basis.push({ row: r, pivot: p });
+      added++;
+    }
+    return added;
+  };
+  // The equations there are now, in order (built-in ones included).
+  const initial = rowsOf(list, null);
+  scale = Math.max(1, ...initial.map((row) => Math.max(...row.map(Math.abs))));
+  take(initial);
+  return {
+    dof: () => unknowns - basis.length,
+    gain(k) {
+      // Asking must not disturb the basis: taking rows in rewrites the rows there, so work on a copy and put it back.
+      const copy = basis.map((b) => ({ row: Float64Array.from(b.row), pivot: b.pivot }));
+      const got = take(rowsOf([...list, k], list.length));
+      basis.length = 0;
+      basis.push(...copy);
+      return got;
+    },
+    adds(k) {
+      return this.gain(k) > 0;
+    },
+    add(k) {
+      const got = take(rowsOf([...list, k], list.length));
+      list.push(k);
+      return got;
+    },
+  };
+}
+
+/**
+ * Per constraint, in order: true when it adds nothing to the constraints
+ * before it (it repeats them, or contradicts them, at the geometry as it is).
+ * Driven dimensions never do. SOLIDWORKS calls such a sketch over defined.
+ */
+export function redundantConstraints(entities: SketchEntity[], constraints: Constraint[]): boolean[] {
+  const t = rankTracker(entities, []);
+  const l = layout(entities);
+  return constraints.map((k) => {
+    if (isDriven(k)) return false;
+    // A relation between constants alone gives no equation: it is not redundant, it holds by the model.
+    if (betweenConstants(l, k)) return false;
+    return t.add(k) === 0;
+  });
+}
+
+/**
+ * SketchXpert, the short way: a smallest set of the sketch's constraints
+ * that over-defines it (cannot all be solved together, or repeat each other),
+ * found by dropping each in turn while what is left still over-defines.
+ * Empty when the sketch is not over defined. Indices into `constraints`.
+ */
+export function conflictSet(entities: SketchEntity[], constraints: Constraint[]): number[] {
+  const bad = (keep: number[]): boolean => {
+    const ks = keep.map((i) => constraints[i]);
+    if (redundantConstraints(entities, ks).some(Boolean)) return true;
+    return !solveSketch(entities, ks).ok;
+  };
+  let keep = constraints.map((_, i) => i).filter((i) => !isDriven(constraints[i]));
+  if (!bad(keep)) return [];
+  // From the newest back: the oldest constraints that still conflict are the ones kept.
+  for (const i of [...keep].reverse()) {
+    const without = keep.filter((j) => j !== i);
+    if (bad(without)) keep = without;
+  }
+  return keep;
 }
 
 /**

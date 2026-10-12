@@ -31,6 +31,9 @@ export const RELATION: Record<ConstraintType, { label: string; icon: IconName }>
   symmetric: { label: "Symmetric", icon: "symmetric" },
   fix: { label: "Fix", icon: "fix" },
   offset: { label: "Offset", icon: "offset" },
+  arcLength: { label: "Arc length", icon: "arcLength" },
+  coradial: { label: "Coradial", icon: "coradial" },
+  intersection: { label: "Intersection", icon: "intersection" },
 };
 
 /** A dimension's text: R and Ø for radii and diameters, ° for angles, at most three decimals. */

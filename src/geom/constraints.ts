@@ -4,7 +4,7 @@
 // The solver (solver.ts) is what drives geometry from constraints.
 
 import type { AngleConstraint, Constraint, SketchEntity, Vec2 } from "../doc/types";
-import { withAxes } from "./axes";
+import { isDriven, withAxes } from "./axes";
 import { dist2, sub2 } from "./vec";
 
 const CONSTRAINT_TOL = 1e-6;
@@ -14,6 +14,8 @@ export function checkConstraints(entities: SketchEntity[], constraints: Constrai
   const byId = new Map(withAxes(entities).map((e) => [e.id, e]));
   const errors: string[] = [];
   constraints.forEach((k, i) => {
+    // A driven dimension measures; it holds whatever the geometry is.
+    if (isDriven(k)) return;
     const r = evaluate(k, byId);
     if (!(Math.abs(r.actual - r.expected) <= (r.tol ?? CONSTRAINT_TOL))) {
       errors.push(`constraint ${i} (${r.label}) is not satisfied: geometry gives ${fmt(r.actual)}, constraint says ${fmt(r.expected)}`);
@@ -47,8 +49,18 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
     case "distance":
     case "distanceX":
     case "distanceY": {
+      // Measured to a circle's nearest or farthest point: its radius off or on, for each centre in it.
+      const rim = (refs: string[]) => conditionOffset(k.condition, refs, byId);
+      if (k.lines) {
+        const [a, b] = k.lines.map(get);
+        const [p, q] = entitySpan(b);
+        const mid: Vec2 = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+        return { label: `distance ${k.lines[0]} to ${k.lines[1]} = ${fmt(k.value)}`, actual: Math.abs(offset(a, mid)), expected: k.value };
+      }
       if (k.line !== undefined) {
-        return { label: `distance ${k.point} to ${k.line} = ${fmt(k.value)}`, actual: Math.abs(offset(get(k.line), pt(k.point!))), expected: k.value };
+        const d = Math.abs(offset(get(k.line), pt(k.point!)));
+        if (k.doubled) return { label: `diameter ${k.point} across ${k.line} = ${fmt(k.value)}`, actual: 2 * d, expected: k.value };
+        return { label: `distance ${k.point} to ${k.line} = ${fmt(k.value)}`, actual: d + rim([k.point!]), expected: k.value };
       }
       const target = k.entity ?? `${k.points![0]} ${k.points![1]}`;
       const label = `${k.type} ${target} = ${fmt(k.value)}`;
@@ -59,7 +71,20 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
       }
       const d = sub2(q, p);
       const actual = k.type === "distance" ? Math.hypot(d[0], d[1]) : Math.abs(k.type === "distanceX" ? d[0] : d[1]);
-      return { label, actual, expected: k.value };
+      return { label, actual: actual + rim(k.points ?? []), expected: k.value };
+    }
+    case "arcLength": {
+      const a = get(k.entity);
+      return { label: `arc length ${k.entity} = ${fmt(k.value)}`, actual: a.type === "arc" ? arcLength(a) : NaN, expected: k.value };
+    }
+    case "intersection": {
+      const p = pt(k.point);
+      const [a, b] = k.entities.map(get);
+      return { label: `${k.point} where ${k.entities[0]} and ${k.entities[1]} cross`, actual: Math.max(Math.abs(offset(a, p)), Math.abs(offset(b, p))), expected: 0 };
+    }
+    case "coradial": {
+      const [a, b] = k.entities.map(get);
+      return { label: `coradial ${k.entities[0]} ${k.entities[1]}`, actual: dist2(centre(a), centre(b)) + Math.abs(radius(a) - radius(b)), expected: 0 };
     }
     case "radius":
       return { label: `radius ${k.entity} = ${fmt(k.value)}`, actual: radius(get(k.entity)), expected: k.value };
@@ -146,6 +171,37 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
     case "fix":
       return { label: `fix ${k.entity ?? k.point}`, actual: 0, expected: 0 };
   }
+}
+
+/** The point refs that are a circle's or an arc's centre ("c1.center"): what a distance's min or max condition applies to. */
+export function roundCentres(refs: string[], byId: Map<string, SketchEntity>): string[] {
+  return refs.filter((r) => {
+    const [id, name] = r.split(".");
+    const t = byId.get(id)?.type;
+    return name === "center" && (t === "circle" || t === "arc");
+  });
+}
+
+/** How much a min (−) or max (+) condition adds to a distance: the radii of the circles and arcs it measures to. */
+function conditionOffset(condition: string | undefined, refs: string[], byId: Map<string, SketchEntity>): number {
+  if (condition !== "min" && condition !== "max") return 0;
+  const sum = roundCentres(refs, byId).reduce((s, r) => s + radius(byId.get(r.split(".")[0])!), 0);
+  return condition === "min" ? -sum : sum;
+}
+
+/** An arc's sweep, radians, 0 to 2π, the way it runs (counter-clockwise unless clockwise). */
+export function arcSweep(a: Extract<SketchEntity, { type: "arc" }>): number {
+  const t0 = Math.atan2(a.start[1] - a.center[1], a.start[0] - a.center[0]);
+  const t1 = Math.atan2(a.end[1] - a.center[1], a.end[0] - a.center[0]);
+  let s = a.clockwise ? t0 - t1 : t1 - t0;
+  while (s <= 0) s += 2 * Math.PI;
+  while (s > 2 * Math.PI) s -= 2 * Math.PI;
+  return s;
+}
+
+/** An arc's length along it. */
+export function arcLength(a: Extract<SketchEntity, { type: "arc" }>): number {
+  return dist2(a.start, a.center) * arcSweep(a);
 }
 
 /** p mirrored about the line (extended). */

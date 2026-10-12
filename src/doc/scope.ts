@@ -25,6 +25,7 @@ import type { Command, RawDocument } from "./commands";
 import { nodeUsers, references } from "./commands";
 import { isObject } from "./validate";
 import { documentParameters, parameterRefs } from "./parameters";
+import { dimensionNames } from "./dimensions";
 import { rawConstraintEntities } from "./sketch";
 import { DEFAULT_BODY } from "./types";
 import { defOf } from "../features/defs";
@@ -60,10 +61,26 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       allowed = has(cmd.id);
       break;
     case "setDimension":
+    case "renameDimension":
+    case "setDriven":
     case "deleteConstraint": {
-      what = `${cmd.type} ${cmd.index} on "${cmd.sketch}"`;
-      const k = sketchConstraints(doc, cmd.sketch)[cmd.index];
+      const list = sketchConstraints(doc, cmd.sketch);
+      // A dimension may be named rather than numbered.
+      const index = "name" in cmd && cmd.name !== undefined ? dimensionNames(list).indexOf(cmd.name.replace(`${cmd.sketch}.`, "")) : (cmd.index ?? -1);
+      what = `${cmd.type} ${"name" in cmd && cmd.name !== undefined ? cmd.name : index} on "${cmd.sketch}"`;
+      const k = list[index];
       allowed = sketchWide(cmd.sketch) || rawConstraintEntities(k).some((e) => has(`${cmd.sketch}/${e}`));
+      // A new name rewrites every expression that read the old one: those features must be in scope too.
+      if (allowed && cmd.type === "renameDimension") {
+        const old = `${cmd.sketch}.${dimensionNames(list)[index]}`;
+        allowed = doc.features.filter((f) => isObject(f) && f.id !== cmd.sketch && parameterRefs(f).has(old)).every((f) => has(String(f.id)));
+      }
+      break;
+    }
+    case "renameParameter": {
+      what = `renameParameter "${cmd.from}"`;
+      const users = doc.features.filter((f) => isObject(f) && parameterRefs(f).has(cmd.from)).map((f) => String(f.id));
+      allowed = has(`param:${cmd.from}`) && users.every(has);
       break;
     }
     case "addConstraint":
