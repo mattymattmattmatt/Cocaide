@@ -4,14 +4,12 @@
 import { useEffect, useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import { DEFAULT_BODY, type FaceSelector, type SketchEntity, type Vec3 } from "../doc/types";
+import { DEFAULT_BODY, type SketchEntity, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
-import { describeWanted } from "../kernel/selectors";
-import { faceSelectorFor } from "../kernel/synthesize";
 import type { RebuildView } from "../worker/protocol";
 import { UI_OPS, type EditorProps } from "../features/uiDefs";
-import { Field, NumberInput, Select, TextInput, type NumberValue } from "./fields";
+import { Field, Select, TextInput } from "./fields";
 import { DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import { nextBodyName } from "./model/names";
@@ -134,8 +132,7 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
         {(op === "endCap" || op === "gusset") && <BodyNameField f={f} rename={rename} />}
         {(op === "extrude" || op === "cut") && <FeatureForm fields={op === "extrude" ? EXTRUDE_FIELDS : CUT_FIELDS} {...editorProps} />}
         {op === "extrude" && <BodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
-        {op === "hole" && <HoleProps f={f} resolved={resolved} update={update} selection={selection} view={view} setError={setError} />}
-        {(op === "cut" || op === "hole") && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
+        {op === "cut" && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
         {op === "combine" && <CombineProps f={f} bodies={bodiesBefore} update={update} />}
         {op === "mirror" && (
           <MirrorProps
@@ -218,7 +215,7 @@ function BodyProps({ f, bodies, update, rename }: { f: Raw; bodies: string[]; up
   );
 }
 
-/** Which bodies a cut or hole removes material from. None ticked: every body it reaches. */
+/** Which bodies a cut removes material from (a hole's editor has its own). None ticked: every body it reaches. */
 function BodiesScope({ f, bodies, update }: { f: Raw; bodies: string[]; update(p: Raw): unknown }) {
   const listed = Array.isArray(f.bodies) ? (f.bodies as string[]) : [];
   const toggle = (name: string, on: boolean) => {
@@ -357,116 +354,3 @@ export function planeName(normal: Vec3, origin: Vec3): string {
   return `normal [${n.join(", ")}] through [${origin.map((v) => Math.round(v * 1e4) / 1e4).join(", ")}]`;
 }
 
-function HoleProps({
-  f,
-  resolved,
-  update,
-  selection,
-  view,
-  setError,
-}: {
-  f: Raw;
-  resolved: Raw;
-  update(p: Raw): string | null | void;
-  selection: Selection;
-  view: RebuildView | null;
-  setError(e: string | null): void;
-}) {
-  const center = f.center as [NumberValue, NumberValue];
-  const through = f.depth === "through";
-  const type = f.counterbore ? "counterbore" : f.countersink ? "countersink" : "simple";
-  const d = resolved.diameter as number;
-  return (
-    <>
-      <Field label="Face">
-        <span className="readout">{describeWanted(f.face as FaceSelector, 1).replace(/^1 /, "")}</span>
-      </Field>
-      <button
-        disabled={selection.faces.length !== 1 || !view}
-        onClick={() => {
-          const s = faceSelectorFor(view!.faces, selection.faces[0]);
-          if (!s.ok) setError(s.error);
-          else update({ face: s.selector });
-        }}
-      >
-        Use selected face
-      </button>
-      <Field label="Centre X" unit="mm">
-        <NumberInput value={center[0]} onCommit={(v) => update({ center: [v, center[1]] })} testId="prop-center-x" />
-      </Field>
-      <Field label="Centre Y" unit="mm">
-        <NumberInput value={center[1]} onCommit={(v) => update({ center: [center[0], v] })} testId="prop-center-y" />
-      </Field>
-      <Field label="Diameter" unit="mm">
-        <NumberInput value={f.diameter as NumberValue} min={0} onCommit={(v) => update({ diameter: v })} testId="prop-diameter" />
-      </Field>
-      <Field label="Depth">
-        <span className="inline">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={through}
-              data-testid="prop-through"
-              onChange={(e) => update({ depth: e.target.checked ? "through" : 10 })}
-            />
-            Through
-          </label>
-          {!through && <NumberInput value={f.depth as number} min={0} onCommit={(v) => update({ depth: v })} testId="prop-depth" />}
-        </span>
-      </Field>
-      <Field label="Type">
-        <Select
-          value={type}
-          testId="prop-hole-type"
-          options={[
-            ["simple", "Simple"],
-            ["counterbore", "Counterbore"],
-            ["countersink", "Countersink"],
-          ]}
-          onChange={(v) =>
-            update({
-              counterbore: v === "counterbore" ? { diameter: round(d * 1.8), depth: through ? 2 : Math.min(2, (resolved.depth as number) / 2) } : null,
-              countersink: v === "countersink" ? { diameter: round(d * 2), angle: 90 } : null,
-            })
-          }
-        />
-      </Field>
-      {type === "counterbore" && (
-        <>
-          <Field label="C'bore Ø" unit="mm">
-            <NumberInput
-              value={(f.counterbore as { diameter: number }).diameter}
-              onCommit={(v) => update({ counterbore: { ...(f.counterbore as object), diameter: v } })}
-            />
-          </Field>
-          <Field label="C'bore depth" unit="mm">
-            <NumberInput
-              value={(f.counterbore as { depth: number }).depth}
-              onCommit={(v) => update({ counterbore: { ...(f.counterbore as object), depth: v } })}
-            />
-          </Field>
-        </>
-      )}
-      {type === "countersink" && (
-        <>
-          <Field label="C'sink Ø" unit="mm">
-            <NumberInput
-              value={(f.countersink as { diameter: number }).diameter}
-              onCommit={(v) => update({ countersink: { ...(f.countersink as object), diameter: v } })}
-            />
-          </Field>
-          <Field label="Angle" unit="°">
-            <NumberInput
-              value={(f.countersink as { angle: number }).angle}
-              onCommit={(v) => update({ countersink: { ...(f.countersink as object), angle: v } })}
-            />
-          </Field>
-        </>
-      )}
-    </>
-  );
-}
-
-function round(x: number): number {
-  return Math.round(x * 100) / 100;
-}

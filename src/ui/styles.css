@@ -1278,3 +1278,11 @@ svg.icon { flex: none; display: block; }
 .spin-steps legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
 .spin-steps .row { display: flex; align-items: center; gap: 6px; }
 .spin-steps input { width: 90px; }
+/* Hole Wizard: the type picker (a picture per type), centres, table resets. Patterns: instance tick boxes. */
+.hole-kinds { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.properties button.hole-kind { height: auto; padding: 4px 2px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; }
+.properties button.hole-kind[aria-pressed="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
+.properties button.link-button { height: auto; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12px; margin: -2px 0 4px 118px; }
+.inline-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+.hole-centres .selector-line input { width: 70px; }
+.instance-checks label { min-width: 52px; }

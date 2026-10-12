@@ -1,31 +1,71 @@
-// Linear pattern's properties: the feature it repeats, a direction, spacing
-// and count, and optionally a second direction for a grid.
+// Linear pattern's properties: the features it repeats, a direction (written
+// out, or taken from an edge, an axis or a face's normal picked in the view,
+// so it follows the model), spacing and count, optionally a second direction
+// for a grid, and which instances it makes.
 
-import { PATTERNABLE } from "../../ui/model/tools/pattern";
+import type { FieldSpec } from "../../ui/props/spec";
 import type { UiOp } from "../uiDefs";
+import { seedsField, skipField } from "./fields";
+import { countPatch, patternRows, seedsOf } from "./instances";
 
-const twoWay = (f: Record<string, unknown>) => f.direction2 !== undefined;
+type Raw = Record<string, unknown>;
+
+const twoWay = (f: Raw) => f.direction2 !== undefined || f.along2 !== undefined;
+
+/** The direction of one row: written out ("direction"), or from the model ("along", a straight edge, an axis, a flat face's normal). */
+function directionFields(n: "" | "2"): FieldSpec[] {
+  const written = `direction${n}`;
+  const along = `along${n}`;
+  const label = n ? "Direction 2" : "Direction";
+  const when = (f: Raw) => (n ? twoWay(f) : true);
+  return [
+    { kind: "direction", key: written, label, testId: `prop-pattern-direction${n}`, when: (f) => when(f) && f[along] === undefined },
+    {
+      kind: "datumRef",
+      key: along,
+      label: n ? "Direction 2 from" : "Direction from",
+      accepts: ["axis", "plane"],
+      optional: true,
+      testId: `prop-pattern-along${n}`,
+      hint: "A straight edge or an axis (its direction), or a flat face or a plane (its normal): Use selected edge",
+      when,
+      // From the model, the written-out direction goes; back to None, it comes back along +X (+Y for the second).
+      set: (ref) => (ref ? { [along]: ref, [written]: null } : { [along]: null, [written]: n ? [0, 1, 0] : [1, 0, 0] }),
+    },
+    { kind: "bool", key: `reverse${n}`, label: "Reverse", testId: `prop-pattern-reverse${n}`, when },
+  ];
+}
+
+export const LINEAR_PATTERN_FIELDS: FieldSpec[] = [
+  seedsField("prop-pattern-features"),
+  ...directionFields(""),
+  { kind: "number", key: "spacing", label: "Spacing", unit: "mm", min: 0, testId: "prop-spacing" },
+  { kind: "number", key: "count", label: "Count", min: 2, testId: "prop-count", hint: "The original counts as one", set: (v, f) => countPatch(f, "count", v) },
+  {
+    kind: "bool",
+    key: "direction2",
+    label: "Second direction",
+    testId: "prop-pattern-second",
+    get: twoWay,
+    // They go together: on, a row along +Y at the first spacing; off, all of them removed.
+    set: (on, f) => (on ? { direction2: [0, 1, 0], spacing2: f.spacing, count2: 2 } : { direction2: null, along2: null, reverse2: null, spacing2: null, count2: null, skip: null }),
+  },
+  ...directionFields("2"),
+  { kind: "number", key: "spacing2", label: "Spacing 2", unit: "mm", min: 0, when: twoWay },
+  { kind: "number", key: "count2", label: "Count 2", min: 2, when: twoWay, set: (v, f) => countPatch(f, "count2", v) },
+  skipField((f) => patternRows(f)),
+];
 
 export const ui: UiOp = {
   op: "linearPattern",
   label: "Linear pattern",
   icon: "linearPattern",
-  fields: [
-    { kind: "feature", key: "feature", label: "Feature", ops: PATTERNABLE, testId: "prop-pattern-feature" },
-    { kind: "direction", key: "direction", label: "Direction", testId: "prop-pattern-direction" },
-    { kind: "number", key: "spacing", label: "Spacing", unit: "mm", min: 0, testId: "prop-spacing" },
-    { kind: "number", key: "count", label: "Count", min: 2, testId: "prop-count" },
-    {
-      kind: "bool",
-      key: "direction2",
-      label: "Second direction",
-      testId: "prop-pattern-second",
-      get: twoWay,
-      // The three go together: on, a row along +Y at the first spacing; off, all three removed.
-      set: (on, f) => (on ? { direction2: [0, 1, 0], spacing2: f.spacing, count2: 2 } : { direction2: null, spacing2: null, count2: null }),
-    },
-    { kind: "direction", key: "direction2", label: "Direction 2", when: twoWay },
-    { kind: "number", key: "spacing2", label: "Spacing 2", unit: "mm", min: 0, when: twoWay },
-    { kind: "number", key: "count2", label: "Count 2", min: 2, when: twoWay },
-  ],
+  fields: LINEAR_PATTERN_FIELDS,
+  summary: (f) => {
+    const seeds = seedsOf(f).length;
+    const total = typeof f.count === "number" ? f.count * (typeof f.count2 === "number" && twoWay(f) ? f.count2 : 1) : null;
+    const skipped = Array.isArray(f.skip) ? f.skip.length : 0;
+    if (total === null) return null;
+    return [`${total - skipped}×`, ...(seeds > 1 ? [`${seeds} features`] : []), ...(skipped ? [`${skipped} skipped`] : [])].join(" ");
+  },
 };

@@ -3,7 +3,8 @@
 // patch each choice sends. Patches are shallow (updateFeature merges
 // top-level keys; null removes one). Vitest covers these in node.
 
-import type { Vec2 } from "../../doc/types";
+import type { Vec2, Vec3 } from "../../doc/types";
+import { facePlaneFrame, to2D } from "../../geom/frame";
 import {
   COUNTERSINK_ANGLE,
   defaultThreadDepth,
@@ -182,6 +183,24 @@ export function addCentrePatch(f: Raw, at: Vec2, resolved: Raw = f): Raw | null 
   return centresPatch([...centresOf(f), at]);
 }
 
+/**
+ * Where a click on a flat face lands as a hole centre, in that face's frame
+ * (the frame the hole's centres are in), or what to click instead. The
+ * clicked face must face the way the hole's face does (it is normally the
+ * same face); `normal` is the hole's face selector's normal.
+ */
+export function clickedCentre(clicked: { type: string; normal?: Vec3; point?: Vec3 } | undefined, at: Vec3 | undefined, normal: Vec3 | undefined): Vec2 | string {
+  if (!clicked || !at) return "Click a point on the hole's face in the view first, then Add the clicked point.";
+  if (clicked.type !== "plane" || !clicked.normal || !clicked.point) return "That face is not flat: click a point on the hole's face.";
+  if (normal) {
+    const n = Math.hypot(...normal) || 1;
+    const dot = (clicked.normal[0] * normal[0] + clicked.normal[1] * normal[1] + clicked.normal[2] * normal[2]) / n;
+    if (dot < 1 - 1e-6) return "That face does not face the way the hole's face does: click a point on the hole's face.";
+  }
+  const c = to2D(facePlaneFrame(clicked.normal, clicked.point), at);
+  return [roundTo(c[0], 3), roundTo(c[1], 3)];
+}
+
 /** Removes centre `i` (the last one can't go). */
 export function removeCentrePatch(f: Raw, i: number): Raw | null {
   const list = centresOf(f);
@@ -255,4 +274,9 @@ export function threadDepthOf(f: Raw): number | "through" | undefined {
 
 function round(x: number): number {
   return Math.round(x * 100) / 100;
+}
+
+function roundTo(x: number, digits: number): number {
+  const k = 10 ** digits;
+  return Math.round(x * k) / k + 0;
 }

@@ -100,7 +100,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.loftCut", label: "Lofted cut", group: "Model tools", key: null },
   { id: "tool.helix", label: "Helix (spring)", group: "Model tools", key: null },
 
-  { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null, planned: true },
+  { id: "tool.sketchPattern", label: "Sketch-driven pattern", group: "Model tools", key: null },
 
   { id: "tool.measure", label: "Measure", group: "Model tools", key: null, planned: true },
   { id: "tool.section", label: "Section view", group: "Model tools", key: null, planned: true },
