@@ -17,6 +17,7 @@ import { planeFrame, to2D, type Frame } from "../../geom/frame";
 import { projectEdge, REFERENCEABLE } from "../../geom/projection";
 import { dist2 } from "../../geom/vec";
 import { edgeSelectorFor } from "../../kernel/synthesize";
+import { selectEdges } from "../../kernel/selectors";
 import type { EdgeInfo, FaceInfo } from "../../kernel/topology";
 import type { MeshData } from "../../kernel/mesh";
 
@@ -151,6 +152,25 @@ export function modelEntities(m: ModelView): SketchEntity[] {
 export function modelEdge(m: ModelView, id: string): ModelEdge | undefined {
   const index = modelIndex(id);
   return m.edges.find((e) => e.index === index);
+}
+
+/**
+ * The reference entities whose model edge is gone (their selector finds no
+ * edge, or several, in the part as the sketch sees it): SOLIDWORKS's dangling
+ * relations, drawn brown. Datum and point references are left to the rebuild.
+ */
+export function danglingRefs(entities: SketchEntity[], m: ModelView): Set<string> {
+  const out = new Set<string>();
+  for (const e of entities) {
+    if (!e.ref || !("edge" in e.ref)) continue;
+    try {
+      const found = selectEdges(m.source.edges, m.source.faces, e.ref.edge);
+      if (found.matches.length !== 1) out.add(e.id);
+    } catch {
+      out.add(e.id);
+    }
+  }
+  return out;
 }
 
 /** The face under p, if any: the one in the sketch plane first, else the one nearest it. */

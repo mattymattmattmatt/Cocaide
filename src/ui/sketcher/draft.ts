@@ -4,7 +4,7 @@
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import type { IconName } from "../icons";
 import { constraintTargets, isAxisId } from "../../geom/axes";
-import { point as pointOf } from "../../geom/constraints";
+import { arcLength, measureConstraint, point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2, wrapAngle } from "../../geom/vec";
 import type { Namer } from "./names";
 
@@ -222,9 +222,10 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
         { label: "Equal", icon: "equal", make: () => ({ type: "equal", entities: pair }), testId: "c-equal" },
       );
       if (parallel) {
-        // Measured from a point of the one that has points (a sketch axis has none) to the other, extended.
+        // The parallel distance: the second line's middle from the first, extended (a sketch axis goes first: it has no middle).
         const [from, to] = isAxisId(b.id) ? [b, a] : [a, b];
-        out.push({ label: "Distance between", icon: "smartDimension", value: round6(offsetFrom(from, to.start)), make: (v) => ({ type: "distance", point: `${to.id}.start`, line: from.id, value: v }), testId: "c-line-distance" });
+        const mid: Vec2 = [(to.start[0] + to.end[0]) / 2, (to.start[1] + to.end[1]) / 2];
+        out.push({ label: "Distance between", icon: "smartDimension", value: round6(offsetFrom(from, mid)), make: (v) => ({ type: "distance", lines: [from.id, to.id], value: v }), testId: "c-line-distance" });
       } else {
         out.push({ label: "Angle", icon: "angle", unit: "°", value: round6(angle), make: (v) => ({ type: "angle", entities: pair, value: v }), testId: "c-angle" });
       }
@@ -243,6 +244,7 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
       const cb = (b as { center: Vec2 }).center;
       out.push(
         { label: "Concentric", icon: "concentric", make: () => ({ type: "concentric", entities: pair }), testId: "c-concentric" },
+        { label: "Coradial", icon: "coradial", make: () => ({ type: "coradial", entities: pair }), testId: "c-coradial" },
         { label: "Tangent", icon: "tangent", make: () => ({ type: "tangent", entities: pair }), testId: "c-tangent" },
         { label: "Equal", icon: "equal", make: () => ({ type: "equal", entities: pair }), testId: "c-equal" },
         { label: "Centre distance", icon: "smartDimension", value: round6(dist2(ca, cb)), make: (v) => ({ type: "distance", points: [`${a.id}.center`, `${b.id}.center`], value: v }), testId: "c-distance" },
@@ -290,6 +292,15 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
     }
   }
 
+  // A point and two lines: the point where they cross.
+  if (ents.length === 2 && ents.every((e) => e.type === "line") && points.length === 1 && ents.every((e) => ownerOf(points[0]) !== e.id)) {
+    const pair: [string, string] = [ents[0].id, ents[1].id];
+    const angle = angleBetween(ents[0] as Line, ents[1] as Line);
+    if (Math.min(angle, 180 - angle) > 1e-6) {
+      out.push({ label: "Intersection", icon: "intersection", make: () => ({ type: "intersection", point: points[0], entities: pair }), testId: "c-intersection" });
+    }
+  }
+
   if (ents.length === 1 && ents[0].type === "line" && points.length === 2 && points.every((r) => ownerOf(r) !== ents[0].id)) {
     const pair: [string, string] = [points[0], points[1]];
     out.push({ label: "Symmetric", icon: "symmetric", make: () => ({ type: "symmetric", points: pair, line: ents[0].id }), testId: "c-symmetric" });
@@ -311,7 +322,10 @@ export function axesAllowed(k: Constraint): boolean {
     case "tangent":
       return true;
     case "distance":
+      if (k.lines) return isAxisId(k.lines[0]) && !isAxisId(k.lines[1]);
       return k.line !== undefined && isAxisId(k.line) && !isAxisId(k.point?.split(".")[0]);
+    case "intersection":
+      return k.entities.some((id) => !isAxisId(id));
     case "pointOn":
       return isAxisId(k.entity);
     case "symmetric":
@@ -350,25 +364,196 @@ export function itemEntities(items: SketchItem[], entities: SketchEntity[]): str
  * between them. Alternatives follow the first (two points: aligned,
  * horizontal, vertical). None when the picks can't be dimensioned.
  */
-export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], at?: Vec2): Suggestion[] {
-  const picks = asPoints(picksIn, new Map(entities.map((e) => [e.id, e])));
+export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], at?: Vec2, opts: SmartOptions = {}): Suggestion[] {
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const picks = asPoints(picksIn, byId);
   const valued = suggestions(entities, picks).filter((s) => s.value !== undefined);
+  const first = (testId: string, list = valued) => [...list].sort((a, b) => (a.testId === testId ? -1 : b.testId === testId ? 1 : 0));
+  const withCondition = (list: Suggestion[]) => conditioned(entities, byId, list, picks, opts.arcs ?? {});
   if (picks.length === 1 && picks[0].kind === "entity") {
-    const e = entities.find((x) => x.id === (picks[0] as { id: string }).id);
+    const e = byId.get(picks[0].id);
     if (e?.type === "rect" && at) {
       // The nearer side: top or bottom edge reads the width, left or right the height.
       const dx = Math.abs(Math.abs(at[0] - e.center[0]) - e.w / 2);
       const dy = Math.abs(Math.abs(at[1] - e.center[1]) - e.h / 2);
-      const first = dy <= dx ? "c-width" : "c-height";
-      return valued.sort((a, b) => (a.testId === first ? -1 : b.testId === first ? 1 : 0));
+      return first(dy <= dx ? "c-width" : "c-height");
     }
+    if (e?.type === "line") {
+      // Its length, or (the alternative) its angle to the sketch's X axis.
+      const a = angleBetween(e, AXIS_X);
+      const extra: Suggestion[] = a > 1e-6 && a < 180 - 1e-6 ? [{ label: "Angle to X axis", icon: "angle", unit: "°", value: round6(a), make: (v) => ({ type: "angle", entities: [e.id, "X"], value: v }), testId: "c-angle-x" }] : [];
+      return [...valued.slice(0, 1), ...extra];
+    }
+    if (e?.type === "circle") return valued.filter((s) => s.testId === "c-diameter" || s.testId === "c-radius");
+    if (e?.type === "arc") return [...valued.filter((s) => s.testId === "c-radius" || s.testId === "c-diameter"), arcLengthOffer(e)];
     return valued.slice(0, 1);
+  }
+  // An arc and one of its own ends: its length along it.
+  if (picks.length === 2) {
+    const arc = picks.map((p) => (p.kind === "entity" ? byId.get(p.id) : undefined)).find((x) => x?.type === "arc");
+    const end = picks.find((p) => p.kind === "point" && arc && (p.ref === `${arc.id}.start` || p.ref === `${arc.id}.end`));
+    if (arc?.type === "arc" && end) return [arcLengthOffer(arc)];
   }
   if (picks.length === 2 && picks.every((p) => p.kind === "point")) {
     const order = ["c-distance", "c-distance-x", "c-distance-y"];
-    return valued.filter((s) => order.includes(s.testId)).sort((a, b) => order.indexOf(a.testId) - order.indexOf(b.testId));
+    const list = valued.filter((s) => order.includes(s.testId)).sort((a, b) => order.indexOf(a.testId) - order.indexOf(b.testId));
+    // Where it is dropped says which: above or below the two points, the horizontal distance; beside them, the vertical; else aligned.
+    const [p, q] = picks.map((x) => pointOf((x as { ref: string }).ref, byId));
+    return withCondition(at ? first(dropKind(p, q, at), list) : list);
   }
-  return valued.slice(0, 1);
+  const lines = picks.map((p) => (p.kind === "entity" ? byId.get(p.id) : undefined));
+  if (picks.length === 2 && lines.every((l) => l?.type === "line")) {
+    const [a, b] = lines as Line[];
+    const angle = valued.find((s) => s.testId === "c-angle");
+    if (angle && at) {
+      // Dropped in the angle between the lines (or the one opposite), that angle; in either other quadrant, its supplement.
+      const x = meetPoint(a, b);
+      if (x && !inAngle(unitOf(a), unitOf(b), sub2(at, x))) {
+        const pair: [string, string] = [a.id, b.id];
+        return [{ ...angle, label: "Supplementary angle", value: round6(180 - angle.value!), make: (v) => ({ type: "angle", entities: pair, value: v, supplement: true }), testId: "c-angle-supplement" }, angle];
+      }
+    }
+    return valued.slice(0, 1);
+  }
+  // A point and a line: its distance; across a centreline (dropped beyond it), twice that, as a diameter.
+  const line = lines.find((l) => l?.type === "line") as Line | undefined;
+  const pt = picks.find((p) => p.kind === "point") as { kind: "point"; ref: string } | undefined;
+  if (picks.length === 2 && line && pt && pt.ref.split(".")[0] !== line.id) {
+    const p = pointOf(pt.ref, byId);
+    const d = offsetFrom(line, p);
+    const across: Suggestion = { label: "Diameter across", icon: "diameter", value: round6(2 * d), make: (v) => ({ type: "distance", point: pt.ref, line: line.id, value: v, doubled: true }), testId: "c-linear-diameter" };
+    // Only across a centreline (construction) or a sketch axis, as SOLIDWORKS offers it: a revolve profile's diameter.
+    const centreline = isCentreline(line);
+    const base = withCondition(valued.slice(0, 1));
+    if (!centreline) return base;
+    const off = (q: Vec2) => unitOf(line)[0] * (q[1] - line.start[1]) - unitOf(line)[1] * (q[0] - line.start[0]);
+    // Dropped clearly beyond the centreline (not on it, where the click that picked it lands): the diameter first.
+    const beyond = at !== undefined && Math.abs(off(at)) > Math.max(1e-6, 0.05 * Math.abs(d)) && Math.sign(off(at)) !== Math.sign(off(p));
+    return beyond ? [across, ...base] : [...base, across];
+  }
+  return withCondition(valued.slice(0, 1));
+}
+
+/**
+ * Whether where a two-pick dimension is dropped changes what it is, so it
+ * follows the pointer until a click places it, as SOLIDWORKS does: two
+ * points apart in X and in Y (aligned, horizontal or vertical), two lines
+ * that meet (the angle or its supplement), a point and a centreline or
+ * sketch axis (its distance, or the diameter across). Any other pair opens
+ * the Modify box at once.
+ */
+export function dropMatters(entities: SketchEntity[], picksIn: SketchItem[]): boolean {
+  if (picksIn.length !== 2) return false;
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const picks = asPoints(picksIn, byId);
+  if (picks.every((p) => p.kind === "point")) {
+    try {
+      const [p, q] = picks.map((x) => pointOf((x as { ref: string }).ref, byId));
+      return Math.abs(p[0] - q[0]) > 1e-9 && Math.abs(p[1] - q[1]) > 1e-9;
+    } catch {
+      return false;
+    }
+  }
+  const ents = picks.map((p) => (p.kind === "entity" ? byId.get(p.id) : undefined));
+  if (ents.every((e) => e?.type === "line")) {
+    const a = angleBetween(ents[0] as Line, ents[1] as Line);
+    return Math.min(a, 180 - a) > 1e-6;
+  }
+  const line = ents.find((e) => e?.type === "line") as Line | undefined;
+  const pt = picks.find((p) => p.kind === "point") as { kind: "point"; ref: string } | undefined;
+  return !!line && !!pt && pt.ref.split(".")[0] !== line.id && isCentreline(line);
+}
+
+/** A centreline (a construction line of the sketch's own, not a model edge) or a sketch axis: what a diameter is measured across. */
+function isCentreline(line: Line): boolean {
+  return (line.construction === true && !line.ref) || isAxisId(line.id);
+}
+
+/** Smart Dimension's modifiers. */
+export interface SmartOptions {
+  /** Circles and arcs Shift-clicked, and where on them: measured to their near (min) or far (max) side, by which side was clicked. */
+  arcs?: Record<string, Vec2>;
+}
+
+const AXIS_X: Line = { id: "X", type: "line", start: [0, 0], end: [1, 0] };
+
+function arcLengthOffer(arc: Extract<SketchEntity, { type: "arc" }>): Suggestion {
+  return { label: "Arc length", icon: "arcLength", value: round6(arcLength(arc)), make: (v) => ({ type: "arcLength", entity: arc.id, value: v }), testId: "c-arc-length" };
+}
+
+/** Which straight dimension a drop calls for: beside the two points (within their height), the vertical; above or below (within their width), the horizontal; else aligned. */
+export function dropKind(p: Vec2, q: Vec2, at: Vec2): "c-distance" | "c-distance-x" | "c-distance-y" {
+  const [x0, x1] = [Math.min(p[0], q[0]), Math.max(p[0], q[0])];
+  const [y0, y1] = [Math.min(p[1], q[1]), Math.max(p[1], q[1])];
+  const inX = at[0] >= x0 && at[0] <= x1;
+  const inY = at[1] >= y0 && at[1] <= y1;
+  if (inX && !inY && x1 - x0 > 1e-9) return "c-distance-x";
+  if (inY && !inX && y1 - y0 > 1e-9) return "c-distance-y";
+  return "c-distance";
+}
+
+/** Is direction w within the angle from u to v (the smaller one), or the one opposite it? */
+function inAngle(u: Vec2, v: Vec2, w: Vec2): boolean {
+  const cross = (a: Vec2, b: Vec2) => a[0] * b[1] - a[1] * b[0];
+  const between = (a: Vec2, b: Vec2, c: Vec2) => {
+    // c between a and b (turning the short way from a to b).
+    const s = Math.sign(cross(a, b)) || 1;
+    return s * cross(a, c) >= 0 && s * cross(c, b) >= 0;
+  };
+  return between(u, v, w) || between([-u[0], -u[1]], [-v[0], -v[1]], w);
+}
+
+/** Where two lines (extended) cross. */
+function meetPoint(a: Line, b: Line): Vec2 | null {
+  const r = sub2(a.end, a.start);
+  const s = sub2(b.end, b.start);
+  const den = r[0] * s[1] - r[1] * s[0];
+  if (Math.abs(den) < 1e-12) return null;
+  const t = ((b.start[0] - a.start[0]) * s[1] - (b.start[1] - a.start[1]) * s[0]) / den;
+  return [a.start[0] + t * r[0], a.start[1] + t * r[1]];
+}
+
+/**
+ * The distance offers with a Shift-clicked circle or arc measured to its near
+ * or far side: the side clicked, as SOLIDWORKS takes it (clicked nearer the
+ * other pick than the centre is: min; beyond: max). That variant goes first.
+ */
+function conditioned(entities: SketchEntity[], byId: Map<string, SketchEntity>, list: Suggestion[], picks: SketchItem[], arcs: Record<string, Vec2>): Suggestion[] {
+  const ids = Object.keys(arcs).filter((id) => picks.some((p) => p.kind === "entity" && p.id === id));
+  if (!ids.length) return list;
+  const out: Suggestion[] = [];
+  for (const s of list) {
+    const k = s.make(s.value ?? 0);
+    if (k.type !== "distance" && k.type !== "distanceX" && k.type !== "distanceY") continue;
+    const refs: string[] = k.points ? [...k.points] : k.point ? [k.point] : [];
+    const id = ids.find((x) => refs.includes(`${x}.center`));
+    if (!id) continue;
+    const round = byId.get(id) as Extract<SketchEntity, { type: "circle" | "arc" }>;
+    const c = round.center;
+    // The other end of the dimension: the other point, or the foot on the line.
+    const otherRef = refs.find((r) => r !== `${id}.center`);
+    let other: Vec2 | null = otherRef ? pointOf(otherRef, byId) : null;
+    if (!other && k.line) {
+      const l = byId.get(k.line);
+      if (l?.type === "line") {
+        const u = unitOf(l);
+        const t = (c[0] - l.start[0]) * u[0] + (c[1] - l.start[1]) * u[1];
+        other = [l.start[0] + t * u[0], l.start[1] + t * u[1]];
+      } else if (isAxisId(k.line)) other = k.line === "X" ? [c[0], 0] : [0, c[1]];
+    }
+    if (!other) continue;
+    const condition = dist2(arcs[id], other) < dist2(c, other) ? "min" : "max";
+    const made = { ...k, condition } as Constraint;
+    let value: number;
+    try {
+      value = round6(measureConstraint(entities, made).actual);
+    } catch {
+      continue;
+    }
+    if (!(value >= 0)) continue;
+    out.push({ ...s, label: `${s.label} (${condition})`, value, make: (v) => ({ ...s.make(v), condition }) as Constraint, testId: `${s.testId}-${condition}` });
+  }
+  return [...out, ...list];
 }
 
 /** What a point being placed snaps to, and the relation that keeps it there. */
@@ -449,8 +634,18 @@ export function describeConstraint(k: Constraint, names: Namer = RAW): string {
     case "horizontal":
     case "vertical":
       return k.entity ? `${e(k.entity)} ${k.type}` : `${p(k.points![0])}, ${p(k.points![1])} ${k.type}`;
-    case "distance":
-      return k.entity ? `${e(k.entity)} length` : k.points ? `${p(k.points[0])} ↔ ${p(k.points[1])}` : `${p(k.point!)} ↔ ${e(k.line!)}`;
+    case "distance": {
+      const at = k.condition && k.condition !== "center" ? ` (${k.condition})` : "";
+      if (k.lines) return `${e(k.lines[0])} ↔ ${e(k.lines[1])}`;
+      if (k.doubled) return `Ø ${p(k.point!)} across ${e(k.line!)}`;
+      return (k.entity ? `${e(k.entity)} length` : k.points ? `${p(k.points[0])} ↔ ${p(k.points[1])}` : `${p(k.point!)} ↔ ${e(k.line!)}`) + at;
+    }
+    case "arcLength":
+      return `${e(k.entity)} arc length`;
+    case "intersection":
+      return `${p(k.point)} where ${e(k.entities[0])} and ${e(k.entities[1])} cross`;
+    case "coradial":
+      return `${e(k.entities[0])}, ${e(k.entities[1])} coradial`;
     case "distanceX":
       return `${k.entity ? `${e(k.entity)} width` : `${p(k.points![0])} ↔ ${p(k.points![1])} (x)`}`;
     case "distanceY":
@@ -460,7 +655,7 @@ export function describeConstraint(k: Constraint, names: Namer = RAW): string {
     case "diameter":
       return `${e(k.entity)} diameter`;
     case "angle":
-      return `${e(k.entities[0])} ∠ ${e(k.entities[1])}`;
+      return `${e(k.entities[0])} ∠ ${e(k.entities[1])}${k.supplement ? " (other side)" : ""}`;
     case "equal":
       return `${e(k.entities[0])} = ${e(k.entities[1])}`;
     case "parallel":

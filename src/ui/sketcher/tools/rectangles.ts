@@ -10,6 +10,7 @@ import type { Constraint, LineEntity, SketchEntity, Vec2 } from "../../../doc/ty
 import { cross2, dist2, dot2, sub2 } from "../../../geom/vec";
 import { along, closedLoop, cornerAt, EPS, line, oriented, perp, unit } from "./shapes";
 import type { Built, Click, ClickRole, FlyoutDef, IdMaker, SketchToolDef } from "./types";
+import { rectTyped } from "./typed";
 
 const RECT: FlyoutDef = { id: "rect", label: "Rectangle" };
 
@@ -65,6 +66,7 @@ export const tools: SketchToolDef[] = [
       const { lines, relations } = levelBox(ids, corners);
       return { entities: lines, relations, roles: clicks.map((c) => cornerRole(lines, c.p)) };
     },
+    typed: rectTyped(false),
   },
   {
     id: "sketch.rectCenter",
@@ -100,6 +102,7 @@ export const tools: SketchToolDef[] = [
         roles: [{ point: `${centre}.at` }, cornerRole(lines, c)],
       };
     },
+    typed: rectTyped(true),
   },
   {
     id: "sketch.rect3",

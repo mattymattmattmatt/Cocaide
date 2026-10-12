@@ -532,6 +532,43 @@ const ICONS = {
     <>
       <path d="M12 2v20" style={{ strokeDasharray: "5 2.2 1 2.2" }} />
       <path d="M5 19c0-2 14-1 14-3S5 14 5 12s14-1 14-3S5 7 5 5" />
+  // Wave 4B: dimensions, relations and sketch status
+  arcLength: (
+    <>
+      <path d="M5 17a9 9 0 0 1 14 0" />
+      <path d="M3.5 12.5a11 11 0 0 1 17 0" strokeDasharray="2 2" />
+      <path d="M3 14l1 -2.5 2.2 1.4 M21 14l-1 -2.5 -2.2 1.4" />
+    </>
+  ),
+  coradial: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="8" strokeDasharray="2.5 2.5" transform="rotate(20 12 12)" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    </>
+  ),
+  intersection: (
+    <>
+      <path d="M4 5l16 14 M4 19L20 5" />
+      <circle cx="12" cy="12" r="2.2" fill="currentColor" />
+    </>
+  ),
+  drivenDimension: (
+    <>
+      <path d="M7 6a8 8 0 0 0 0 12 M17 6a8 8 0 0 1 0 12" />
+      <path d="M10 12h4" />
+    </>
+  ),
+  relationsList: (
+    <>
+      <path d="M9 6h11 M9 12h11 M9 18h11" />
+      <path d="M4 5h2v2H4z M4 11h2v2H4z M4 17h2v2H4z" />
+    </>
+  ),
+  diagnose: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6" />
+      <path d="M15 15l5 5 M10.5 7.5v3.5 M10.5 13.2v.3" />
     </>
   ),
 } satisfies Record<string, ReactNode>;

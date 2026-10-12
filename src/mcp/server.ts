@@ -61,8 +61,13 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { id: z.string(), suppressed: z.boolean() },
   },
   setParameter: {
-    description: 'Set a document parameter (creating it if new). Fields written as "=name" follow it; sketches whose dimensions use it are re-solved.',
-    input: { name: z.string(), value: z.number() },
+    description:
+      'Set a document parameter (creating it if new): a number, or an "=expression" over other parameters and sketch dimensions ("=sketch_1.width / 2"; a cycle is refused). Fields written as "=name" follow it; sketches whose dimensions use it are re-solved.',
+    input: { name: z.string(), value: z.union([z.number(), z.string()]) },
+  },
+  renameParameter: {
+    description: "Rename a parameter. Every expression that reads it follows.",
+    input: { from: z.string(), to: z.string() },
   },
   renameBody: {
     description: "Rename a body. Every feature and selector that names it follows.",
@@ -85,8 +90,17 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { name: z.string() },
   },
   setDimension: {
-    description: 'Change one sketch dimension (the constraint at index in the sketch\'s constraints) to a number or "=expression", and re-solve the sketch geometry.',
-    input: { sketch: z.string(), index: z.number().int(), value: z.union([z.number(), z.string()]) },
+    description:
+      'Change one sketch dimension, by index (its place in the sketch\'s constraints) or name ("d2", "width"), to a number or "=expression", and re-solve the sketch geometry. A driven dimension is refused: setDriven false first.',
+    input: { sketch: z.string(), index: z.number().int().optional(), name: z.string().optional(), value: z.union([z.number(), z.string()]) },
+  },
+  renameDimension: {
+    description: "Name a sketch dimension (by index or its current name). Expressions anywhere read it as <sketch>.<to>; those that read the old name follow.",
+    input: { sketch: z.string(), index: z.number().int().optional(), name: z.string().optional(), to: z.string() },
+  },
+  setDriven: {
+    description: "Make a sketch dimension driven (a reference dimension: measured from the geometry, never solved) or driving again (refused if that would over-define the sketch).",
+    input: { sketch: z.string(), index: z.number().int().optional(), name: z.string().optional(), driven: z.boolean() },
   },
   addEntity: {
     description: "Add an entity (line, circle, arc, point; rect and slot for older documents) to a sketch; id is optional. The sketch re-solves.",

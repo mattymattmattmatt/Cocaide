@@ -75,6 +75,9 @@ export const EDIT_TOOLS = [
   "setView",
   "setAnnotation",
   "setDimension",
+  "renameDimension",
+  "setDriven",
+  "renameParameter",
   "addEntity",
   "updateEntity",
   "deleteEntity",
@@ -238,7 +241,9 @@ export class AgentSession {
       case "suppressFeature":
         return this.edit({ type: "suppressFeature", id: String(a.id), suppressed: a.suppressed !== false });
       case "setParameter":
-        return this.edit({ type: "setParameter", name: String(a.name), value: a.value as number });
+        return this.edit({ type: "setParameter", name: String(a.name), value: a.value as number | string });
+      case "renameParameter":
+        return this.edit({ type: "renameParameter", from: String(a.from), to: String(a.to) });
       case "deleteParameter":
         return this.edit({ type: "deleteParameter", name: String(a.name) });
       case "renameBody":
@@ -269,7 +274,11 @@ export class AgentSession {
       case "exportDrawing":
         return this.exportDrawing(a.format, a.file);
       case "setDimension":
-        return this.edit({ type: "setDimension", sketch: String(a.sketch), index: a.index as number, value: a.value as number | string });
+        return this.edit({ type: "setDimension", sketch: String(a.sketch), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), value: a.value as number | string });
+      case "renameDimension":
+        return this.edit({ type: "renameDimension", sketch: String(a.sketch), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), to: String(a.to) });
+      case "setDriven":
+        return this.edit({ type: "setDriven", sketch: String(a.sketch), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), driven: a.driven !== false });
       case "addEntity":
         return this.edit({ type: "addEntity", sketch: String(a.sketch), entity: isObject(a.entity) ? a.entity : {} });
       case "updateEntity":

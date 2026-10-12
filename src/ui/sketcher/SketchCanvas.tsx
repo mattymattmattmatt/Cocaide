@@ -1,6 +1,6 @@
 // The 2D sketch editor: an SVG in sketch-plane millimetres, y up.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isConstruction } from "../../doc/sketch";
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { entityPolylines } from "../../geom/profile";
@@ -8,13 +8,15 @@ import { dist2 } from "../../geom/vec";
 import { Icon, type IconName } from "../icons";
 import { inputPrefs, keyFor, keyOf, useCommands, wheelZoom } from "../input";
 import { dimensionShapes, RELATION, relationGlyphs } from "./annotate";
-import { constraintTargets } from "../../geom/axes";
-import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem } from "./draft";
+import { constraintTargets, isDriven } from "../../geom/axes";
+import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem, type SmartOptions } from "./draft";
 import { faceAt, isModelId, modelEntities, type ModelFace, type ModelView } from "./model";
 import { shapeWords } from "./names";
 import { tangentStart } from "./tools/arcs";
-import { place, previewOf, snapClick, toolByName, type Placement } from "./tools/run";
-import type { Click, SketchToolDef, ToolContext, ToolOptions } from "./tools/types";
+import { place, placeTyped, previewOf, snapClick, toolByName, typedClick, type Placement } from "./tools/run";
+import { readValue } from "./modify";
+import { ParametersContext } from "../fields";
+import type { Click, SketchToolDef, ToolContext, ToolOptions, TypedField } from "./tools/types";
 import type { EditInput, EditPicks, EditPreview, EditToolDef } from "./edit/types";
 
 /** "select", "dimension", "convert" (picking model edges and faces to convert), or a drawing tool's name in the registry (src/ui/sketcher/tools). */
@@ -97,8 +99,21 @@ interface Props {
   onSelectConstraint?(index: number | null): void;
   /** A dimension double-clicked: edit its value where it is. */
   onEditDimension?(index: number, clientX: number, clientY: number): void;
-  /** Smart Dimension: the picks are made (two, or one and a click in space); `at` is where it was placed. */
-  onDimension?(picks: SketchItem[], at: Vec2, clientX: number, clientY: number): void;
+  /** Smart Dimension: the picks are made (two, or one and a click in space); `at` is where it was placed; `opts.arcs`, the circles Shift-clicked (min or max) and where. */
+  onDimension?(picks: SketchItem[], at: Vec2, clientX: number, clientY: number, opts?: SmartOptions): void;
+  /**
+   * Two picks whose dimension depends on where it is dropped (two points: aligned, horizontal or vertical; two
+   * lines: the angle or its supplement; a point and a centreline: distance or diameter): the dimension follows
+   * the pointer, shown by `dimensionAt`, until a click places it. Without these, two picks place it at once.
+   */
+  dropMatters?(picks: SketchItem[]): boolean;
+  dimensionAt?(picks: SketchItem[], at: Vec2, opts?: SmartOptions): { constraint: Constraint; label: string; value: number; unit?: string } | null;
+  /** Dimensions Fully Define would add, drawn faded until applied. */
+  proposed?: Constraint[];
+  /** Constraint indices of the smallest set that over-defines the sketch: drawn red. */
+  overDefining?: number[];
+  /** Reference entities whose model geometry is gone: drawn brown. */
+  dangling?: ReadonlySet<string>;
   /** The edit tool in use, if one is. */
   edit?: CanvasEdit;
   /** The closed contours of the profile, shaded lightly: what will extrude. */
@@ -115,6 +130,9 @@ interface ViewState {
 }
 
 const SNAP_PX = 10;
+/** Stable empty defaults, so memoised annotations don't redo their work every render. */
+const NONE: Constraint[] = [];
+const NO_INDICES: number[] = [];
 const PICK_PX = 7;
 
 export function SketchCanvas(props: Props) {
@@ -135,6 +153,15 @@ export function SketchCanvas(props: Props) {
   const [stroke, setStroke] = useState<Vec2[] | null>(null);
   /** Smart Dimension's picks so far. */
   const [picks, setPicks] = useState<SketchItem[]>([]);
+  /** Two picks made, the dimension following the pointer until a click drops it (where it goes says which). */
+  const [placing, setPlacing] = useState<{ picks: SketchItem[]; opts?: SmartOptions } | null>(null);
+  /** Circles and arcs Shift-clicked among them, and where: measured to their near or far side. */
+  const shiftArcs = useRef<Record<string, Vec2>>({});
+  /** On-screen numeric input: the values typed for the last click (a line's length and angle), and the field in use. */
+  const [typed, setTyped] = useState<{ values: string[]; field: number } | null>(null);
+  /** Where the pointer is on the screen: the typed box opens there. */
+  const client = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const params = useContext(ParametersContext);
   /** A selection box being dragged: left to right selects what is inside it, right to left what it touches. */
   const [box, setBox] = useState<{ a: Vec2; b: Vec2 } | null>(null);
   const lastMiddle = useRef(0);
@@ -178,7 +205,10 @@ export function SketchCanvas(props: Props) {
   useEffect(() => {
     setClicks([]);
     setPicks([]);
+    setPlacing(null);
+    shiftArcs.current = {};
     setArcNext(false);
+    setTyped(null);
     trail.current = [];
   }, [tool]);
   useEffect(() => props.onProgress?.({ placed: clicks.length, arcNext }), [clicks.length, arcNext]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -314,6 +344,8 @@ export function SketchCanvas(props: Props) {
 
   const onPointerMove = (e: React.PointerEvent) => {
     const p = toWorld(e.clientX, e.clientY);
+    lastCursor.current = p;
+    client.current = { x: e.clientX, y: e.clientY };
     if (def && clicks.length) {
       trail.current.push(p);
       // A long sweep keeps its shape at half the samples.
@@ -397,19 +429,35 @@ export function SketchCanvas(props: Props) {
     }
     if (tool === "dimension") {
       // Smart Dimension: pick one or two things; a second pick, or a click in space after one, places it.
+      if (placing) {
+        // The dimension was following the pointer: this click drops it, and where says which it is.
+        setPlacing(null);
+        return props.onDimension?.(placing.picks, p, e.clientX, e.clientY, placing.opts);
+      }
       const hit = itemAt(p);
       // A click on a sketch axis after a line across it places that line's dimension (the axes run through
       // where dimensions go); after a point, a circle or a line along the axis, it dimensions to the axis.
       const item = hit && picks.length === 1 && placesOn(hit, picks[0]) ? null : hit;
+      // Shift-clicking a circle or arc measures to its near or far side, by the side clicked (SOLIDWORKS's min and max).
+      if (item?.kind === "entity" && e.shiftKey) {
+        const round = [...entities, ...modelEnts].find((x) => x.id === item.id);
+        if (round?.type === "circle" || round?.type === "arc") shiftArcs.current = { ...shiftArcs.current, [item.id]: p };
+      }
+      const arcs = () => {
+        const out = shiftArcs.current;
+        shiftArcs.current = {};
+        return Object.keys(out).length ? { arcs: out } : undefined;
+      };
       if (item && !picks.some((x) => sameItem(x, item))) {
         const next = [...picks, item];
         if (next.length < 2) return setPicks(next);
         setPicks([]);
-        return props.onDimension?.(next, p, e.clientX, e.clientY);
+        if (props.dropMatters?.(next)) return setPlacing({ picks: next, opts: arcs() });
+        return props.onDimension?.(next, p, e.clientX, e.clientY, arcs());
       }
       if (!item && picks.length === 1) {
         setPicks([]);
-        props.onDimension?.(picks, p, e.clientX, e.clientY);
+        props.onDimension?.(picks, p, e.clientX, e.clientY, arcs());
       }
       return;
     }
@@ -426,7 +474,13 @@ export function SketchCanvas(props: Props) {
       setClicks(next);
       return;
     }
-    const made = finishPlacement(next);
+    afterPlacement(finishPlacement(next), s);
+  };
+
+  /** What follows a shape placed by its last click `s` (or by typed values): a chain carries on from its end; else the tool starts over. */
+  const afterPlacement = (made: Placement | null, s: Snap) => {
+    setTyped(null);
+    if (!def) return;
     if (def.chain && made?.next) {
       // Clicking the point the chain started from (it snaps there) closes it; otherwise keep drawing from the end.
       const start = chainStart.current;
@@ -438,6 +492,37 @@ export function SketchCanvas(props: Props) {
     }
     setClicks([]);
     setArcNext(false);
+  };
+
+  /** The typed values as numbers: an empty field is undefined (the pointer gives it); a bad one says why. */
+  const typedValues = (): (number | undefined)[] | string => {
+    if (!typed) return [];
+    const out: (number | undefined)[] = [];
+    for (const [i, text] of typed.values.entries()) {
+      if (text.trim() === "") {
+        out.push(undefined);
+        continue;
+      }
+      const r = readValue(text, params, def?.typed?.fields[i]?.unit === "°" ? "angle" : "length");
+      if (!r.ok) return `${def?.typed?.fields[i]?.label ?? "Value"}: ${r.error}`;
+      out.push(r.value);
+    }
+    return out;
+  };
+  /** Where the pointer was last over the sketch, in sketch mm: the typed values take the rest from it. */
+  const lastCursor = useRef<Vec2>([0, 0]);
+
+  /** Enter in the typed box: the shape with its last click where the values put it, each value a driving dimension. */
+  const commitTyped = () => {
+    if (!def?.typed || !typed) return;
+    const values = typedValues();
+    if (typeof values === "string") return props.onMessage?.(values);
+    const made = placeTyped(def, clicks, values, cursor ?? lastCursor.current, options, toolContext(), construction);
+    if (!made) return props.onMessage?.("those values make nothing: type a length above 0");
+    props.onCreate(made);
+    const last = typedClick(def, clicks, values, cursor ?? lastCursor.current)!;
+    trail.current = [];
+    afterPlacement(made, last);
   };
 
   const select = (item: SketchItem | null, additive: boolean) => {
@@ -471,9 +556,17 @@ export function SketchCanvas(props: Props) {
     const onKey = (e: KeyboardEvent) => {
       // Typing in a field (the polygon's sides), Esc and A are the field's.
       const typing = e.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-      if (e.key === "Escape" && !typing && (clicks.length || picks.length)) {
+      // On-screen numeric input: a number typed while the last click is being placed opens the box at the pointer.
+      if (!typing && !typed && def?.typed && clicks.length > 0 && clicks.length === def.clicks - 1 && !e.ctrlKey && !e.metaKey && !e.altKey && /^[0-9.]$/.test(e.key)) {
+        setTyped({ values: def.typed.fields.map((_, i) => (i === 0 ? e.key : "")), field: 0 });
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.key === "Escape" && !typing && (clicks.length || picks.length || placing)) {
         setClicks([]);
         setPicks([]);
+        setPlacing(null);
         setArcNext(false);
         e.stopPropagation();
         return;
@@ -491,11 +584,21 @@ export function SketchCanvas(props: Props) {
   });
 
   const preview = useMemo(() => {
-    if (!def || !cursor || clicks.length === 0) return [];
+    if (!def || clicks.length === 0) return [];
+    // Values being typed place the last click; the pointer gives what is not typed yet.
+    if (typed && def.typed) {
+      const values = typedValues();
+      const last = typeof values === "string" ? null : typedClick(def, clicks, values, cursor ?? lastCursor.current);
+      return last ? previewOf(def, [...clicks, last], options, toolContext(), construction) : [];
+    }
+    if (!cursor) return [];
     return previewOf(def, [...clicks, snap(cursor)], options, toolContext(), construction);
-  }, [def, cursor, clicks, construction, options, entities]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [def, cursor, clicks, construction, options, entities, typed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const chosen = props.edit ? props.edit.chosen : tool === "dimension" ? picks : selection;
+  const chosen = props.edit ? props.edit.chosen : tool === "dimension" ? (placing?.picks ?? picks) : selection;
+  /** The dimension being placed, as it would be dropped where the pointer is. */
+  const dropping = useMemo(() => (placing && cursor ? (props.dimensionAt?.(placing.picks, cursor, placing.opts) ?? null) : null), [placing, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const proposed = useMemo(() => (dropping ? [...(props.proposed ?? NONE), dropping.constraint] : (props.proposed ?? NONE)), [dropping?.constraint, props.proposed]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedIds = new Set(chosen.flatMap((s) => (s.kind === "entity" ? [s.id] : [])));
   const selectedPoints = new Set(chosen.flatMap((s) => (s.kind === "point" ? [s.ref] : [])));
   const hoverItem = cursor && (tool === "select" || tool === "dimension" || tool === "convert" || (props.edit?.tool.kind === "collect" && !props.edit.places)) && !gesture.current ? itemAt(cursor) : null;
@@ -516,6 +619,7 @@ export function SketchCanvas(props: Props) {
   const pointState = (ref: string) => (!props.defined ? "" : props.defined.freePoints.has(ref) ? "free" : "defined");
 
   return (
+    <>
     <svg
       ref={svg}
       className={`sketch-canvas tool-${tool}`}
@@ -603,6 +707,7 @@ export function SketchCanvas(props: Props) {
             isConstruction(e) ? "construction" : "",
             e.ref ? "reference" : "",
             related.has(e.id) ? "related" : "",
+            props.dangling?.has(e.id) ? "dangling" : "",
             selectedIds.has(e.id) || (e.type === "point" && selectedPoints.has(`${e.id}.at`)) ? "selected" : "",
             (hoverItem?.kind === "entity" && hoverItem.id === e.id) || (e.type === "point" && hoverItem?.kind === "point" && hoverItem.ref === `${e.id}.at`) ? "hover" : "",
           ].join(" ");
@@ -668,6 +773,8 @@ export function SketchCanvas(props: Props) {
         onEdit={(i, x, y) => props.onEditDimension?.(i, x, y)}
         onContext={(i, x, y) => props.onContext?.({ kind: "constraint", index: i }, x, y)}
         interactive={tool === "select" || tool === "dimension"}
+        proposed={proposed}
+        overDefining={props.overDefining ?? NO_INDICES}
       />
       {(props.problems ?? []).map((w, i) => (
         <g key={`warn:${i}`} className="sketch-warning" data-testid="sketch-warning" pointerEvents="visiblePainted">
@@ -675,6 +782,13 @@ export function SketchCanvas(props: Props) {
           <Icon name="alert" size={14 * unit} x={w.at[0] - 7 * unit} y={-w.at[1] - 20 * unit} />
         </g>
       ))}
+      {cursor && dropping && (
+        <g className="infer dropping" data-testid="dimension-placing" pointerEvents="none">
+          <text x={cursor[0] + 14 * unit} y={-cursor[1] + 22 * unit} fontSize={12 * unit}>
+            {`${dropping.label} ${Math.round(dropping.value * 1000) / 1000}${dropping.unit === "°" ? "°" : ""}`}
+          </text>
+        </g>
+      )}
       {cursor && inferIcon && (
         <g className="infer" data-testid={`infer-${inferIcon}`} pointerEvents="none">
           <rect x={cursor[0] + 10 * unit} y={-cursor[1] + 8 * unit} width={18 * unit} height={18 * unit} rx={3 * unit} />
@@ -682,6 +796,18 @@ export function SketchCanvas(props: Props) {
         </g>
       )}
     </svg>
+    {typed && def?.typed && (
+      <TypedBox
+        fields={def.typed.fields}
+        state={typed}
+        at={client.current}
+        problem={typeof typedValues() === "string" ? (typedValues() as string) : null}
+        onChange={setTyped}
+        onCommit={commitTyped}
+        onCancel={() => setTyped(null)}
+      />
+    )}
+    </>
   );
 }
 
@@ -763,6 +889,8 @@ function Annotations({
   onEdit,
   onContext,
   interactive,
+  proposed,
+  overDefining,
 }: {
   /** Clicks reach the dimensions and glyphs (Select, Smart Dimension); with a drawing or edit tool they go through to the sketch. */
   interactive: boolean;
@@ -774,8 +902,17 @@ function Annotations({
   onSelect(i: number): void;
   onEdit(i: number, clientX: number, clientY: number): void;
   onContext(i: number, clientX: number, clientY: number): void;
+  /** Dimensions Fully Define would add: drawn faded after the sketch's own, not clickable. */
+  proposed: Constraint[];
+  /** The constraints that over-define the sketch: red. */
+  overDefining: number[];
 }) {
-  const dims = useMemo(() => dimensionShapes(entities, constraints, unit), [entities, constraints, unit]);
+  const all = useMemo(() => (proposed.length ? [...constraints, ...proposed] : constraints), [constraints, proposed]);
+  const dims = useMemo(() => dimensionShapes(entities, all, unit), [entities, all, unit]);
+  const dimClass = (i: number) => {
+    const k = all[i];
+    return [i >= constraints.length ? " proposed" : "", k && isDriven(k) ? " driven" : "", overDefining.includes(i) ? " conflict" : ""].join("");
+  };
   const glyphs = useMemo(() => (showRelations ? relationGlyphs(entities, constraints, unit) : []), [entities, constraints, unit, showRelations]);
   const f = (p: Vec2) => `${p[0]} ${-p[1]}`;
   const arrow = (tip: Vec2, dir: Vec2) => {
@@ -813,7 +950,12 @@ function Annotations({
             ? `M${f([d.arc.center[0] + d.arc.r * Math.cos(d.arc.from), d.arc.center[1] + d.arc.r * Math.sin(d.arc.from)])}A${d.arc.r} ${d.arc.r} 0 ${Math.abs(sweep) > Math.PI ? 1 : 0} ${sweep > 0 ? 0 : 1} ${f([d.arc.center[0] + d.arc.r * Math.cos(a1), d.arc.center[1] + d.arc.r * Math.sin(a1)])}`
             : "";
           return (
-            <g key={n} className={`dim${selected === d.index ? " selected" : ""}`} data-testid={`dim-${d.index}`} {...handlers(d.index, true)}>
+            <g
+              key={n}
+              className={`dim${selected === d.index ? " selected" : ""}${dimClass(d.index)}`}
+              data-testid={d.index < constraints.length ? `dim-${d.index}` : `dim-proposed-${d.index - constraints.length}`}
+              {...(d.index < constraints.length ? handlers(d.index, true) : { pointerEvents: "none" })}
+            >
               <path d={d.lines.map(([a, b]) => `M${f(a)}L${f(b)}`).join("") + arcPath} className="dim-line" vectorEffect="non-scaling-stroke" />
               <path d={d.arrows.map((a) => arrow(a.at, a.dir)).join("")} className="dim-arrow" />
               <text x={d.at[0]} y={-d.at[1]} fontSize={12 * unit} textAnchor="middle" dominantBaseline="middle">
@@ -845,6 +987,74 @@ function Annotations({
         ))}
       </g>
     </>
+  );
+}
+
+/**
+ * The on-screen numeric input box, at the pointer: one field per value
+ * (Tab and Shift+Tab move between them), Enter places the shape with them,
+ * Esc goes back to the pointer. A value may be a calculation or carry units.
+ */
+function TypedBox({
+  fields,
+  state,
+  at,
+  problem,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  fields: TypedField[];
+  state: { values: string[]; field: number };
+  at: { x: number; y: number };
+  problem: string | null;
+  onChange(s: { values: string[]; field: number }): void;
+  onCommit(): void;
+  onCancel(): void;
+}) {
+  const refs = useRef<(HTMLInputElement | null)[]>([]);
+  useLayoutEffect(() => {
+    const el = refs.current[state.field];
+    if (el && document.activeElement !== el) {
+      el.focus();
+      // The first key typed is in the field already: carry on after it.
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, [state.field]);
+  return (
+    <div className="typed-box" style={{ left: at.x + 16, top: at.y + 16 }} data-testid="typed-box" onPointerDown={(e) => e.stopPropagation()}>
+      {fields.map((f, i) => (
+        <label key={f.key} className={i === state.field ? "active" : undefined}>
+          <span>{f.label}</span>
+          <input
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            value={state.values[i] ?? ""}
+            inputMode="decimal"
+            aria-label={f.label}
+            data-testid={`typed-${f.key}`}
+            onFocus={() => i !== state.field && onChange({ ...state, field: i })}
+            onChange={(e) => onChange({ ...state, values: state.values.map((v, j) => (j === i ? e.target.value : v)) })}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onCommit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancel();
+              } else if (e.key === "Tab") {
+                e.preventDefault();
+                onChange({ ...state, field: (state.field + (e.shiftKey ? fields.length - 1 : 1)) % fields.length });
+              }
+            }}
+          />
+          <span className="unit">{f.unit}</span>
+        </label>
+      ))}
+      {problem && <div className="expr-error">{problem}</div>}
+    </div>
   );
 }
 

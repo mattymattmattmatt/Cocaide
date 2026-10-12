@@ -429,14 +429,14 @@ export function App() {
   };
 
   /** `weldment`: the sketch's "Weldment profile" box is ticked; the profile card opens. */
-  const finishSketch = (drawn: SketchFeature, weldment = false) => {
+  const finishSketch = (drawn: SketchFeature, weldment = false, renames?: Record<string, string>) => {
     if (!sketch) return;
     // The plane as the document had it (a reference stays one), not the frame the sketcher drew on.
     const feature: SketchFeature = { ...drawn, plane: sketch.spec };
     const original = features.find((g) => g.id === sketch.id);
     const problem = sketch.isNew
       ? run({ type: "addFeature", feature })
-      : run({ type: "replaceFeature", id: sketch.id, feature: restoreExpressions(original, feature, params) as Record<string, unknown> });
+      : run({ type: "replaceFeature", id: sketch.id, feature: restoreExpressions(original, feature, params) as Record<string, unknown>, ...(renames ? { renames } : {}) });
     if (problem) return; // stay in the sketch; the notice says why
     setSketch(null);
     setSelectedFeature(feature.id);

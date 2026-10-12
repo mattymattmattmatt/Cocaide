@@ -1,11 +1,19 @@
 // Document parameters: `"parameters": { "plate_t": 6 }` and any numeric field
 // of any feature written as an expression, `"distance": "=plate_t"` or
-// `"=plate_t * 2 + 1"`. Expressions are numbers, parameter names, + - * /
-// and parentheses; nothing else is evaluated.
+// `"=plate_t * 2 + 1"`. The language (functions, units, comparisons) is in
+// expr.ts; the names an expression may read, parameters and sketch
+// dimensions by name ("=sketch_1.width"), are in dimensions.ts. A parameter
+// may itself be an expression ("=sketch_1.d1 / 2").
 //
 // Expressions are resolved before validation, so everything downstream (the
 // rebuild, the solver, the checks) sees plain numbers.
 
+import { documentSymbols } from "./dimensions";
+import { evaluateWith, namesIn, recordLookup, type Evaluation, type Lookup } from "./expr";
+
+export type { Evaluation } from "./expr";
+
+/** Names and their numbers: the parameters, and every sketch dimension by its full name ("sketch_1.d2"). */
 export type Parameters = Record<string, number>;
 
 export const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -14,79 +22,20 @@ export function isExpression(v: unknown): v is string {
   return typeof v === "string" && v.startsWith("=");
 }
 
-export type Evaluation = { ok: true; value: number } | { ok: false; error: string };
+/** Why a name of a set of parameters can't be worked out (a cycle), kept beside the set it belongs to. */
+const problemsOf = new WeakMap<Parameters, Record<string, string>>();
 
-/** Evaluates "=a * 2 + 1" against the parameters. */
-export function evaluate(expression: string, params: Parameters): Evaluation {
-  const src = expression.startsWith("=") ? expression.slice(1) : expression;
-  let i = 0;
-  const fail = (message: string): never => {
-    throw new ExpressionError(`${message} in "${expression}"`);
-  };
-  const ws = () => {
-    while (i < src.length && /\s/.test(src[i])) i++;
-  };
-  const expr = (): number => {
-    let v = term();
-    for (;;) {
-      ws();
-      if (src[i] === "+") (i++, (v += term()));
-      else if (src[i] === "-") (i++, (v -= term()));
-      else return v;
-    }
-  };
-  const term = (): number => {
-    let v = factor();
-    for (;;) {
-      ws();
-      if (src[i] === "*") (i++, (v *= factor()));
-      else if (src[i] === "/") {
-        i++;
-        const d = factor();
-        if (d === 0) fail("division by zero");
-        v /= d;
-      } else return v;
-    }
-  };
-  const factor = (): number => {
-    ws();
-    const ch = src[i];
-    if (ch === "-") return i++, -factor();
-    if (ch === "+") return i++, factor();
-    if (ch === "(") {
-      i++;
-      const v = expr();
-      ws();
-      if (src[i] !== ")") fail("missing )");
-      i++;
-      return v;
-    }
-    const num = /^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(src.slice(i));
-    if (num) {
-      i += num[0].length;
-      return Number(num[0]);
-    }
-    const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i));
-    if (name) {
-      i += name[0].length;
-      if (!(name[0] in params)) fail(`unknown parameter "${name[0]}"`);
-      return params[name[0]];
-    }
-    return fail(i >= src.length ? "unexpected end" : `unexpected "${ch}"`);
-  };
-  try {
-    const value = expr();
-    ws();
-    if (i < src.length) fail(`unexpected "${src[i]}"`);
-    if (!Number.isFinite(value)) fail("result is not a finite number");
-    return { ok: true, value };
-  } catch (e) {
-    if (e instanceof ExpressionError) return { ok: false, error: e.message };
-    throw e;
-  }
+/** The lookup over a set of parameters, saying why a name of it doesn't resolve when it can. */
+export function lookupOf(params: Parameters): Lookup {
+  const own = recordLookup(params);
+  const problems = problemsOf.get(params);
+  return (name) => own(name) ?? (problems?.[name] ? { error: `${name} can't be worked out: ${problems[name]}` } : undefined);
 }
 
-class ExpressionError extends Error {}
+/** Evaluates "=a * 2 + 1" (or "=sqrt(2) * 10", "=1in", "=sketch_1.d1 / 2") against the parameters. */
+export function evaluate(expression: string, params: Parameters): Evaluation {
+  return evaluateWith(expression, lookupOf(params));
+}
 
 /**
  * A deep copy of `value` with every "=expr" string replaced by its number.
@@ -108,15 +57,10 @@ export function resolveExpressions(value: unknown, params: Parameters, errors: s
   return value;
 }
 
-/** Parameter names an object's expressions refer to. */
+/** Names (parameters, dimensions) an object's expressions refer to. */
 export function parameterRefs(value: unknown, out = new Set<string>()): Set<string> {
   if (isExpression(value)) {
-    for (const m of value.slice(1).matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
-      // Skip the exponent letter of numbers such as 1e3.
-      const before = value.slice(1)[m.index! - 1];
-      if (before !== undefined && /[0-9.]/.test(before)) continue;
-      out.add(m[0]);
-    }
+    for (const n of namesIn(value)) out.add(n);
   } else if (Array.isArray(value)) {
     for (const v of value) parameterRefs(v, out);
   } else if (value !== null && typeof value === "object") {
@@ -125,12 +69,33 @@ export function parameterRefs(value: unknown, out = new Set<string>()): Set<stri
   return out;
 }
 
-/** The document's parameters when they are well formed, else an empty set. */
+/**
+ * Every name an expression in the document may read, to its number: the
+ * parameters (an expression one worked out) and each sketch dimension by its
+ * full name. A name that can't be worked out (a cycle) is left out, and an
+ * expression reading it says why.
+ */
 export function documentParameters(doc: unknown): Parameters {
+  const table = documentSymbols(doc);
+  const values = { ...table.values };
+  problemsOf.set(values, table.problems);
+  return values;
+}
+
+/** The document's own parameters (not the dimensions), worked out. */
+export function parameterValues(doc: unknown): Parameters {
+  const table = documentSymbols(doc);
+  const out: Parameters = {};
+  for (const [name, e] of table.entries) if (e.kind === "parameter" && name in table.values) out[name] = table.values[name];
+  return out;
+}
+
+/** The parameters as written: numbers and "=expressions". */
+export function rawParameters(doc: unknown): Record<string, number | string> {
   const p = (doc as { parameters?: unknown })?.parameters;
   if (p === null || typeof p !== "object" || Array.isArray(p)) return {};
-  const out: Parameters = {};
-  for (const [k, v] of Object.entries(p)) if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  const out: Record<string, number | string> = {};
+  for (const [k, v] of Object.entries(p)) if ((typeof v === "number" && Number.isFinite(v)) || isExpression(v)) out[k] = v;
   return out;
 }
 

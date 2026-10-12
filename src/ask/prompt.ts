@@ -204,8 +204,13 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "setParameter",
-    description: "Set a document parameter.",
-    input_schema: obj({ name: { type: "string" }, value: { type: "number" } }, ["name", "value"]),
+    description: 'Set a document parameter: a number, or an "=expression" over other parameters and sketch dimensions ("=sketch_1.width / 2"). A cycle is refused.',
+    input_schema: obj({ name: { type: "string" }, value: { type: ["number", "string"] } }, ["name", "value"]),
+  },
+  {
+    name: "renameParameter",
+    description: "Rename a parameter; every expression that reads it follows.",
+    input_schema: obj({ from: { type: "string" }, to: { type: "string" } }, ["from", "to"]),
   },
   {
     name: "renameBody",
@@ -232,8 +237,19 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
 const SKETCH_TOOLS: Anthropic.Tool[] = [
   {
     name: "setDimension",
-    description: "Set the value of constraint `index` of a sketch (a number or \"=expression\"); the sketch re-solves.",
-    input_schema: obj({ sketch: { type: "string" }, index: { type: "integer" }, value: { type: ["number", "string"] } }, ["sketch", "index", "value"]),
+    description:
+      'Set a sketch dimension, by `index` (its constraint\'s place) or `name` ("d2", "width"), to a number or "=expression" (functions, units, other dimensions as <sketch>.<name>); the sketch re-solves. A driven dimension is refused: make it driving first.',
+    input_schema: obj({ sketch: { type: "string" }, index: { type: "integer" }, name: { type: "string" }, value: { type: ["number", "string"] } }, ["sketch", "value"]),
+  },
+  {
+    name: "renameDimension",
+    description: "Name a sketch dimension (by `index` or its current `name`); expressions anywhere read it as <sketch>.<to>, and those that read the old name follow.",
+    input_schema: obj({ sketch: { type: "string" }, index: { type: "integer" }, name: { type: "string" }, to: { type: "string" } }, ["sketch", "to"]),
+  },
+  {
+    name: "setDriven",
+    description: "Make a sketch dimension driven (a reference: measured, never solved) or driving again (refused if that over-defines the sketch).",
+    input_schema: obj({ sketch: { type: "string" }, index: { type: "integer" }, name: { type: "string" }, driven: { type: "boolean" } }, ["sketch", "driven"]),
   },
   {
     name: "addEntity",

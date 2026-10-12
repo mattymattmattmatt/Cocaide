@@ -5,18 +5,23 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Constraint, DatumPlane, SketchEntity, SketchFeature, Vec2 } from "../../doc/types";
 import { isConstruction } from "../../doc/sketch";
-import { constraintTargets, withAxes } from "../../geom/axes";
-import { measureConstraint } from "../../geom/constraints";
+import { constraintTargets, isDriven, withAxes } from "../../geom/axes";
 import { buildProfile } from "../../geom/profile";
-import { sketchStatus, solveSketch, wouldOverDefine } from "../../geom/solver";
-import { evaluate } from "../../doc/parameters";
+import { solveSketch, wouldOverDefine } from "../../geom/solver";
+import { fullyDefine } from "../../geom/fullyDefine";
+import { evaluate, type Parameters as NameValues } from "../../doc/parameters";
+import { DIMENSION_NAME, dimensionNames } from "../../doc/dimensions";
+import { renameIn } from "../../doc/expr";
+import { draftCycle, draftParameters, measureDriven, reexpress, withOldNames, type Dimension } from "./dimdraft";
+import { filterRelations, sketchHealth, type Fix, type RelationFilter } from "./status";
+import { loadSpin, readValue, shownValue, spinValue, type ValueKind } from "./modify";
 import { NumberInput, ParametersContext } from "../fields";
 import { planeName } from "../PropertyPanel";
-import { constraintEntities, constraintSentence, describeConstraint, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type Suggestion } from "./draft";
-import { convertEdges, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, renamed, type ModelView } from "./model";
+import { constraintSentence, describeConstraint, dropMatters, itemEntities, removeEntities, smartDimension, suggestions, type SketchItem, type SmartOptions, type Suggestion } from "./draft";
+import { convertEdges, danglingRefs, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, renamed, type ModelView } from "./model";
 import { namer, referenceName, shapeWords } from "./names";
 import { dimensionText, RELATION } from "./annotate";
-import { SketchCanvas, type CanvasEdit, type CanvasTarget, type DefinedState, type DrawProgress, type Tool } from "./SketchCanvas";
+import { SketchCanvas, type CanvasEdit, type CanvasTarget, type DrawProgress, type Tool } from "./SketchCanvas";
 import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
@@ -44,8 +49,13 @@ export interface SketchSession {
   profile?: SketchFeature["profile"];
 }
 
-/** A dimension typed as "=b": solved with its value, written back as the expression. */
-type Dimension = Constraint & { expr?: string };
+/** What the Modify box asks of a dimension: its value (an "=expression" kept as `expr`), and a new name or driven state. */
+export interface DimensionChange {
+  value: number;
+  expr?: string;
+  name?: string;
+  driven?: boolean;
+}
 
 interface Props {
   session: SketchSession;
@@ -56,8 +66,11 @@ interface Props {
    * reference entity), and Convert Entities copies them in.
    */
   model: ModelView;
-  /** `weldment`: the weldment profile box is ticked; the profile card opens next. */
-  onFinish(feature: SketchFeature, weldment: boolean): void;
+  /**
+   * `weldment`: the weldment profile box is ticked; the profile card opens next.
+   * `renames`: dimensions whose full names changed ("sketch_1.d3" → "sketch_1.width"), for the expressions that read them.
+   */
+  onFinish(feature: SketchFeature, weldment: boolean, renames?: Record<string, string>): void;
   onCancel(): void;
   /** "Ask AI…" on an entity, a relation or dimension, or the sketch: ask about it, with the draft as it is now. */
   onAsk?(target: { kind: "entity"; entity: string } | { kind: "constraint"; index: number } | { kind: "sketch" }, draft: SketchFeature, x: number, y: number): void;
@@ -83,7 +96,7 @@ const MODES: [Tool, string, string, IconName][] = [
 export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef }: Props) {
   const [past, setPast] = useState<DraftState[]>([]);
   const [future, setFuture] = useState<DraftState[]>([]);
-  const [draft, setDraft] = useState<DraftState>({ entities: session.entities, constraints: session.constraints });
+  const [draft, setDraft] = useState<DraftState>(() => ({ entities: session.entities, constraints: session.isNew ? session.constraints : withOldNames(session.constraints) }));
   /** Geometry during a drag, before it becomes a draft state. */
   const [live, setLive] = useState<SketchEntity[] | null>(null);
   const dragBase = useRef<SketchEntity[] | null>(null);
@@ -136,14 +149,23 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   /** SOLIDWORKS's Modify box: a new Smart Dimension, or an existing dimension being edited, where it was clicked. */
   const [modify, setModify] = useState<{ x: number; y: number; options: Suggestion[]; choice: number } | { x: number; y: number; index: number } | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const params = useContext(ParametersContext);
+  const docParams = useContext(ParametersContext);
+  /** The document's names, with this sketch's dimensions as the draft has them now: "=sketch_1.d1 * 2" reads the draft. */
+  const params = useMemo(() => draftParameters(docParams, session.id, draft.constraints), [docParams, session.id, draft.constraints]);
+  /** A new dimension that would over-define the sketch: SOLIDWORKS asks to make it driven. */
+  const [drivenAsk, setDrivenAsk] = useState<{ k: Constraint; entities: SketchEntity[]; x: number; y: number } | null>(null);
+  /** Fully Define's preview: what it would add, and from where X and Y are measured. */
+  const [define, setDefine] = useState<{ datum: string; relations: boolean; dimensions: boolean } | null>(null);
+  /** Display/Delete Relations: which rows show. */
+  const [relationFilter, setRelationFilter] = useState<RelationFilter>("all");
 
   const entities = live ?? draft.entities;
   const commit = useCallback(
     (next: DraftState) => {
       setPast((p) => [...p, draft].slice(-200));
       setFuture([]);
-      setDraft(next);
+      // Driven dimensions read what the geometry now measures.
+      setDraft({ ...next, constraints: measureDriven(next.entities, next.constraints) });
     },
     [draft],
   );
@@ -157,7 +179,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   });
   if (applyRef) {
     applyRef.current = (f) => {
-      commit({ entities: f.entities, constraints: f.constraints ?? [] });
+      // A dimension the proposal kept (renamed or not) keeps the name the document knew it by, so a rename reaches what reads it.
+      const known = new Map(draft.constraints.flatMap((c) => ((c as Dimension).was ? [[constraintKey(c), (c as Dimension).was!] as const] : [])));
+      const constraints = (f.constraints ?? []).map((k) => {
+        const was = "value" in k ? known.get(constraintKey(k)) : undefined;
+        return was ? ({ ...k, was } as Dimension) : k;
+      });
+      commit({ entities: f.entities, constraints });
       setSelection([]);
       setMessage(null);
     };
@@ -176,13 +204,11 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     setFuture((f) => f.slice(1));
   };
 
-  /** Re-solve with a new constraint set; refuse if it cannot be met. */
-  const setConstraints = (constraints: Constraint[], entitiesIn = draft.entities): boolean => {
+  /** Re-solve with a new constraint set; refuse if it cannot be met. Dimensions typed as expressions over the others follow them first. */
+  const setConstraints = (constraintsIn: Constraint[], entitiesIn = draft.entities): boolean => {
+    const constraints = reexpress(constraintsIn, docParams, session.id);
     const r = solveSketch(entitiesIn, constraints);
-    if (!r.ok) {
-      setMessage(r.error);
-      return false;
-    }
+    if (!r.ok) return refuse(r.error);
     setMessage(null);
     commit({ entities: r.entities, constraints });
     return true;
@@ -206,29 +232,114 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     return { entities: made.entities, constraints: ks.map((k) => renamed(k, made.ids)) };
   };
 
-  const addConstraint = (raw: Constraint): boolean => {
-    const lifted = lift([raw]);
-    if (typeof lifted === "string") {
-      setMessage(lifted);
+  /** True when k (with the sketch's entities `ents`) would over-define the sketch. */
+  const overDefines = (ents: SketchEntity[], k: Constraint): boolean => {
+    if (isDriven(k)) return false;
+    try {
+      return wouldOverDefine(ents, draft.constraints, k);
+    } catch {
       return false;
     }
+  };
+
+  /**
+   * Adds a relation or dimension. One that would over-define the sketch is
+   * refused; a dimension, as SOLIDWORKS does, asks first whether to add it
+   * driven instead ("ask": the question is open, at `at` or the pointer).
+   */
+  const addConstraint = (raw: Constraint, at?: { x: number; y: number }): boolean | "ask" => {
+    const lifted = lift([raw]);
+    if (typeof lifted === "string") return refuse(lifted);
     const k = lifted.constraints[0];
-    if (wouldOverDefine(lifted.entities, draft.constraints, k)) {
-      setMessage("that would over-define the sketch: other relations or dimensions already fix it");
-      return false;
+    if (overDefines(lifted.entities, k)) {
+      if ("value" in k) {
+        setDrivenAsk({ k, entities: lifted.entities, x: at?.x ?? pointer.x, y: at?.y ?? pointer.y });
+        setMessage(null);
+        return "ask";
+      }
+      return refuse("that would over-define the sketch: other relations or dimensions already fix it");
     }
     return setConstraints([...draft.constraints, k], lifted.entities);
   };
 
+  /** The over-defining dimension added driven: it measures, and nothing moves. */
+  const addDriven = () => {
+    if (!drivenAsk) return;
+    const { expr: _expr, ...k } = drivenAsk.k as Dimension;
+    setDrivenAsk(null);
+    setConstraints([...draft.constraints, { ...k, driven: true } as Constraint], drivenAsk.entities);
+  };
+
+  /**
+   * Changes dimension `i`: its value (an "=expression" kept beside it), its
+   * name (expressions in the sketch that read it follow; the document's on
+   * Finish), driven or driving. One undo step; refused with a reason.
+   */
+  const changeDimension = (i: number, change: DimensionChange): boolean => {
+    const k = draft.constraints[i] as Dimension | undefined;
+    if (!k || !("value" in k)) return false;
+    const names = dimensionNames(draft.constraints);
+    let list = [...draft.constraints] as Dimension[];
+    if (change.name !== undefined && change.name !== names[i]) {
+      if (!DIMENSION_NAME.test(change.name)) return refuse(`"${change.name}" is not a dimension name: letters, digits and _, starting with a letter`);
+      if (names.some((n, j) => j !== i && n === change.name)) return refuse(`this sketch already has a dimension "${change.name}"`);
+      const from = `${session.id}.${names[i]}`;
+      const to = `${session.id}.${change.name}`;
+      list = list.map((c, j) => {
+        const expr = c.expr ? renameIn(c.expr, (n) => (n === from ? to : undefined)) : undefined;
+        const out = expr !== c.expr ? ({ ...c, expr } as Dimension) : c;
+        return j === i ? ({ ...out, name: change.name } as Dimension) : out;
+      });
+      // A name given can take another's default d<n>: that one keeps the name it had.
+      const after = dimensionNames(list);
+      list = list.map((c, j) => (j !== i && names[j] && "value" in c && c.name === undefined && after[j] !== names[j] ? ({ ...c, name: names[j] } as Dimension) : c));
+    }
+    const target = list[i];
+    const driven = change.driven ?? isDriven(target);
+    if (driven) {
+      // Measured, never solved: an expression has nothing to drive.
+      const { expr: _expr, ...rest } = target;
+      list[i] = { ...rest, driven: true } as Dimension;
+    } else {
+      const { expr: _expr, driven: _driven, ...rest } = target as Dimension & { driven?: boolean };
+      if (change.expr) {
+        const loop = draftCycle(list, i, change.expr, session.id);
+        if (loop) return refuse(`${loop}: an expression can't read itself, even through others`);
+      }
+      list[i] = { ...rest, value: change.value, ...(change.expr ? { expr: change.expr } : {}) } as Dimension;
+      if (isDriven(target)) {
+        // Driving again: it must not over-define the sketch.
+        try {
+          if (wouldOverDefine(draft.entities, list.filter((_, j) => j !== i), list[i])) return refuse(`${names[i]} would over-define the sketch as a driving dimension: it stays driven. Delete or make driven one of the dimensions that fix the same thing first`);
+        } catch {
+          // the solve below says what is wrong
+        }
+      }
+    }
+    return setConstraints(list);
+  };
+  /** Why the last change was refused, for the Modify box to say in place (the sketch's message line says it too). */
+  const refusal = useRef<string | null>(null);
+  function refuse(text: string): false {
+    refusal.current = text;
+    setMessage(text);
+    return false;
+  }
+
   /** Sets dimension `i` to a number or an "=expression" (kept beside its value, written back on Finish). */
   const setDimension = (i: number, v: number | string): boolean => {
+    const k = draft.constraints[i];
+    if (k && isDriven(k)) return refuse(`${dimensionNames(draft.constraints)[i]} is driven: the geometry sets it. Make it driving first (right-click it)`);
     const value = typeof v === "number" ? v : evaluate(v, params);
-    if (typeof value !== "number" && !value.ok) {
-      setMessage(value.error);
-      return false;
-    }
+    if (typeof value !== "number" && !value.ok) return refuse(value.error);
     const n = typeof value === "number" ? value : value.value;
-    return setConstraints(draft.constraints.map((c, j) => (j === i ? ({ ...numeric(c), value: n, ...(typeof v === "string" ? { expr: v } : {}) } as Constraint) : c)));
+    return changeDimension(i, { value: n, ...(typeof v === "string" ? { expr: v } : {}) });
+  };
+
+  /** A dimension made driven, or driving again (its right-click menu, the Modify box, a fix). */
+  const toggleDriven = (i: number) => {
+    const k = draft.constraints[i];
+    if (k && "value" in k) changeDimension(i, { value: k.value, driven: !isDriven(k) });
   };
 
   const removeConstraint = (i: number) => {
@@ -480,7 +591,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     if (draft.constraints.length) f.constraints = draft.constraints.map((c: Dimension) => (c.expr ? ({ ...numeric(c), value: c.expr } as unknown as Constraint) : numeric(c)));
     if (session.suppressed) f.suppressed = true;
     if (weldment && session.profile) f.profile = session.profile;
-    onFinish(f, weldment);
+    // A dimension whose name changed here (renamed, or its default d<n> moved by a deletion): what read the old name follows.
+    const now = dimensionNames(draft.constraints);
+    const renames: Record<string, string> = {};
+    draft.constraints.forEach((c: Dimension, i) => {
+      if (c.was && now[i] && now[i] !== c.was) renames[`${session.id}.${c.was}`] = `${session.id}.${now[i]}`;
+    });
+    onFinish(f, weldment, Object.keys(renames).length ? renames : undefined);
   };
 
   // Keyboard: the sketch's commands (tools, undo inside the sketch, delete, finish, the shortcut bar) are
@@ -497,6 +614,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     "sketch.construction": () => toggleConstruction(editTool && editPicks.entities.length ? editPicks.entities.map((id) => ({ kind: "entity" as const, id })) : selection),
     "sketch.explode": () => explodeItems(),
     "sketch.check": () => setShowCheck((v) => !v),
+    "sketch.fullyDefine": () => openFullyDefine(),
     "sketch.finish": finish,
     ...Object.fromEntries(MODES.map(([t, , id]) => [id, () => setTool(t)])),
     ...Object.fromEntries(SKETCH_TOOLS.map((t) => [t.id, () => setTool(t.name)])),
@@ -510,7 +628,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         e.preventDefault();
         redo();
       } else if (e.key === "Escape") {
-        if (modify || menu) return;
+        if (modify || menu || drivenAsk) return;
+        if (define) return setDefine(null);
         // An edit tool drops what it picked first, then itself.
         if (editTool && (editPicks.entities.length || editPicks.points.length || editPicks.places.length || editPicks.about)) restartEdit();
         else if (tool !== "select") setTool("select");
@@ -527,21 +646,38 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // How defined the sketch is, entity by entity: SOLIDWORKS's blue, black and red.
-  const status = useMemo(() => {
+  // How defined the sketch is, entity by entity: SOLIDWORKS's blue, black, red and brown, and the status line.
+  const dangling = useMemo(() => danglingRefs(draft.entities, model), [draft.entities, model]);
+  const health = useMemo(() => sketchHealth(draft.entities, draft.constraints, dangling), [draft, dangling]);
+  const dof = health.dof;
+  /** The constraints as shown: while a drag is live, driven dimensions read the geometry being dragged. */
+  const shownConstraints = useMemo(() => (live ? measureDriven(live, draft.constraints) : draft.constraints), [live, draft.constraints]);
+  const fixOver = (f: Fix) => {
+    if (f.action.kind === "delete") removeConstraint(f.action.index);
+    else toggleDriven(f.action.index);
+  };
+
+  /** Fully Define's proposal for the options chosen: what it would add, measured as the sketch is. */
+  const proposal = useMemo(() => {
+    if (!define) return null;
     try {
-      const st = sketchStatus(draft.entities, draft.constraints);
-      const conflicts = new Set<string>();
-      draft.constraints.forEach((k) => {
-        const m = measureConstraint(draft.entities, k);
-        if (!(Math.abs(m.actual - m.expected) <= 1e-6)) constraintEntities(k).forEach((id) => conflicts.add(id));
-      });
-      return { ...st, conflicts } as DefinedState & { dof: number };
-    } catch {
-      return null;
+      return fullyDefine(draft.entities, draft.constraints, { datum: define.datum, relations: define.relations, dimensions: define.dimensions });
+    } catch (e) {
+      return { add: [], dof: dof ?? 0, error: (e as Error).message };
     }
-  }, [draft]);
-  const dof = status?.dof ?? null;
+  }, [define, draft, dof]);
+  /** The point picked, as Fully Define's datum: X and Y are measured from it. */
+  const pickedPoint = selection.find((i): i is { kind: "point"; ref: string } => i.kind === "point" && !isModelId(i.ref));
+  const openFullyDefine = () => {
+    if (!draft.entities.some((e) => !e.ref)) return setMessage("Fully Define: draw something first");
+    if (health.state === "over") return setMessage(`Fully Define: the sketch is over defined. ${health.text.replace(/^Over defined: /, "")}: fix that first`);
+    setDefine({ datum: pickedPoint?.ref ?? "origin", relations: true, dimensions: true });
+    setTool("select");
+  };
+  const applyFullyDefine = () => {
+    if (!proposal?.add.length) return setDefine(null);
+    if (setConstraints([...draft.constraints, ...proposal.add])) setDefine(null);
+  };
   const profile = useMemo(() => buildProfile(draft.entities), [draft.entities]);
   /** It ties something of the sketch's own: a relation between references and axes alone holds by the model, and adds nothing. */
   const touchesSketch = (k: Constraint) => constraintTargets(k).some((id) => draft.entities.some((e) => e.id === id && !e.ref));
@@ -556,10 +692,22 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   const relations = offers.filter((o) => o.value === undefined);
   const dimensions = offers.filter((o) => o.value !== undefined);
 
-  /** Smart Dimension placed: the Modify box opens with what it measures now. */
-  const onDimension = (picks: SketchItem[], at: Vec2, x: number, y: number) => {
+  /**
+   * Smart Dimension placed: the Modify box opens with what it measures now
+   * (which kind by the picks and where it was dropped; a Shift-clicked circle
+   * to its near or far side). One that would over-define asks to be driven.
+   */
+  const dimensionOptions = (picks: SketchItem[], at?: Vec2, opts?: SmartOptions) => {
     const have = new Set(draft.constraints.map((k) => constraintKey(k)));
-    const options = smartDimension(pool, picks, at).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
+    return smartDimension(pool, picks, at, opts).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
+  };
+  /** The dimension being dropped, as it would be where the pointer is: what follows the pointer before the click that places it. */
+  const dimensionAt = (picks: SketchItem[], at: Vec2, opts?: SmartOptions) => {
+    const o = dimensionOptions(picks, at, opts)[0];
+    return o ? { constraint: o.make(o.value ?? 0), label: o.label, value: o.value ?? 0, unit: o.unit } : null;
+  };
+  const onDimension = (picks: SketchItem[], at: Vec2, x: number, y: number, opts?: SmartOptions) => {
+    const options = dimensionOptions(picks, at, opts);
     if (!options.length)
       return setMessage(
         picks.every((p) => p.kind !== "face" && !draft.entities.some((e) => !e.ref && e.id === (p.kind === "entity" ? p.id : p.ref.split(".")[0])))
@@ -567,6 +715,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           : "those can't be dimensioned together; pick a line, circle, arc, or two points, lines or circles",
       );
     setMessage(null);
+    openDimension(options, x, y);
+  };
+  /** The Modify box for a new dimension, or the driven question when the first choice would over-define. */
+  const openDimension = (options: Suggestion[], x: number, y: number) => {
+    const k = options[0].make(options[0].value ?? 0);
+    const lifted = lift([k]);
+    if (typeof lifted !== "string" && overDefines(lifted.entities, lifted.constraints[0])) return setDrivenAsk({ k: lifted.constraints[0], entities: lifted.entities, x, y });
     setModify({ x, y, options, choice: 0 });
   };
 
@@ -612,6 +767,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         items: [
           ...tools,
           "sep",
+          { label: "Fully Define Sketch…", icon: "fullyDefine", onClick: openFullyDefine, testId: "ctx-fully-define" },
           { label: showRelations ? "Hide relations" : "Show relations", icon: showRelations ? "eyeOff" : "eye", onClick: () => setShowRelations((v) => !v), testId: "ctx-relations" },
           { label: "Undo", icon: "undo", disabled: !past.length, onClick: undo },
           "sep",
@@ -630,9 +786,19 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       return setMenu({
         x,
         y,
-        title: `${RELATION[k.type].label}${isDim ? ` ${dimensionText(k)}` : ""}`,
+        title: `${RELATION[k.type].label}${isDim ? ` ${dimensionText(k)} · ${session.id}.${dimensionNames(draft.constraints)[target.index]}` : ""}`,
         items: [
-          ...(isDim ? [{ label: "Edit value…", icon: "smartDimension", onClick: () => setModify({ x, y, index: target.index }), testId: "ctx-edit-dimension" } as MenuEntry] : []),
+          ...(isDim
+            ? [
+                { label: isDriven(k) ? "Rename…" : "Edit value…", icon: "smartDimension", onClick: () => setModify({ x, y, index: target.index }), testId: "ctx-edit-dimension" } as MenuEntry,
+                {
+                  label: isDriven(k) ? "Make driving" : "Make driven (reference)",
+                  icon: "drivenDimension",
+                  onClick: () => toggleDriven(target.index),
+                  testId: "ctx-toggle-driven",
+                } as MenuEntry,
+              ]
+            : []),
           { label: isDim ? "Delete dimension" : "Delete relation", icon: "trash", shortcut: "Delete", onClick: () => removeConstraint(target.index), testId: "ctx-delete-constraint" },
           "sep",
           ...ask({ kind: "constraint", index: target.index }),
@@ -681,7 +847,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
                 icon: "smartDimension",
                 onClick: () => {
                   const options = smartDimension(pool, items).filter((o) => touchesSketch(o.make(o.value ?? 0)) && !have.has(constraintKey(o.make(o.value ?? 0))));
-                  if (options.length) setModify({ x, y, options, choice: 0 });
+                  if (options.length) openDimension(options, x, y);
                   else setTool("dimension");
                 },
                 testId: "ctx-dimension",
@@ -740,7 +906,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   };
 
   return (
-    <>
+    <ParametersContext.Provider value={params}>
       <section className="center sketch-center">
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
           {MODES.filter(([t]) => t !== "convert").map(([t, label, id, icon]) => (
@@ -887,7 +1053,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         </div>
         <SketchCanvas
           entities={entities}
-          constraints={draft.constraints}
+          constraints={shownConstraints}
           model={model}
           tool={tool}
           options={toolOptions}
@@ -903,7 +1069,10 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           onProgress={setProgress}
           onDrag={onDrag}
           onContext={openMenu}
-          defined={status ?? undefined}
+          defined={health}
+          proposed={proposal?.add}
+          overDefining={health.conflicting}
+          dangling={dangling}
           showRelations={showRelations}
           selectedConstraint={picked}
           onSelectConstraint={(i) => {
@@ -911,6 +1080,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             setSelection([]);
           }}
           onEditDimension={(index, x, y) => setModify({ x, y, index })}
+          dropMatters={(picks) => dropMatters(pool, picks)}
+          dimensionAt={dimensionAt}
           onDimension={onDimension}
           edit={canvasEdit}
           regions={check.loops}
@@ -985,22 +1156,52 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             constraints={draft.constraints}
             onChoose={(choice) => setModify((m) => (m && "options" in m ? { ...m, choice } : m))}
             onClose={() => setModify(null)}
-            onApply={(value, expr) => {
-              if ("index" in modify) return setDimension(modify.index, expr ?? value);
-              const k = modify.options[modify.choice].make(value);
-              return addConstraint(expr ? ({ ...k, expr } as unknown as Constraint) : k);
+            sketch={session.id}
+            params={params}
+            onApply={(change) => {
+              refusal.current = null;
+              if ("index" in modify) return changeDimension(modify.index, change) || (refusal.current ?? false);
+              const k = modify.options[modify.choice].make(change.value);
+              return addConstraint(change.expr ? ({ ...k, expr: change.expr } as unknown as Constraint) : k, modify) !== false || (refusal.current ?? false);
             }}
           />
         )}
-        <div className={`sketch-status ${status?.conflicts.size ? "over" : dof === 0 ? "full" : "under"}`} data-testid="sketch-status">
-          {status?.conflicts.size ? "Over defined" : dof === 0 ? "Fully defined" : "Under defined"}
-        </div>
-        {check.problems.length > 0 && (
-          <button className="sketch-problems" onClick={() => setShowCheck(true)} title="Check sketch for feature: what is wrong, and fixes" data-testid="sketch-problems">
-            <Icon name="alert" size={13} />
-            {problemSummary(check)}
-          </button>
+        {drivenAsk && (
+          <Popup x={drivenAsk.x + 12} y={drivenAsk.y + 12} onClose={() => setDrivenAsk(null)} label="Make this dimension driven?" testId="driven-prompt">
+            {(close) => (
+              <div className="driven-prompt">
+                <div className="modify-title">
+                  <Icon name="alert" size={14} />
+                  Make this dimension driven?
+                </div>
+                <p className="small">
+                  {describeConstraint(drivenAsk.k, names)} = {dimensionText(drivenAsk.k)}: adding it as a driving dimension would over-define the sketch. A driven dimension measures the
+                  geometry and shows in parentheses; it never moves anything.
+                </p>
+                <div className="row-buttons">
+                  <button className="primary" onClick={addDriven} data-testid="driven-yes" autoFocus>
+                    Driven
+                  </button>
+                  <button onClick={close} data-testid="driven-cancel">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </Popup>
         )}
+        {/* The status line: how defined the sketch is, then what keeps it from a clean profile. */}
+        <div className="sketch-statusbar">
+          <div className={`sketch-status ${health.state}`} data-testid="sketch-status" title="Blue: can still move. Black: fully defined. Red: over defined. Brown: a reference lost its model geometry">
+            {health.text}
+          </div>
+          {check.problems.length > 0 && (
+            <button className="sketch-problems" onClick={() => setShowCheck(true)} title="Check sketch for feature: what is wrong, and fixes" data-testid="sketch-problems">
+              <Icon name="alert" size={13} />
+              {problemSummary(check)}
+            </button>
+          )}
+        </div>
         <div className="sketch-plane-label">{planeName(session.plane.normal, session.plane.origin)}</div>
       </section>
       <aside className="side right sketch-panel" data-testid="sketch-panel">
@@ -1008,9 +1209,36 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           <h2>
             Sketch <span className="muted">{session.id}</span>
           </h2>
-          <div className={`dof ${status?.conflicts.size ? "over" : dof === 0 ? "full" : ""}`} data-testid="sketch-dof" title="Blue geometry can still move; black is fully defined; red is in a relation that doesn't hold">
-            {dof === null ? "—" : status?.conflicts.size ? "Over defined: a relation doesn't hold" : dof === 0 ? "Fully defined" : `Under defined: ${dof} degree${dof === 1 ? "" : "s"} of freedom`}
+          <div className={`dof ${health.state}`} data-testid="sketch-dof" title="Blue geometry can still move; black is fully defined; red is over defined; brown has lost a reference">
+            {health.state === "under" ? `Under defined: ${dof} degree${dof === 1 ? "" : "s"} of freedom` : health.text}
           </div>
+          {health.state === "under" && (
+            <div className="row-buttons">
+              <button
+                className="fully-define-button"
+                onClick={() => (define ? setDefine(null) : openFullyDefine())}
+                aria-pressed={!!define}
+                title={`Fully Define Sketch: add the relations and dimensions that leave it fully defined, previewed before they are applied${keyHint("sketch.fullyDefine", prefs)}`}
+                data-testid="tool-fully-define"
+              >
+                <Icon name="fullyDefine" size={14} />
+                Fully define…
+              </button>
+            </div>
+          )}
+          {health.fixes.length > 0 && (
+            <div className="over-fixes" data-testid="over-fixes">
+              <p className="small muted">These conflict; any one of these fixes it:</p>
+              <div className="row-buttons">
+                {health.fixes.map((f) => (
+                  <button key={f.testId} onClick={() => fixOver(f)} data-testid={f.testId}>
+                    <Icon name={f.action.kind === "delete" ? "trash" : "drivenDimension"} size={13} />
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <label className="check weldment-check" title="A section for structural members: finishing opens the profile card, and it goes into the section library">
             <input type="checkbox" checked={weldment} onChange={(e) => setWeldment(e.target.checked)} data-testid="sketch-weldment" />
             Weldment profile
@@ -1112,47 +1340,154 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             </div>
           )}
         </section>
-        <section className="panel constraints-panel">
-          <h2>Relations and dimensions</h2>
+        {define && proposal && (
+          <section className="panel fully-define" data-testid="fully-define">
+            <h2>
+              <Icon name="fullyDefine" size={14} />
+              Fully Define Sketch
+              <button className="icon" aria-label="Close" title="Close (Esc)" onClick={() => setDefine(null)}>
+                <Icon name="x" size={14} />
+              </button>
+            </h2>
+            <label className="field">
+              <span className="field-label">Measure X and Y from</span>
+              <select value={define.datum} onChange={(e) => setDefine({ ...define, datum: e.target.value })} data-testid="fully-define-datum">
+                <option value="origin">The sketch origin</option>
+                {define.datum !== "origin" && <option value={define.datum}>Point {names.point(define.datum)}</option>}
+                {pickedPoint && pickedPoint.ref !== define.datum && <option value={pickedPoint.ref}>Point {names.point(pickedPoint.ref)} (selected)</option>}
+              </select>
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={define.relations} onChange={(e) => setDefine({ ...define, relations: e.target.checked })} data-testid="fully-define-relations" />
+              Relations: level, plumb, and points that meet
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={define.dimensions} onChange={(e) => setDefine({ ...define, dimensions: e.target.checked })} data-testid="fully-define-dimensions" />
+              Dimensions: sizes, then positions (baseline)
+            </label>
+            {"error" in proposal && proposal.error ? (
+              <p className="command-error">{String(proposal.error)}</p>
+            ) : proposal.add.length === 0 ? (
+              <p className="muted small" data-testid="fully-define-none">
+                {dof === 0 ? "Nothing to add: the sketch is fully defined." : "Nothing to add with these options."}
+              </p>
+            ) : (
+              <>
+                <p className="small muted">
+                  Adds {proposal.add.length}, drawn faded on the sketch. Nothing moves. {proposal.dof === 0 ? "Then: fully defined." : `Then: ${proposal.dof} degrees of freedom left.`}
+                </p>
+                <ol className="constraint-list proposed" data-testid="fully-define-list">
+                  {proposal.add.map((k, i) => (
+                    <li key={i}>
+                      <span className="constraint-label">
+                        <Icon name={RELATION[k.type].icon} size={14} />
+                        {describeConstraint(k, names)}
+                      </span>
+                      {"value" in k && <span className="dim-value">{dimensionText(k)}</span>}
+                    </li>
+                  ))}
+                </ol>
+              </>
+            )}
+            <div className="row-buttons">
+              <button className="primary" disabled={!proposal.add.length} onClick={applyFullyDefine} data-testid="fully-define-apply">
+                Apply
+              </button>
+              <button onClick={() => setDefine(null)} data-testid="fully-define-cancel">
+                Cancel
+              </button>
+            </div>
+          </section>
+        )}
+        <section className="panel constraints-panel" data-testid="relations-panel">
+          <h2>
+            <Icon name="relationsList" size={14} />
+            Relations and dimensions
+            <select
+              className="relation-filter"
+              value={relationFilter}
+              onChange={(e) => setRelationFilter(e.target.value as RelationFilter)}
+              aria-label="Show"
+              title="Display/Delete Relations: which to list"
+              data-testid="relations-filter"
+            >
+              <option value="all">All</option>
+              <option value="over">Over defining</option>
+              <option value="dangling">Dangling</option>
+              <option value="selected">On selected entities</option>
+            </select>
+          </h2>
           {draft.constraints.length === 0 && <p className="muted small">None yet.</p>}
-          <ol className="constraint-list" data-testid="constraint-list">
-            {draft.constraints.map((k, i) => (
-              <li
-                key={i}
-                data-testid={`constraint-row-${i}`}
-                className={picked === i ? "selected" : undefined}
-                onClick={(e) => {
-                  if ((e.target as HTMLElement).closest("input, button")) return;
-                  setPicked(picked === i ? null : i);
-                  setSelection([]);
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openMenu({ kind: "constraint", index: i }, e.clientX, e.clientY);
-                }}
-              >
-                <span className="constraint-label" title={constraintSentence(k, RELATION[k.type].label, names)}>
-                  <Icon name={RELATION[k.type].icon} size={14} />
-                  {describeConstraint(k, names)}
-                </span>
-                {"value" in k && (
-                  <NumberInput
-                    value={(k as Dimension).expr ?? k.value}
-                    min={0}
-                    testId={`constraint-value-${i}`}
-                    onCommit={(v) => {
-                      // The sketcher solves numbers; an expression is kept beside its value and written back on Finish.
-                      setDimension(i, v);
-                    }}
-                  />
-                )}
-                {"value" in k && <span className="unit">{k.type === "angle" ? "°" : "mm"}</span>}
-                <button className="icon" aria-label="Remove" title="Remove" onClick={() => removeConstraint(i)}>
-                  <Icon name="x" size={14} />
-                </button>
-              </li>
-            ))}
-          </ol>
+          {(() => {
+            const selectedIds = new Set(entityIds(selection));
+            const rows = filterRelations(draft.constraints, relationFilter, health, selectedIds);
+            const dimNames = dimensionNames(draft.constraints);
+            if (draft.constraints.length > 0 && rows.length === 0) {
+              return (
+                <p className="muted small" data-testid="relations-none">
+                  {relationFilter === "over" ? "Nothing over defines the sketch." : relationFilter === "dangling" ? "No dangling relations." : "None on the selected entities: select some on the sketch."}
+                </p>
+              );
+            }
+            return (
+              <ol className="constraint-list" data-testid="constraint-list">
+                {rows.map((i) => {
+                  const k = draft.constraints[i] as Dimension;
+                  const state = health.conflicting.includes(i) ? "conflict" : health.dangling.includes(i) ? "dangling" : isDriven(k) ? "driven" : "";
+                  return (
+                    <li
+                      key={i}
+                      data-testid={`constraint-row-${i}`}
+                      data-state={state || undefined}
+                      className={[picked === i ? "selected" : "", state].filter(Boolean).join(" ") || undefined}
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).closest("input, button")) return;
+                        setPicked(picked === i ? null : i);
+                        setSelection([]);
+                      }}
+                      onDoubleClick={(e) => {
+                        if ("value" in k && !(e.target as HTMLElement).closest("input, button")) setModify({ x: e.clientX, y: e.clientY, index: i });
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        openMenu({ kind: "constraint", index: i }, e.clientX, e.clientY);
+                      }}
+                    >
+                      <span className="constraint-label" title={constraintSentence(k, RELATION[k.type].label, names)}>
+                        <Icon name={RELATION[k.type].icon} size={14} />
+                        {dimNames[i] && (
+                          <span className="dim-name" data-testid={`constraint-name-${i}`} title={`Expressions read it as =${session.id}.${dimNames[i]}`}>
+                            {dimNames[i]}
+                          </span>
+                        )}
+                        {describeConstraint(k, names)}
+                      </span>
+                      {"value" in k &&
+                        (isDriven(k) ? (
+                          <span className="dim-value driven" data-testid={`constraint-value-${i}`} title="Driven: measured from the geometry, never solved">
+                            ({round(k.value)})
+                          </span>
+                        ) : (
+                          <NumberInput
+                            value={k.expr ?? k.value}
+                            min={0}
+                            testId={`constraint-value-${i}`}
+                            onCommit={(v) => {
+                              // The sketcher solves numbers; an expression is kept beside its value and written back on Finish.
+                              setDimension(i, v);
+                            }}
+                          />
+                        ))}
+                      {"value" in k && <span className="unit">{k.type === "angle" ? "°" : "mm"}</span>}
+                      <button className="icon" aria-label="Remove" title="Delete" onClick={() => removeConstraint(i)} data-testid={`constraint-delete-${i}`}>
+                        <Icon name="x" size={14} />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            );
+          })()}
         </section>
         <section className="panel sketch-actions">
           <button className="primary" onClick={finish} data-testid="finish-sketch">
@@ -1163,7 +1498,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           </button>
         </section>
       </aside>
-    </>
+    </ParametersContext.Provider>
   );
 }
 
@@ -1222,30 +1557,47 @@ function Offer({ offer, onAdd }: { offer: Suggestion; onAdd(v: number, expr?: st
 }
 
 /**
- * SOLIDWORKS's Modify box: the dimension's value where it was placed, a
- * number or "=expression"; Enter (or the tick) applies, Escape cancels. Two
- * points can be dimensioned aligned, level or plumb.
+ * SOLIDWORKS's Modify box: the dimension's value where it was placed. It
+ * takes a number, a calculation worked out once ("sqrt(2)*10", "1in",
+ * "30deg"), or an "=expression" that stays linked ("=sketch_1.width / 2");
+ * what it comes to shows beneath, and a mistake says why there. The spin
+ * buttons (and the arrow keys) step it by the increment set in Settings. An
+ * existing dimension can be renamed (expressions read it as
+ * <sketch>.<name>) and made driven. Enter (or the tick) applies, Esc cancels.
+ * Two points can be dimensioned aligned, level or plumb.
  */
 function ModifyBox({
   state,
   constraints,
+  sketch,
+  params,
   onChoose,
   onApply,
   onClose,
 }: {
   state: { x: number; y: number; options: Suggestion[]; choice: number } | { x: number; y: number; index: number };
   constraints: Constraint[];
+  sketch: string;
+  /** The names expressions read: the document's, with this sketch's dimensions as the draft has them. */
+  params: NameValues;
   onChoose(choice: number): void;
-  onApply(value: number, expr?: string): boolean;
+  /** True when applied; else why not (shown in the box), or false. */
+  onApply(change: DimensionChange): boolean | string;
   onClose(): void;
 }) {
-  const params = useContext(ParametersContext);
   const existing = "index" in state ? (constraints[state.index] as Dimension | undefined) : undefined;
   const option = "options" in state ? state.options[state.choice] : undefined;
-  const start = existing && "value" in existing ? String(existing.expr ?? existing.value) : String(option?.value ?? 0);
+  const start = existing && "value" in existing ? String(existing.expr ?? round(existing.value)) : String(option?.value ?? 0);
+  const ownName = existing ? (dimensionNames(constraints)[(state as { index: number }).index] ?? "") : "";
   const [text, setText] = useState(start);
+  const [name, setName] = useState(ownName);
+  const [driven, setDriven] = useState(existing ? isDriven(existing) : false);
   const [problem, setProblem] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const angle = (existing?.type ?? option?.make(0).type) === "angle";
+  const unit = angle ? "°" : "mm";
+  const steps = useMemo(loadSpin, []);
+  const step = angle ? steps.angle : steps.length;
   useLayoutEffect(() => {
     input.current?.focus();
     input.current?.select();
@@ -1261,18 +1613,33 @@ function ModifyBox({
       input.current?.select();
     });
   };
-  const apply = () => {
-    const t = text.trim();
-    if (t.startsWith("=")) {
-      const r = evaluate(t, params);
-      if (!r.ok) return setProblem(r.error);
-      if (onApply(r.value, t)) onClose();
-      return;
-    }
-    const v = Number(t);
-    if (t === "" || !Number.isFinite(v)) return setProblem("a number, or =expression");
-    if (onApply(v)) onClose();
+  const spin = (dir: 1 | -1) => {
+    if (driven) return;
+    const next = spinValue(text, dir, step, params, 0, angle ? "angle" : "length");
+    if (next === null) return setProblem(readError(text, params, angle ? "angle" : "length"));
+    setText(next);
+    setProblem(null);
   };
+  const apply = () => {
+    const n = name.trim();
+    const renamed = existing && n !== ownName ? { name: n } : {};
+    if (existing && n !== ownName && !DIMENSION_NAME.test(n)) return setProblem(`"${n}" is not a name: letters, digits and _, starting with a letter`);
+    if (existing && driven) {
+      // Measured: the value is the geometry's.
+      return done(onApply({ value: "value" in existing ? existing.value : 0, ...renamed, ...(isDriven(existing) ? {} : { driven: true }) }));
+    }
+    const r = readValue(text, params, angle ? "angle" : "length");
+    if (!r.ok) return setProblem(r.error);
+    if (r.value < 0) return setProblem("a dimension is 0 or more");
+    const change: DimensionChange = { value: r.value, ...(r.expr ? { expr: r.expr } : {}), ...renamed, ...(existing && isDriven(existing) ? { driven: false } : {}) };
+    done(onApply(change));
+  };
+  /** Applied: the box closes. Refused: why, in the box. */
+  const done = (r: boolean | string) => {
+    if (r === true) onClose();
+    else if (typeof r === "string") setProblem(r);
+  };
+  const evaluated = driven ? null : shownValue(text, params, unit);
   const label = existing ? RELATION[existing.type].label : option?.label;
   return (
     <Popup x={state.x + 12} y={state.y + 12} onClose={onClose} label="Modify" testId="modify-box">
@@ -1291,15 +1658,39 @@ function ModifyBox({
               ))}
             </div>
           )}
+          {existing && (
+            <label className="modify-name" title={`Expressions anywhere read it as =${sketch}.${name || ownName}`}>
+              <span className="muted">{sketch}.</span>
+              <input
+                type="text"
+                value={name}
+                aria-label="Name"
+                spellCheck={false}
+                data-testid="modify-name"
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setProblem(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    apply();
+                  }
+                }}
+              />
+            </label>
+          )}
           <div className="modify-row">
             <input
               ref={input}
               type="text"
               inputMode="decimal"
-              value={text}
-              className={text.trim().startsWith("=") ? "expr" : undefined}
+              value={driven && existing && "value" in existing ? `(${round(existing.value)})` : text}
+              readOnly={driven}
+              className={[text.trim().startsWith("=") ? "expr" : "", driven ? "driven" : ""].filter(Boolean).join(" ") || undefined}
               aria-invalid={problem ? true : undefined}
               aria-label="Value"
+              title="A number, a calculation (sqrt(2)*10, 1in, 30deg), or =expression to stay linked to parameters and dimensions"
               data-testid="modify-value"
               onChange={(e) => {
                 setText(e.target.value);
@@ -1309,10 +1700,21 @@ function ModifyBox({
                 if (e.key === "Enter") {
                   e.preventDefault();
                   apply();
+                } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  spin(e.key === "ArrowUp" ? 1 : -1);
                 }
               }}
             />
-            <span className="unit">{(existing?.type ?? option?.make(0).type) === "angle" ? "°" : "mm"}</span>
+            <span className="spin" aria-hidden={driven}>
+              <button type="button" tabIndex={-1} disabled={driven} onClick={() => spin(1)} aria-label={`Up ${step} ${unit}`} title={`Up ${step} ${unit} (↑; the step is in Settings)`} data-testid="modify-spin-up">
+                ▲
+              </button>
+              <button type="button" tabIndex={-1} disabled={driven} onClick={() => spin(-1)} aria-label={`Down ${step} ${unit}`} title={`Down ${step} ${unit} (↓)`} data-testid="modify-spin-down">
+                ▼
+              </button>
+            </span>
+            <span className="unit">{unit}</span>
             <button type="button" className="icon" onClick={apply} aria-label="Apply" title="Apply (Enter)" data-testid="modify-ok">
               <Icon name="check" size={14} />
             </button>
@@ -1320,11 +1722,32 @@ function ModifyBox({
               <Icon name="x" size={14} />
             </button>
           </div>
-          {problem && <div className="expr-error">{problem}</div>}
+          {evaluated && !problem && (
+            <div className="modify-evaluated muted small" data-testid="modify-evaluated">
+              {evaluated}
+            </div>
+          )}
+          {problem && (
+            <div className="expr-error" data-testid="modify-error">
+              {problem}
+            </div>
+          )}
+          {existing && (
+            <label className="check modify-driven" title="A driven (reference) dimension measures the geometry and never moves it; it shows in parentheses">
+              <input type="checkbox" checked={driven} onChange={(e) => setDriven(e.target.checked)} data-testid="modify-driven" />
+              Driven (reference)
+            </label>
+          )}
         </div>
       )}
     </Popup>
   );
+}
+
+/** Why what is typed can't be read, for the Modify box. */
+function readError(text: string, params: NameValues, kind: ValueKind): string {
+  const r = readValue(text, params, kind);
+  return r.ok ? "" : r.error;
 }
 
 /** Longer names for the tooltips. */
@@ -1340,16 +1763,16 @@ function round(x: number): number {
   return Math.round(x * 1000) / 1000;
 }
 
-/** Identity of a constraint, ignoring its value; pairs in either order. */
+/** Identity of a constraint, ignoring its value, name and driven state; pairs in either order. */
 function constraintKey(k: Constraint): string {
-  const { value: _ignored, expr: _expr, ...rest } = k as Dimension & { value?: number };
+  const { value: _ignored, expr: _expr, was: _was, name: _name, driven: _driven, ...rest } = k as Dimension & { value?: number; name?: string; driven?: boolean };
   if (k.type === "coincident" || (k.type === "horizontal" || k.type === "vertical") && k.points) return `${k.type}:${[...k.points!].sort().join("|")}`;
   if ("entities" in k && k.entities && k.type !== "angle" && k.type !== "offset") return `${k.type}:${[...k.entities].sort().join("|")}${k.type === "symmetric" ? `@${k.line}` : ""}`;
   return JSON.stringify(rest);
 }
 
-/** A constraint as the solver and the document see it: its number, without the expression beside it. */
+/** A constraint as the solver and the document see it: its number, without the expression and old name beside it. */
 function numeric(c: Dimension): Constraint {
-  const { expr: _expr, ...rest } = c;
+  const { expr: _expr, was: _was, ...rest } = c;
   return rest as Constraint;
 }

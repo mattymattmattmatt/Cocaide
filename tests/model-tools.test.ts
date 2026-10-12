@@ -117,8 +117,8 @@ describe("the registry", () => {
     for (const id of ["tool.measure", "tool.section", "tool.sketchPattern"]) {
       expect(planned).toContain(id);
     }
-    // The sketch edit tools (trim … copy) landed in wave 3.
-    const sketch = ["ellipse", "spline", "fullyDefine"];
+    // The sketch edit tools (trim … copy) landed in wave 3, Fully Define in wave 4.
+    const sketch = ["ellipse", "spline"];
     expect(planned.filter((id) => id.startsWith("sketch.")).sort()).toEqual(sketch.map((s) => `sketch.${s}`).sort());
   });
 });

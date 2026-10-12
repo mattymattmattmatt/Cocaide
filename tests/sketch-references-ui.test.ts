@@ -207,8 +207,8 @@ describe("names, rows and suggestions", () => {
       { kind: "entity", id: "X" },
     ]).map((o) => o.make(o.value ?? 0));
     expect(offers.map((k) => k.type)).toEqual(["parallel", "perpendicular", "collinear", "distance"]);
-    // The distance between parallel lines is from a point of the sketch's own line to the axis.
-    expect(offers[3]).toEqual({ type: "distance", point: "l2.start", line: "X", value: 5 });
+    // The distance between parallel lines (Wave 4B: a line-to-line distance), the axis first.
+    expect(offers[3]).toEqual({ type: "distance", lines: ["X", "l2"], value: 5 });
     expect(axesAllowed({ type: "equal", entities: ["l2", "X"] })).toBe(false);
     expect(axesAllowed({ type: "distance", entity: "X", value: 1 })).toBe(false);
     expect(axesAllowed({ type: "pointOn", point: "l2.start", entity: "Y" })).toBe(true);

@@ -61,7 +61,7 @@ test("relations: inferred while drawing, added from a selection, shown as glyphs
   await page.getByTestId("c-fix").click();
   await expect(page.locator('[data-entity="l1"]')).toHaveClass(/\bdefined\b/);
   await expect(page.locator('[data-entity="l2"]')).toHaveClass(/\bfree\b/);
-  await expect(page.getByTestId("sketch-status")).toHaveText("Under defined");
+  await expect(page.getByTestId("sketch-status")).toHaveText(/^Under defined · \d+ DOF$/);
 
   // Hide the glyphs, show them again.
   await page.getByTestId("tool-relations").click();
@@ -115,6 +115,8 @@ test("Smart Dimension: a line's length, a circle's diameter, two lines' angle, i
   await page.keyboard.press("d");
   await sketchClick(page, 0, 0);
   await sketchClick(page, 60, 20);
+  // Where it is dropped says which (below them: horizontal); the box offers the others too.
+  await sketchClick(page, 30, -10);
   await expect(page.getByTestId("modify-c-distance-x")).toBeVisible();
   await page.getByTestId("modify-c-distance-y").click();
   await expect(page.getByTestId("modify-value")).toHaveValue("20");
@@ -185,10 +187,12 @@ test("a plate sketched as in SOLIDWORKS: inferred relations, Smart Dimensions, e
   }
   await sketchClick(page, -40, -20);
   await sketchClick(page, -20, 0);
+  await sketchClick(page, -30, -28); // dropped below: horizontal
   await page.getByTestId("modify-c-distance-x").click();
   await page.getByTestId("modify-value").press("Enter");
   await sketchClick(page, -40, -20);
   await sketchClick(page, -20, 0);
+  await sketchClick(page, -48, -10); // dropped beside: vertical
   await page.getByTestId("modify-c-distance-y").click();
   await page.getByTestId("modify-value").press("Enter");
   await page.getByTestId("tool-select").click();

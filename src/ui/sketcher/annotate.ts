@@ -4,7 +4,7 @@
 // sketch millimetres, y up; the canvas draws it.
 
 import type { Constraint, ConstraintType, SketchEntity, Vec2 } from "../../doc/types";
-import { withAxes } from "../../geom/axes";
+import { isDriven, withAxes } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
 import type { IconName } from "../icons";
@@ -31,13 +31,19 @@ export const RELATION: Record<ConstraintType, { label: string; icon: IconName }>
   symmetric: { label: "Symmetric", icon: "symmetric" },
   fix: { label: "Fix", icon: "fix" },
   offset: { label: "Offset", icon: "offset" },
+  arcLength: { label: "Arc length", icon: "arcLength" },
+  coradial: { label: "Coradial", icon: "coradial" },
+  intersection: { label: "Intersection", icon: "intersection" },
 };
 
 /** A dimension's text: R and Ø for radii and diameters, ° for angles, at most three decimals. */
 export function dimensionText(k: Constraint): string {
   if (!("value" in k)) return "";
   const v = String(Math.round(k.value * 1000) / 1000);
-  return k.type === "radius" ? `R${v}` : k.type === "diameter" ? `Ø${v}` : k.type === "angle" ? `${v}°` : v;
+  const doubled = k.type === "distance" && k.doubled;
+  const text = k.type === "radius" ? `R${v}` : k.type === "diameter" || doubled ? `Ø${v}` : k.type === "angle" ? `${v}°` : k.type === "arcLength" ? `⌒${v}` : v;
+  // A driven (reference) dimension reads in parentheses, as on a drawing.
+  return isDriven(k) ? `(${text})` : text;
 }
 
 export interface DimensionShape {
@@ -154,14 +160,66 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         if (e?.type === "line") [p, q] = [e.start, e.end];
         else if (e?.type === "slot") [p, q] = [e.center1, e.center2];
         else if (k.points) [p, q] = [at(k.points[0]), at(k.points[1])];
-        else if (k.point && k.line) {
+        else if (k.lines) {
+          // Two lines: from the second's middle square to the first.
+          const [a, b] = k.lines.map((id) => byId.get(id));
+          if (a?.type !== "line" || b?.type !== "line") return;
+          q = [(b.start[0] + b.end[0]) / 2, (b.start[1] + b.end[1]) / 2];
+          p = foot(a.start, a.end, q);
+        } else if (k.point && k.line) {
           const l = byId.get(k.line);
           p = at(k.point);
           if (l?.type === "line" && p) q = foot(l.start, l.end, p);
+          // A diameter across a centreline: from the point to its mirror image.
+          if (k.doubled && p && q) q = [2 * q[0] - p[0], 2 * q[1] - p[1]];
         }
         if (!p || !q) return;
+        // Min or max: the ends at the circles' near or far sides.
+        if (k.condition === "min" || k.condition === "max") {
+          const refs = k.points ?? (k.point ? [k.point] : []);
+          const shift = (end: Vec2, ref: string | undefined, toward: Vec2): Vec2 => {
+            const r = ref ? radiusAt(ref, byId) : 0;
+            if (!r) return end;
+            const axis = k.type === "distanceX" ? 0 : k.type === "distanceY" ? 1 : null;
+            const d: Vec2 = axis === null ? sub2(toward, end) : axis === 0 ? [Math.sign(toward[0] - end[0]) || 1, 0] : [0, Math.sign(toward[1] - end[1]) || 1];
+            const n = Math.hypot(d[0], d[1]) || 1;
+            const s = k.condition === "min" ? 1 : -1;
+            return [end[0] + (s * r * d[0]) / n, end[1] + (s * r * d[1]) / n];
+          };
+          const [p0, q0] = [p, q];
+          p = shift(p0, refs[0], q0);
+          q = shift(q0, refs[1], p0);
+        }
         if (k.type === "distance") aligned(index, text, p, q);
         else straight(index, text, p, q, k.type === "distanceX" ? 0 : 1);
+        return;
+      }
+      case "arcLength": {
+        // An arc beside the arc, its ends marked: SOLIDWORKS's arc length dimension.
+        const a = byId.get(k.entity);
+        if (a?.type !== "arc") return;
+        const r = dist2(a.start, a.center);
+        const a0 = angleOf(sub2(a.start, a.center));
+        const sweep = (a.clockwise ? -1 : 1) * arcTurn(a);
+        const R = r + gap;
+        const end = (t: number): Vec2 => [a.center[0] + R * Math.cos(t), a.center[1] + R * Math.sin(t)];
+        const tip = (t: number): Vec2 => [a.center[0] + r * Math.cos(t), a.center[1] + r * Math.sin(t)];
+        const s = Math.sign(sweep) || 1;
+        const mid = a0 + sweep / 2;
+        out.push({
+          index,
+          text,
+          lines: [
+            [tip(a0), end(a0)],
+            [tip(a0 + sweep), end(a0 + sweep)],
+          ],
+          arc: { center: a.center, r: R, from: a0, sweep },
+          arrows: [
+            { at: end(a0), dir: [Math.sin(a0) * s, -Math.cos(a0) * s] },
+            { at: end(a0 + sweep), dir: [-Math.sin(a0 + sweep) * s, Math.cos(a0 + sweep) * s] },
+          ],
+          at: [a.center[0] + (R + 12 * px) * Math.cos(mid), a.center[1] + (R + 12 * px) * Math.sin(mid)],
+        });
         return;
       }
       case "radius":
@@ -199,7 +257,8 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         if (a?.type !== "line" || b?.type !== "line") return;
         const x = meet(a.start, a.end, b.start, b.end) ?? a.start;
         const ua = angleOf(sub2(a.end, a.start));
-        const ub = angleOf(sub2(b.end, b.start));
+        // The other quadrant: from the first line to the second turned back on itself.
+        const ub = angleOf(sub2(b.end, b.start)) + (k.supplement ? Math.PI : 0);
         let sweep = ub - ua;
         while (sweep > Math.PI) sweep -= 2 * Math.PI;
         while (sweep <= -Math.PI) sweep += 2 * Math.PI;
@@ -254,7 +313,42 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
     const tries = (e.type === "circle" ? [0, 1, 3, 2] : [0]).map((q) => leader(a + (q * Math.PI) / 2));
     out.push(tries.find((t) => out.every((o) => dist2(o.at, t.at) > 28 * px)) ?? tries[0]);
   }
+  unstack(out, px);
   return out;
+}
+
+/**
+ * Linear dimensions that would sit on top of one another (a line's length
+ * and the width between its ends, a driven one beside the driving one) step
+ * further out, one row each, so every value can be read and clicked.
+ */
+function unstack(shapes: DimensionShape[], px: number): void {
+  const placed: DimensionShape[] = [];
+  for (const d of shapes) {
+    // Only straight dimensions (two extension lines and the dimension line) move; leaders and arcs keep their place.
+    if (!d.arc && d.lines.length === 3) {
+      const [a, b] = d.lines[2];
+      const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      // Every point moved is a new array: the arrows share the dimension line's ends.
+      const off = sub2(d.at, mid);
+      const n = Math.hypot(off[0], off[1]);
+      if (n > 1e-12) {
+        const u: Vec2 = [off[0] / n, off[1] / n];
+        for (let row = 0; row < 6 && placed.some((o) => dist2(o.at, d.at) < 14 * px); row++) {
+          const step: Vec2 = [u[0] * 18 * px, u[1] * 18 * px];
+          const move = (p: Vec2): Vec2 => [p[0] + step[0], p[1] + step[1]];
+          d.lines = [
+            [d.lines[0][0], move(d.lines[0][1])],
+            [d.lines[1][0], move(d.lines[1][1])],
+            [move(d.lines[2][0]), move(d.lines[2][1])],
+          ];
+          d.arrows = d.arrows.map((x) => ({ ...x, at: move(x.at) }));
+          d.at = move(d.at);
+        }
+      }
+    }
+    placed.push(d);
+  }
 }
 
 export interface Glyph {
@@ -374,7 +468,9 @@ export function relationGlyphs(entities: SketchEntity[], constraints: Constraint
       case "collinear":
       case "tangent":
       case "concentric":
+      case "coradial":
         return k.entities.forEach((id) => onEntity(id, index, icon));
+      case "intersection":
       case "midpoint":
       case "pointOn":
         return onPoint(k.point, index, icon);
@@ -410,6 +506,24 @@ function anchorOf(e: SketchEntity): Vec2 {
     case "point":
       return e.at;
   }
+}
+
+/** The radius of the circle or arc whose centre a point ref is ("c1.center"); 0 for any other point. */
+function radiusAt(ref: string, byId: Map<string, SketchEntity>): number {
+  const [id, name] = ref.split(".");
+  const e = byId.get(id);
+  if (name !== "center") return 0;
+  return e?.type === "circle" ? e.radius : e?.type === "arc" ? dist2(e.start, e.center) : 0;
+}
+
+/** How far an arc turns, radians, 0 to 2π. */
+function arcTurn(a: Extract<SketchEntity, { type: "arc" }>): number {
+  const a0 = angleOf(sub2(a.start, a.center));
+  const a1 = angleOf(sub2(a.end, a.center));
+  let s = a.clockwise ? a0 - a1 : a1 - a0;
+  while (s <= 0) s += 2 * Math.PI;
+  while (s > 2 * Math.PI) s -= 2 * Math.PI;
+  return s;
 }
 
 /** The foot of the perpendicular from p to the line through a and b. */

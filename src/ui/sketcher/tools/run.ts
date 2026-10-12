@@ -161,6 +161,33 @@ export function place(def: SketchToolDef, clicks: Click[], options: ToolOptions,
   };
 }
 
+/**
+ * The shape with its last click placed by values typed (on-screen numeric
+ * input), the values its driving dimensions (kept with the shape's own
+ * relations). Null when the tool takes no typed values or they make nothing.
+ */
+export function placeTyped(
+  def: SketchToolDef,
+  clicks: Click[],
+  values: (number | undefined)[],
+  pointer: Vec2,
+  options: ToolOptions,
+  ctx: ToolContext,
+  construction = false,
+): Placement | null {
+  const last = def.typed?.place(clicks, values, pointer);
+  if (!def.typed || !last) return null;
+  const made = place(def, [...clicks, last], options, ctx, construction);
+  if (!made) return null;
+  const dims = def.typed.dimensions({ entities: made.entities, relations: made.relations, roles: [] }, values);
+  return { ...made, relations: [...made.relations, ...dims] };
+}
+
+/** Where the typed values put the last click, for the preview (the pointer gives what is not typed yet). */
+export function typedClick(def: SketchToolDef, clicks: Click[], values: (number | undefined)[], pointer: Vec2): Click | null {
+  return def.typed?.place(clicks, values, pointer) ?? null;
+}
+
 /** The rubber band for the clicks so far, the pointer's snapped place last. */
 export function previewOf(def: SketchToolDef, clicks: Click[], options: ToolOptions, ctx: ToolContext, construction = false): SketchEntity[] {
   const values = optionValues(def, options);

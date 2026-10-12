@@ -5,6 +5,7 @@
 import { dist2 } from "../../../geom/vec";
 import { EPS, line, oriented } from "./shapes";
 import type { Built, Click, FlyoutDef, SketchToolDef } from "./types";
+import { LINE_TYPED } from "./typed";
 
 const LINE: FlyoutDef = { id: "line", label: "Line" };
 
@@ -34,6 +35,7 @@ export const tools: SketchToolDef[] = [
     prompts: ["Click where the line starts", "Click where it ends; keep clicking to chain lines, Esc to stop"],
     alignTo: (pts) => (pts.length === 1 ? pts[0] : undefined),
     build: (clicks, _options, ids) => buildLine(clicks, ids("l"), false),
+    typed: LINE_TYPED,
   },
   {
     id: "sketch.centerline",
@@ -47,6 +49,7 @@ export const tools: SketchToolDef[] = [
     prompts: ["Click where the centreline starts", "Click where it ends; Esc to stop"],
     alignTo: (pts) => (pts.length === 1 ? pts[0] : undefined),
     build: (clicks, _options, ids) => buildLine(clicks, ids("l"), true),
+    typed: LINE_TYPED,
   },
   {
     id: "sketch.midpointLine",

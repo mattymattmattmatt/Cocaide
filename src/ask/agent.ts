@@ -489,7 +489,9 @@ function toCommand(name: string, a: Record<string, unknown>): Command | string {
     case "deleteFeature":
       return { type: "deleteFeature", id: str("id") };
     case "setParameter":
-      return { type: "setParameter", name: str("name"), value: a.value as number };
+      return { type: "setParameter", name: str("name"), value: a.value as number | string };
+    case "renameParameter":
+      return { type: "renameParameter", from: str("from"), to: str("to") };
     case "renameBody":
       return { type: "renameBody", from: str("from"), to: str("to") };
     case "setNode":
@@ -505,7 +507,11 @@ function toCommand(name: string, a: Record<string, unknown>): Command | string {
     case "setSheet":
       return obj("patch") ? { type: "setSheet", patch: obj("patch")! } : "setSheet: patch must be an object";
     case "setDimension":
-      return { type: "setDimension", sketch: str("sketch"), index: a.index as number, value: a.value as number | string };
+      return { type: "setDimension", sketch: str("sketch"), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), value: a.value as number | string };
+    case "renameDimension":
+      return { type: "renameDimension", sketch: str("sketch"), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), to: str("to") };
+    case "setDriven":
+      return { type: "setDriven", sketch: str("sketch"), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), driven: a.driven !== false };
     case "addEntity":
       return obj("entity") ? { type: "addEntity", sketch: str("sketch"), entity: obj("entity")! } : "addEntity: entity must be an object";
     case "updateEntity":

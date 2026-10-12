@@ -5,6 +5,7 @@ import type { Vec2 } from "../../../doc/types";
 import { dist2 } from "../../../geom/vec";
 import { circumcircle, EPS } from "./shapes";
 import type { FlyoutDef, SketchToolDef } from "./types";
+import { CIRCLE_TYPED } from "./typed";
 
 const CIRCLE: FlyoutDef = { id: "circle", label: "Circle" };
 
@@ -25,6 +26,7 @@ export const tools: SketchToolDef[] = [
       const id = ids("c");
       return { entities: [{ id, type: "circle", center: c, radius }], relations: [], roles: [{ point: `${id}.center` }, { on: id }] };
     },
+    typed: CIRCLE_TYPED,
   },
   {
     id: "sketch.circle3",
