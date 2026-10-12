@@ -16,6 +16,7 @@ import { tools as reference } from "./reference";
 import { tools as revolve } from "./revolve";
 import { tools as dress } from "./dress";
 import { tools as scale } from "./scale";
+import { tools as sweep } from "./sweep";
 
 const LISTS: ToolDef[][] = [
   sketch,
@@ -30,6 +31,7 @@ const LISTS: ToolDef[][] = [
   revolve,
   dress,
   scale,
+  sweep,
 ];
 
 export const MODEL_TOOLS: ToolDef[] = LISTS.flat();

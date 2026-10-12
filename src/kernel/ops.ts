@@ -56,7 +56,8 @@ export const pnt = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Pnt(v[0], v[
 export const dir = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Dir(v[0], v[1], v[2]));
 export const vec = (oc: OC, s: Scope, v: Vec3) => s.track(new oc.gp_Vec(v[0], v[1], v[2]));
 
-function loopWire(oc: OC, s: Scope, frame: Frame, loop: Loop) {
+/** One loop of a profile as a wire in the model (lines, arcs, whole circles). Tracked in `s`. */
+export function loopWire(oc: OC, s: Scope, frame: Frame, loop: Loop) {
   const wire = s.track(new oc.BRepBuilderAPI_MakeWire());
   for (const seg of loop.segs) {
     let edge;

@@ -10,6 +10,9 @@ import { def as point } from "./point/doc";
 import { def as revolve } from "./revolve/doc";
 import { def as shell } from "./shell/doc";
 import { def as draft } from "./draft/doc";
+import { def as sweep } from "./sweep/doc";
+import { def as loft } from "./loft/doc";
+import { def as rib } from "./rib/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -19,4 +22,7 @@ export const DOC_DEFS = [
   revolve,
   shell,
   draft,
+  sweep,
+  loft,
+  rib,
 ];

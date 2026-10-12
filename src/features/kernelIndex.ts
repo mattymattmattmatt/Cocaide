@@ -10,6 +10,9 @@ import { kernel as point } from "./point/kernel";
 import { kernel as revolve } from "./revolve/kernel";
 import { kernel as shell } from "./shell/kernel";
 import { kernel as draft } from "./draft/kernel";
+import { kernel as sweep } from "./sweep/kernel";
+import { kernel as loft } from "./loft/kernel";
+import { kernel as rib } from "./rib/kernel";
 
 export const KERNEL_DEFS = [
   scale,
@@ -19,4 +22,7 @@ export const KERNEL_DEFS = [
   revolve,
   shell,
   draft,
+  sweep,
+  loft,
+  rib,
 ];

@@ -63,14 +63,20 @@ describe("the registry", () => {
       "tool-shell",
       "tool-draft",
       "tool-scale",
+      "tool-sweep",
+      "tool-sweep-cut",
+      "tool-helix",
+      "tool-loft",
+      "tool-loft-cut",
+      "tool-rib",
     ]);
   });
 
   it("lays out the CommandManager: Sketch pinned, then each tab's groups in order, patterns in one menu", () => {
     expect(ids(toolbarGroups("pinned"))).toEqual([["tool.sketch"]]);
     expect(ids(toolbarGroups("features"))).toEqual([
-      ["tool.extrude", "tool.cut", "revolve: tool.revolve, tool.revolveCut"],
-      ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft"],
+      ["tool.extrude", "tool.cut", "revolve: tool.revolve, tool.revolveCut", "sweep: tool.sweep, tool.sweepCut, tool.helix", "loft: tool.loft, tool.loftCut"],
+      ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft", "tool.rib"],
       ["pattern: tool.linearPattern, tool.circularPattern", "tool.mirror"],
     ]);
     expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"]]);
@@ -107,7 +113,8 @@ describe("the registry", () => {
 
   it("reserves a command for each tool still to come, out of Settings until it lands", () => {
     const planned = COMMANDS.filter((c) => c.planned).map((c) => c.id);
-    for (const id of ["tool.sweep", "tool.loft", "tool.rib", "tool.measure", "tool.section", "tool.sketchPattern"]) {
+    // Sweep, Loft and Rib landed in wave 4.
+    for (const id of ["tool.measure", "tool.section", "tool.sketchPattern"]) {
       expect(planned).toContain(id);
     }
     // The sketch edit tools (trim … copy) landed in wave 3.
@@ -284,7 +291,7 @@ describe("Pattern and Mirror", () => {
     ]);
     const none = harness(doc, view);
     run("tool.linearPattern", none.ctx);
-    expect(none.out.notices).toEqual([["error", "Select an extrude, cut, hole, member or revolve in the feature tree, then Pattern."]]);
+    expect(none.out.notices).toEqual([["error", "Select an extrude, cut, hole, member, revolve, sweep, loft or rib in the feature tree, then Pattern."]]);
   });
 
   it("mirror the selected feature about the part's middle, or the clicked body beside itself", () => {
