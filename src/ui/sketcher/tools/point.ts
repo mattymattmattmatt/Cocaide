@@ -1,4 +1,4 @@
-// Point, as SOLIDWORKS has it: a sketch point on its own, for a hole centre,
+// Point: a sketch point on its own, for a hole centre,
 // a pattern instance or a dimension's anchor. Clicked on a line's middle or
 // on a curve, it stays there. A click on a sketch point adds nothing: one
 // point there is enough (a double-click would otherwise stack two).

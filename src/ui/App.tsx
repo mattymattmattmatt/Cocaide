@@ -743,7 +743,7 @@ export function App() {
   const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
     // Empty space: the menu for the whole part.
     if (!target) return contextMenuRef.current({ kind: "part" }, x, y);
-    // Select what was right-clicked, as SOLIDWORKS does: its menu acts on it, and it stays outlined while an ask is open.
+    // Select what was right-clicked, the usual CAD way: its menu acts on it, and it stays outlined while an ask is open.
     // An edge, vertex or plane keeps a selection it is already part of (Fillet the selected edges); a face's entries act
     // on that one face at the point clicked (Sketch on this face, Hole here), so a face is always selected alone, here.
     setSelection((sel) => (target.kind !== "face" && isSelected(sel, target) ? sel : only(target)));
@@ -757,7 +757,7 @@ export function App() {
   // A plain click selects one face or edge; Ctrl- or Shift-click adds one, or takes it out again.
   const onPick = useCallback((target: PickTarget | null, additive: boolean) => setSelection((sel) => pickInto(sel, target, additive)), []);
 
-  // Escape clears the selection; Ctrl+Shift+Z redoes too (Ctrl+Y is SOLIDWORKS's). Every other key is a command below.
+  // Escape clears the selection; Ctrl+Shift+Z redoes too (Ctrl+Y is the usual one). Every other key is a command below.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (sketch || e.defaultPrevented) return;
@@ -841,7 +841,7 @@ export function App() {
   };
 
   /**
-   * The right-click menu, as SOLIDWORKS has one on everything: what can be
+   * The right-click menu, as CAD users expect one on everything: what can be
    * done to the thing under the pointer, then "Ask AI…", which opens the ask
    * panel about it.
    */
@@ -1570,7 +1570,7 @@ function Help() {
         {step(
           "move",
           "Mouse and keys",
-          "as in SOLIDWORKS: middle-drag rotates, Ctrl+middle pans, the wheel zooms; Space for views, S for the shortcut bar, Ctrl+1–8 for the standard views. Settings changes them.",
+          "the usual CAD way: middle-drag rotates, Ctrl+middle pans, the wheel zooms; Space for views, S for the shortcut bar, Ctrl+1–8 for the standard views. Settings changes them.",
         )}
       </ol>
       <p className="muted small">

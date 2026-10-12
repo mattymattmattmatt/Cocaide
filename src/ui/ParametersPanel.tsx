@@ -1,6 +1,6 @@
 // Document parameters: named numbers any number field can use as "=name".
 // A parameter may itself be an "=expression" over the others and the
-// sketches' named dimensions ("=sketch_1.width / 2"): SOLIDWORKS's equations.
+// sketches' named dimensions ("=sketch_1.width / 2"): the part's equations.
 // Changing one is one setParameter command, so it is one undo step and the
 // sketches that use it are re-solved. Double-click a name to rename it (every
 // expression that reads it follows). The named dimensions are listed beneath,

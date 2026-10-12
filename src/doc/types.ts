@@ -501,7 +501,7 @@ export type PointRef = string;
  * What every dimension (a constraint with a value) may carry:
  * - `name`: what expressions call it, as <sketch id>.<name> ("=sketch_1.width * 2"). Without one it is d<n>,
  *   n its place among the sketch's dimensions; a name given is kept whatever is deleted around it.
- * - `driven`: a reference dimension (SOLIDWORKS's driven dimension): measured from the geometry, never solved,
+ * - `driven`: a reference (driven) dimension: measured from the geometry, never solved,
  *   shown in parentheses; its value is what it measures, kept up to date by every solve.
  */
 export interface DimensionFields {
@@ -544,7 +544,7 @@ export interface DistanceConstraint extends DimensionFields {
   /**
    * Measured to a circle's or arc's nearest (min) or farthest (max) point
    * rather than its centre, wherever a point of the dimension is the centre
-   * of a circle or arc ("c1.center"). SOLIDWORKS: Shift-click the circle.
+   * of a circle or arc ("c1.center"). In the sketcher: Shift-click the circle.
    */
   condition?: ArcCondition;
   /**
@@ -581,7 +581,7 @@ export interface EqualConstraint {
 }
 
 /**
- * Relations between two entities, as SOLIDWORKS has them: parallel,
+ * Relations between two entities, the standard CAD set: parallel,
  * perpendicular and collinear lines; tangent (a line and a circle or arc, or
  * two circles or arcs, on whichever side they are); concentric circles or arcs;
  * coradial circles or arcs (concentric and the same radius, as one relation).
@@ -664,7 +664,7 @@ export type ConstraintType = Constraint["type"];
 // ------------------------------------------------------- extrude and cut
 
 /**
- * Where an extrude or cut ends (SOLIDWORKS "end conditions"):
+ * Where an extrude or cut ends (its "end condition"):
  * - blind: `distance` along the direction; midplane: `distance` in all, half each way;
  * - throughAll: through every body it works on; throughAllBoth: that, both ways;
  * - upToNext: to the next face of the part it meets (a boss stops where it
@@ -731,7 +731,7 @@ export interface ExtrudeFeature extends FeatureBase {
   regions?: Vec2[];
   /** extrude: keep only where the extrusion and the body overlap (an intersect). */
   intersect?: boolean;
-  /** cut: remove what lies outside the profile instead (SOLIDWORKS "flip side to cut"). */
+  /** cut: remove what lies outside the profile instead ("flip side to cut"). */
   flipSide?: boolean;
   /** extrude: the body to add to (default "main"). */
   body?: string;

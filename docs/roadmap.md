@@ -12,7 +12,7 @@ weldment is many bodies in one part, so multibody parts come first.
 
 **Done.** See the README's Phase H acceptance.
 
-One part, many solids. SolidWorks has this, but its bodies are the weak
+One part, many solids. Other CAD packages have this, but their bodies are the weak
 spot: they are named by the feature that happened to make them
 ("Boss-Extrude3[2]"), they merge silently, and nothing tells you when two
 bodies overlap. Cocaide's rules:
@@ -62,7 +62,7 @@ an edit to the other.
 **Done.** See the README's Phase I acceptance.
 
 Sections are not typed in from tables: they are drawn, in the same sketcher as
-everything else, and the library grows as parts are made. In SolidWorks a
+everything else, and the library grows as parts are made. In the usual CAD tools a
 profile is a separate file in a folder tree, set up in options, edited by
 opening another document. In Cocaide it is one tick box away from any sketch.
 
@@ -181,7 +181,7 @@ The spec's "later" list says it: drawing generation projects the solid, not
 the other way around. A drawing is views of the rebuilt part, and every
 number on it is measured from that part. Nothing on a sheet is typed except
 notes and the title block, so a drawing can't disagree with the model it was
-made from. In SolidWorks a drawing is a second file that goes stale and whose
+made from. In the usual CAD tools a drawing is a second file that goes stale and whose
 dimensions dangle when a feature changes. In Cocaide it is part of the
 document, it rebuilds with the part, and a change it can no longer show is
 listed as a problem, not drawn wrong.
@@ -300,7 +300,7 @@ Acceptance:
 
 ## Phase N — sketch relations, right-click menus, a freer assistant
 
-**Done.** From using the app: the sketcher needs SOLIDWORKS's relations, every
+**Done.** From using the app: the sketcher needs the usual CAD relations, every
 right-click needs a menu, and the assistant needs room to work.
 
 - **Relations.** Besides coincident, horizontal, vertical and equal:
@@ -321,7 +321,7 @@ right-click needs a menu, and the assistant needs room to work.
   each dimension as a dimension, and has Smart Dimension (D) with its Modify
   box. Geometry is blue while it can move and black when fully defined; which
   numbers can still move is read from the null space of the solver's Jacobian.
-- **Right-click menus** on every target: the actions SOLIDWORKS puts there,
+- **Right-click menus** on every target: the actions CAD users expect there,
   and **Ask AI…** last, which opens the ask panel.
 - **Reach.** An ask may change the whole part by default: the right-clicked
   thing is the focus, the packet carries the part's outline, every feature is

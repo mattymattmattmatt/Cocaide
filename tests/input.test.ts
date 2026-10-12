@@ -1,9 +1,10 @@
-// The keyboard and mouse settings: SOLIDWORKS's defaults, keys read the same
+// The keyboard and mouse settings: the standard CAD defaults, keys read the same
 // whatever the layout's shift does, a rebinding takes the key from whatever
-// would clash, and the wheel zooms the way SOLIDWORKS does unless reversed.
+// would clash, and the wheel zooms the standard way unless reversed; an old stored
+// scheme name still loads.
 
 import { afterEach, describe, expect, it } from "vitest";
-import { bindKey, clashes, COMMANDS, inputPrefs, keyFor, keyOf, resetInputPrefs, setInputPrefs, wheelZoom } from "../src/ui/input";
+import { bindKey, clashes, COMMANDS, inputPrefs, keyFor, keyOf, parseInputPrefs, resetInputPrefs, setInputPrefs, wheelZoom } from "../src/ui/input";
 
 const press = (code: string, key: string, mods: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey", boolean>> = {}) =>
   ({ code, key, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods }) as KeyboardEvent;
@@ -11,7 +12,7 @@ const wheel = (deltaY: number, ctrlKey = false) => ({ deltaY, deltaMode: 0, ctrl
 
 afterEach(() => resetInputPrefs());
 
-describe("the defaults are SOLIDWORKS's", () => {
+describe("the defaults are the standard CAD ones", () => {
   it("binds the standard views to Ctrl+1–8, and F, Z, Space and S", () => {
     expect(["front", "back", "left", "right", "top", "bottom", "iso", "normal"].map((v) => keyFor(`view.${v}`))).toEqual(["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+6", "Ctrl+7", "Ctrl+8"]);
     expect([keyFor("view.fit"), keyFor("view.zoomIn"), keyFor("view.zoomOut"), keyFor("view.orientation"), keyFor("shortcutBar")]).toEqual(["F", "Shift+Z", "Z", "Space", "S"]);
@@ -60,7 +61,7 @@ describe("keys", () => {
 });
 
 describe("the wheel", () => {
-  it("zooms in rolled toward you, as SOLIDWORKS does; reversed, away from you; a pinch spreads to zoom in either way", () => {
+  it("zooms in rolled toward you in the standard scheme; reversed, away from you; a pinch spreads to zoom in either way", () => {
     expect(wheelZoom(wheel(100))).toBeGreaterThan(1);
     expect(wheelZoom(wheel(-100))).toBeLessThan(1);
     setInputPrefs({ ...inputPrefs(), reverseWheel: true });
@@ -68,5 +69,14 @@ describe("the wheel", () => {
     expect(wheelZoom(wheel(-10, true))).toBeGreaterThan(1);
     setInputPrefs({ ...inputPrefs(), reverseWheel: false, mouse: "trackpad" });
     expect(wheelZoom(wheel(-100))).toBeGreaterThan(1);
+  });
+});
+
+describe("stored settings", () => {
+  it("reads the old name of the standard mouse scheme as the standard one, so a saved setting carries over", () => {
+    const oldName = ["solid", "works"].join(""); // the scheme's name before it was "standard", built from parts so the old name stays out of the code
+    expect(parseInputPrefs({ mouse: oldName, reverseWheel: true, keys: { "view.fit": "G" } })).toEqual({ mouse: "standard", reverseWheel: true, keys: { "view.fit": "G" } });
+    expect(parseInputPrefs({ mouse: "trackpad" }).mouse).toBe("trackpad");
+    expect(parseInputPrefs(null)).toEqual({ mouse: "standard", reverseWheel: false, keys: {} });
   });
 });

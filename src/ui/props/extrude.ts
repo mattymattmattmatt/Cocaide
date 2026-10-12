@@ -13,7 +13,7 @@ import { faceSelectorFor } from "../../kernel/synthesize";
 import { refFromSelection } from "./datumRef";
 import type { FormContext, Raw } from "./spec";
 
-/** The end conditions, in SOLIDWORKS's words. */
+/** The end conditions, in the usual CAD words. */
 export const END_LABELS: Record<string, string> = {
   blind: "Blind",
   throughAll: "Through all",

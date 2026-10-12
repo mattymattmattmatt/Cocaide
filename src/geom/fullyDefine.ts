@@ -1,4 +1,4 @@
-// Fully Define Sketch, as SOLIDWORKS has it: the relations and dimensions
+// Fully Define Sketch, as CAD users expect it: the relations and dimensions
 // that would leave the sketch fully defined, measured from the geometry as it
 // is so applying them moves nothing. Relations first (what is already level,
 // plumb or touching says so), then the sizes (lengths, diameters, radii,

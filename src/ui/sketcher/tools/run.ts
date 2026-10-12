@@ -85,7 +85,7 @@ export interface SnapContext {
 }
 
 /**
- * Where a click lands, as SOLIDWORKS infers it: on an end, centre, sketch
+ * Where a click lands, as the usual CAD inferencing has it: on an end, centre, sketch
  * point or the origin; on a model vertex or centre; on a line's middle; on a
  * line, circle or arc (the sketch's, then the model's); the tool's own
  * inference (a polygon side level); level with or plumb above the click it is

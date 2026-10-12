@@ -1,4 +1,4 @@
-// On-screen numeric input for the drawing tools (SOLIDWORKS's numeric input):
+// On-screen numeric input for the drawing tools:
 // while a line, circle or rectangle is being placed, typed values place its
 // last click exactly and become its driving dimensions. Each TypedInput is
 // plain data and pure functions; SketchCanvas opens the box and feeds them.

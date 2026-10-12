@@ -222,7 +222,7 @@ Build each one once, in a browser-safe module such as `src/ask/tools/` (pure fun
     - Solve once, then return `{entities, constraints:[indices], dof, freePoints, profile}`.
     - Apply as one `updateFeature` with new `entities`/`constraints`; the `<sketch>/*` scope allows that via `onlyContentsChanged`, `scope.ts:169`. Or add a `setSketchContents` command.
     - The UI's polyline tool can reuse the same function.
-11. **`fullyDefine({sketch, anchor?: "origin", scheme?: "baseline"|"chain"})`**, SOLIDWORKS-style "Fully Define Sketch".
+11. **`fullyDefine({sketch, anchor?: "origin", scheme?: "baseline"|"chain"})`**, a "Fully Define Sketch" command.
     - Greedy over `sketchStatus.freePoints`: try orientation relations, then `distanceX`/`distanceY` from the anchor at their current values, keep each one that `wouldOverDefine` (`solver.ts:449`) does not refuse, and stop at dof 0.
     - Pure; shared with a UI button. Today the "Fully define this sketch" chip (`prompt.ts:41`) leaves it all to the model.
 12. **`sketchOnFace({face: selector, offset?, entities?})`** creates a sketch whose plane is computed by `facePlane`. If the modelling worker adds `plane: {type:"face", face: selector}` or `{type:"ref", plane:"<id>"}` to `DatumPlane`, switch to that (parametric), and make `addRule` (`agent.ts:383-393`) compare selectors instead of numbers.

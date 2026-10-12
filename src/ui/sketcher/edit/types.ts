@@ -1,6 +1,6 @@
 // The sketch edit tools' interface. A drawing tool (../tools) turns clicks
 // into new geometry; an edit tool changes what is there: trim, extend and
-// split act on each click (and trim on a drag, SOLIDWORKS's power trim);
+// split act on each click (and trim on a drag, the power trim);
 // fillet, chamfer, offset, mirror, the patterns and move/copy/rotate/scale
 // collect picks (entities, corners, a mirror line, a base point) with their
 // options in the strip, show what they would do, and apply on Apply or

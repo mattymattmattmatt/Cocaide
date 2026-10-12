@@ -1,4 +1,4 @@
-// Selecting in the 3D view, as SOLIDWORKS does it: a plain click selects one
+// Selecting in the 3D view, the usual CAD way: a plain click selects one
 // face or edge, Ctrl- or Shift-click adds one or takes it out again, faces and
 // edges mix, and the chip over the view says what is selected.
 

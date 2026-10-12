@@ -1,4 +1,4 @@
-// What the sketch shows over its geometry, as SOLIDWORKS does: each
+// What the sketch shows over its geometry, as CAD users expect: each
 // dimension drawn as a dimension (extension lines, arrows, the value), and
 // each relation as a small glyph beside what it holds. Pure geometry in
 // sketch millimetres, y up; the canvas draws it.
@@ -9,7 +9,7 @@ import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
 import type { IconName } from "../icons";
 
-/** Each constraint type's name and icon, as on SOLIDWORKS's relation and dimension lists. */
+/** Each constraint type's name and icon, as on the relation and dimension lists. */
 export const RELATION: Record<ConstraintType, { label: string; icon: IconName }> = {
   coincident: { label: "Coincident", icon: "coincident" },
   horizontal: { label: "Horizontal", icon: "horizontal" },
@@ -195,7 +195,7 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         return;
       }
       case "arcLength": {
-        // An arc beside the arc, its ends marked: SOLIDWORKS's arc length dimension.
+        // An arc beside the arc, its ends marked: the usual arc length dimension.
         const a = byId.get(k.entity);
         if (a?.type !== "arc") return;
         const r = dist2(a.start, a.center);
@@ -408,7 +408,7 @@ export function relationGroups(constraints: Constraint[]): number[][] {
 
 /**
  * A glyph for each relation, beside each entity or point it holds (a pair
- * relation shows on both), as SOLIDWORKS shows them. Dimensions draw as
+ * relation shows on both). Dimensions draw as
  * dimensions instead. Glyphs that share a place line up side by side.
  */
 export function relationGlyphs(entities: SketchEntity[], constraints: Constraint[], px: number): Glyph[] {

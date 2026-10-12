@@ -1,4 +1,4 @@
-// SOLIDWORKS's sketch relations: each one moves the geometry to meet it,
+// The sketch relations: each one moves the geometry to meet it,
 // the rebuild's check agrees, validation knows its shape, and the sketch
 // reports which entities are still free (blue) and which are defined (black).
 
@@ -150,7 +150,7 @@ describe("relations with circles and arcs", () => {
   });
 });
 
-describe("defined state, as SOLIDWORKS colours it", () => {
+describe("defined state, in the standard CAD colours", () => {
   it("names what can still move, and nothing once fully defined", () => {
     const l = line("l1", [1, 1], [30, 2]);
     const c: Circle = { id: "c1", type: "circle", center: [50, 5], radius: 5 };

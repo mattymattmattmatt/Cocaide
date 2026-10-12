@@ -156,7 +156,7 @@ export function modelEdge(m: ModelView, id: string): ModelEdge | undefined {
 
 /**
  * The reference entities whose model edge is gone (their selector finds no
- * edge, or several, in the part as the sketch sees it): SOLIDWORKS's dangling
+ * edge, or several, in the part as the sketch sees it): dangling
  * relations, drawn brown. Datum and point references are left to the rebuild.
  */
 export function danglingRefs(entities: SketchEntity[], m: ModelView): Set<string> {

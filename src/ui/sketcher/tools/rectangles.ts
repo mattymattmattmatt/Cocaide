@@ -1,5 +1,5 @@
-// Rectangle ▾: Corner, Centre, 3-point and Parallelogram, as SOLIDWORKS has
-// them. Each is four lines joined at the corners and held in shape by
+// Rectangle ▾: Corner, Centre, 3-point and Parallelogram. Each is four lines
+// joined at the corners and held in shape by
 // relations, so a side can be trimmed, filleted or dimensioned on its own:
 // level and plumb sides for the corner and centre rectangles (4 degrees of
 // freedom: where and how big), square corners for the 3-point one (5: it may

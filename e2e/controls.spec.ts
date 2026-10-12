@@ -1,4 +1,4 @@
-// The mouse and keyboard as SOLIDWORKS has them, and changed in Settings:
+// The mouse and keyboard the standard CAD way, and changed in Settings:
 // middle-drag rotates, Ctrl+middle pans, the wheel zooms toward you, a middle
 // double-click fits; Ctrl+1–8, F, Z, the arrows and Space for the view; S for
 // the shortcut bar, Enter to repeat, Delete, F9; box selection in a sketch;
@@ -40,7 +40,7 @@ async function drag(page: Page, button: "left" | "middle" | "right", dx: number,
   await page.mouse.up({ button });
 }
 
-test("the SOLIDWORKS mouse: middle-drag rotates, Ctrl pans, Shift zooms; the wheel toward you zooms in; a middle double-click fits", async ({ page }) => {
+test("the standard mouse: middle-drag rotates, Ctrl pans, Shift zooms; the wheel toward you zooms in; a middle double-click fits", async ({ page }) => {
   const start = await cam(page);
   // Middle-drag: the view turns about the part, at the same distance.
   await drag(page, "middle", 120, 0);
@@ -195,7 +195,7 @@ test("in a sketch: L, R and C pick tools, a box left to right selects what's ins
   await expect(page.getByTestId("sketch-selection")).toContainText("2 selected");
 });
 
-test("Settings: the trackpad scheme rotates on left-drag; a key rebound works and the old one doesn't; reset brings SOLIDWORKS's back", async ({ page }) => {
+test("Settings: the trackpad scheme rotates on left-drag; a key rebound works and the old one doesn't; reset brings the defaults back", async ({ page }) => {
   await page.getByTestId("ask-settings-open").click();
   await page.getByTestId("settings-tab-mouse").click();
   await expect(page.getByTestId("mouse-table")).toContainText("Middle-drag");
@@ -232,5 +232,5 @@ test("Settings: the trackpad scheme rotates on left-drag; a key rebound works an
   await expect(page.getByTestId("key-view.front")).toHaveText("Ctrl+1");
   await expect(page.getByTestId("key-view.fit")).toHaveText("F");
   await page.getByTestId("settings-tab-mouse").click();
-  await expect(page.getByTestId("settings-mouse")).toHaveValue("solidworks");
+  await expect(page.getByTestId("settings-mouse")).toHaveValue("standard");
 });

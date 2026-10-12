@@ -1,4 +1,4 @@
-// The right-click menu, as SOLIDWORKS has one on everything: what you can do
+// The right-click menu, as CAD users expect one on everything: what you can do
 // to the thing under the pointer, the usual edits, and "Ask AI…", which opens
 // the ask panel scoped to it. It opens at the pointer and closes on a choice,
 // a click elsewhere or Escape.

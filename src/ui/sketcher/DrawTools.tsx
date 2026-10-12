@@ -1,4 +1,4 @@
-// The sketch toolbar's pieces for the drawing tools: SOLIDWORKS-style flyout
+// The sketch toolbar's pieces for the drawing tools: flyout
 // buttons (the button runs the variant used last; its arrow lists them all),
 // small icon toggles, and the strip that says what to click next and holds
 // the active tool's options (a polygon's sides) while it is in use.
@@ -99,7 +99,7 @@ export function IconTool({ icon, label, title, pressed, disabled, onClick, testI
   );
 }
 
-/** Small tools stacked two high, SOLIDWORKS's CommandManager way: a group that takes the width of one big button per two. */
+/** Small tools stacked two high, the usual CommandManager way: a group that takes the width of one big button per two. */
 export function ToolStack({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="tool-stack" role="group" aria-label={label}>

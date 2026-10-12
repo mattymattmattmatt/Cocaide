@@ -883,7 +883,7 @@ svg.icon { flex: none; display: block; }
 .menu-items button > span { flex: 1; }
 .view-buttons .caret { opacity: 0.55; }
 
-/* the sketch's selection box: solid for a window, dashed for crossing, as SOLIDWORKS draws them */
+/* the sketch's selection box: solid for a window, dashed for crossing, as CAD users expect */
 .sketch-canvas .select-box { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: var(--accent); stroke-width: 1; }
 .sketch-canvas .select-box.crossing { fill: color-mix(in srgb, var(--ok) 8%, transparent); stroke: var(--ok); stroke-dasharray: 5 4; }
 
@@ -922,7 +922,7 @@ svg.icon { flex: none; display: block; }
 
 /* ======================================================= sketch relations, dimensions, right-click menus */
 :root {
-  /* SOLIDWORKS: blue can still move, black is fully defined, red is over defined. */
+  /* The standard CAD colours: blue can still move, black is fully defined, red is over defined. */
   --sketch-defined: #1b1f27;
   --sketch-dim: #3d4a5c;
   --glyph-bg: #e9f6ea;
@@ -1010,7 +1010,7 @@ svg.icon { flex: none; display: block; }
 .sketch-panel > .panel { flex-shrink: 0; }
 
 /* ======================================================= Phase O: CommandManager, declared property forms, multi-select */
-/* The model toolbar: Undo, Redo and Sketch always at hand, then the active tab's tools over a strip of tabs, as SOLIDWORKS lays it out. */
+/* The model toolbar: Undo, Redo and Sketch always at hand, then the active tab's tools over a strip of tabs. */
 .toolbar.command-manager { align-items: flex-start; flex-wrap: nowrap; padding-bottom: 0; }
 .cm-pinned { display: flex; align-items: center; gap: 1px; flex: none; }
 .toolbar.command-manager > .sep.cm-sep { align-self: flex-start; margin-top: 8px; }
@@ -1049,7 +1049,7 @@ svg.icon { flex: none; display: block; }
     --datum: #8db4e8;
   }
 }
-/* Names of the planes, axes and points in the view, as SOLIDWORKS labels them: small, at a corner, never in the way of a pick. */
+/* Names of the planes, axes and points in the view: small, at a corner, never in the way of a pick. */
 .datum-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .datum-label {
   position: absolute; left: 0; top: 0; padding: 0 4px; border-radius: 3px;
@@ -1116,7 +1116,7 @@ svg.icon { flex: none; display: block; }
 .sketch-canvas .entity.point.selected { fill: var(--sketch-selected); }
 .sketch-canvas .entity.point.preview { fill: var(--sketch-hover); stroke-dasharray: none; }
 /* ======================================================= Phase O wave 2: sketch references to the model */
-/* Reference geometry is purple, as SOLIDWORKS draws it: the model's edges in the sketch, and the entities that follow them. */
+/* Reference geometry is purple, as CAD users expect: the model's edges in the sketch, and the entities that follow them. */
 :root {
   --sketch-reference: #8e44c9;
   --model-edge: #a3aab6;
@@ -1194,7 +1194,7 @@ svg.icon { flex: none; display: block; }
 .sketch-tool-strip .strip-actions > button[aria-pressed="true"] { background: var(--selected-row); border-color: var(--sketch-selected); }
 .sketch-tool-strip .strip-problem { color: var(--bad); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
 .sketch-tool-strip .stepper input { width: 46px; }
-/* Small tools two high (the edit tools, the toggles, undo): SOLIDWORKS's stacked CommandManager buttons, so the sketch toolbar keeps one row. */
+/* Small tools two high (the edit tools, the toggles, undo): stacked CommandManager buttons, so the sketch toolbar keeps one row. */
 .sketch-toolbar .tool-stack { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 23px); gap: 2px 1px; flex: none; align-content: center; height: 48px; }
 .sketch-toolbar .tool.small { height: 23px; min-width: 26px; width: 26px; padding: 0; border-radius: 5px; gap: 0; }
 .sketch-toolbar .flyout.small { position: relative; }

@@ -1,6 +1,6 @@
 // A rib's 2D shapes, pure (no kernel), in the sketch's coordinates:
 //   - the chain with its end lines extended (the rib reaches the walls even
-//     when the line stops short of them, as SOLIDWORKS's rib does);
+//     when the line stops short of them, as CAD users expect of a rib);
 //   - for a rib in the sketch's plane: the region each piece of the chain
 //     sweeps when moved a long way across the line (their union is the strip
 //     the rib is cut from);

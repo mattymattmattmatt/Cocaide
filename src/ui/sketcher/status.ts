@@ -1,4 +1,4 @@
-// How defined a sketch is, as SOLIDWORKS's status bar and Display/Delete
+// How defined a sketch is, as the status bar and Display/Delete
 // Relations say it: "Under defined · 3 DOF", "Fully defined", "Over defined:
 // d4 conflicts with Horizontal l1, d1", a dangling reference, or an empty
 // sketch. Over-definition is diagnosed the SketchXpert way: the smallest set
@@ -89,7 +89,7 @@ export function sketchHealth(entities: SketchEntity[], constraints: Constraint[]
       set = [];
     }
     const names = set.map((i) => constraintName(constraints[i], i, constraints));
-    // The newest of them is the one that conflicts "with" the rest, as SOLIDWORKS words it.
+    // The newest of them is the one that conflicts "with" the rest, the usual CAD wording.
     const text = set.length > 1 ? `Over defined: ${names[names.length - 1]} conflicts with ${names.slice(0, -1).reverse().join(", ")}` : set.length === 1 ? `Over defined: ${names[0]} can't be met` : "Over defined";
     const fixes: Fix[] = [...set].reverse().flatMap((i, n) => {
       const name = names[set.length - 1 - n];

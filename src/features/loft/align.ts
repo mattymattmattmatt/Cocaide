@@ -3,7 +3,7 @@
 //   - every loop runs the same way round as seen along the loft (a loop
 //     drawn the other way, or on a plane facing back, is reversed);
 //   - each loop starts at the corner nearest (in direction from its centre)
-//     to where the previous one starts, as SOLIDWORKS's default connectors
+//     to where the previous one starts, as the usual default connectors
 //     do; a circle starts at the point in that direction.
 
 import type { Vec2, Vec3 } from "../../doc/types";

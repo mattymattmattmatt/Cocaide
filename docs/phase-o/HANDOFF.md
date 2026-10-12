@@ -1,6 +1,6 @@
 # Phase O — where it stands (on hold)
 
-The user's request: make Cocaide a SOLIDWORKS-class part modeller ("smarter and cleaner than SOLIDWORKS, all the little
+The user's request: make Cocaide a professional-grade parametric part modeller ("smarter and cleaner" than the usual CAD tools, "all the little
 things", reference edges you can dimension to, more tools for the AI). Built in waves of two parallel engineers (git
 worktrees under .claude/worktrees), each followed by an adversarial reviewer, then merged, fully tested and pushed.
 

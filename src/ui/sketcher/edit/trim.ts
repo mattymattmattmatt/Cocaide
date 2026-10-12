@@ -1,5 +1,5 @@
 // Trim ▾: Trim (click a piece: it goes back to the nearest crossings; drag
-// across pieces: each one crossed goes, SOLIDWORKS's power trim), Extend
+// across pieces: each one crossed goes, a power trim), Extend
 // (click near an end: it grows to the next entity it meets) and Split
 // (click a point on an entity: it becomes two, joined there). Each acts on
 // the click; the pointer shows what it would do first.

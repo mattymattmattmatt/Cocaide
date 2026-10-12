@@ -1,7 +1,7 @@
 // Reference geometry in the browser (Wave 1A): planes, axes and points from
 // the Reference tab, picked from the selection; sketches placed on a plane or
 // a face by reference, following it; the default planes in the tree and the
-// view, shown SOLIDWORKS-style.
+// view, shown the usual CAD way.
 
 import { expect, test, type Page } from "@playwright/test";
 import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
@@ -52,7 +52,7 @@ test("an offset plane from Top, a sketch on it, extruded: the body sits at the o
 
 test("the default planes: listed first in the tree, shown while selected or by their eye, remembered", async ({ page }) => {
   await expect(page.getByTestId("datum-Front")).toBeVisible();
-  // Hidden until selected (SOLIDWORKS); the origin's triad is shown.
+  // Hidden until selected (the usual CAD way); the origin's triad is shown.
   expect(await drawn(page)).toEqual(["Origin"]);
   await page.getByTestId("datum-Top").locator(".feature-row").click();
   await expect(page.getByTestId("selection")).toHaveText("Selected: Top plane");

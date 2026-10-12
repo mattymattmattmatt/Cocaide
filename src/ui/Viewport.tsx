@@ -15,7 +15,7 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 
-/** The standard views: SOLIDWORKS's seven, in this part's axes (Z up; Front looks along +Y). */
+/** The seven standard views, in this part's axes (Z up; Front looks along +Y). */
 export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
 
 // What a click picks and what is selected: plain data, in a pure module (src/ui/model/selection.ts).
@@ -874,7 +874,7 @@ export function Viewport({
     else onMessage?.("Normal to needs one flat face or plane: click one first.");
   };
   const togglePlanes = () => onDatumView?.({ ...datumView, planes: !datumView.planes });
-  // SOLIDWORKS's view keys: Ctrl+1 to Ctrl+8, F, Z and Shift+Z, the arrows, and Space for the view menu.
+  // The standard view keys: Ctrl+1 to Ctrl+8, F, Z and Shift+Z, the arrows, and Space for the view menu.
   const viewCommands: Record<string, () => void> = {
     "view.front": () => orient("front"),
     "view.back": () => orient("back"),

@@ -157,7 +157,7 @@ const ICONS = {
     </>
   ),
   ruler: <path d="M3 15 15 3l6 6L9 21z M7 11l2 2 M10 8l2 2 M13 5l2 2" />,
-  // sketch relations and dimensions, as SOLIDWORKS draws them
+  // sketch relations and dimensions, drawn as CAD users expect
   smartDimension: <path d="M4 7v10 M20 7v10 M4 12h16 M7.5 9 4.5 12l3 3 M16.5 9l3 3-3 3" />,
   horizontal: <path d="M4 12h16 M4 9v6 M20 9v6" />,
   vertical: <path d="M12 4v16 M9 4h6 M9 20h6" />,

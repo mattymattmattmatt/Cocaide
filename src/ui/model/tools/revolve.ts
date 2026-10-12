@@ -72,7 +72,7 @@ export function revolveFeature(ctx: ToolCtx, cut: boolean): Raw | string {
     axis = found;
   }
   const feature: Raw = { id: ctx.nextId(cut ? "revolve_cut" : "revolve"), op: "revolve", sketch: sk.id, axis };
-  // An open chain cannot turn into a solid: as SOLIDWORKS offers, it becomes a thin revolve (a 2 mm wall).
+  // An open chain cannot turn into a solid: as CAD users expect, it becomes a thin revolve (a 2 mm wall).
   if (openProfile((Array.isArray(sk.entities) ? sk.entities : []) as SketchEntity[], axis)) feature.thin = { thickness: 2 };
   if (cut) feature.operation = "remove";
   // In a part of several bodies, new material starts a body of its own (choose another in Properties).

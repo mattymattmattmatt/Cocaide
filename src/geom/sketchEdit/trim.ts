@@ -1,4 +1,4 @@
-// Trim, extend and split, as SOLIDWORKS has them.
+// Trim, extend and split, as CAD users expect them.
 //
 // - Trim to closest: click a piece of a line, arc or circle; it is cut away
 //   back to the nearest places other entities cross or touch it. With

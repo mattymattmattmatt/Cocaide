@@ -1,6 +1,6 @@
 // Plane, Axis and Point look at what is selected and pick the mode, so one
-// button makes the reference the selection means (smarter than SOLIDWORKS,
-// where the user picks references and then hunts for the mode):
+// button makes the reference the selection means (smarter than the usual CAD
+// tools, where the user picks references and then hunts for the mode):
 //
 //   Plane: a flat face or a plane -> offset 10 mm; a plane and a straight
 //   edge or axis in it -> at 45° about it; three vertices or points -> through

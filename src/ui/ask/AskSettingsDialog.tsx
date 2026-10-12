@@ -126,8 +126,8 @@ export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "a
             </button>
           )}
           {(tab === "mouse" || tab === "keyboard") && (
-            <button type="button" onClick={resetInputPrefs} data-testid="settings-reset-input" title="The mouse and every key back to SOLIDWORKS's defaults">
-              Reset to SOLIDWORKS defaults
+            <button type="button" onClick={resetInputPrefs} data-testid="settings-reset-input" title="The mouse and every key back to their defaults">
+              Reset to defaults
             </button>
           )}
           <span className="sep" />
@@ -199,7 +199,7 @@ function SpinSteps() {
 
 /** What each mouse action does, by scheme: the reference beside the choice. */
 const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
-  solidworks: [
+  standard: [
     ["Middle-drag", "Rotate"],
     ["Ctrl + middle-drag", "Pan"],
     ["Shift + middle-drag", "Zoom"],
@@ -219,7 +219,7 @@ const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
     ["Click", "Select; Ctrl- or Shift-click adds"],
     ["Right-click (two-finger click)", "The menu for what is under the pointer, with Ask AI…"],
     ["Right-drag", "Pan"],
-    ["Middle button", "As in SOLIDWORKS, if there is one"],
+    ["Middle button", "As in the standard scheme, if there is one"],
   ],
 };
 
@@ -230,7 +230,7 @@ function MouseTab() {
       <div className="field">
         <span className="field-label">Mouse</span>
         <select value={prefs.mouse} onChange={(e) => setInputPrefs({ ...prefs, mouse: e.target.value as MouseScheme })} data-testid="settings-mouse">
-          <option value="solidworks">SOLIDWORKS (middle button rotates)</option>
+          <option value="standard">Standard (middle button rotates)</option>
           <option value="trackpad">Trackpad (left-drag rotates)</option>
         </select>
       </div>
@@ -282,7 +282,7 @@ function KeyboardTab() {
   return (
     <>
       <p className="muted small">
-        Click a key to change it, then press the new one. Backspace clears it, Escape keeps it. The defaults are SOLIDWORKS's; Ctrl+N, Ctrl+T and Ctrl+W belong
+        Click a key to change it, then press the new one. Backspace clears it, Escape keeps it. The defaults are the standard CAD ones; Ctrl+N, Ctrl+T and Ctrl+W belong
         to the browser.
       </p>
       {note && (

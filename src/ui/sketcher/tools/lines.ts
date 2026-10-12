@@ -1,4 +1,4 @@
-// Line ▾: Line, Centreline and Midpoint line, as SOLIDWORKS has them. Line
+// Line ▾: Line, Centreline and Midpoint line. Line
 // and Centreline draw in a chain (each click carries on from the last end);
 // a line drawn nearly level or plumb comes out so, with that relation.
 

@@ -139,7 +139,7 @@ export interface ToolDef {
   contextItems?(ctx: ToolCtx, target: ContextTarget): ToolItem[];
   /**
    * A tool with its own dropdown runs straight away when the selection says
-   * what to do (Sketch on the selected plane or face, as SOLIDWORKS does):
+   * what to do (Sketch on the selected plane or face):
    * the button's tooltip then, or undefined to open the dropdown.
    */
   direct?(ctx: ToolCtx): string | undefined;

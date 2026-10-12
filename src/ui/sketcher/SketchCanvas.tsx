@@ -30,7 +30,7 @@ export type Tool = string;
  */
 export type CanvasTarget = { kind: "entity"; id: string } | { kind: "point"; ref: string } | { kind: "constraint"; index: number };
 
-/** How defined the sketch is, as SOLIDWORKS colours it. */
+/** How defined the sketch is, in the standard CAD colours. */
 export interface DefinedState {
   /** Entities that can still move: drawn blue. The rest are fully defined: black. */
   free: Set<string>;
@@ -145,7 +145,7 @@ export function SketchCanvas(props: Props) {
   const [view, setView] = useState<ViewState | null>(null);
   const [cursor, setCursor] = useState<Vec2 | null>(null);
   const [clicks, setClicks] = useState<Snap[]>([]);
-  /** A line chain's next piece is a tangent arc (A toggles it, as in SOLIDWORKS). */
+  /** A line chain's next piece is a tangent arc (A toggles it). */
   const [arcNext, setArcNext] = useState(false);
   /** Where the pointer went since the last click: an arc bends the way it was drawn. */
   const trail = useRef<Vec2[]>([]);
@@ -236,7 +236,7 @@ export function SketchCanvas(props: Props) {
   const toolContext = (): ToolContext => ({ entities, trail: trail.current, px: unit });
 
   /**
-   * Where a placed point lands, as SOLIDWORKS infers it: on an end, centre,
+   * Where a placed point lands, as the usual CAD inferencing has it: on an end, centre,
    * midpoint, sketch point or the origin, on a line, circle or arc; the tool's
    * own inference; level with or plumb above the click before; else the grid.
    */
@@ -359,7 +359,7 @@ export function SketchCanvas(props: Props) {
       return;
     }
     if (g.kind === "edit") {
-      // A drag (not a click) with a tool that takes one: SOLIDWORKS's power trim stroke.
+      // A drag (not a click) with a tool that takes one: the power trim stroke.
       if (!g.stroke && props.edit?.tool.drag && Math.hypot(e.clientX - g.startClient[0], e.clientY - g.startClient[1]) >= 4) g.stroke = true;
       if (g.stroke) {
         g.path.push(p);
@@ -376,8 +376,8 @@ export function SketchCanvas(props: Props) {
       const dx = e.clientX - g.startClient[0];
       const dy = e.clientY - g.startClient[1];
       if (g.kind === "click" && Math.hypot(dx, dy) < 4) return;
-      // Dragging empty space: SOLIDWORKS draws a selection box; the trackpad scheme pans.
-      if (g.kind === "click" && inputPrefs().mouse === "solidworks") {
+      // Dragging empty space: the standard scheme draws a selection box; the trackpad scheme pans.
+      if (g.kind === "click" && inputPrefs().mouse === "standard") {
         gesture.current = { kind: "box", start: g.at, additive: g.additive };
         setBox({ a: g.at, b: p });
         return;
@@ -438,7 +438,7 @@ export function SketchCanvas(props: Props) {
       // A click on a sketch axis after a line across it places that line's dimension (the axes run through
       // where dimensions go); after a point, a circle or a line along the axis, it dimensions to the axis.
       const item = hit && picks.length === 1 && placesOn(hit, picks[0]) ? null : hit;
-      // Shift-clicking a circle or arc measures to its near or far side, by the side clicked (SOLIDWORKS's min and max).
+      // Shift-clicking a circle or arc measures to its near or far side, by the side clicked (min and max).
       if (item?.kind === "entity" && e.shiftKey) {
         const round = [...entities, ...modelEnts].find((x) => x.id === item.id);
         if (round?.type === "circle" || round?.type === "arc") shiftArcs.current = { ...shiftArcs.current, [item.id]: p };
@@ -571,7 +571,7 @@ export function SketchCanvas(props: Props) {
         e.stopPropagation();
         return;
       }
-      // Drawing lines, the Arc key turns the next piece into a tangent arc from the end, and back (SOLIDWORKS's A).
+      // Drawing lines, the Arc key turns the next piece into a tangent arc from the end, and back.
       if (!typing && !e.repeat && active?.chain && active !== TANGENT_ARC && clicks.length === 1 && keyOf(e) === keyFor("sketch.arc") && tangentStart(clicks[0], entities)) {
         setArcNext((a) => !a);
         trail.current = [];
@@ -1096,7 +1096,7 @@ function fitView(entities: SketchEntity[], model: ModelView, size: { w: number; 
 }
 
 /**
- * What a selection box picks, as SOLIDWORKS does: dragged left to right (a
+ * What a selection box picks, the usual CAD way: dragged left to right (a
  * window), the entities wholly inside it; right to left (crossing), every
  * entity inside it or crossing its edge.
  */

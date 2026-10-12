@@ -1,4 +1,4 @@
-// Sketch relations and dimensions as SOLIDWORKS has them: relations
+// Sketch relations and dimensions as CAD users expect them: relations
 // inferred while drawing, the Add Relations buttons for a selection, Smart
 // Dimension with its Modify box, dimensions and relation glyphs drawn on the
 // sketch, blue/black by how defined it is, and the right-click menus.
@@ -33,7 +33,7 @@ async function ctrlClick(page: Page, x: number, y: number) {
 }
 
 test("relations: inferred while drawing, added from a selection, shown as glyphs, and the sketch goes black when defined", async ({ page }) => {
-  // A line drawn nearly level comes out level, with a Horizontal relation, as SOLIDWORKS infers it.
+  // A line drawn nearly level comes out level, with a Horizontal relation, inferred as CAD users expect.
   await page.getByTestId("tool-line").click();
   await sketchClick(page, -30, 0);
   await sketchClick(page, 10, 0.4);
@@ -165,7 +165,7 @@ test("right-click menus: an entity's relations and Ask AI…, a dimension's edit
   await expect(page.getByTestId("feature-sketch_1")).toBeVisible();
 });
 
-test("a plate sketched as in SOLIDWORKS: inferred relations, Smart Dimensions, equal holes, fully defined", async ({ page }) => {
+test("a plate sketched the usual CAD way: inferred relations, Smart Dimensions, equal holes, fully defined", async ({ page }) => {
   await page.getByTestId("tool-line").click();
   for (const [x, y] of [[-40, -20], [40, -20], [40, 20], [-40, 20], [-40, -20]]) await sketchClick(page, x, y);
   await page.getByTestId("tool-circle").click();

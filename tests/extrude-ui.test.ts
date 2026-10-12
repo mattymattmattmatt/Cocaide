@@ -62,7 +62,7 @@ function patched(d: RawDocument, id: string, patch: Raw) {
 }
 
 describe("end conditions in the editor", () => {
-  it("offers SOLIDWORKS's end conditions; direction 2 has no two-way ones", () => {
+  it("offers the usual CAD end conditions; direction 2 has no two-way ones", () => {
     expect(endOptions(1).map(([v]) => v)).toEqual(["blind", "throughAll", "throughAllBoth", "upToNext", "upToVertex", "upToFace", "offsetFromFace", "midplane"]);
     expect(endOptions(2).map(([v]) => v)).toEqual(["blind", "throughAll", "upToNext", "upToVertex", "upToFace", "offsetFromFace"]);
   });
@@ -164,7 +164,7 @@ describe("direction 2, start, thin, draft", () => {
     expect(thinPatch(f, false)).toEqual({ thin: null });
   });
 
-  it("the fields shown follow the feature, SOLIDWORKS's blocks in order", () => {
+  it("the fields shown follow the feature, the usual blocks in order", () => {
     const ids = (f: Raw) => visibleFields(EXTRUDE_FIELDS, f, form(f)).map(fieldTestId);
     const blind = ids({ id: "e", op: "extrude", sketch: "sketch_1", distance: 6 });
     expect(blind).toEqual(["prop-sketch", "prop-_from", "prop-from", "prop-_dir1", "prop-extent", "prop-distance", "prop-direction-mode", "prop-draft", "prop-direction2", "prop-thin", "prop-regions", "prop-intersect"]);

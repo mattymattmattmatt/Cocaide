@@ -1,7 +1,7 @@
 // Sweep, Swept cut and Helix (a spring or a coil), in the Sweep menu; Loft
 // and Lofted cut in the Loft menu (shape group); Rib (dress group). Each
 // works out what to use from the selection and the sketches no feature uses
-// yet, as SOLIDWORKS's PropertyManagers fill themselves from a preselection,
+// yet, as a CAD feature panel fills itself from a preselection,
 // then opens Properties to change it:
 //   - Sweep: the path is the selected sketch when it is a chain of lines and
 //     arcs, else the newest unused such sketch, else model edges selected in

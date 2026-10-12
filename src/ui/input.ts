@@ -1,4 +1,4 @@
-// How the mouse and keyboard drive the app: SOLIDWORKS's defaults, changed in
+// How the mouse and keyboard drive the app: the standard CAD defaults, changed in
 // Settings and kept in this browser. Every keyboard command is listed here
 // with its default key; each part of the app handles the commands it owns
 // through useCommands(), so a rebinding in Settings applies everywhere at once.
@@ -6,7 +6,7 @@
 import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type WheelEvent as ReactWheelEvent } from "react";
 
 /** How the mouse moves the 3D view. */
-export type MouseScheme = "solidworks" | "trackpad";
+export type MouseScheme = "standard" | "trackpad";
 
 export const COMMAND_GROUPS = ["General", "View", "Model tools", "Sketch"] as const;
 export type CommandGroup = (typeof COMMAND_GROUPS)[number];
@@ -15,7 +15,7 @@ export interface CommandDef {
   id: string;
   label: string;
   group: CommandGroup;
-  /** SOLIDWORKS's key for it, or ours where it has none; null: unbound until you bind it. */
+  /** The standard CAD key for it, or ours where there is none; null: unbound until you bind it. */
   key: string | null;
   /**
    * Listed ahead of its tool, so that its id and key are taken: Settings leaves
@@ -25,7 +25,7 @@ export interface CommandDef {
 }
 
 /**
- * Every command a key can run. The view keys are SOLIDWORKS's defaults.
+ * Every command a key can run. The view keys are the standard CAD defaults.
  * Ctrl+N, Ctrl+T and Ctrl+W belong to the browser and can't be taken.
  */
 export const COMMANDS: CommandDef[] = [
@@ -160,18 +160,27 @@ export interface InputPrefs {
   keys: Record<string, string | null>;
 }
 
-const DEFAULTS: InputPrefs = { mouse: "solidworks", reverseWheel: false, keys: {} };
+const DEFAULTS: InputPrefs = { mouse: "standard", reverseWheel: false, keys: {} };
 const STORE_KEY = "cocaide.input.v1";
+
+/**
+ * The settings as stored, made safe: anything missing or odd takes its
+ * default. A mouse scheme saved under its old name (or any name but
+ * "trackpad") reads as the standard one, so a stored setting carries over.
+ */
+export function parseInputPrefs(raw: unknown): InputPrefs {
+  if (!raw || typeof raw !== "object") return DEFAULTS;
+  const r = raw as Partial<Record<keyof InputPrefs, unknown>>;
+  return {
+    mouse: r.mouse === "trackpad" ? "trackpad" : "standard",
+    reverseWheel: r.reverseWheel === true,
+    keys: r.keys && typeof r.keys === "object" ? (r.keys as Record<string, string | null>) : {},
+  };
+}
 
 function load(): InputPrefs {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as Partial<InputPrefs> | null;
-    if (!raw || typeof raw !== "object") return DEFAULTS;
-    return {
-      mouse: raw.mouse === "trackpad" ? "trackpad" : "solidworks",
-      reverseWheel: raw.reverseWheel === true,
-      keys: raw.keys && typeof raw.keys === "object" ? raw.keys : {},
-    };
+    return parseInputPrefs(JSON.parse(localStorage.getItem(STORE_KEY) ?? "null"));
   } catch {
     return DEFAULTS;
   }
@@ -194,7 +203,7 @@ export function setInputPrefs(next: InputPrefs): void {
   for (const l of listeners) l();
 }
 
-/** Back to SOLIDWORKS's defaults. */
+/** Back to the defaults. */
 export function resetInputPrefs(): void {
   setInputPrefs(DEFAULTS);
 }
@@ -307,13 +316,13 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** The zoom a wheel turn asks for: above 1 zooms in. SOLIDWORKS zooms in when the wheel rolls toward you. */
+/** The zoom a wheel turn asks for: above 1 zooms in. The standard scheme zooms in when the wheel rolls toward you. */
 export function wheelZoom(e: WheelEvent | ReactWheelEvent, p: InputPrefs = prefs): number {
   const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
   const dy = e.deltaY * lines;
   // A trackpad pinch arrives as a wheel with Ctrl: spreading the fingers zooms in, whatever the scheme.
   if (e.ctrlKey) return Math.exp(-dy * 0.01);
-  let inward = p.mouse === "solidworks" ? dy > 0 : dy < 0;
+  let inward = p.mouse === "standard" ? dy > 0 : dy < 0;
   if (p.reverseWheel) inward = !inward;
   const step = Math.min(Math.abs(dy), 200) * 0.0016;
   return Math.exp(inward ? step : -step);

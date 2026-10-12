@@ -1,4 +1,4 @@
-// The 3D view's mouse, as SOLIDWORKS has it: the middle button rotates, with
+// The 3D view's mouse, the standard CAD way: the middle button rotates, with
 // Ctrl it pans, with Shift it zooms and with Alt it rolls; a middle click on
 // the part makes the next rotation turn about that point, and a middle
 // double-click fits the part. The wheel zooms at the pointer. Rotation is
@@ -196,7 +196,7 @@ export class CadControls {
     this.drag = null;
     if (this.dom.hasPointerCapture?.(e.pointerId)) this.dom.releasePointerCapture(e.pointerId);
     if (d.moving) {
-      // The point a middle click picked is for one rotation, as in SOLIDWORKS.
+      // The point a middle click picked is for one rotation.
       if (d.usedPivot) this.setPivot(null);
       return;
     }

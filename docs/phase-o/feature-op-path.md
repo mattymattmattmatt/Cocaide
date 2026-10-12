@@ -1,4 +1,4 @@
-# Cocaide feature-op pipeline: how an op flows through the code (map for the SOLIDWORKS-class patch)
+# Cocaide feature-op pipeline: how an op flows through the code (map for the Phase O part-modeller patch)
 
 This was read-only; no files were edited. Line numbers are against HEAD `4de1139`.
 

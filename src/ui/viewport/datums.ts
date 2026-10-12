@@ -1,4 +1,4 @@
-// The reference geometry in the 3D view, drawn as SOLIDWORKS draws it:
+// The reference geometry in the 3D view, drawn as CAD users expect:
 // planes as translucent rectangles with a crisp border (and a label, placed
 // by the viewport as HTML), axes as dash-dot lines, points as small markers,
 // the origin as a red-green-blue triad. A selected one is orange, the one

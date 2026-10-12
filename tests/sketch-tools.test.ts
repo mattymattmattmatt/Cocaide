@@ -564,7 +564,7 @@ describe("the registry", () => {
     }
   });
 
-  it("keeps the first tools' test ids, and groups the toolbar into SOLIDWORKS's flyouts", () => {
+  it("keeps the first tools' test ids, and groups the toolbar into the usual flyouts", () => {
     for (const n of ["line", "rect", "circle", "arc", "slot"]) expect(toolByName(n)?.id).toBe(`sketch.${n}`);
     expect(toolbarEntries().map((e) => (e.kind === "flyout" ? `${e.flyout.label}: ${e.tools.map((t) => t.name).join(" ")}` : e.tool.name))).toEqual([
       "Line: line centerline midpoint-line",

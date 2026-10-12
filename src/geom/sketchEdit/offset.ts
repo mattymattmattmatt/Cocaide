@@ -1,4 +1,4 @@
-// Offset entities, as SOLIDWORKS has them: a chain of lines and arcs (or a
+// Offset entities, as CAD users expect them: a chain of lines and arcs (or a
 // circle) copied at a distance to one side, or both; the copies joined where
 // they meet (lines extended or trimmed to meet; at a corner that opens up,
 // the lines run on to meet, or with "round corners" an arc goes round it);

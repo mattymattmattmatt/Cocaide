@@ -373,7 +373,7 @@ describe("drawing the planes", () => {
     ]);
   });
 
-  it("shown as SOLIDWORKS does: default planes hidden until selected or shown; features shown; Planes hides all but the origin", () => {
+  it("shown as CAD users expect: default planes hidden until selected or shown; features shown; Planes hides all but the origin", () => {
     const v = DEFAULT_DATUM_VIEW;
     expect(datumVisible("Top", v)).toBe(false);
     expect(datumVisible("Top", v, ["Top"])).toBe(true);

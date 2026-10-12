@@ -1,4 +1,4 @@
-// The right-click menu on everything, as SOLIDWORKS has it: a feature's
+// The right-click menu on everything, as CAD users expect it: a feature's
 // edit, suppress, rename and delete; a face's sketch and hole; empty space's
 // sketch planes and views; and on every one, "Ask AI…", which opens the ask
 // panel. By default the AI may change the whole part from there.

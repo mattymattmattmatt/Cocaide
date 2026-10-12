@@ -1,6 +1,6 @@
-// Named dimensions and the document's symbol table (SOLIDWORKS's D1@Sketch1,
-// done plainly). Every dimension of a sketch (a constraint with a value) has a
-// name: the one it is given (`name`, renameable in the Modify box), else
+// Named dimensions and the document's symbol table (names like D1@Sketch1,
+// done plainly). Every dimension of a sketch (a constraint with a value) has
+// a name: the one it is given (`name`, renameable in the Modify box), else
 // d<n>, n its place among the sketch's dimensions (d1, d2, …). Any expression
 // anywhere reads it as <sketch id>.<name>: "=sketch_1.width * 2". A
 // parameter may be an expression too ("=sketch_1.d1 / 2"), so parameters and

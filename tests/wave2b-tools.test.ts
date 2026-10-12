@@ -188,7 +188,7 @@ describe("the revolve editor's rules", () => {
 });
 
 describe("review fixes", () => {
-  it("an open chain revolves as a thin wall from the tool (SOLIDWORKS offers the thin feature)", () => {
+  it("an open chain revolves as a thin wall from the tool (the usual thin feature)", () => {
     const chain = [
       { id: "l1", type: "line", start: [10, 0], end: [10, 20] },
       { id: "l2", type: "line", start: [10, 20], end: [20, 20] },

@@ -1,4 +1,4 @@
-// The CommandManager's tabs, as SOLIDWORKS has them, and the order of the
+// The CommandManager's tabs, and the order of the
 // tool groups on each. A tool names its tab and group (ToolDef.tab, .group);
 // a group not listed here goes after the listed ones. A tab with no tools is
 // not shown.

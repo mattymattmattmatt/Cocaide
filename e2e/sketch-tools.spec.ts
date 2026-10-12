@@ -1,4 +1,4 @@
-// The sketch tool registry in the browser (Phase O wave 1): SOLIDWORKS-style
+// The sketch tool registry in the browser (Phase O wave 1):
 // flyouts that show and run the variant used last, keys, the shortcut bar and
 // the right-click menu listing the drawing tools, the options strip, Esc that
 // first drops the shape and then the tool, every new shape drawn as plain

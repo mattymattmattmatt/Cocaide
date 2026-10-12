@@ -1,4 +1,4 @@
-// Move, copy, rotate and scale entities, as SOLIDWORKS has them.
+// Move, copy, rotate and scale entities, as CAD users expect them.
 //
 // The picked entities are moved by a translation, a rotation about a point,
 // or a scale about a point (copy: copies are made and moved instead). The

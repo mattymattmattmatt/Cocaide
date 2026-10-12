@@ -121,7 +121,7 @@ export { constraintEntities, nextEntityId, removeEntities, ENTITY_PREFIX as ID_P
 
 export interface Suggestion {
   label: string;
-  /** The relation's or dimension's icon, as on SOLIDWORKS's Add Relations list. */
+  /** The relation's or dimension's icon, as on the Add Relations list. */
   icon: IconName;
   /** Builds the constraint; `value` comes from the input when the constraint has one. */
   make(value: number): Constraint;
@@ -159,7 +159,7 @@ export function angleBetween(a: Line, b: Line): number {
 
 /**
  * What the current selection can be related or dimensioned by, as on
- * SOLIDWORKS's Add Relations list: relations first (no value), then the
+ * the Add Relations list: relations first (no value), then the
  * dimensions, each valued at what it measures now so adding it moves nothing.
  */
 export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Suggestion[] {
@@ -197,7 +197,7 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
       out.push(
         { label: "Centre on origin", icon: "coincident", make: () => ({ type: "coincident", points: [`${e.id}.center`, "origin"] }), testId: "c-center-origin" },
         fix({ entity: e.id }),
-        // SOLIDWORKS dimensions a circle by its diameter and an arc by its radius.
+        // A circle is dimensioned by its diameter and an arc by its radius.
         ...(e.type === "circle" ? [diameter, radius] : [radius, diameter]),
       );
     }
@@ -358,7 +358,7 @@ export function itemEntities(items: SketchItem[], entities: SketchEntity[]): str
 }
 
 /**
- * SOLIDWORKS's Smart Dimension: the dimension the picks call for. One line
+ * Smart Dimension: the dimension the picks call for. One line
  * is its length, a circle its diameter, an arc its radius, a rectangle its
  * width or height by the side clicked; two picks are the distance or angle
  * between them. Alternatives follow the first (two points: aligned,
@@ -422,7 +422,7 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
     const p = pointOf(pt.ref, byId);
     const d = offsetFrom(line, p);
     const across: Suggestion = { label: "Diameter across", icon: "diameter", value: round6(2 * d), make: (v) => ({ type: "distance", point: pt.ref, line: line.id, value: v, doubled: true }), testId: "c-linear-diameter" };
-    // Only across a centreline (construction) or a sketch axis, as SOLIDWORKS offers it: a revolve profile's diameter.
+    // Only across a centreline (construction) or a sketch axis: a revolve profile's diameter.
     const centreline = isCentreline(line);
     const base = withCondition(valued.slice(0, 1));
     if (!centreline) return base;
@@ -436,7 +436,7 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
 
 /**
  * Whether where a two-pick dimension is dropped changes what it is, so it
- * follows the pointer until a click places it, as SOLIDWORKS does: two
+ * follows the pointer until a click places it: two
  * points apart in X and in Y (aligned, horizontal or vertical), two lines
  * that meet (the angle or its supplement), a point and a centreline or
  * sketch axis (its distance, or the diameter across). Any other pair opens
@@ -515,7 +515,7 @@ function meetPoint(a: Line, b: Line): Vec2 | null {
 
 /**
  * The distance offers with a Shift-clicked circle or arc measured to its near
- * or far side: the side clicked, as SOLIDWORKS takes it (clicked nearer the
+ * or far side: the side clicked (clicked nearer the
  * other pick than the centre is: min; beyond: max). That variant goes first.
  */
 function conditioned(entities: SketchEntity[], byId: Map<string, SketchEntity>, list: Suggestion[], picks: SketchItem[], arcs: Record<string, Vec2>): Suggestion[] {
@@ -566,7 +566,7 @@ export interface Inference {
 }
 
 /**
- * SOLIDWORKS's sketch inferencing: an end, centre or the origin first, then
+ * Sketch inferencing: an end, centre or the origin first, then
  * a line's midpoint, then anywhere on a line, circle or arc. Null when the
  * point lands on nothing (the grid takes it).
  */

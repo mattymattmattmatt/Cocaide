@@ -1,7 +1,7 @@
 // Sketch: on a default plane, a plane feature, or the one flat face
 // selected, by reference, so the sketch follows what it stands on (a sketch
 // on a face moves when an earlier feature moves the face). It sits left of
-// the CommandManager's tabs, always shown, as SOLIDWORKS keeps it at hand:
+// the CommandManager's tabs, always shown, so it is always at hand:
 // with a plane or a flat face selected it sketches there straight away;
 // otherwise its dropdown offers the planes.
 
@@ -49,7 +49,7 @@ export function sketchOnFace(ctx: ToolCtx): void {
 const planeFeatures = (ctx: ToolCtx) => ctx.features.filter((f) => f.op === "plane").map((f) => String(f.id));
 
 /**
- * What the selection says to sketch on, as SOLIDWORKS reads it: one plane
+ * What the selection says to sketch on: one plane
  * picked (in the view or the tree), else one flat face, else the plane
  * feature selected in the tree; null when nothing says.
  */

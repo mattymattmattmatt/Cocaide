@@ -38,7 +38,7 @@ test("draws a closed line profile, constrains it, cuts it", async ({ page }) => 
   await page.getByTestId("tool-line").click();
   for (const [x, y] of [[-30, -10], [-10, -10], [-10, 10], [-30, 10], [-30, -10]]) await sketchClick(page, x, y);
   await expect(page.getByTestId("profile-status")).toContainText("1 region, area 400");
-  // The chain closed itself: four coincidences, no gaps; and each line was inferred level or plumb, as SOLIDWORKS does.
+  // The chain closed itself: four coincidences, no gaps; and each line was inferred level or plumb, as CAD users expect.
   await expect(page.getByTestId("constraint-list").locator("li")).toHaveCount(8);
   await expect(page.getByTestId("constraint-list")).toContainText("l1 horizontal");
   await expect(page.getByTestId("constraint-list")).toContainText("l2 vertical");

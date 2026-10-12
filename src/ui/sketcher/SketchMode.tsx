@@ -146,13 +146,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   const [showRelations, setShowRelations] = useState(true);
   /** The relation or dimension selected on the canvas or in the list. */
   const [picked, setPicked] = useState<number | null>(null);
-  /** SOLIDWORKS's Modify box: a new Smart Dimension, or an existing dimension being edited, where it was clicked. */
+  /** The Modify box: a new Smart Dimension, or an existing dimension being edited, where it was clicked. */
   const [modify, setModify] = useState<{ x: number; y: number; options: Suggestion[]; choice: number } | { x: number; y: number; index: number } | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const docParams = useContext(ParametersContext);
   /** The document's names, with this sketch's dimensions as the draft has them now: "=sketch_1.d1 * 2" reads the draft. */
   const params = useMemo(() => draftParameters(docParams, session.id, draft.constraints), [docParams, session.id, draft.constraints]);
-  /** A new dimension that would over-define the sketch: SOLIDWORKS asks to make it driven. */
+  /** A new dimension that would over-define the sketch: the sketcher asks whether to make it driven. */
   const [drivenAsk, setDrivenAsk] = useState<{ k: Constraint; entities: SketchEntity[]; x: number; y: number } | null>(null);
   /** Fully Define's preview: what it would add, and from where X and Y are measured. */
   const [define, setDefine] = useState<{ datum: string; relations: boolean; dimensions: boolean } | null>(null);
@@ -244,7 +244,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
 
   /**
    * Adds a relation or dimension. One that would over-define the sketch is
-   * refused; a dimension, as SOLIDWORKS does, asks first whether to add it
+   * refused; a dimension asks first whether to add it
    * driven instead ("ask": the question is open, at `at` or the pointer).
    */
   const addConstraint = (raw: Constraint, at?: { x: number; y: number }): boolean | "ask" => {
@@ -646,7 +646,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // How defined the sketch is, entity by entity: SOLIDWORKS's blue, black, red and brown, and the status line.
+  // How defined the sketch is, entity by entity: blue, black, red and brown, and the status line.
   const dangling = useMemo(() => danglingRefs(draft.entities, model), [draft.entities, model]);
   const health = useMemo(() => sketchHealth(draft.entities, draft.constraints, dangling), [draft, dangling]);
   const dof = health.dof;
@@ -740,7 +740,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     return `${RELATION_NOUN[e.type]} ${e.id}${e.construction ? " (construction)" : ""}`;
   };
 
-  /** The right-click menu for whatever is under the pointer, as SOLIDWORKS's sketch menus have it. */
+  /** The right-click menu for whatever is under the pointer, as CAD sketch menus have it. */
   const openMenu = (target: CanvasTarget | null, x: number, y: number) => {
     const ask = (t: Parameters<NonNullable<Props["onAsk"]>>[0]) => (onAsk ? [askEntry(() => onAsk(t, asFeature(), x, y))] : []);
     // Select, Smart Dimension, then each toolbar button's tool: a flyout's, the one it shows.
@@ -805,7 +805,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         ],
       });
     }
-    // An entity or point: right-clicking something outside the selection selects it alone, as SOLIDWORKS does.
+    // An entity or point: right-clicking something outside the selection selects it alone, the usual CAD way.
     const item: SketchItem = target.kind === "entity" ? { kind: "entity", id: target.id } : { kind: "point", ref: target.ref };
     const inSelection = selection.some((s) => (s.kind === "entity" && item.kind === "entity" ? s.id === item.id : s.kind === "point" && item.kind === "point" && s.ref === item.ref));
     const items = inSelection ? selection : [item];
@@ -1557,7 +1557,7 @@ function Offer({ offer, onAdd }: { offer: Suggestion; onAdd(v: number, expr?: st
 }
 
 /**
- * SOLIDWORKS's Modify box: the dimension's value where it was placed. It
+ * The Modify box: the dimension's value where it was placed. It
  * takes a number, a calculation worked out once ("sqrt(2)*10", "1in",
  * "30deg"), or an "=expression" that stays linked ("=sketch_1.width / 2");
  * what it comes to shows beneath, and a mistake says why there. The spin

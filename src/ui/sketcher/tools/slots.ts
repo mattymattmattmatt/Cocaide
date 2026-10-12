@@ -1,4 +1,4 @@
-// Slot ▾: Straight slot and Centrepoint slot, as SOLIDWORKS has them. A slot
+// Slot ▾: Straight slot and Centrepoint slot. A slot
 // is two lines and two arcs joined end to end, each line tangent to both
 // arcs, the arcs equal, their centres on the ends of a construction
 // centreline: it trims, fillets and dimensions like any lines and arcs, and

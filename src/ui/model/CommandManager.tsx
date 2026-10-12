@@ -1,4 +1,4 @@
-// The model toolbar as SOLIDWORKS's CommandManager: Undo, Redo and Sketch
+// The model toolbar (the CommandManager): Undo, Redo and Sketch
 // always at hand on the left, then tabs of tools (Features, Reference,
 // Bodies, Weldments, Evaluate), each tab's tools in groups. Everything comes
 // from the tool registry; the tab last shown is remembered in this browser.

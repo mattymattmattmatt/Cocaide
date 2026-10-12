@@ -1,5 +1,5 @@
-// What the sketcher remembers between sketches in this browser, as SOLIDWORKS
-// does: the tool each flyout button shows (the one used last) and each tool's
+// What the sketcher remembers between sketches in this browser, as CAD
+// users expect: the tool each flyout button shows (the one used last) and each tool's
 // options (a polygon's sides). A convenience only: anything missing, stale or
 // unreadable falls back to the defaults.
 

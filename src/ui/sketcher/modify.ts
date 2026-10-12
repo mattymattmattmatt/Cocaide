@@ -1,5 +1,5 @@
 // What the Modify box (and the inline box while drawing) reads from what is
-// typed, as SOLIDWORKS's does: a number; a calculation with functions and
+// typed: a number; a calculation with functions and
 // units, worked out once ("sqrt(2)*10", "1in", "25.4mm + 3", "30deg"); or an
 // "=expression" that stays linked to the parameters and dimensions it reads.
 // The spin buttons step the value by the increment set in Settings. Pure.

@@ -1,5 +1,5 @@
-// Arc ▾: Centrepoint arc, Tangent arc and 3-point arc, as SOLIDWORKS has
-// them. An arc bends the way the pointer went: a centrepoint arc runs
+// Arc ▾: Centrepoint arc, Tangent arc and 3-point arc. An arc bends the way
+// the pointer went: a centrepoint arc runs
 // anticlockwise or clockwise as the pointer swept round its centre, and a
 // tangent arc leaves its line or arc forwards, or backwards when the pointer
 // first heads back.

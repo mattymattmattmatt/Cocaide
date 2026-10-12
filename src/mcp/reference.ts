@@ -41,7 +41,7 @@ the sketch's dimensions (d1, d2 …, constraints without a value not counted). E
 Once an expression reads a default name, the name is written into the dimension ("name": "d2") so deleting an earlier
 dimension can't move it onto another. renameDimension renames one and every expression that read it; renaming a
 sketch (its id) renames <old id>.<name> everywhere too.
-"driven": true makes a dimension a reference (SOLIDWORKS's driven dimension): never solved, never over-defining,
+"driven": true makes a dimension a reference (driven) one: never solved, never over-defining,
 its value kept equal to what the geometry measures (so expressions can read it). Add a dimension that would
 over-define the sketch as driven; setDriven turns one driving again only if the sketch stays solvable.
 
@@ -79,7 +79,7 @@ outlines from lines and arcs with relations, as the app's tools do:
   polygon: N equal lines (coincident ends, "equal" to the first) with their corners "pointOn" a construction circle;
   slot: 2 lines and 2 arcs joined by coincident ends, each line "tangent" to both arcs, the arcs "equal", their centres
     coincident with the ends of a construction centreline.
-Constraints are SOLIDWORKS's sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2, point at) or "origin".
+Constraints are the standard CAD sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2, point at) or "origin".
 Dimensions (mm; angles in degrees). Each may carry "name" and "driven": true (see Dimension names, driven dimensions).
   { "type": "distanceX" | "distanceY" | "distance", "entity": "r1", "value": 80 }   (or "points": ["l1.start","l1.end"])
   { "type": "distance", "point": "c1.center", "line": "l1", "value": 12 }   (square to the line, extended; "X"/"Y" are the sketch axes)
@@ -87,7 +87,7 @@ Dimensions (mm; angles in degrees). Each may carry "name" and "driven": true (se
   { "type": "distance", "point": "l3.end", "line": "cl", "doubled": true, "value": 40 }   (a linear diameter: twice the
                                                                  distance to a centreline, shown Ø: a revolve profile's diameter)
   "condition": "min" | "max" on a distance, distanceX or distanceY whose point is a circle's or arc's "center": measured
-    to its nearest (min) or farthest (max) side instead ("center", the default). SOLIDWORKS: Shift-click the circle.
+    to its nearest (min) or farthest (max) side instead ("center", the default). In the sketcher: Shift-click the circle.
   { "type": "radius" | "diameter", "entity": "c1", "value": 5 }
   { "type": "arcLength", "entity": "a1", "value": 25 }          (along the arc)
   { "type": "angle", "entities": ["l1", "l2"], "value": 30 }     (between their directions, start to end; over 0, under 180;

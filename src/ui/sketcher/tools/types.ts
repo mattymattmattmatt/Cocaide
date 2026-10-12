@@ -129,7 +129,7 @@ export interface TypedField {
 }
 
 /**
- * SOLIDWORKS's on-screen numeric input: once the clicks before the last are
+ * On-screen numeric input: once the clicks before the last are
  * down, typing a number opens a box at the pointer (Tab goes to the next
  * value). The values place the last click exactly, and each becomes a
  * driving dimension of what is built. A value left empty follows the pointer.

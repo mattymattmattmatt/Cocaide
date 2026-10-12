@@ -1,4 +1,4 @@
-// Wave 4B: the details that make the sketcher feel like SOLIDWORKS. Driven
+// Wave 4B: the details that make the sketcher feel as CAD users expect. Driven
 // dimensions offered when one would over-define, named dimensions read by
 // expressions elsewhere, the Modify box's functions and units, min and max to
 // a circle with Shift, Fully Define, typing a length while drawing, and the
@@ -54,7 +54,7 @@ test("an empty sketch says so; a dimension that over-defines is offered as drive
   await dimension(page, [15, 0], [15, -10], "30");
   await expect(page.getByTestId("sketch-status")).toHaveText("Fully defined");
 
-  // The distance between its ends would fix the length again: SOLIDWORKS asks.
+  // The distance between its ends would fix the length again: the sketcher asks.
   await sketchClick(page, 0, 0);
   await sketchClick(page, 30, 0);
   await expect(page.getByTestId("driven-prompt")).toBeVisible();

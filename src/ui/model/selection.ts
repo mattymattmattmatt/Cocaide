@@ -1,5 +1,5 @@
-// What is selected in the 3D view, and how a click changes it, as SOLIDWORKS
-// does: a plain click selects that one face, edge, vertex or plane; Ctrl- or
+// What is selected in the 3D view, and how a click changes it, the usual
+// CAD way: a plain click selects that one face, edge, vertex or plane; Ctrl- or
 // Shift-click adds it, or takes it out again if it was in. Faces, edges,
 // vertices and reference geometry (planes, axes, points) mix freely.
 //

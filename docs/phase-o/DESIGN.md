@@ -1,4 +1,4 @@
-# Cocaide "Phase O": a SOLIDWORKS-class part modeller — design contract
+# Cocaide "Phase O": a professional-grade parametric part modeller — design contract
 
 This is the contract every implementation agent works to. Read it fully before you start.
 Background maps of the codebase (read the ones your task names; they have line numbers):
@@ -9,10 +9,10 @@ Background maps of the codebase (read the ones your task names; they have line n
 - `/home/user/Cocaide/.plan/ui-structure.md` — App, PropertyPanel, Viewport, sketcher, styles, icons, input, e2e conventions.
 - `/home/user/Cocaide/.plan/agent-tools.md` — the AI side (right-click agent, MCP server, reference doc).
 - `/home/user/Cocaide/.plan/tests-infra.md` — how to write unit and e2e tests here.
-- `/home/user/Cocaide/.plan/cad-research.md` — the SOLIDWORKS/Onshape/Fusion checklist this patch works from.
+- `/home/user/Cocaide/.plan/cad-research.md` — the Onshape/Fusion/desktop-CAD checklist this patch works from.
 
-The user asked for: "make this a great 3D modeller like SOLIDWORKS … implement them in a smarter, cleaner way than
-SOLIDWORKS but try to get all the little things in there. One example is reference edges and being able to dimension
+The user asked for a great 3D modeller, built "in a smarter, cleaner way" than the usual CAD tools, "but try to get
+all the little things in there. One example is reference edges and being able to dimension
 to them … mainly sketching and parametric modelling. The AI was limited by the amount of tools and features."
 
 ## 1. Principles
@@ -20,7 +20,7 @@ to them … mainly sketching and parametric modelling. The AI was limited by the
 1. **One document, one command path.** Every feature is JSON in the document, validated strictly (unknown keys are
    errors), rebuilt by the kernel, editable by humans in the UI and by agents through the same commands. Numbers accept
    `"=expr"` (resolved before validation, so validators and the kernel only see numbers).
-2. **Smarter than SOLIDWORKS:** one feature per shape-making method with an `operation` (new/add/remove/intersect);
+2. **Smarter than the usual CAD tools:** one feature per shape-making method with an `operation` (new/add/remove/intersect);
    one reference-geometry system (`DatumRef`) shared by planes, axes, points, sketch placement, mirror, patterns,
    revolve axes and extrude end conditions; references to model geometry are selectors (queries), never indices;
    sketches can reference model edges directly; every failure message names what to fix.
@@ -89,7 +89,7 @@ Any line / circle / arc / point entity may carry `ref?: DatumRef` (normally `{ e
 `{ datum: "<axis or point feature>" }`). Such an entity is **reference geometry**: the rebuild re-projects it into the
 sketch plane from the model as it stands at the sketch's place in history, and the solver treats its numbers as
 constants (not unknowns). It can take part in every relation and dimension. It is drawn purple in the sketcher, it is
-construction by default (never profile) unless `construction: false` is set explicitly (SOLIDWORKS "convert entities"
+construction by default (never profile) unless `construction: false` is set explicitly (the usual "convert entities"
 makes profile geometry: the Convert Entities tool sets `construction: false`; dimensioning to a model edge creates a
 construction reference automatically).
 The sketch's own axes are always available to constraints as virtual reference lines with ids `"X"` and `"Y"`

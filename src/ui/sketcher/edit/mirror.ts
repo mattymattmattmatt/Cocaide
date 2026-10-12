@@ -21,7 +21,7 @@ export const tools: EditToolDef[] = [
     options: [{ kind: "toggle", key: "copy", label: "Copy", title: "Keep the originals and add mirrored copies (off: move them over)", default: "on" }],
     start: (selection, state) => {
       const picks = fromSelection(selection, state);
-      // A centreline picked last with the entities is the mirror line, as SOLIDWORKS takes it; not one tied to
+      // A centreline picked last with the entities is the mirror line, the usual CAD way; not one tied to
       // them by a relation (a slot's own centreline, in a box round the slot), which is one of the entities.
       const last = picks.entities[picks.entities.length - 1];
       const e = state.entities.find((x) => x.id === last);

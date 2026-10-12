@@ -1,4 +1,4 @@
-// Mirror entities, as SOLIDWORKS has them: the picked lines, arcs, circles
+// Mirror entities, as CAD users expect them: the picked lines, arcs, circles
 // and points mirrored about a line (a centreline, any line, or the sketch's
 // X or Y axis). With copy (the default) the originals stay and each copy is
 // held to its original by a symmetric relation (entity to entity for lines,

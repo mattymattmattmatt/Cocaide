@@ -1,6 +1,6 @@
 // The feature tree: select, reorder (drag or arrows), suppress, delete.
-// Every change is a document command; rejected moves say why. As in
-// SOLIDWORKS, the default planes and the origin head it: a click selects one
+// Every change is a document command; rejected moves say why. The
+// default planes and the origin head it: a click selects one
 // (and shows it while selected), the eye shows or hides it for good, a
 // right-click offers Sketch on this plane, an offset plane, Ask AI. Plane,
 // axis and point features carry an eye too. Showing is view state, never

@@ -4,7 +4,7 @@ import { edgesSelectorFor, facesSelectorFor } from "../../../kernel/synthesize";
 import type { Raw, ToolCtx, ToolDef } from "../ToolContext";
 
 /**
- * The new fillet or chamfer on the selected edges and (SOLIDWORKS-like) every
+ * The new fillet or chamfer on the selected edges and (as CAD users expect) every
  * edge of the selected faces; or what to click first.
  */
 export function edgeFeature(ctx: ToolCtx, op: "fillet" | "chamfer"): Raw | string {

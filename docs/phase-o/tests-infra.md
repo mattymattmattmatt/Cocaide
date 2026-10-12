@@ -212,8 +212,8 @@ Also present: `examples/drawings/` (`bracket.pdf`, `.svg`, `-scan.png`, `-blurry
 
 ## 5. Naming and structure conventions
 - **File header:** each file starts with a comment block naming the phase or feature (e.g. `multibody.test.ts:1-3`, `sketch-relations.spec.ts:1-4`). Helper modules have no `.test` or `.spec` suffix (`tests/drawings.ts`, `e2e/sections.ts`, `e2e/helpers.ts`), so they are not collected.
-- **`describe` names** are topics in lowercase prose: `"operations"`, `"errors the agent can read"`, `"fillet and chamfer"`, `"the tools' rules"`, `"defined state, as SOLIDWORKS colours it"`.
-- **`it` and `test` names** are full behavioural sentences, often citing SOLIDWORKS: `"reports a tie instead of guessing"`, `"Smart Dimension: a line's length, a circle's diameter, …"`. Acceptance items are numbered to match the roadmap: `"1. mirrors hole_1 about the XZ plane: …"`.
+- **`describe` names** are topics in lowercase prose: `"operations"`, `"errors the agent can read"`, `"fillet and chamfer"`, `"the tools' rules"`, `"defined state, in the standard CAD colours"`.
+- **`it` and `test` names** are full behavioural sentences: `"reports a tie instead of guessing"`, `"Smart Dimension: a line's length, a circle's diameter, …"`. Acceptance items are numbered to match the roadmap: `"1. mirrors hole_1 about the XZ plane: …"`.
 - **Per-file local helpers** (duplicated, not shared):
   - `load` / `example(name)`
   - `build` / `built(doc)`, which rebuilds, maps and disposes in `finally`

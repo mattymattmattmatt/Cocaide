@@ -1,4 +1,4 @@
-// Polygon, as SOLIDWORKS has it: 3 to 40 equal sides round a construction
+// Polygon: 3 to 40 equal sides round a construction
 // circle, inscribed (the corners on the circle) or circumscribed (the sides
 // touching it: its diameter is the size across flats). Plain lines joined at
 // the corners, so the sides trim and fillet like any others; it keeps its

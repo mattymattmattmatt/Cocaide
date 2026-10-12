@@ -164,7 +164,7 @@ There are two kinds of site. **[TS]** means the TypeScript compiler will flag a 
 
 ### 2.5 Recommended data model
 - Converted entities stay ordinary entities, so every existing constraint, dimension and profile path works unchanged.
-- Add `ref?: { edge: EdgeSelector }` on `EntityBase`. It is orthogonal to `construction`: SOLIDWORKS converted edges are profile geometry unless made construction.
+- Add `ref?: { edge: EdgeSelector }` on `EntityBase`. It is orthogonal to `construction`: converted edges are profile geometry unless made construction, as CAD users expect.
 - **Dimension to a model edge without converting it:** Smart Dimension on a reference edge auto-creates a `construction:true` reference entity and dimensions to that. Existing forms then just work: the point-to-line form needs `line` to be a `"line"` (`validate.ts:596`), and concentric already accepts circle and arc (632).
 - **UI changes:**
   - `projectEdges` returns structured records `{ edge: index, kind, a, b, center?, radius?, clockwise?, inPlane, poly: Vec2[] }`.
@@ -192,7 +192,7 @@ There are two kinds of site. **[TS]** means the TypeScript compiler will flag a 
    - `anchorEquations` 370, 379-381
    - `opts.fixed` 399
    - `unpack` 74: copy the reference entity unchanged
-   - `sketchStatus` 477-483: reference entities are never in `free`, so they draw black like SOLIDWORKS
+   - `sketchStatus` 477-483: reference entities are never in `free`, so they draw black, the usual CAD way
 3. **Effects:**
    - `freedom()` and the degree-of-freedom count are correct automatically.
    - `wouldOverDefine` (449) correctly refuses a relation between two reference entities, because the Jacobian row is zero and the rank is unchanged.
@@ -225,6 +225,6 @@ There are two kinds of site. **[TS]** means the TypeScript compiler will flag a 
 - **Offset.** Needs ordered chains, including open ones. `chain` is private and throws on open ends, so export a non-throwing `chains(segs) → {closed, open}`.
   - Offsetting a line or arc is analytic. Corners need extending or trimming, or new arcs.
   - `BRepOffsetAPI_MakeOffset` is in the bindings, but results would have to be converted back into entities.
-- **Optional SOLIDWORKS-style "selected contours".** Build a planar arrangement: split all segments at all intersections, build a half-edge graph, take minimal faces.
+- **Optional "selected contours".** Build a planar arrangement: split all segments at all intersections, build a half-edge graph, take minimal faces.
   - Then `extrude`/`cut` gain `regions?: Vec2[]` (seed points), checked against `windingNumber` (326).
   - This would allow crossing sketches without trimming. Today they are rejected outright.

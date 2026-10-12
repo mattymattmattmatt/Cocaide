@@ -1,9 +1,9 @@
-# SOLIDWORKS-class part modelling for Cocaide: a prioritised feature checklist
+# Professional-grade part modelling for Cocaide: a prioritised feature checklist
 
 **Scope:** sketching and parametric solid modelling only. Surfacing, assemblies and drawings are left out.
 **Priorities:**
-- **P0:** without it, nobody would take the tool seriously as a SOLIDWORKS-class part modeller.
-- **P1:** strongly expected by daily SOLIDWORKS users.
+- **P0:** without it, nobody would take the tool seriously as a professional part modeller.
+- **P1:** strongly expected by daily CAD users.
 - **P2:** nice to have.
 
 **Format:** `- [ ]` = missing, `- [x]` = Cocaide already has it. A note after an item says how much Cocaide has today, based on reading `src/doc/types.ts`, `docs/roadmap.md` and the sketcher.
@@ -99,7 +99,7 @@ So almost everything below can be built on the existing wasm.
 
 ### Relations
 - [x] P0 Coincident, horizontal and vertical (entity and point pair), collinear, parallel, perpendicular, tangent, concentric, equal, midpoint, pointOn, fix. *(Cocaide has all of these.)*
-- [ ] P0 **Symmetric for lines, arcs and circles**, not only points (SOLIDWORKS allows lines, arcs and ellipses).
+- [ ] P0 **Symmetric for lines, arcs and circles**, not only points (lines, arcs and ellipses, as CAD users expect).
 - [ ] P0 **Intersection:** a point at the crossing of two lines. Inferred when you click on a crossing.
 - [ ] P0 **Merge points:** two points become one shared point, a real topology merge rather than a coincident relation. *Design:* the solver keeps one variable, and the UI shows the shared vertex.
 - [ ] P0 **Relations to external or model geometry:** horizontal or vertical to a model edge, parallel to a model edge or planar face, coincident to a model vertex, on-edge, collinear with a projected edge. Works through `ref` entities.
@@ -108,7 +108,7 @@ So almost everything below can be built on the existing wasm.
 - [ ] P1 **Pierce:** a sketch point where a 3D curve or edge passes through the sketch plane; used to locate sweep profiles.
 - [ ] P1 **Fix slot, equal slots, doubled distance.** Doubled distance means a dimension measured to a centreline and shown as a diameter, used for revolve profiles.
 - [ ] P1 **Along X, Y and Z** (3D sketch).
-- [ ] P2 **Relation groups:** collect relations under a name, then suppress or edit them together (SOLIDWORKS 2026 SP1).
+- [ ] P2 **Relation groups:** collect relations under a name, then suppress or edit them together.
 - [ ] P2 **Tangent to face, on surface** (3D sketch).
 
 ### Dimensions
@@ -117,12 +117,12 @@ So almost everything below can be built on the existing wasm.
 - [ ] P0 **Line-to-line parallel distance** (two lines, not a point and a line).
 - [ ] P0 **Arc conditions min, max and centre:** a dimension to a circle or arc measured to its centre, nearest or farthest point. Shift-click a circle to get min or max.
 - [ ] P0 **Arc length:** select the arc and its two endpoints.
-- [ ] P0 **Driven (reference) dimensions:** shown grey or in parentheses. A driving/driven toggle. When a new dimension would over-define, prompt "Make this dimension driven?" (SOLIDWORKS does exactly this).
+- [ ] P0 **Driven (reference) dimensions:** shown grey or in parentheses. A driving/driven toggle. When a new dimension would over-define, prompt "Make this dimension driven?" (the usual CAD behaviour).
 - [ ] P0 **Dimension to reference edges, model edges, vertices, origin and planes:** pick any model edge or vertex while in a sketch. A hidden `ref` entity is created automatically and dimensioned. *(This is the user's explicit example.)*
 - [ ] P0 **Diameter dimension across a revolve centreline:** a "linear diameter" that shows twice the distance to the centreline.
 - [ ] P0 **On-screen numeric input while drawing:** typed values become dimensions.
 - [ ] P0 **The Modify box takes expressions, units, parameters and functions:** `=width/2`, `1in`, `25.4mm + 3`, `30deg`, `sqrt()`, `sin()`, `min()`, `max()`, `round()`, `if(c, a, b)`. *(Partial: + - * / and parameters only.)* It also needs spin increments, Rebuild and Reverse.
-- [ ] P0 **Named dimensions:** every dimension has a stable name (`sk1.width`, renameable) that any expression can reference. This replaces SOLIDWORKS' `D1@Sketch1`.
+- [ ] P0 **Named dimensions:** every dimension has a stable name (`sk1.width`, renameable) that any expression can reference. This replaces opaque names like `D1@Sketch1`.
 - [ ] P0 **Dimension display:** drag to place the text, flip arrows, text size fixed in screen space, and double-click to edit in place.
 - [ ] P1 **Ordinate and baseline dimensions:** a chain from one base entity, all driving.
 - [ ] P1 **Chamfer dimension in a sketch:** length × angle on a sketch chamfer.
@@ -171,7 +171,7 @@ Each reference becomes a feature in the history and can be selected by features 
 - [ ] P1 **Helix and spiral curves:** pitch and revolutions, or height and pitch, variable pitch, taper. Needed for thread and spring sweeps.
 - [ ] P1 **Composite curve and projected curve** (a sketch projected onto a face, or two sketches' intersection).
 - [ ] P1 **Bounding box:** best-fit or aligned to a CS, shown as reference geometry and exposed as `bbox.x` and similar variables.
-- [ ] P2 **Patterns of reference planes:** pattern the plane feature itself (SOLIDWORKS 2025).
+- [ ] P2 **Patterns of reference planes:** pattern the plane feature itself.
 - [ ] P2 **Split line:** splits a face by a projected sketch or an intersection, for draft and face selection.
 - [ ] P2 **Curve through XYZ points** from a table or CSV.
 - [ ] *(Skip mate references; those are for assemblies.)*
@@ -198,7 +198,7 @@ Each reference becomes a feature in the history and can be selected by features 
 
 ### Sweep
 - [ ] P1 **Profile along a path:** sketch, 3D sketch, edges or helix, with add or remove operations. Orientation: follow path, keep normal constant, follow path and first guide, or minimum twist. Twist by angle or turns along the path. Start and end tangency. Uses `BRepOffsetAPI_MakePipeShell` (twist through `SetLaw`, orientation through `SetMode`).
-- [ ] P1 **Circular-profile sweep:** a diameter only, no profile sketch, for pipes, wires and springs (SOLIDWORKS 2018+).
+- [ ] P1 **Circular-profile sweep:** a diameter only, no profile sketch, for pipes, wires and springs.
 - [ ] P2 **Guide curves; cut sweep with a solid tool body** (tool-path machining).
 
 ### Loft
@@ -278,7 +278,7 @@ Each reference becomes a feature in the history and can be selected by features 
 - [ ] P0 **Rollback bar:** drag it in the tree or timeline. New features are inserted at the rollback point; "roll to end" and "roll to previous" are available. Features below the bar are greyed out.
 - [ ] P0 **Edit feature and edit sketch:** double-click or right-click. A live preview while editing, OK or Cancel, and the user edits within the feature's position in history.
 - [ ] P0 **Reorder by drag with dependency validation:** refuse a drop above a parent and say why.
-- [ ] P0 **Parent and child relations:** hovering a feature highlights its parents and children with arrows, like SOLIDWORKS' dynamic reference visualisation.
+- [ ] P0 **Parent and child relations:** hovering a feature highlights its parents and children with arrows (dynamic reference visualisation).
 - [ ] P0 **Suppress and unsuppress with dependents.** *(Partial: suppress exists.)* **Rebuild** with Ctrl+B and a force rebuild with Ctrl+Q.
 - [ ] P0 **Errors and warnings per feature, without cascading:**
   - The feature that failed shows a red marker and its children show yellow.
@@ -297,7 +297,7 @@ Each reference becomes a feature in the history and can be selected by features 
 
 ### Direct manipulation
 - [ ] P0 **Instant3D drag handles:** select a feature face and drag an arrow handle to change depth or offset, with a ruler that snaps to geometry, and type the value. The change is written back to the feature parameter.
-- [ ] P0 **Show feature dimensions on the model:** double-click a feature to show its dimensions (sketch plus feature) in 3D. Double-click a dimension to edit it in place and rebuild. This is one of SOLIDWORKS' most-used details.
+- [ ] P0 **Show feature dimensions on the model:** double-click a feature to show its dimensions (sketch plus feature) in 3D. Double-click a dimension to edit it in place and rebuild. This is one of the most-used details in desktop CAD.
 
 ### Inspection
 - [ ] P0 **Measure tool:** pick any two entities to get min or centre distance, normal distance, dX, dY and dZ, angle, radius or diameter, edge length, face area, point XYZ. Arc conditions apply. It stays open while picking. Uses `BRepExtrema_DistShapeShape`. *(Cocaide has a measurements panel for bodies but no interactive measure.)*
@@ -361,7 +361,7 @@ Each reference becomes a feature in the history and can be selected by features 
 - **CATIA:** knowledgeware (rules, checks, reactions) and PowerCopy templates.
 - **Inventor:** iLogic-style rules (*if length > 500 then add a stiffener*).
 - **nTop:** a reusable block graph. The idea worth taking is to package feature subgraphs as reusable, typed custom features.
-- **SOLIDWORKS pain points to *avoid*:**
+- **Desktop-CAD pain points to *avoid*:**
   - Boss and Cut duplication, and one feature type per fillet variant.
   - `D1@Sketch1` naming and body names like "Boss-Extrude3[2]".
   - Modal dialogs, and a hidden "Edit Sketch Plane".
@@ -372,7 +372,7 @@ Each reference becomes a feature in the history and can be selected by features 
 
 ---
 
-## 7. Ten concrete ways to be smarter and cleaner than SOLIDWORKS
+## 7. Ten concrete ways to be smarter and cleaner than the usual CAD tools
 
 1. **One feature per shape-making method, with an operation type.**
    - `extrude`, `revolve`, `sweep` and `loft` each take `operation: "new" | "add" | "remove" | "intersect"` plus `scope: bodies[]`. Delete `cut` as a separate concept and keep it as an alias for old documents.
@@ -392,7 +392,7 @@ Each reference becomes a feature in the history and can be selected by features 
    - It works like Onshape mate connectors and FreeCAD attachment, minus the dialog sprawl. Sketches attach the same way, so "sketch on face" comes free.
 3. **External references as first-class sketch entities (the user's example).**
    - A `ref` entity type: `{type: "ref", source: EdgeSelector | VertexSelector | {plane|axis: id}, construction: true}`.
-   - It is projected again on every rebuild and drawn in a distinct colour, purple as in SOLIDWORKS.
+   - It is projected again on every rebuild and drawn in a distinct colour, purple as CAD users expect.
    - It can be used in any relation or dimension like ordinary geometry.
    - Picking a model edge or vertex with Smart Dimension or Add Relation *creates it automatically*, so the user never has to "convert entities first".
    - Each one shows a state (linked, broken) with a one-click "re-attach". Broken refs turn the dependent relations brown; they don't explode the sketch.
@@ -426,7 +426,7 @@ Each reference becomes a feature in the history and can be selected by features 
 9. **Patterns of anything, varied by expressions.**
    - A pattern copies features, bodies or faces; instances are skipped by clicking.
    - Each instance can read `i` (index) and `n` inside its seed's expressions, so `="10 + i*2"` gives growing holes.
-   - This replaces SOLIDWORKS' clunky Variable Pattern, Table Pattern and Fill Pattern with one mechanism. Sketch-point patterns and CSV table patterns become just position sources.
+   - This replaces the usual clunky variable, table and fill patterns with one mechanism. Sketch-point patterns and CSV table patterns become just position sources.
 10. **Rebuild that diagnoses first, plus a sketch solver that teaches.**
     - Every failure names the lost reference, ghosts where it *was*, and offers ranked fixes (nearest match, re-pick, suppress).
     - Children rebuild against the last good geometry wherever possible, so one error doesn't cascade into a red tree.
@@ -486,20 +486,11 @@ That keeps every tool usable by the AI agent too.
 ---
 
 Sources:
-- [Javelin: SOLIDWORKS Sketch Relations Summary](https://www.javelin-tech.com/blog/2014/01/solidworks-sketch-relations-summary/)
-- [GoEngineer: SOLIDWORKS Sketch Relations Guide](https://www.goengineer.com/blog/solidworks-sketch-relations-guide)
-- [SOLIDWORKS Help: Description of Sketch Relations](https://help.solidworks.com/2021/english/SolidWorks/sldworks/c_description_of_sketch_relations.htm)
-- [SOLIDWORKS Help: Sketch Relations Overview](https://help.solidworks.com/2018/English/SolidWorks/sldworks/c_Sketch_Relations_Overview.htm)
 - [Onshape Help: Extrude](https://cad.onshape.com/help/Content/extrude.htm)
 - [Onshape forum: improvements Feb 2023 (second end from starting offset, draft from offset)](https://forum.onshape.com/discussion/20115/improvements-to-onshape-february-3rd-2023)
 - [Onshape forum: extrude to face second end option](https://forum.onshape.com/discussion/6695/extrude-to-face-second-end-option)
 - [Onshape Help: Sketch Tools](https://cad.onshape.com/help/Content/sketch-tools.htm)
 - [Onshape tech tip: Sketch tools Use / Intersection](https://onshape.com/en/resource-center/tech-tips/sketch-tools-use-intersection)
-- [SolidProfessor: SOLIDWORKS 2026 enhancements for sketches, features and parts](https://solidprofessor.com/blog/solidworks-2026-enahcements-sketches-features-parts)
-- [SolidProfessor: What's New in SOLIDWORKS 2026 SP1](https://solidprofessor.com/blog/whats-new-solidworks-2026-sp1/)
-- [Javelin: Part Modeling, What's New in SOLIDWORKS 2026](https://www.javelin-tech.com/3d/part-modeling-whats-new-in-solidworks-2026/)
-- [GoEngineer: SOLIDWORKS 2025 Parts & Features, What's New](https://www.goengineer.com/blog/solidworks-2025-parts-and-features-whats-new)
-- [Engineers Rule: 20 things to look forward to in SOLIDWORKS 2025](https://www.engineersrule.com/20-things-to-look-forward-to-in-solidworks-2025/)
 
 Local files read:
 - `/home/user/Cocaide/src/doc/types.ts`

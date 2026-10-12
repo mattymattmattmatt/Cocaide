@@ -4,7 +4,7 @@
 //     joined end to end into one chain, open or closed, in order, or an error
 //     that says what is wrong with them (two chains, a branch, nothing);
 //   - where the chain meets a plane (the profile's), and the chain turned so
-//     it starts there: SOLIDWORKS's rule that the path starts on the profile's
+//     it starts there: the usual CAD rule that the path starts on the profile's
 //     plane, applied for the user (an open path runs from whichever end is on
 //     the plane; a closed one is split where it crosses it);
 //   - points and tangents along it.

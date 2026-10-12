@@ -1,10 +1,10 @@
-// Sketch fillet and sketch chamfer, as SOLIDWORKS has them.
+// Sketch fillet and sketch chamfer, as CAD users expect them.
 //
 // A corner is where two lines or arcs end at one point (or, for two lines
 // picked that don't meet, where they would meet if extended). A fillet
 // shortens both and puts in an arc of the radius tangent to both: tangent
 // and coincident relations hold it there, and one radius dimension drives
-// every fillet made at once (the others are equal to the first, SOLIDWORKS's
+// every fillet made at once (the others are equal to the first: the usual
 // "equal radius"). A chamfer cuts the corner with a line, set back by two
 // distances or by a distance and an angle, each a dimension.
 //

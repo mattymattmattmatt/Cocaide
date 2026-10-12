@@ -399,7 +399,7 @@ Open follow-ups from Wave 3:
 - Draft only works with a start parallel to the sketch plane; a slanted 'from' with a draft gives a clear error. A thin feature cannot have a draft.
 - An intersecting extrude leaves no tool for a pattern to repeat; patterning one says so.
 - Dynamic mirror (draw on one side of a centreline, mirrored live) is not done; it was optional.
-- Shift-drag in power trim to extend, and SOLIDWORKS's trim modes 'corner' and 'trim away inside/outside', are not done.
+- Shift-drag in power trim to extend, and the trim modes 'corner' and 'trim away inside/outside', are not done.
 - Patterns: only the seed's key point is placed, so a patterned line or arc can still turn (each copy is equal to and, for a line, parallel to its seed, but the circular pattern does not fix copy orientation). There is no second direction for linear patterns.
 - Offset uses one side for all picked chains: closed chains drawn in opposite directions picked together could go opposite ways.
 - Relation glyphs crowd the sketch after fillets, offsets and patterns. This is the existing Wave 1 follow-up, made more visible by these tools; grouping coincident and tangent glyphs per joint would help.

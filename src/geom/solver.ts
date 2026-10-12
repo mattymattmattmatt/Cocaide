@@ -673,7 +673,7 @@ export function solveSketch(entities: SketchEntity[], constraints: Constraint[],
   }
   if (pins.length) {
     // The pointer is somewhere the constraints don't let the handle reach (a polygon's corner off its
-    // centre's line once a side is level): go as near as they allow, as SOLIDWORKS slides it along.
+    // centre's line once a side is level): go as near as they allow, sliding it along as CAD users expect.
     const x = slide(l.x, base, pins, l.frozen);
     if (x && maxAbs(evaluate(base, x)) <= ACCEPT && norm(evaluate(pins, x)) < norm(evaluate(pins, l.x)) - 1e-6) return done(x);
   }
@@ -791,7 +791,7 @@ export function rankTracker(entities: SketchEntity[], constraints: Constraint[])
 /**
  * Per constraint, in order: true when it adds nothing to the constraints
  * before it (it repeats them, or contradicts them, at the geometry as it is).
- * Driven dimensions never do. SOLIDWORKS calls such a sketch over defined.
+ * Driven dimensions never do. Such a sketch is called over defined.
  */
 export function redundantConstraints(entities: SketchEntity[], constraints: Constraint[]): boolean[] {
   const t = rankTracker(entities, []);
@@ -874,7 +874,7 @@ function tiedToTrouble(entities: SketchEntity[], constraints: Constraint[], keep
 }
 
 /**
- * How defined a sketch is, as SOLIDWORKS colours it: which entities and
+ * How defined a sketch is, coloured the usual CAD way: which entities and
  * points can still move (blue), which cannot (black), and the degrees of
  * freedom left. An unknown can move when some motion the constraints allow
  * changes it: when it has a part in the Jacobian's null space.

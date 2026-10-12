@@ -1,4 +1,4 @@
-// What the viewport draws of the reference geometry, as SOLIDWORKS shows it:
+// What the viewport draws of the reference geometry, as CAD users expect it:
 // the default planes (Front, Top, Right) hidden until selected or shown with
 // their eye; plane, axis and point features shown; each one's eye in the tree
 // and a "Planes" toggle for all of them. Planes are rectangles sized to the
@@ -12,7 +12,7 @@ import type { Vec3 } from "../../doc/types";
 import { DEFAULT_DATUMS, type Datum } from "../../features/datum";
 import { add3, cross3, dot3, normalize3, scale3, sub3 } from "../../geom/vec";
 
-/** The default reference geometry the tree lists at its top, in SOLIDWORKS's order. */
+/** The default reference geometry the tree lists at its top, in the usual CAD order. */
 export const TREE_DATUMS = ["Front", "Top", "Right", "Origin"] as const;
 /** The defaults that are planes. */
 export const DEFAULT_PLANES = ["Front", "Top", "Right"] as const;
@@ -41,8 +41,8 @@ const margin = (size: number) => Math.max(5, size * 0.1);
 
 /**
  * A plane's rectangle: the part's box seen along its normal (and, for a
- * default plane, the origin too, so it sits round the origin as in
- * SOLIDWORKS), plus a margin; a 100 mm square on the plane's origin with no
+ * default plane, the origin too, so it sits round the origin), plus a
+ * margin; a 100 mm square on the plane's origin with no
  * part. Corners in order round the rectangle; the label at its far corner.
  */
 export function planeRect(d: Extract<Datum, { kind: "plane" }>, box: Box | null, isDefault = false): { corners: [Vec3, Vec3, Vec3, Vec3]; label: Vec3 } {
@@ -114,7 +114,7 @@ export function eyeOpen(id: string, v: DatumView): boolean {
   return v.shown[id] ?? shownByDefault(id);
 }
 
-/** Is it drawn now? A selected one always is (as SOLIDWORKS shows a plane picked in the tree). */
+/** Is it drawn now? A selected one always is (a plane picked in the tree shows while selected). */
 export function datumVisible(id: string, v: DatumView, selected: readonly string[] = []): boolean {
   if (selected.includes(id)) return true;
   if (!v.planes && id !== "Origin") return false;

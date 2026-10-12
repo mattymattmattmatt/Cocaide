@@ -84,7 +84,7 @@ describe("the registry", () => {
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point"]]);
   });
 
-  it("shows only the tabs that have tools, in SOLIDWORKS's order", () => {
+  it("shows only the tabs that have tools, in the usual CAD order", () => {
     expect(TABS.map((t) => t.label)).toEqual(["Features", "Reference", "Bodies", "Weldments", "Evaluate"]);
     expect(visibleTabs().map((t) => t.id)).toEqual(["features", "reference", "bodies", "weldments"]);
   });

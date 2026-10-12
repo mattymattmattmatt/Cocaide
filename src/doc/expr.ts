@@ -1,5 +1,5 @@
 // The expression language of every "=expr" number in a document, and of the
-// sketcher's Modify box: what SOLIDWORKS's equations take, written plainly.
+// sketcher's Modify box: what CAD equations usually take, written plainly.
 //
 //   numbers        12, 2.5, .5, 1e3
 //   units          25.4mm, 2.5cm, 0.1m, 1in, 2ft (lengths, to mm); 30deg, 30°, 1.2rad (angles, to degrees)

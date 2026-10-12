@@ -1,5 +1,5 @@
 // Circle ▾: Circle (centre, then a point on it) and Perimeter circle (three
-// points on it), as SOLIDWORKS has them. A point clicked on goes on the circle.
+// points on it). A point clicked on goes on the circle.
 
 import type { Vec2 } from "../../../doc/types";
 import { dist2 } from "../../../geom/vec";

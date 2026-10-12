@@ -1,4 +1,4 @@
-// Linear and circular sketch patterns, as SOLIDWORKS has them: copies of the
+// Linear and circular sketch patterns, as CAD users expect them: copies of the
 // picked entities (the seed) in a row, or round a centre; instances can be
 // skipped. Each copy is equal to its seed entity (a line parallel to it too)
 // and keeps the seed's own relations. One dimension drives the spacing:

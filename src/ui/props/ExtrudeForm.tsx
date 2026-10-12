@@ -1,5 +1,5 @@
 // The extrude and cut editors, declared for FeatureForm, laid out the way
-// SOLIDWORKS's Boss-Extrude and Cut-Extrude panels are: From (sketch plane,
+// CAD extrude and cut panels usually are: From (sketch plane,
 // an offset, a surface), Direction 1 (end condition, depth or what it goes up
 // to, offset, reverse, draft), Direction 2 (a tick box and its own block),
 // Thin feature, Selected contours, and intersect (extrude) or flip side to cut

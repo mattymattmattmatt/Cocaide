@@ -1,5 +1,5 @@
-// Phase O's UI foundations in the browser: the model toolbar as SOLIDWORKS's
-// CommandManager (Sketch always at hand, tools on tabs, the tab remembered,
+// Phase O's UI foundations in the browser: the model toolbar as a
+// command manager (Sketch always at hand, tools on tabs, the tab remembered,
 // every tool still on the shortcut bar and Enter), Ctrl/Shift-click to select
 // several faces and edges, and property editors declared as fields, which
 // turn a pick into selectors and send nested values whole.
