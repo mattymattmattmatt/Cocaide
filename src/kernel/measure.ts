@@ -77,13 +77,18 @@ export interface Interference {
   volume: number;
 }
 
-export function volumeOf(oc: OC, s: Scope, shape: TopoDS_Shape): number {
+/** The volume properties of a shape (volume, centre, moments), integrated as exactly as its faces need. */
+export function volumePropsOf(oc: OC, s: Scope, shape: TopoDS_Shape) {
   const props = s.track(new oc.GProp_GProps());
   // The plain integration is exact on planes, cylinders, cones, spheres and tori; a swept ellipse or spline
   // face (an extrusion or revolution surface) needs the adaptive one to come within 1e-9 of the truth.
   if (hasSweptFaces(oc, s, shape)) oc.BRepGProp.VolumePropertiesGK(shape, props, 1e-9, false, true, false, false, false);
   else oc.BRepGProp.VolumeProperties(shape, props, false, false, false);
-  return props.Mass();
+  return props;
+}
+
+export function volumeOf(oc: OC, s: Scope, shape: TopoDS_Shape): number {
+  return volumePropsOf(oc, s, shape).Mass();
 }
 
 const ANALYTIC_SURFACES: ReadonlySet<unknown> = new Set(["GeomAbs_Plane", "GeomAbs_Cylinder", "GeomAbs_Cone", "GeomAbs_Sphere", "GeomAbs_Torus"]);
@@ -101,8 +106,7 @@ function hasSweptFaces(oc: OC, s: Scope, shape: TopoDS_Shape): boolean {
 
 /** The centre of volume of a solid (or of the solids of a compound together). */
 export function centroidOf(oc: OC, s: Scope, shape: TopoDS_Shape): Vec3 {
-  const props = s.track(new oc.GProp_GProps());
-  oc.BRepGProp.VolumeProperties(shape, props, false, false, false);
+  const props = volumePropsOf(oc, s, shape);
   const c = s.track(props.CentreOfMass());
   return [c.X(), c.Y(), c.Z()];
 }

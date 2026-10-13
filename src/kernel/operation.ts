@@ -35,6 +35,8 @@ export function applyOperation(ctx: RebuildCtx, s: Scope, f: OperationFields & {
       break;
     case "intersect":
       ctx.commit(new Map([[r.body, commonWith(oc, s, r.body, ctx.need(r.body), tool, what)]]));
+      // Keeps an overlap: nothing for a pattern or mirror to repeat.
+      ctx.setIntersected(f.id);
       break;
   }
   return r;

@@ -1290,6 +1290,8 @@ function validateHole(raw: Record<string, unknown>, c: Checker, earlier: Readonl
     if (d >= t.major) c.fail("diameter", `a tapped hole's drill must be smaller than its thread (${t.designation}: ${t.major}) (got ${d})`);
     if (t.pitch >= t.major / 2) c.fail("thread.pitch", `must be less than half the thread's diameter ${t.major} (got ${t.pitch})`);
     if (typeof t.depth === "number" && typeof depth === "number" && t.depth > depth) c.fail("thread.depth", `must be at most the drill depth ${depth} (got ${t.depth})`);
+    // Drilled through (or up to next), the thread runs through the wall: a depth of its own would be dropped.
+    if (thread?.depth !== undefined && depth !== undefined && typeof depth !== "number") c.fail("thread.depth", `a thread depth goes with a blind hole; drilled "${depth}", the hole is threaded all the way through: leave thread.depth out, or give the hole a depth`);
   }
   if (c.errors.length > 0 || face === null || depth === undefined) return null;
   const hole: HoleFeature = { id: raw.id as string, op: "hole", diameter: d, depth };
