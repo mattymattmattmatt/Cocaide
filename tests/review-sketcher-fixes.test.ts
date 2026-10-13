@@ -156,7 +156,7 @@ describe("mirroring ellipses and splines", () => {
     const moved = r.entities.map((e) => (e.id === "el1" ? { ...e, endAngle: 150 } : e)) as SketchEntity[];
     const s = solveSketch(moved, r.constraints);
     if (!s.ok) throw new Error(s.error);
-    const im = byId<EllipseEntity>(s.entities, r.made[0]);
+    const im = byId<EllipseEntity>(s.entities, r.made![0]);
     expect(im.startAngle).toBeCloseTo(-150, 6);
     const orig = byId<EllipseEntity>(s.entities, "el1");
     const m = (p: Vec2): Vec2 => [-p[0], p[1]];
@@ -176,7 +176,7 @@ describe("mirroring ellipses and splines", () => {
     const moved = r.entities.map((e) => (e.id === "sp1" ? { ...e, startTangent: 60 } : e)) as SketchEntity[];
     const s = solveSketch(moved, r.constraints);
     if (!s.ok) throw new Error(s.error);
-    const t = splineEndTangent(byId<SplineEntity>(s.entities, r.made[0]), false);
+    const t = splineEndTangent(byId<SplineEntity>(s.entities, r.made![0]), false);
     expect(t[0]).toBeCloseTo(Math.cos((120 * Math.PI) / 180), 6);
     expect(t[1]).toBeCloseTo(Math.sin((120 * Math.PI) / 180), 6);
     // It validates as a document.
