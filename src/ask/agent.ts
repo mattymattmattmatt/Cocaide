@@ -8,7 +8,7 @@ import { apply, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument } from "../doc/format";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
 import { rawDrawing } from "../doc/drawing";
-import type { Vec3 } from "../doc/types";
+import { seedIds, type Vec3 } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
 import { isObject } from "../doc/validate";
 import { defOf } from "../features/defs";
@@ -454,14 +454,16 @@ class Sandbox {
   private async batch(steps: unknown, dryRun: boolean): Promise<Outcome> {
     // The one-feature rule from a face or an edge applies to each feature the batch adds, as it would one by one.
     const saved = { sketch: this.addedSketch, feature: this.addedFeature };
+    const added: Record<string, unknown>[] = [];
     const planned = await planBatch(this.doc, this.kernel, steps, {
       scope: this.scope,
       allowed: BATCH_STEP_TOOLS,
       check: async (cmd) => {
         if (cmd.type !== "addFeature") return null;
-        const problem = await this.addRule(cmd.feature as Record<string, unknown>);
+        const problem = await this.addRule(cmd.feature as Record<string, unknown>, added);
         if (problem) return problem;
         const f = cmd.feature as Record<string, unknown>;
+        added.push(f);
         if (f.op === "sketch") this.addedSketch = String(f.id);
         else this.addedFeature = String(f.id);
         return null;
@@ -489,15 +491,17 @@ class Sandbox {
     let doc = this.doc;
     const made: Record<string, unknown>[] = [];
     const addedHere: string[] = [];
+    const addedFeatures: Record<string, unknown>[] = [];
     for (const cmd of cmds) {
       if (cmd.type === "addFeature") {
         const f = cmd.feature as Record<string, unknown>;
         if (f.id === undefined) f.id = nextFree(doc, String(f.op));
         // A batch already checked its features against the rule.
         if (!opts.results) {
-          const problem = await this.addRule(f);
+          const problem = await this.addRule(f, addedFeatures);
           if (problem) return { ok: false, error: problem };
         }
+        addedFeatures.push(f);
       }
       // A feature an earlier command of this edit added is this ask's to change.
       const applied = apply(doc, cmd, { writeScope: [...this.scope, ...addedHere] });
@@ -567,9 +571,11 @@ class Sandbox {
   /**
    * From a face or edge the ask adds one feature, and it must use that face
    * or edge (spec 6.2). A sketch on the face, plus the one cut or extrude of
-   * it, counts as that feature.
+   * it, counts as that feature; so does a hole on the face plus one pattern
+   * of that hole (a bolt circle, a grid). `earlier` is what this same edit
+   * added before f.
    */
-  private async addRule(f: Record<string, unknown>): Promise<string | null> {
+  private async addRule(f: Record<string, unknown>, earlier: Record<string, unknown>[] = []): Promise<string | null> {
     const t = this.target;
     if ((t.kind !== "face" && t.kind !== "edge") || this.wide) return null;
     if (!isObject(f)) return "feature must be an object";
@@ -593,6 +599,14 @@ class Sandbox {
         return `the sketch must lie on ${where} (plane normal ${JSON.stringify(face.normal)}, offset ${round6(face.offset ?? 0)})`;
       }
       return null;
+    }
+    if ((f.op === "linearPattern" || f.op === "circularPattern") && t.kind === "face") {
+      // One pattern of the hole this ask added: the hole and its copies count as the one feature.
+      const seeds = seedIds(f);
+      const ours = [...this.doc.features, ...earlier].filter(isObject);
+      const hole = seeds.length === 1 ? ours.find((x) => x.id === seeds[0] && x.op === "hole" && (x.id === this.addedFeature || earlier.includes(x))) : undefined;
+      const patterned = ours.some((x) => (x.op === "linearPattern" || x.op === "circularPattern") && seedIds(x).includes(seeds[0]));
+      if (hole && !patterned) return null;
     }
     if (this.addedFeature) return `from a ${t.kind}, the ask adds one feature; ${this.addedFeature} is it`;
     if (f.op === "extrude" || f.op === "cut") {
@@ -631,7 +645,7 @@ class Sandbox {
     // A registry op that can start from a face or an edge says how it must use it.
     const d = defOf(f.op);
     if (d?.askFrom) return d.askFrom(rf, t, { select: (sel) => this.kernel.select(this.base, sel), topology: () => this.topology() });
-    return `from a ${t.kind}, the ask adds a hole, fillet, chamfer, or a sketch on the face with its cut or extrude`;
+    return `from a ${t.kind}, the ask adds a hole (and one pattern of it), fillet, chamfer, or a sketch on the face with its cut or extrude`;
   }
 
   private async topology(): Promise<PartTopology | null> {

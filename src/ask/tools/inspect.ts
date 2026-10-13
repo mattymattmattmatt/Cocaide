@@ -14,6 +14,7 @@ import type { Constraint, SketchEntity, Vec2, Vec3 } from "../../doc/types";
 import { isObject } from "../../doc/validate";
 import { DEFAULT_DATUMS, type Datum } from "../../features/datum";
 import { measureConstraint } from "../../geom/constraints";
+import { entityPoint, pointNames } from "../../geom/curves";
 import { facePlaneFrame, to2D, to3D, type Frame } from "../../geom/frame";
 import { buildProfile } from "../../geom/profile";
 import { add3, cross3, dot3, len3, normalize3, scale3, sub3 } from "../../geom/vec";
@@ -267,15 +268,12 @@ async function sketchPoint(doc: RawDocument, kernel: KernelPort, sketch: string,
   if (!s.frame) return `sketch "${sketch}" did not build, so its points are nowhere`;
   if (ref === "origin") return s.frame.origin;
   const [id, field] = ref.split(".");
-  const e = s.entities.find((x) => x.id === id) as unknown as Record<string, unknown> | undefined;
+  const e = (s.entities as SketchEntity[]).find((x) => x.id === id);
   if (!e) return `sketch "${sketch}" has no entity "${id}"`;
-  const p = e[field ?? ""];
-  if (!isVec2(p)) return `"${ref}" is not a point of ${id} (a ${String(e.type)}: ${pointNames(String(e.type)).map((n) => `${id}.${n}`).join(", ")})`;
+  // The shared resolver: an ellipse's minor end and arc ends and a spline's p0, p1, … are worked out, not stored.
+  const p = field === undefined ? undefined : entityPoint(e, field);
+  if (!isVec2(p)) return `"${ref}" is not a point of ${id} (a ${e.type}: ${pointNames(e).map((n) => `${id}.${n}`).join(", ")})`;
   return to3D(s.frame, p);
-}
-
-function pointNames(type: string): string[] {
-  return ({ line: ["start", "end"], arc: ["center", "start", "end"], circle: ["center"], point: ["at"], rect: ["center"], slot: ["center1", "center2"] } as Record<string, string[]>)[type] ?? ["center"];
 }
 
 /** The angle between two lines' directions, 0..90 (directions either way round), in degrees. */

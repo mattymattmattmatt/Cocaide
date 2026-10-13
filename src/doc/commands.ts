@@ -597,6 +597,9 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const r = editSketch(features[i], cmd, documentParameters(doc));
       if (typeof r === "string") return { ok: false, error: `${cmd.type}: ${r}` };
       features[i] = r;
+      // Other sketches whose dimensions read one this edit re-measured move with it.
+      const problem = resolveSketchesUsing(doc, sketchDimensionNames(r), cmd.sketch);
+      if (problem) return { ok: false, error: `${cmd.type}: ${problem}` };
       break;
     }
     default:
@@ -894,7 +897,11 @@ function editSketch(raw: Record<string, unknown>, cmd: SketchCommand, params: Pa
       for (const [key, v] of Object.entries(next)) if (v === null) delete next[key];
       entities[k] = next;
       // What the edit set stays put; the rest of the sketch moves to keep its constraints.
-      for (const [key, v] of Object.entries(cmd.patch)) if (typeof v === "number" || Array.isArray(v)) fixed.push(`${cmd.id}.${key}`);
+      for (const [key, v] of Object.entries(cmd.patch)) {
+        // A spline's points: the solver calls points[i] "p<i>".
+        if (key === "points" && next.type === "spline" && Array.isArray(v)) v.forEach((_, i) => fixed.push(`${cmd.id}.p${i}`));
+        else if (typeof v === "number" || Array.isArray(v)) fixed.push(`${cmd.id}.${key}`);
+      }
       break;
     }
     case "deleteEntity": {

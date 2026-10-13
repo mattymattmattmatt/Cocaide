@@ -124,7 +124,7 @@ Relations:
   { "type": "intersection", "point": "p1.at", "entities": ["l1", "l2"] }   (the point where two lines, extended, cross)
   { "type": "equal", "entities": ["c1", "c2"] }                  (two lines' lengths, or two radii)
   { "type": "symmetric", "points": ["l1.start", "l2.start"], "line": "l3" }
-  { "type": "symmetric", "entities": ["l1", "l4"], "line": "l3" }   (two lines, two arcs or two circles that are each
+  { "type": "symmetric", "entities": ["l1", "l4"], "line": "l3" }   (two lines, two arcs, two circles or two splines that are each
                                                                  other's mirror images about l3 (or "X", "Y"): ends paired
                                                                  as they lie, centres and radii mirrored; Mirror makes these)
   { "type": "fix", "entity": "l1" }                              (or "point": "l1.end", or a point entity: held where it is)

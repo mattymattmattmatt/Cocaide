@@ -479,7 +479,16 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
               const s = splineOf(at(x));
               const near = closestOnSpline(s, q);
               const d = splineTangentAt(s, near.t);
-              return d[0] * (q[1] - near.at[1]) - d[1] * (q[0] - near.at[0]);
+              const across = d[0] * (q[1] - near.at[1]) - d[1] * (q[0] - near.at[0]);
+              if (s.closed) return across;
+              // Past an open spline's end the nearest point is the end itself: the
+              // tangent's straight extension is not on the curve, so count how far
+              // beyond the end it is too (the same sign, continuous at the end).
+              const along = d[0] * (q[0] - near.at[0]) + d[1] * (q[1] - near.at[1]);
+              const last = s.knots[s.knots.length - 1];
+              const beyond = near.t <= s.knots[0] + 1e-12 ? -along : near.t >= last - 1e-12 ? along : 0;
+              if (beyond <= 0) return across;
+              return (across < 0 ? -1 : 1) * Math.hypot(across, beyond);
             } catch {
               return NaN;
             }
@@ -499,6 +508,27 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
         }
         // Mirror images: the centres mirrored (and a circle's radius the same), and the ends paired as they lie now.
         const [a, b] = k.entities.map((id) => entityById(l, id));
+        if (a.type === "spline" && b.type === "spline") {
+          // Point for point in order; an end tangent the image holds runs the way the original's mirrored does.
+          const fns = a.points.flatMap((_, n) => mirrored(l, k.line, pointOf(l, `${a.id}.p${n}`), pointOf(l, `${b.id}.p${n}`)));
+          const [ux, uy] = direction(l, k.line);
+          for (const end of [false, true]) {
+            if ((end ? b.endTangent : b.startTangent) === undefined) continue;
+            const [tx, ty] = splineTangentFn(l, a.id, end);
+            const [sx, sy] = splineTangentFn(l, b.id, end);
+            fns.push((x) => {
+              const n = Math.hypot(ux(x), uy(x));
+              const [vx, vy] = [ux(x) / n, uy(x) / n];
+              const along = tx(x) * vx + ty(x) * vy;
+              // The original's tangent reflected in the mirror line, crossed with the image's.
+              const rx = 2 * along * vx - tx(x);
+              const ry = 2 * along * vy - ty(x);
+              return rx * sy(x) - ry * sx(x);
+            });
+          }
+          push(i, ...fns);
+          break;
+        }
         if (a.type !== "line") push(i, ...mirrored(l, k.line, pointOf(l, `${a.id}.center`), pointOf(l, `${b.id}.center`)));
         if (a.type === "circle") {
           const ra = radiusOf(l, a.id);
@@ -633,7 +663,9 @@ function sharedEnd(
  * direction it must have.
  */
 function splineTangency(l: Layout, spline: SplineEntity, other: SketchEntity, joined: (p: string, q: string) => boolean): Fn {
-  const ends = endRefs(spline)!;
+  const ends = endRefs(spline);
+  if (!ends) throw new Error(`"${spline.id}" is a closed spline: it has no ends to be tangent at`);
+  if (other.type === "spline" && other.closed) throw new Error(`"${other.id}" is a closed spline: it has no ends to be tangent at`);
   const otherEnds = endRefs(other) ?? [];
   const joinedEnd = ends.findIndex((p) => otherEnds.some((q) => joined(p, q)) || (other.type !== "line" && other.type !== "spline" && joined(p, `${other.id}.center`)));
   const end = joinedEnd >= 0 ? joinedEnd === 1 : splineTangentEnd(spline, other);

@@ -59,6 +59,10 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
         const old = new Set(Object.keys(cmd.renames));
         allowed = doc.features.filter((f) => isObject(f) && f.id !== cmd.id && [...parameterRefs(f)].some((n) => old.has(n))).every((f) => has(String(f.id)));
       }
+      // A renamed sketch rewrites every expression that reads its dimensions (<sketch>.<name>): those must be in scope too.
+      if (allowed && isObject(before) && before.op === "sketch" && isObject(after) && after.id !== undefined && after.id !== cmd.id) {
+        allowed = readersInScope(doc, (n) => n.startsWith(`${cmd.id}.`), cmd.id, has);
+      }
       break;
     }
     case "deleteFeature":
@@ -80,7 +84,7 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       // A new name rewrites every expression that read the old one: those features must be in scope too.
       if (allowed && cmd.type === "renameDimension") {
         const old = `${cmd.sketch}.${dimensionNames(list)[index]}`;
-        allowed = doc.features.filter((f) => isObject(f) && f.id !== cmd.sketch && parameterRefs(f).has(old)).every((f) => has(String(f.id)));
+        allowed = readersInScope(doc, (n) => n === old, cmd.sketch, has);
       }
       break;
     }
@@ -188,6 +192,19 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
   function sketchWide(sketch: string) {
     return has(sketch) || has(`${sketch}/*`);
   }
+}
+
+/**
+ * True when everything whose expressions read a name `reads` picks (other
+ * than feature `self`) is in scope: each such feature by its id, a parameter
+ * as "param:<name>", a node as "node:<name>". A rename rewrites them all.
+ */
+function readersInScope(doc: RawDocument, reads: (name: string) => boolean, self: string, has: (t: string) => boolean): boolean {
+  const uses = (v: unknown) => [...parameterRefs(v)].some(reads);
+  const features = doc.features.filter((f) => isObject(f) && f.id !== self && uses(f)).every((f) => has(String((f as Record<string, unknown>).id)));
+  const params = Object.entries(isObject(doc.parameters) ? doc.parameters : {}).every(([n, v]) => !uses(v) || has(`param:${n}`));
+  const nodes = Object.entries(isObject(doc.nodes) ? doc.nodes : {}).every(([n, v]) => !uses(v) || has(`node:${n}`));
+  return features && params && nodes;
 }
 
 function sketchConstraints(doc: RawDocument, sketch: string): unknown[] {
