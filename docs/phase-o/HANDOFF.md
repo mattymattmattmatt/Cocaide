@@ -32,8 +32,8 @@ Done and pushed on ccr-851589c3-2dh2fn:
 - Wave 7: adversarial review of the whole Phase O diff in four areas (sketch, kernel, UI, AI), with Waves 5 and 6
   reviewed in full for the first time. Every finding was fixed on two branches and merged (see the two Wave 7
   sections of api.md); README and roadmap updated; docs screenshots regenerated with the new UI, plus new README
-  pictures of the Hole Wizard (docs/phase-o-hole-wizard.png) and the section view (docs/phase-o-section.png) and a sketch dimensioned to a model edge
-  (docs/phase-o-sketch-references.png).
+  pictures of the Hole Wizard (docs/phase-o-hole-wizard.png), the section view (docs/phase-o-section.png) and a
+  sketch dimensioned to a model edge (docs/phase-o-sketch-references.png).
   tsc, the whole Vitest suite and the whole e2e suite pass.
 
 **Phase O is finished.** The briefs (docs/phase-o/briefs/), the contract (DESIGN.md) and the API notes (api.md) stay
