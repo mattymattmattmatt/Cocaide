@@ -6,9 +6,14 @@
 // right-click face ask.
 
 import { beforeAll, describe, expect, it } from "vitest";
+import { LocalKernel } from "../src/ask/kernel";
+import { measureBetween } from "../src/ask/tools/inspect";
+import { sketchProfile } from "../src/ask/tools/sketchProfile";
 import { apply, references, type RawDocument } from "../src/doc/commands";
+import type { EllipseEntity, SketchEntity, SplineEntity } from "../src/doc/types";
 import { allErrors, validateDocument } from "../src/doc/validate";
-import { loadOC, rebuild, type OC } from "../src/kernel";
+import { entityPoint } from "../src/geom/curves";
+import { getOC, loadOC, rebuild, type OC } from "../src/kernel";
 
 let oc: OC;
 beforeAll(async () => {
@@ -61,6 +66,73 @@ describe("a linear pattern's second direction (along2)", () => {
     expect(renamed.ok ? "" : renamed.error).toBe("updateFeature: cannot rename ax; lp uses it");
     const del = apply(d, { type: "deleteFeature", id: "ax" });
     expect(del.ok ? "" : del.error).toBe("deleteFeature: ax is used by lp; delete or change it first");
+  });
+});
+
+describe("sketchProfile positions given as =expressions", () => {
+  type Circle = Extract<SketchEntity, { type: "circle" }>;
+  const centreAfter = (cx: string, w2: number, shape: Record<string, unknown>) => {
+    const doc: RawDocument = { version: 1, units: "mm", name: "t", parameters: { w: 40 }, features: [] };
+    const m = sketchProfile(doc, { sketch: "sk", shapes: [{ rect: { center: [cx, 0], width: 10, height: 10 } }, shape] });
+    if (typeof m === "string") throw new Error(m);
+    const a = apply(doc, m.command);
+    if (!a.ok) throw new Error(a.error);
+    const kept = (feature(a.doc, "sk").constraints as { type: string; value: unknown }[]).filter((k) => typeof k.value === "string").map((k) => [k.type, k.value]);
+    const b = apply(a.doc, { type: "setParameter", name: "w", value: w2 });
+    if (!b.ok) throw new Error(b.error);
+    expect(errorsOf(b.doc)).toEqual([]);
+    const c = (feature(b.doc, "sk").entities as SketchEntity[]).find((e) => e.type === "circle") as Circle;
+    return { kept, center: c.center };
+  };
+
+  it("keeps a negative one (left of the origin), and the shapes follow the parameter", () => {
+    const pos = centreAfter("=w/4", 80, { circle: { center: ["=w/4", 20], diameter: 4 } });
+    expect(pos.center[0]).toBeCloseTo(20, 6);
+    const neg = centreAfter("=-w/4", 80, { circle: { center: ["=-w/4", 20], diameter: 4 } });
+    expect(neg.kept.length).toBe(2);
+    expect(neg.center[0]).toBeCloseTo(-20, 6);
+    expect(neg.center[1]).toBeCloseTo(20, 6);
+  });
+
+  it("keeps a negative y, and a polygon's centre", () => {
+    const r = centreAfter("=-w/4", 80, { polygon: { center: ["=-w/4", "=-w/2"], sides: 6, diameter: 6 } });
+    // The polygon's construction circle is the only circle.
+    expect(r.center[0]).toBeCloseTo(-20, 6);
+    expect(r.center[1]).toBeCloseTo(-40, 6);
+  });
+});
+
+describe("measureBetween and the points of ellipses and splines", () => {
+  const el: EllipseEntity = { id: "el", type: "ellipse", center: [10, 5], major: [30, 5], minor: 8, startAngle: 0, endAngle: 90 };
+  const sp: SplineEntity = { id: "sp", type: "spline", points: [[-10, 0], [-5, 12], [0, 20]] };
+  const d: RawDocument = {
+    version: 1,
+    units: "mm",
+    name: "curves",
+    features: [{ id: "sk", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [el, sp, { id: "l1", type: "line", start: [0, 0], end: [5, 5] }] }],
+  };
+
+  it("resolves every documented point ref, the computed ones too", async () => {
+    expect(errorsOf(d)).toEqual([]);
+    const kernel = new LocalKernel(getOC);
+    const refs = ["l1.end", "el.center", "el.major", "el.minorEnd", "el.start", "el.end", "sp.p0", "sp.p2"];
+    for (const point of refs) {
+      const [id, name] = point.split(".");
+      const e = (feature(d, "sk").entities as SketchEntity[]).find((x) => x.id === id)!;
+      const p = entityPoint(e, name)!;
+      const r = await measureBetween(d, kernel, { a: { sketch: "sk", point }, b: [0, 0, 20] });
+      expect(r.error, point).toBeUndefined();
+      expect(r.distance as number, point).toBeCloseTo(Math.hypot(p[0], p[1], 20), 6);
+    }
+  });
+
+  it("lists the points an entity really has when one is not", async () => {
+    const kernel = new LocalKernel(getOC);
+    const r = await measureBetween(d, kernel, { a: { sketch: "sk", point: "sp.center" }, b: [0, 0, 0] });
+    expect(r.error).toBe('measureBetween: a: "sp.center" is not a point of sp (a spline: sp.p0, sp.p1, sp.p2)');
+    const e = await measureBetween(d, kernel, { a: { sketch: "sk", point: "el.p0" }, b: [0, 0, 0] });
+    expect(e.error).toContain("el.minorEnd");
+    expect(e.error).toContain("el.start");
   });
 });
 

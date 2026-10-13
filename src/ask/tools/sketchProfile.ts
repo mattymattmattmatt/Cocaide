@@ -197,10 +197,12 @@ class Drawer {
     const zx = Math.abs(p[0]) <= TOL;
     const zy = Math.abs(p[1]) <= TOL;
     if (zx && zy) return this.rel({ type: "coincident", points: ["origin", ref] });
+    // A distance is never negative: an expression for a point left of or below the origin is kept negated.
+    const kept = (n: Num | undefined, v: number): Num | number => (!n?.expr ? Math.abs(v) : v > 0 ? n : { value: -v, expr: `=-(${n.expr.slice(1)})` });
     if (zx) this.rel({ type: "vertical", points: ["origin", ref] });
-    else this.dim({ type: "distanceX", points: ["origin", ref], value: 0 }, src?.x && src.x.expr && p[0] > 0 ? src.x : Math.abs(p[0]));
+    else this.dim({ type: "distanceX", points: ["origin", ref], value: 0 }, kept(src?.x, p[0]));
     if (zy) this.rel({ type: "horizontal", points: ["origin", ref] });
-    else this.dim({ type: "distanceY", points: ["origin", ref], value: 0 }, src?.y && src.y.expr && p[1] > 0 ? src.y : Math.abs(p[1]));
+    else this.dim({ type: "distanceY", points: ["origin", ref], value: 0 }, kept(src?.y, p[1]));
   }
 
   shape(s: Raw, path: string): string {
@@ -511,7 +513,9 @@ class Drawer {
 
   private polygon(raw: unknown, construction: boolean, name: string | undefined, want: string | undefined, path: string) {
     if (!isObject(raw)) throw new ProfileError(`${path} must be { "center": [x, y], "sides", "diameter" (across corners) | "acrossFlats", "angle"? }`);
-    const c = this.pt(raw.center ?? [0, 0], `${path}.center`);
+    const cRaw = raw.center as unknown[];
+    const c = this.pt(cRaw ?? [0, 0], `${path}.center`);
+    const src = Array.isArray(cRaw) ? { x: this.num(cRaw[0], `${path}.center[0]`), y: this.num(cRaw[1], `${path}.center[1]`) } : undefined;
     const sides = raw.sides;
     if (typeof sides !== "number" || !Number.isInteger(sides) || sides < 3 || sides > 40) throw new ProfileError(`${path}.sides must be a whole number from 3 to 40`);
     if ((raw.diameter === undefined) === (raw.acrossFlats === undefined)) throw new ProfileError(`${path}: give "diameter" (across corners) or "acrossFlats"`);
@@ -535,7 +539,7 @@ class Drawer {
     this.orient(lines[0].id, lines[0].start, lines[0].end);
     if (flats) this.dim({ type: "distance", lines: [lines[0].id, lines[Math.floor(sides / 2)].id], value: 0 } as Constraint & { value: number }, flats, name);
     else this.dim({ type: "diameter", entity: circle.id, value: 0 }, dia, name);
-    this.place(`${circle.id}.center`, c);
+    this.place(`${circle.id}.center`, c, src);
   }
 }
 
