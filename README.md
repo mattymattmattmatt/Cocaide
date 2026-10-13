@@ -4,7 +4,7 @@
 
 Browser parametric CAD. One JSON feature document is the source of truth; OpenCascade (WASM, in the tab) rebuilds it into a B-rep; the mesh, the measurements and the STEP file are views of that solid. Humans and agents edit the same document, through the same commands.
 
-**Status: Phase M (multibody tools) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list), K (the agent on weldments), L (fabrication drawings) and M (multibody tools).
+**Status: Phase O (the full part modeller) done.** Phases A–G were the original build spec; [docs/roadmap.md](docs/roadmap.md) continues it with H (multibody parts), I (weldment profiles and the section library), J (frames, joints and the cut list), K (the agent on weldments), L (fabrication drawings), M (multibody tools), N (sketch relations and right-click menus) and O (the full part modeller).
 - Phase A gave the document, the kernel, the viewport and STEP export.
 - Phase B added the human modeller: a sketcher with a constraint solver, a feature tree you can reorder, suppress, edit and undo, picking in the viewport, fillet, chamfer and patterns.
 - Phase C adds an MCP server: an agent edits the same document through the same commands, inside a write scope the host sets.
@@ -57,10 +57,17 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
   - Every new body is named in the document, and renames follow through.
   - A member that is mirrored, patterned, copied or split stays in the cut list.
   - A body can have its own material, and any body can be saved as a part of its own.
-- Since then: the sketch relations and dimensions CAD users expect, and right-click menus everywhere.
+- Phase N adds the sketch relations and dimensions CAD users expect, and right-click menus everywhere.
   - Parallel, perpendicular, collinear, tangent, concentric, midpoint, coincident (on a curve too), equal, symmetric and fix, and angle, diameter and point-to-line dimensions, in the solver, the rebuild check and the agent's reference.
   - Relations are inferred while drawing, offered for what you select, and shown as glyphs; Smart Dimension (D) places a dimension with its Modify box; geometry is blue until fully defined, then black.
   - Every right-click opens a menu of what you can do to that thing, ending in **Ask AI…**. The AI may change the whole part by default, with what you right-clicked as its focus; **Just this** keeps Phase D's scopes.
+- Phase O makes it a full parametric part modeller (see [Part modelling](#part-modelling-phase-o)).
+  - Sketching: 19 draw tools including polygons, slots, ellipses and splines; edit tools (trim, extend, offset, mirror, sketch patterns, fillet, chamfer, move, rotate, scale); reference edges from the model that you can dimension to, and that follow the model.
+  - Named and driven dimensions, and expressions with functions, units and conditions, readable from any sketch or feature.
+  - Reference planes, axes and points; revolve, sweep (along a sketch, edges or a helix), loft, rib, shell, draft and scale; extrude up to a face, vertex or the next face, with a second direction, draft and thin walls; variable fillets and two-distance chamfers.
+  - The Hole Wizard (ISO metric counterbore, countersink and tapped holes with callouts), patterns of several features with instances left out, sketch-driven patterns.
+  - The rollback bar, Measure, Mass Properties, section view, display styles, drag handles and the command palette.
+  - New AI tools: inspection, all-or-nothing batches with a dry run, profile and hole-layout helpers, and a sectioned reference.
 
 ![The flange example: circular pattern of counterbored holes, chamfered rim, filleted hub](docs/phase-b-modeller.png)
 
@@ -79,9 +86,9 @@ The build is made for the `/<repo>/` subpath (`COCAIDE_BASE`). Modelling, drawin
 ```sh
 npm install
 npm run dev            # http://localhost:5173
-npm test               # 349 unit, kernel and agent tests, including the Phase A, C, D, E, F, G, H, I, J, K, L and M acceptance logic
+npm test               # 1349 unit, kernel and agent tests, including the Phase A, C to O acceptance logic
                        #   (+14 live-model Phase D–G, K and L tests, run when ANTHROPIC_API_KEY is set)
-npm run test:e2e       # 53 browser tests (Playwright, Chromium), including the Phase B, D, E, F, G, H, I, J, K, L and M acceptance suites
+npm run test:e2e       # 134 browser tests (Playwright, Chromium), including the Phase B, D to O acceptance suites
 npm run build          # typecheck + production bundle in dist/
 COCAIDE_BASE=/Cocaide/ npm run build && COCAIDE_BASE=/Cocaide/ npm run preview   # the Pages build, at http://localhost:4173/Cocaide/
 ```
@@ -109,6 +116,24 @@ npm run replay -- part.cocaide.log.jsonl                      # re-run the logge
 ```
 
 ## Acceptance
+
+### Phase O: the full part modeller
+
+Each area has its own browser suite, and the unit tests check the kernel's numbers against volumes and areas worked out by hand.
+
+| Area | Checked in the browser by |
+|---|---|
+| Draw tools, flyouts, the options strip | `e2e/sketch-tools.spec.ts`, `e2e/curves.spec.ts` (ellipse, partial ellipse, spline) |
+| Reference edges, Convert Entities, the sketch following the model | `e2e/sketch-references.spec.ts` |
+| Sketch edit tools | `e2e/sketch-edit.spec.ts` |
+| Named and driven dimensions, expressions, conflicts, Fully Define | `e2e/dimensions.spec.ts` |
+| Planes, axes and points from every kind of selection | `e2e/datums.spec.ts` |
+| Revolve, shell, draft, scale; extrude, fillet and chamfer options | `e2e/features-batch1.spec.ts`, `e2e/extrude-plus.spec.ts` |
+| Sweep, helix, loft, rib | `e2e/sweep-loft-rib.spec.ts` |
+| Hole Wizard, patterns, mirror, sketch-driven pattern | `e2e/holes-patterns.spec.ts` |
+| Rollback, Measure, Mass Properties, section view, display styles, drag handles, palette | `e2e/evaluate-view.spec.ts` |
+| AI inspection tools, batch, helpers | `e2e/ask-tools.spec.ts`, `tests/agent-reference.test.ts` (builds every worked example and checks its volume) |
+| The fixes from the final review | `e2e/wave7-review.spec.ts`, `tests/wave7-*.test.ts`, `tests/review-*.test.ts` |
 
 ### Phase M: multibody tools
 
@@ -407,7 +432,7 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 ## Modelling in the browser
 
 - **Units.** Millimetres (metric) throughout, and only millimetres: every length field says mm, every angle °, masses are in g or kg, and the `mm` badge in the top bar and **Settings → Units** say so. Parts are stored in millimetres.
-- **The toolbar** has a picture over each tool's name, in groups: Sketch; Extrude, Cut, Hole, Fillet, Chamfer; Pattern (linear or circular) and Mirror; the body tools (Combine, Split, Move, Delete body); and Member for weldments. A tool that needs something it doesn't have yet (Combine with one body) is greyed out and says why. The feature tree shows the same picture for each feature. The left column's sections fold under their headings; **Nodes** starts folded on a part without nodes.
+- **The toolbar** has a picture over each tool's name, in tabs: Features, Sketch, Reference, Evaluate, Bodies and Weldments (see [Part modelling](#part-modelling-phase-o) for what is on each). A tool that needs something it doesn't have yet (Combine with one body) is greyed out and says why. The feature tree shows the same picture for each feature. The left column's sections fold under their headings; **Nodes** starts folded on a part without nodes.
 - **Mouse, the usual CAD way.** Middle-drag rotates (freely, no fixed up), Ctrl+middle-drag pans, Shift+middle-drag zooms, Alt+middle-drag rolls. Middle-click the part and the next rotation turns about that point; a middle double-click fits. The wheel zooms at the pointer, rolled toward you to zoom in. Left-click selects (Ctrl- or Shift-click adds); right-click opens the menu for what is under the pointer; right-drag pans. In a sketch, middle-drag pans and a left-drag on empty space draws a selection box: left to right takes what is wholly inside it, right to left everything it touches. **Settings → Mouse** has a trackpad scheme (left-drag rotates, Shift+drag pans, pinch zooms) and reverses the wheel.
 - **Keyboard, the usual CAD way.** Ctrl+1 to Ctrl+7 are Front, Back, Left, Right, Top, Bottom and Isometric; Ctrl+8 is Normal to the selected face (again, from behind). F fits, Z and Shift+Z zoom, the arrows turn the view 15° (Shift: 90°, Ctrl: pan, Alt: roll), Space opens the view menu, S brings the tools to the pointer, Enter repeats the last tool, Delete deletes the selected feature, F9 hides the left column, Ctrl+S saves, Ctrl+O opens, Ctrl+Z and Ctrl+Y undo and redo. In a sketch: V select, D Smart Dimension, L line, R rectangle, C circle, A arc, O slot, Q construction, Ctrl+B finishes. **Settings → Keyboard** lists every command: click one and press a key to change it (a command that had that key loses it), Backspace to clear it; the model tools have no key until you give them one. The settings are kept in this browser, and **Reset to defaults** puts them back. Ctrl+N, Ctrl+T and Ctrl+W belong to the browser.
 - **Sketch** starts a sketch on the Top, Front or Right plane, or on a flat face you clicked. Draw with Line (clicks chain; clicking the first point closes the loop), Rectangle, Circle, Arc (centre, start, end) and Slot (two centres, then the width).
@@ -421,6 +446,78 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 - **Parameters** (left panel) are named numbers. Type `=plate_t` or `=plate_t * 2 + 1` in any number field; the field shows what it evaluates to, and a bad expression is shown and not committed. Changing a parameter is one undo step, and sketches whose dimensions use it are re-solved. The sketcher works on numbers but keeps every expression whose value you did not change.
 - **Frames.** **Nodes** (left panel) are named points; type `=frame_w` in a coordinate to tie it to a parameter. With two nodes or more, **Members along a path** takes a size (the part's or the library's) and a path such as `A B C D A, A E`. It adds the members along it with their corners mitred, with the nodes on the outside of the frame or on the centrelines. A member's Properties set its ends (a node or a point), the point of the section its line runs through (a 3 × 3 grid, seen from its To end), and **All like it**, which switches every member of that size at once. They also cap either end. A joint's Properties change mitre or butt, which members, and the gap, and add a gusset or a weld there. The **Cut list** tab is the cut list and the weld table, each with **Export CSV**.
 - **Weldments.** A dimension in the sketcher can be typed as an expression too (`=b - 2 * t`), and it stays one. Tick **Weldment profile** and **Finish**: the profile card names the section, lists its sizes with their area and kg/m, and tags it, and **Save** puts it in the **Sections** tab. "Not now" keeps the sketch; its Properties have **Save as a weldment profile…** for later. In **Sections**, **+ Member** on a size adds a 1000 mm member along X beside the others. Set its ends, length or rotation in Properties. The toolbar's **Member** adds another like the selected one. The **Bodies** panel lists the members, with alike ones counted together, and a newer library version offers to update the part's copy.
+
+## Part modelling (Phase O)
+
+Phase O turns the modeller into a full parametric part modeller. Everything below is a field in the same JSON document, so the right-click AI and the MCP server can use all of it too. The model toolbar is in tabs: **Features**, **Sketch**, **Reference**, **Evaluate**, **Bodies** and **Weldments**. Ctrl+K opens the command palette, which finds and runs any tool by name.
+
+![The Hole Wizard: three M6 counterbores at a sketch's points, the numbers from the ISO table, the drawing callout below](docs/phase-o-hole-wizard.png)
+
+### Sketching
+
+- **Draw tools.** Line (L), Centreline (Shift+L), Midpoint line; Corner rectangle (R), Centre rectangle (Shift+R), 3-point rectangle, Parallelogram; Circle (C), 3-point circle (Shift+C); Centrepoint arc (A), Tangent arc, 3-point arc (Shift+A); Straight slot (O), Centrepoint slot (Shift+O); Polygon (G, 3 to 40 sides, inscribed or circumscribed); Point (P); Ellipse (Shift+E), Partial ellipse and Spline (Shift+S). Related tools share a flyout that remembers the one you used last. In a line chain, A switches the next piece to a tangent arc and back.
+- **Splines and ellipses.** A spline runs through the points you click: double-click or Enter ends it, and clicking its first point closes it. Its points and end tangents can be dimensioned and related like any others. An ellipse is its centre, the end of its major axis and its minor radius; a partial ellipse adds its start and end angles.
+- **Relations and dimensions** work on the new entities too (an ellipse can't yet be tangent to a circle, arc or another ellipse). Besides the Phase N set there are intersection and coradial relations, arc length, a linear diameter, and distances to a circle's centre, nearest side or farthest side. Relations are inferred while drawing, and you can type a length or angle while a tool is running.
+- **Status.** The status line says Under defined (with the degrees of freedom left), Fully defined or Over defined. When it is over defined, the Relations panel lists the relations and dimensions that conflict, with a one-click fix for each. **Fully Define** adds the dimensions and relations the sketch still needs, from the origin or a point you pick. **Check sketch** lists open ends, crossings and overlaps that would stop a feature.
+
+### Sketch references
+
+- **Reference edges.** Click a model edge in the sketcher and dimension or relate to it: it becomes a purple reference entity that is re-projected from the model on every rebuild, so the sketch follows when the model changes. **Convert Entities** copies picked model edges (or a face's outline) into the sketch as profile geometry that stays linked.
+- The sketch's own X and Y axes can be used in any relation or dimension, as the origin already could.
+- A sketch can sit on a default plane, a plane feature or a flat face, with an offset, flipped, and with its X direction set. A sketch on a face follows the face.
+
+### Sketch editing
+
+- Trim (T) and power trim, Extend (E), Split, sketch Fillet and Chamfer, Offset, Mirror (M), linear and circular sketch patterns, Move, Copy, Rotate and Scale, and Explode (a rectangle or slot into its lines and arcs). Each keeps the relations that still apply and adds the ones the edit implies, so a mirrored copy moves with the original.
+- Closed regions are shaded, so you can see what will extrude.
+
+![The sketcher: a plate fully defined in black, relation glyphs, Smart Dimensions, and a line's right-click menu](docs/sketch-relations.png)
+
+### Dimensions and expressions
+
+- Name a dimension (`width`) and use it anywhere: `=s1.width / 2` in another sketch or in a feature's field. A **driven** dimension measures without fixing anything, is shown in parentheses, and can still be read by expressions.
+- Expressions have functions (`sqrt`, `sin` in degrees, `min`, `max`, `round`, `hypot`, `pi`, …), units (`25.4mm`, `1in`, `30deg`, converted to millimetres and degrees), comparisons, and `if(condition, then, else)`, as in `=if(w > 100, 8, 6)`. A cycle is found and named.
+- Renaming a parameter, a dimension or a sketch rewrites every expression that reads it. Double-click a dimension on the model to change it, or drag an extrude's depth handle (whole millimetres, one undo step).
+
+### Reference geometry
+
+- On the **Reference** tab: **Plane** (offset, at an angle about an axis, through three points, midplane, normal to an edge, parallel through a point), **Axis** (two points, an edge, a cylinder, two planes, a point and a plane's normal) and **Point** (coordinates, a centre, an intersection, on an edge). Select faces, edges, vertices or planes first, and the tool works out which kind you mean.
+- The default planes, origin and axes are listed at the top of the tree and drawn in the view. Sketches, mirrors, patterns, revolve axes and extrude end conditions can all use any of them, or a face or edge of the model, through one reference system.
+
+### Features
+
+- **Extrude and Cut**: blind, midplane, through all, up to next, up to a face, up to a vertex, offset from a face; a second direction; a start offset; a draft (on ellipse and spline profiles too); a thin wall from an open sketch; picked regions of the sketch; Intersect.
+- **Revolve** and **Revolved cut** about a sketch line or any axis, in one or two directions, solid or thin.
+- **Sweep** a profile (or a plain round tube) along a sketch, model edges or a helix (pitch, turns, taper, left or right hand), with twist. **Loft** through two or more sketches, smooth or ruled, open or closed. **Rib** from an open sketch line.
+- **Shell** (remove faces, inward or outward), **Draft** faces about a neutral plane, **Scale** bodies.
+- **Fillet** with a radius that varies along the edge, or several radius sets in one feature; **Chamfer** by one distance, two distances, or a distance and an angle. Edges can come from picks, whole faces or whole features.
+- New shape features choose an operation: a new body, add, remove or intersect.
+
+### Holes and patterns
+
+- **Hole Wizard**: simple, counterbore, countersink or tapped, ISO metric M3 to M24, with close, normal or loose fit. The numbers come from the table; a number you type wins, and **Use the table** takes it back. One hole, several centres, or every point of a sketch; blind, through all or up to next. The callout ("3× Ø6.6 THRU, CBORE Ø11 × 6.5 DEEP", "M8×1.25 - 6H") is shown in Properties and goes on the drawing.
+- **Linear pattern** in one or two directions, **circular pattern** over a full turn or any angle, and **sketch-driven pattern** at a sketch's points or a table of positions. Each repeats one or several features, takes its direction from an edge, axis or face picked in the view, and lets you untick instances to leave them out.
+- **Mirror** several features about a face or plane.
+
+### Evaluate and view
+
+![Section view through the bracket's hole: the cut faces hatched, with the plane and offset in the panel](docs/phase-o-section.png)
+
+- **Rollback bar**: drag it (or right-click a feature, **Roll back to here**) to see and edit the part as it was at that point; new features go in at the bar.
+- **Measure**: pick two faces, edges, vertices, planes or axes for the minimum distance (and the angle, for planes and lines), or one for its area, radius, centre or direction.
+- **Mass Properties**: volume, area, mass, centre of mass (marked in the view), moments and products of inertia and the principal moments, per body or for the part, with **Copy all**.
+- **Section view** on any plane or flat face, moved by an offset and flipped, with the cut faces hatched.
+- **Display styles**: shaded with edges, shaded, hidden lines removed, hidden lines visible, wireframe; perspective; zoom to selection; previous view. They are remembered for the document.
+- **Selection filters** for faces (X), edges (E), vertices (V) and planes, box select, hover highlighting in the tree, and hovering a feature in the tree lights up what it is built on and what is built on it.
+
+### AI tools
+
+The right-click AI and the MCP server get the same new tools:
+- inspection: a part summary, faces, edges, a measurement between any two things, a sketch with its solved geometry, a face's plane, the datums, and a screenshot;
+- **batch**: several edits, all or nothing, with a dry run that reports the volume and what each step made;
+- helpers: **sketchProfile** (draws rectangles, circles, slots and polygons and dimensions them, keeping `=expressions`), **fullyDefine**, and **holes** (a bolt circle or grid as a hole and its pattern);
+- **plan** with a self-check after the build, and a bigger turn and token budget when the AI builds a part;
+- a sectioned **reference** with worked examples, fetched a section at a time.
 
 ## Right-click menus and Ask AI
 
@@ -624,6 +721,11 @@ For Claude Code, for example, in `.mcp.json`:
 | `newDrawing(date?)`, `setSheet(patch)`, `setView(id, view)`, `setAnnotation(id, annotation)` | The part's drawing: planned by code, then edited. A drawing edit doesn't rebuild the part, and its result says what the annotation reads and which drawing checks fail |
 | `drawing` | The composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks |
 | `exportDrawing(format, file?)` | The sheet as PDF or SVG, written to the output folder |
+| `renameDimension(sketch, index \| name, to)`, `setDriven(sketch, index \| name, driven)` | Rename a sketch dimension (every expression that reads it follows), or make it driven (measured only) |
+| `partSummary`, `listFaces`, `listEdges`, `measureBetween(a, b)`, `getSketch(id)`, `facePlane`, `listDatums` | Inspection: what the part has and where, before deciding what to change |
+| `batch(steps, dryRun?)` | Several edits, all or nothing; a dry run reports the volume and what each step would make |
+| `sketchProfile`, `fullyDefine`, `holes` | Helpers: a dimensioned profile from shapes (keeping `=expressions`), the dimensions a sketch still needs, a bolt circle or grid of holes |
+| `plan`, `reference(section)` | Write down a plan the build is checked against; fetch a section of the reference, with worked examples |
 | `undo`, `redo` | The agent's own revisions |
 
 The server's instructions say how edits work. The resource `cocaide://reference` documents every op, field and selector, and `cocaide://document` is the current file.

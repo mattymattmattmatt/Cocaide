@@ -1,6 +1,6 @@
 # Cocaide: after v1
 
-Phases A–G (the original build spec) are done: see the README. So are H–N below. This file
+Phases A–G (the original build spec) are done: see the README. So are H–O below. This file
 continues the spec in the same form. Each phase ends with an acceptance
 check, and the next phase does not start until it passes.
 
@@ -333,3 +333,75 @@ Acceptance:
 2. A plate sketched in the browser with inferred relations, Smart Dimensions, equal holes and its corner on the origin reads Fully defined, all black (`e2e/sketch-relations.spec.ts`).
 3. Every right-click opens a menu whose actions work and whose last entry opens the ask (`e2e/context-menu.spec.ts`).
 4. From a sketch entity, "pattern the part" is refused with Just this and proposed with the whole part (`tests/ask.test.ts`, `e2e/ask.spec.ts`, `e2e/context-menu.spec.ts`).
+
+## Phase O — a full parametric part modeller
+
+**Done.** From the request: a part modeller with "all the little things" the
+usual CAD tools have, built more cleanly, with reference edges you can
+dimension to, and far more tools for the AI. Built in seven waves; the design
+contract is [docs/phase-o/DESIGN.md](phase-o/DESIGN.md), the APIs are in
+[docs/phase-o/api.md](phase-o/api.md), and [docs/phase-o/HANDOFF.md](phase-o/HANDOFF.md)
+says how it was run.
+
+- **Registries.** Each new op lives in `src/features/<op>/` (document,
+  kernel, UI) and is listed in an index; model tools and sketch tools are
+  registries too. The toolbar is in tabs, rendered from them.
+- **One reference system** (`DatumRef`): default planes, axes and origin,
+  plane/axis/point features, faces, edges and points, shared by sketches,
+  mirrors, patterns, revolve axes and extrude end conditions.
+- **Sketching.** 19 draw tools (rectangles, polygons, slots, arcs, points,
+  ellipses, partial ellipses, splines), edit tools (trim, extend, split,
+  fillet, chamfer, offset, mirror, sketch patterns, move/copy/rotate/scale,
+  explode, Check sketch), reference entities projected from model edges
+  (re-projected on every rebuild, so the sketch follows the model), the
+  sketch's own X and Y axes, Convert Entities.
+- **Dimensions and expressions.** Named and driven dimensions readable as
+  `<sketch>.<name>` anywhere; functions, units, comparisons and `if`;
+  intersection and coradial relations, arc length, linear diameter,
+  min/max/centre distances to circles; conflict diagnosis with fixes; Fully
+  Define.
+- **Features.** Revolve, sweep (sketch, edges or helix path; twist; tube),
+  loft, rib, shell, draft, scale, each with new/add/remove/intersect;
+  extrude up to next/face/vertex, offset from a face, second direction,
+  start offset, draft, thin, regions; variable fillets and radius sets;
+  two-distance and distance-angle chamfers.
+- **Holes and patterns.** The Hole Wizard (ISO metric sizes and fits,
+  counterbore, countersink, tapped with callouts; several centres or a
+  sketch's points; through, blind, up to next); linear patterns in two
+  directions, circular patterns over any angle, sketch-driven patterns, each
+  of several features with instances skipped; mirror of several features.
+- **Evaluate and view.** Rollback bar, Measure, Mass Properties, section
+  view, display styles and perspective, drag handles and dimensions on the
+  model, selection filters and box select, the command palette.
+- **AI tools.** Inspection (part summary, faces, edges, measure between,
+  sketches, face planes, datums, screenshot), all-or-nothing batch with dry
+  run, sketchProfile / fullyDefine / holes helpers, plan with a self-check,
+  a bigger budget for builds, a sectioned reference with worked examples.
+- **Review.** Wave 7 reviewed the whole diff adversarially (sketch, kernel,
+  UI, AI) and fixed every finding; see the Wave 7 sections of api.md.
+
+Acceptance: the README's Phase O table. Each area has a browser suite, and
+the kernel's numbers are checked against volumes worked out by hand.
+
+Left for later (the full lists are in api.md and HANDOFF.md):
+- **Sketch.** Trim, extend, split and offset of ellipses and splines;
+  ellipse tangency to circles, arcs and other ellipses; curvature-continuous
+  spline joins; dimensioning a spline's end tangent directly; dynamic mirror;
+  shift-drag extend in power trim; patterned copies that cannot turn; offset
+  side from the pointer; draggable dimension text; Fully Define schemes
+  (baseline, chain, ordinate); grouping relation glyphs at crowded joints;
+  an intersection curve.
+- **Features.** A standalone helix curve; loft guide curves and end
+  tangency; rib end arcs extended to the walls; twist on paths with corners;
+  draft with a slanted start or a thin wall; picking extrude regions in the
+  view; the pattern instance variable in seed expressions and "up to
+  reference" spacing; skipping instances by clicking them; inch holes and
+  modelled threads; thin revolve of splines.
+- **Robustness.** Face selectors made from picks can record a position, so
+  "up to surface" can lose a face that moves; datum and point references are
+  not checked for dangling before the rebuild.
+- **UI.** Drag handles for revolve angles, fillet radii and the like; box
+  select with the trackpad scheme; Enter on a toolbar dropdown; the tree
+  summary chips that are cut short; the sketch toolbar is full at 1500 px.
+- **AI.** A run against the live model (all checks so far use scripted
+  models).

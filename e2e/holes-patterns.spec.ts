@@ -96,6 +96,8 @@ test("Hole Wizard: an M6 counterbore at three sketch points, numbers from the ta
   await page.getByTestId("prop-counterbore-depth-table").click();
   await expect(page.getByTestId("prop-counterbore-depth")).toHaveValue("6.5");
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/hole-wizard.png` });
+  // The README picture of the Hole Wizard.
+  await page.screenshot({ path: "docs/phase-o-hole-wizard.png" });
 });
 
 test("Hole Wizard: a tapped M8 blind hole, called out M8×1.25 - 6H ⌴11.25 on the drawing", async ({ page }) => {

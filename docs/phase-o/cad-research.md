@@ -47,8 +47,8 @@ So almost everything below can be built on the existing wasm.
 ### P0
 - [ ] **Sketch on a face or a reference plane:** the sketch plane is a planar face selector or a `plane` feature, worked out again on every rebuild. *Design:* `plane: {ref: "<planeFeatureId>" | FaceSelector}` alongside the current `DatumPlane`. The sketch follows the face when upstream geometry moves. *(Cocaide has fixed datum planes only. This is the biggest gap.)*
 - [ ] **Origin and default planes and axes as sketch references:** the origin point plus the projected X and Y axes can be selected for relations and dimensions in every sketch. *(Partial: the `origin` PointRef exists, the axes don't.)*
-- [ ] **Line in chain mode:** click-click draws a polyline; double-click or Esc ends it. Moving back over the last endpoint, or pressing `A`, switches to a tangent arc. *Design:* type length and angle into floating boxes while placing; each typed value becomes a driving dimension (Fusion and Onshape do this).
-- [ ] **Centerline:** a line with `construction: true`. Q, or right-click, toggles construction on any selection (as in Onshape). *(Partial: the flag exists. There's no tool and no toggle.)*
+- [ ] **Line in chain mode:** click-click draws a polyline; double-click or Esc ends it. Moving back over the last endpoint, or pressing `A`, switches to a tangent arc. *Design:* type length and angle into floating boxes while placing; each typed value becomes a driving dimension (the usual CAD tools do this).
+- [ ] **Centerline:** a line with `construction: true`. Q, or right-click, toggles construction on any selection. *(Partial: the flag exists. There's no tool and no toggle.)*
 - [ ] **Midpoint line:** the first click is the midpoint and the line extends both ways symmetrically. It adds a midpoint relation to whatever the first click snapped to.
 - [ ] **Rectangles:** corner, centre, 3-point corner (angled), 3-point centre and parallelogram. *Design:* the tools emit 4 `line`s plus relations (H/V or parallel/perpendicular, coincident corners). The centre variants add construction diagonals and a midpoint relation to the centre. Keep `rect` only as a legacy entity, because primitives can't be trimmed, filleted or partly dimensioned. *(Cocaide has a `rect` primitive only.)*
 - [ ] **Circle (centre and radius) and perimeter circle (3-point).** *(Partial: centre only.)*
@@ -296,7 +296,7 @@ Each reference becomes a feature in the history and can be selected by features 
 - [ ] P1 **Selection helper:** after picking an edge or face, offer tangency, loop, the feature's faces, convex or concave edges.
 
 ### Direct manipulation
-- [ ] P0 **Instant3D drag handles:** select a feature face and drag an arrow handle to change depth or offset, with a ruler that snaps to geometry, and type the value. The change is written back to the feature parameter.
+- [ ] P0 **Drag handles:** select a feature face and drag an arrow handle to change depth or offset, with a ruler that snaps to geometry, and type the value. The change is written back to the feature parameter.
 - [ ] P0 **Show feature dimensions on the model:** double-click a feature to show its dimensions (sketch plus feature) in 3D. Double-click a dimension to edit it in place and rebuild. This is one of the most-used details in desktop CAD.
 
 ### Inspection
@@ -323,14 +323,14 @@ Each reference becomes a feature in the history and can be selected by features 
 - [ ] P2 **IGES.**
 
 ### Automated assistants
-- [ ] P2 **Design Checker, FeatureXpert:** automatic fillet and draft reordering on failure.
+- [ ] P2 **Design checks and automatic repair:** automatic fillet and draft reordering on failure.
 - [ ] P2 **Breadcrumbs:** a selection shows its owner chain.
 
 ---
 
 ## 6. What other CAD packages do better, and what to take from each
 
-- **Onshape:**
+- **Browser-based history modellers:**
   - A single Extrude, Revolve, Sweep and Loft, each with **New / Add / Remove / Intersect** and a **merge scope**.
   - Extrude end conditions: Blind, Up to next, Up to face, Up to part, Up to vertex, Through all, Symmetric, Second end position, Starting offset, Draft.
   - The **variable feature** sits *in the history*, and **Variable Studio** shares variables across part studios.
@@ -340,27 +340,27 @@ Each reference becomes a feature in the history and can be selected by features 
   - **Mate connectors** act as implicit frames anywhere.
   - Sketch **Use** (project, linked) and **Intersect**; **Transform** in a sketch; the **S** shortcut toolbar.
   - Feature list filter and folders; **FeatureScript**, where custom features are first-class.
-- **Fusion 360:**
+- **Timeline-based modellers:**
   - A **timeline** with dependency highlighting.
   - **Press-pull**, one context tool: a face does offset or extrude, an edge does fillet.
   - **Fillet, chamfer and rule fillet** in one dialog with per-row type; rule fillet means "all edges between features" or "all concave".
   - Tab between typed dimensions while drawing; projected geometry stays linked, with "break link".
   - A Change Parameters dialog with units and expressions; a marking menu; and a sketch palette with Look At, Slice and Show Profile.
-- **Shapr3D and Plasticity:**
+- **Direct modellers:**
   - **Selection first**: select something and a context bar offers only valid operations.
   - Live drag with typed values and snapping.
   - Very fast multi-target operations, such as fillet 40 edges with one drag.
-  - Shapr3D added parametric history on top of direct editing; that hybrid is the model to copy.
+  - Some have added parametric history on top of direct editing; that hybrid is the model to copy.
 - **FreeCAD:**
   - **Expressions everywhere**, including cross-references (`Sketch.Constraints.width`) and spreadsheets.
   - The **Attachment engine**: any datum or sketch attaches to references with a *mode* plus an *offset placement*. It is one general system instead of 9 dialogs.
   - Sketcher **external geometry** and **carbon copy**; **block constraint**.
-- **Solid Edge (synchronous):**
+- **Hybrid direct/history modellers:**
   - Direct face edits that keep **live rules** (coplanar, concentric, tangent, symmetric) and **3D driving dimensions** on the model, mixed with a history tree.
-- **Creo:** **Flexible modelling** (move or offset or replace faces with automatic re-intersection), **intent references**, and **user-defined features (UDFs)** as reusable templates.
-- **CATIA:** knowledgeware (rules, checks, reactions) and PowerCopy templates.
-- **Inventor:** iLogic-style rules (*if length > 500 then add a stiffener*).
-- **nTop:** a reusable block graph. The idea worth taking is to package feature subgraphs as reusable, typed custom features.
+- **Flexible modelling** in some tools: (move or offset or replace faces with automatic re-intersection), **intent references**, and **user-defined features (UDFs)** as reusable templates.
+- **Knowledge rules** (rules, checks, reactions) and copyable feature templates.
+- **Scripted design rules** (*if length > 500 then add a stiffener*).
+- **Implicit-modelling tools:** a reusable block graph. The idea worth taking is to package feature subgraphs as reusable, typed custom features.
 - **Desktop-CAD pain points to *avoid*:**
   - Boss and Cut duplication, and one feature type per fillet variant.
   - `D1@Sketch1` naming and body names like "Boss-Extrude3[2]".
@@ -389,7 +389,7 @@ Each reference becomes a feature in the history and can be selected by features 
      - edge plus face → angle plane;
      - three vertices → 3-point plane;
      - cylinder → axis.
-   - It works like Onshape mate connectors and FreeCAD attachment, minus the dialog sprawl. Sketches attach the same way, so "sketch on face" comes free.
+   - It works like the attachment systems other CAD tools have (FreeCAD's among them), minus the dialog sprawl. Sketches attach the same way, so "sketch on face" comes free.
 3. **External references as first-class sketch entities (the user's example).**
    - A `ref` entity type: `{type: "ref", source: EdgeSelector | VertexSelector | {plane|axis: id}, construction: true}`.
    - It is projected again on every rebuild and drawn in a distinct colour, purple as CAD users expect.
@@ -398,7 +398,7 @@ Each reference becomes a feature in the history and can be selected by features 
    - Each one shows a state (linked, broken) with a one-click "re-attach". Broken refs turn the dependent relations brown; they don't explode the sketch.
 4. **Expressions everywhere, with units and named dimensions.**
    - Every numeric field accepts `=expr` with units, functions, conditionals and references to *any* named dimension (`sk1.width`, `hole1.size`, `bbox.z`, `mass`).
-   - Variables can be declared at a point in history (the Onshape variable feature). The Variables panel shows the value, its source and "used by".
+   - Variables can be declared at a point in history (a variable feature in the tree). The Variables panel shows the value, its source and "used by".
    - Configurations are just named override sets.
 5. **Selection by intent, not by face ID.**
    - Extend the existing selectors with semantic queries:
@@ -418,11 +418,11 @@ Each reference becomes a feature in the history and can be selected by features 
    - Select an edge → Fillet / Chamfer.
    - Select a sketch region → Extrude / Revolve.
    - Select two sketch lines → ranked relation and dimension suggestions.
-   - A palette (S or Ctrl+K) searches every command. This takes Shapr3D and Plasticity speed without losing history.
+   - A palette (S or Ctrl+K) searches every command. This takes the speed of the direct modellers without losing history.
 8. **Direct manipulation that stays parametric.**
-   - Drag handles (Instant3D, improved) on faces and features: drag snaps to model geometry, and a value can be typed.
+   - Drag handles on faces and features: drag snaps to model geometry, and a value can be typed.
    - The drag *writes back* to the owning parameter (depth, offset, radius, sketch dimension).
-   - If no single parameter owns the face, it offers to insert an `offsetFace` or `moveFace` feature (Fusion press-pull, Solid Edge live rules). Direct editing never breaks the parametric model.
+   - If no single parameter owns the face, it offers to insert an `offsetFace` or `moveFace` feature (press-pull and live rules, as direct modellers have). Direct editing never breaks the parametric model.
 9. **Patterns of anything, varied by expressions.**
    - A pattern copies features, bodies or faces; instances are skipped by clicking.
    - Each instance can read `i` (index) and `n` inside its seed's expressions, so `="10 + i*2"` gives growing holes.
@@ -465,7 +465,7 @@ Each reference becomes a feature in the history and can be selected by features 
    - rollback bar, reorder with validation, parent and child highlighting;
    - error panel with fixes;
    - measure tool, selection filters and Select Other;
-   - Instant3D handles, feature dimensions on double-click;
+   - drag handles, feature dimensions on double-click;
    - display styles, hide/show all types.
 6. **P1 features:**
    - sweep (including circular profile and twist), loft, draft, rib;
@@ -485,12 +485,7 @@ That keeps every tool usable by the AI agent too.
 
 ---
 
-Sources:
-- [Onshape Help: Extrude](https://cad.onshape.com/help/Content/extrude.htm)
-- [Onshape forum: improvements Feb 2023 (second end from starting offset, draft from offset)](https://forum.onshape.com/discussion/20115/improvements-to-onshape-february-3rd-2023)
-- [Onshape forum: extrude to face second end option](https://forum.onshape.com/discussion/6695/extrude-to-face-second-end-option)
-- [Onshape Help: Sketch Tools](https://cad.onshape.com/help/Content/sketch-tools.htm)
-- [Onshape tech tip: Sketch tools Use / Intersection](https://onshape.com/en/resource-center/tech-tips/sketch-tools-use-intersection)
+Sources: the public help pages and forums of current CAD tools (not linked here).
 
 Local files read:
 - `/home/user/Cocaide/src/doc/types.ts`

@@ -598,9 +598,9 @@ Open follow-ups from Wave 5 (its two reviews were cut short by a usage limit aft
 - Drag handles cover blind or midplane extrude/cut depths (both directions) and offset-plane distances. Revolve angle, fillet radius and similar have none yet.
 - Box select runs only with the standard mouse scheme (the trackpad scheme's left drag turns the view). With no filter it selects faces only; planes are never boxed.
 - In the dimensions-on-model view the depth handle's label can overlap the depth dimension's label.
-- The full e2e run rewrites some docs/*.png screenshots (existing specs do it); those were reverted, so docs screenshots do not show the new UI yet.
+- The full e2e run rewrites some docs/*.png screenshots (existing specs do it). They were reverted during the waves and regenerated with the new UI in Wave 7.
 
-## Wave 6 (merged, not yet reviewed): AI tools + ellipse and spline
+## Wave 6 (merged, reviewed in Wave 7): AI tools + ellipse and spline
 
 Tool specs shared by the right-click agent and the MCP server: SPECS in src/ask/tools/specs.ts (partSummary, listFaces, listEdges, measureBetween, getSketch, facePlane, listDatums, reference, plan, batch, sketchProfile, fullyDefine, holes). anthropicTool(name) turns a spec into an Anthropic tool. The MCP server spreads SPECS into TOOLS; its VERSION is now 0.5.0.
 - Batch: planBatch(doc, kernel, steps) in src/ask/tools/batch.ts. Each step is { tool, ...args }, and the call takes dryRun?: boolean. It is all-or-nothing, and the result gives ok, volume and what each step made.
@@ -660,3 +660,16 @@ Open follow-ups from Wave 6:
 - `volumePropsOf(oc, s, shape)` (measure.ts): the GProp_GProps that volumeOf, centroidOf and Mass Properties share (adaptive on swept faces).
 - An extrude that names no body and starts "main" next to other bodies is refused when it overlaps one of them, with the "body" to add to.
 - UI: a locked drag-handle label shows why in the notice instead of a value box; a section on a plane feature follows the plane and closes when it is gone; grid pattern skips keep their [i, j] when a count changes (`countPatch`), sketch-pattern skips follow their places (`followedSkips`, `copyIndices`); switching a plane's type fills distinct default references.
+
+## Wave 7 review fixes (sketch, document and AI)
+
+- Solver: `pointOn` an open spline counts the distance past the end when the nearest point is an end, so a point on the end tangent's extension is no longer "on" the spline.
+- `updateEntity` with a spline `points` patch holds `<id>.p0` … `<id>.pN` (not `<id>.points`).
+- addEntity, updateEntity, deleteEntity, addConstraint and deleteConstraint re-solve the other sketches that read a dimension the edit changed (`resolveSketchesUsing`), as setDimension already did.
+- A tangent is refused when either spline of the pair is closed; `splineTangency` says "closed spline: it has no ends" instead of a TypeError.
+- Sketch Mirror: an elliptical-arc copy also ties its ends (symmetric start/end), a spline copy is held by an entity `symmetric` relation between two splines (points in order, end tangents mirrored; validation refuses different point counts or open/closed), and Mirror without Copy keeps a relation on an ellipse's `minorEnd` (or drops a point ref it cannot keep, never mapping it to the wrong point).
+- `featureDatumRefs` covers `linearPattern.along2`: renameBody, validation, references/dependants and selector health see it.
+- Write scope: renaming a sketch through updateFeature/replaceFeature requires every reader of `<old id>.*` (features, `param:<name>`, `node:<name>`) to be in scope; renameDimension shares the same `readersInScope` check.
+- sketchProfile keeps a negative `=expression` position (written as `=-(expr)`), and polygon centres keep theirs.
+- measureBetween resolves every named point (`entityPoint` from geom/curves), including `el.minorEnd`, `el.start`/`el.end` and `sp.p<i>`.
+- A face ask's one-feature rule accepts the hole it added plus one linear or circular pattern of that hole.

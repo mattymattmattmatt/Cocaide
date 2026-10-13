@@ -9,7 +9,7 @@ Background maps of the codebase (read the ones your task names; they have line n
 - `/home/user/Cocaide/.plan/ui-structure.md` — App, PropertyPanel, Viewport, sketcher, styles, icons, input, e2e conventions.
 - `/home/user/Cocaide/.plan/agent-tools.md` — the AI side (right-click agent, MCP server, reference doc).
 - `/home/user/Cocaide/.plan/tests-infra.md` — how to write unit and e2e tests here.
-- `/home/user/Cocaide/.plan/cad-research.md` — the Onshape/Fusion/desktop-CAD checklist this patch works from.
+- `/home/user/Cocaide/.plan/cad-research.md` — the checklist of what the usual CAD tools offer that this patch works from.
 
 The user asked for a great 3D modeller, built "in a smarter, cleaner way" than the usual CAD tools, "but try to get
 all the little things in there. One example is reference edges and being able to dimension

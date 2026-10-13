@@ -161,6 +161,8 @@ test("section view through the hole: capped, moved, flipped, off again", async (
   // Front through the middle: Y = 0, right through the hole's centre; the part's front half is cut away.
   await expect.poll(() => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.section())).toEqual({ normal: [0, 1, 0], constant: 0, capped: true });
   await shot(page, "section-front");
+  // The README picture of the section view.
+  await page.screenshot({ path: "docs/phase-o-section.png" });
   await commit(page, "section-offset", "5");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.section()?.constant)).toBe(5);
   await page.getByTestId("section-flip").check();
