@@ -647,10 +647,12 @@ export interface PointOnConstraint {
 }
 
 /**
- * Two points mirrored about a line (`points`); or two lines, two arcs or two
- * circles that are each other's mirror images about it (`entities`: their
- * ends pair up as they lie, the arcs' centres and radii too). Exactly one of
- * the two. Mirror Entities relates each copy to its original this way.
+ * Two points mirrored about a line (`points`); or two lines, two arcs, two
+ * circles or two splines that are each other's mirror images about it
+ * (`entities`: their ends pair up as they lie, the arcs' centres and radii
+ * too; a spline's points pair up in order, and an end tangent the second one
+ * holds is the first's mirrored). Exactly one of the two. Mirror Entities
+ * relates each copy to its original this way.
  */
 export interface SymmetricConstraint {
   type: "symmetric";

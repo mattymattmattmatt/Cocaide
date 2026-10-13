@@ -240,6 +240,18 @@ function mirrorError(a: SketchEntity, b: SketchEntity, line: SketchEntity): numb
   const m = (p: Vec2) => reflect(line, p);
   const ends = (e: SketchEntity): Vec2[] => (e.type === "line" || e.type === "arc" ? [e.start, e.end] : []);
   let err = a.type === b.type ? 0 : Infinity;
+  if (a.type === "spline" && b.type === "spline") {
+    // Point for point in order, and each end tangent the image holds the original's mirrored (its unit vectors apart).
+    if (a.points.length !== b.points.length) return Infinity;
+    for (const [n, p] of a.points.entries()) err = Math.max(err, dist2(m(p), b.points[n]));
+    const o = m([0, 0]);
+    for (const end of [false, true]) {
+      if ((end ? b.endTangent : b.startTangent) === undefined) continue;
+      const t = sub2(m(splineEndTangent(a, end)), o);
+      err = Math.max(err, dist2(t, splineEndTangent(b, end)));
+    }
+    return err;
+  }
   if (a.type !== "line") err = Math.max(err, dist2(m(centre(a)), centre(b)), Math.abs(radius(a) - radius(b)));
   const [p, q] = ends(a);
   const [r, s] = ends(b);

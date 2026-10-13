@@ -41,6 +41,7 @@ import {
   PROFILE_KEYS,
   type ProfileDef,
   type SketchEntity,
+  type SplineEntity,
   type SketchFeature,
   type Vec2,
   type Vec3,
@@ -909,13 +910,14 @@ function validateConstraint(
         c.fail(label, `"${ellipse}" is an ellipse: it can be tangent to a line (or the X or Y axis), not to a ${typeOf(pair[0] === ellipse ? pair[1] : pair[0])}`);
         return null;
       }
+      const closedSpline = pair.find((id) => typeOf(id) === "spline" && (byId.get(id) as { closed?: boolean } | undefined)?.closed);
+      if (closedSpline) {
+        c.fail(label, `"${closedSpline}" is a closed spline: it has no ends to be tangent at`);
+        return null;
+      }
       const spline = pair.find((id) => typeOf(id) === "spline");
       if (spline) {
         const other = pair[0] === spline ? pair[1] : pair[0];
-        if (byId.get(spline)?.type === "spline" && (byId.get(spline) as { closed?: boolean }).closed) {
-          c.fail(label, `"${spline}" is a closed spline: it has no ends to be tangent at`);
-          return null;
-        }
         if (isSketchAxis(other)) {
           c.fail(label, `a spline is tangent at one of its ends to an entity of the sketch; draw a line along the ${other} axis and make "${spline}" tangent to it`);
           return null;
@@ -934,13 +936,20 @@ function validateConstraint(
     case "symmetric": {
       c.keys(k, label, ["type", "points", "entities", "line"]);
       if ((k.points !== undefined) === (k.entities !== undefined)) {
-        c.fail(label, "needs exactly one of points (two point refs) or entities (two lines, arcs or circles)");
+        c.fail(label, "needs exactly one of points (two point refs) or entities (two lines, arcs, circles or splines)");
         return null;
       }
       const line = entityRef("line", k.line, ["line"], true);
       if (k.entities !== undefined) {
-        const pair = entityPair(["line", "arc", "circle"]);
-        if (pair && entities.get(pair[0]) !== entities.get(pair[1])) c.fail(label, `mirrors a ${entities.get(pair[0])} onto a ${entities.get(pair[1])}; a line mirrors a line, an arc an arc, a circle a circle`);
+        const pair = entityPair(["line", "arc", "circle", "spline"]);
+        if (pair && entities.get(pair[0]) !== entities.get(pair[1])) c.fail(label, `mirrors a ${entities.get(pair[0])} onto a ${entities.get(pair[1])}; a line mirrors a line, an arc an arc, a circle a circle, a spline a spline`);
+        else if (pair && entities.get(pair[0]) === "spline") {
+          // Point for point, in order: the same number of points, both open or both closed.
+          const [a, b] = pair.map((id) => byId.get(id)) as [SplineEntity | undefined, SplineEntity | undefined];
+          if (a && b && (a.points.length !== b.points.length || !!a.closed !== !!b.closed)) {
+            c.fail(label, `"${pair[0]}" and "${pair[1]}" can't be mirror images: a spline mirrors a spline with as many points (${a.points.length} and ${b.points.length}), both open or both closed`);
+          }
+        }
         if (pair && line && pair.includes(line)) c.fail(label, `"${line}" is the line they mirror about; it can't be one of the pair`);
         return pair && line && c.errors.length === before ? { type: "symmetric", entities: pair, line } : null;
       }
