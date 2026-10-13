@@ -7,6 +7,9 @@ import type { CocaideDocument, Feature, SketchEntity, Vec2 } from "../src/doc/ty
 import { loadOC, rebuild, type OC } from "../src/kernel";
 import { buildProfile } from "../src/geom/profile";
 import { interpolate, splineArea } from "../src/geom/spline";
+import type { RawDocument } from "../src/doc/commands";
+import { LocalKernel } from "../src/ask/kernel";
+import { buildPacket } from "../src/ask/packet";
 
 let oc: OC;
 beforeAll(async () => {
@@ -122,5 +125,45 @@ describe("spline solids", () => {
       }
     }
     expect(r.volume / v).toBeCloseTo(1, 5);
+  });
+});
+
+describe("the AI's packets", () => {
+  const doc = {
+    version: 1,
+    units: "mm",
+    name: "curves",
+    features: [
+      {
+        id: "s1",
+        op: "sketch",
+        plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] },
+        entities: [
+          { id: "el1", type: "ellipse", center: [0, 0], major: [0, 30], minor: 15 },
+          { id: "sp1", type: "spline", points: [[50, 0], [80, -10], [100, 10], [80, 30], [55, 25]], closed: true },
+          { id: "sp2", type: "spline", points: [[-60, 0], [-50, 10], [-40, 0]] },
+        ],
+      },
+    ],
+  } as unknown as RawDocument;
+
+  it("measure an ellipse: radii, tilt, length round and area", async () => {
+    const p = await buildPacket(doc, { kind: "entity", sketch: "s1", entity: "el1" }, new LocalKernel(() => oc));
+    expect(p.measurements).toMatchObject({ majorRadius: 30, minorRadius: 15, majorAxisAngleDeg: 90, center: [0, 0], minorEnd: [-15, 0], area: 1413.716694 });
+    // Ramanujan: π(a + b)(1 + 3h/(10 + √(4 − 3h))), h = ((a − b)/(a + b))².
+    const h = (15 / 45) ** 2;
+    expect((p.measurements as { length: number }).length).toBeCloseTo(Math.PI * 45 * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h))), 3);
+  });
+
+  it("measure a spline: its points, length, and an open one's end directions or a closed one's area", async () => {
+    const closed = await buildPacket(doc, { kind: "entity", sketch: "s1", entity: "sp1" }, new LocalKernel(() => oc));
+    const pts: Vec2[] = [[50, 0], [80, -10], [100, 10], [80, 30], [55, 25]];
+    expect(closed.measurements).toMatchObject({ points: 5, closed: true });
+    expect((closed.measurements as { area: number }).area).toBeCloseTo(Math.abs(splineArea(interpolate(pts, true))), 5);
+    const open = await buildPacket(doc, { kind: "entity", sketch: "s1", entity: "sp2" }, new LocalKernel(() => oc));
+    // Symmetric about x = −50: it leaves rising and arrives falling at the same angle.
+    const m = open.measurements as { startTangentDeg: number; endTangentDeg: number };
+    expect(m.startTangentDeg).toBeGreaterThan(0);
+    expect(m.endTangentDeg).toBeCloseTo(-m.startTangentDeg, 6);
   });
 });

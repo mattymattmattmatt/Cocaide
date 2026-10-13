@@ -49,11 +49,11 @@ function axesOf(e: EllipseEntity, ids: IdMaker): { entities: SketchEntity[]; rel
   };
 }
 
-/** An ellipse (with its axes when asked) from centre, major end and a point on it. */
-function ellipseFrom(clicks: Click[], options: ToolOptions, ids: IdMaker, arc?: { start: number; end: number }) {
+/** An ellipse (with its axes when asked) from centre, major end and a point on it (or the minor radius itself). */
+function ellipseFrom(clicks: Click[], options: ToolOptions, ids: IdMaker, arc?: { start: number; end: number; minor: number }) {
   const [c, m, q] = clicks.map((k) => k.p);
   if (dist2(c, m) < EPS) return null;
-  const minor = minorThrough(c, m, q);
+  const minor = arc ? arc.minor : minorThrough(c, m, q);
   if (minor < EPS) return null;
   const e: EllipseEntity = { id: ids("el"), type: "ellipse", center: c, major: m, minor, ...(arc ? { startAngle: arc.start, endAngle: arc.end } : {}) };
   const axes = options.axes === "off" ? { entities: [], relations: [] } : axesOf(e, ids);
@@ -118,8 +118,8 @@ const drawn: SketchToolDef[] = [
       if (Math.abs(Math.sin((t1 - t0) / 2)) < 1e-6) return null;
       // Stored counter-clockwise from start to end: swept the other way, the ends swap.
       const clockwise = turning(c, s, [...(ctx.trail ?? []), q]) < 0;
-      const arc = clockwise ? { start: deg(t1), end: deg(t0) } : { start: deg(t0), end: deg(t1) };
-      const made = ellipseFrom([clicks[0], clicks[1], { ...clicks[2], p: ellipsePoint(g, t0) }], options, ids, arc);
+      const arc = clockwise ? { start: deg(t1), end: deg(t0), minor } : { start: deg(t0), end: deg(t1), minor };
+      const made = ellipseFrom(clicks, options, ids, arc);
       if (!made) return null;
       const { e } = made;
       const [first, last] = clockwise ? ["end", "start"] : ["start", "end"];
