@@ -1,6 +1,6 @@
 // Worked examples for the agent: whole parts built with the tools as a model
 // would call them (each example is a list of batch steps on an empty part),
-// plus the modelling strategy. tests/agent-examples.test.ts builds every one
+// plus the modelling strategy. tests/agent-reference.test.ts builds every one
 // and checks the volume, so the reference never teaches something that fails.
 
 const PI = Math.PI;
