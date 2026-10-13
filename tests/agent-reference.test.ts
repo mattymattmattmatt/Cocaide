@@ -80,7 +80,7 @@ describe("worked examples", () => {
         const r = (await s.call("batch", { commands: e.steps })).result;
         expect(r.ok, JSON.stringify(r.error)).toBe(true);
         expect(r.errors).toBeUndefined();
-        const sum = (await s.call("partSummary")).result as { measurements: { volume: number; holeCount: number; solids: number } };
+        const sum = (await s.call("partSummary")).result as unknown as { measurements: { volume: number; holeCount: number; solids: number } };
         if (typeof e.volume === "number") expect(sum.measurements.volume).toBeCloseTo(e.volume, 2);
         else {
           expect(sum.measurements.volume).toBeGreaterThan(e.volume[0]);
@@ -144,10 +144,10 @@ describe("every Phase O op through the agent's tools", () => {
       const r = (await s.call("batch", { commands: steps })).result;
       expect(r.ok, JSON.stringify(r.error)).toBe(true);
       expect(r.errors).toBeUndefined();
-      const sum = (await s.call("partSummary")).result as { bodies: { name: string }[]; measurements: { holeCount: number } };
+      const sum = (await s.call("partSummary")).result as unknown as { bodies: { name: string }[]; measurements: { holeCount: number } };
       expect(sum.bodies.map((b) => b.name)).toEqual(["main", "spire"]);
       expect(sum.measurements.holeCount).toBe(3);
-      const datums = (await s.call("listDatums")).result as { features: Record<string, unknown>[] };
+      const datums = (await s.call("listDatums")).result as unknown as { features: Record<string, unknown>[] };
       expect(datums.features.map((d) => [d.id, d.kind])).toEqual([
         ["p20", "plane"],
         ["p50", "plane"],
@@ -155,7 +155,7 @@ describe("every Phase O op through the agent's tools", () => {
         ["ax_hole", "axis"],
         ["pt_hole", "point"],
       ]);
-      const sketch = (await s.call("getSketch", { id: "sk_boss" })).result as { constraints: Record<string, unknown>[] };
+      const sketch = (await s.call("getSketch", { id: "sk_boss" })).result as unknown as { constraints: Record<string, unknown>[] };
       expect(sketch.constraints).toContainEqual(expect.objectContaining({ name: "boss_d", value: "=round(spire_w / 1.5)", measured: 12 }));
       expect(sketch.constraints).toContainEqual(expect.objectContaining({ name: "boss_r", driven: true }));
     } finally {
