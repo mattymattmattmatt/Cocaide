@@ -649,3 +649,14 @@ Open follow-ups from Wave 6:
 - Ellipse relations that don't exist yet: tangent to circles, arcs or other ellipses (validation refuses these); spline curvature-continuous joins; and dimensioning a spline's end tangent angle directly (it is set through a tangent relation or the startTangent/endTangent fields).
 - The sketch toolbar is now packed tight at the 1500 px e2e window: one more top-level button would wrap it again, so the next new tool should go into an existing flyout.
 - Sketching on a model face and referencing an elliptical model edge (Convert Entities) still refuses tilted circles and freeform edges, as before.
+
+## Wave 7 review fixes (kernel and UI)
+
+- Hole: a through hole's counterbore or countersink must stop inside the first wall along its axis (`holeTool(..., wall)`), as up to next already did.
+- Hole: `thread.depth` goes with a blind hole only; on "through" or "upToNext" validation refuses it.
+- Extrude/cut draft on ellipse or spline sides: built as a ruled loft from each loop to its offset at the far end (OCCT's draft cannot tilt those faces); it needs the extrude square to the sketch.
+- Sweep: a sharp corner of the path is rounded, else mitred; if neither builds next to a curved piece, the error says to round the corner with a sketch fillet.
+- `RebuildCtx.setIntersected(id)`: applyOperation calls it for "intersect", so a pattern or mirror of the feature says why there is nothing to repeat.
+- `volumePropsOf(oc, s, shape)` (measure.ts): the GProp_GProps that volumeOf, centroidOf and Mass Properties share (adaptive on swept faces).
+- An extrude that names no body and starts "main" next to other bodies is refused when it overlaps one of them, with the "body" to add to.
+- UI: a locked drag-handle label shows why in the notice instead of a value box; a section on a plane feature follows the plane and closes when it is gone; grid pattern skips keep their [i, j] when a count changes (`countPatch`), sketch-pattern skips follow their places (`followedSkips`, `copyIndices`); switching a plane's type fills distinct default references.
