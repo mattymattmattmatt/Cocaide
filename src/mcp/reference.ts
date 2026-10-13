@@ -70,6 +70,17 @@ Entities (2D, in the sketch frame; "construction": true keeps one out of the pro
   { "id": "a1", "type": "arc", "center": [0,0], "start": [5,0], "end": [0,5], "clockwise": false }
   { "id": "s1", "type": "slot", "center1": [0,0], "center2": [20,0], "width": 6 }
   { "id": "p1", "type": "point", "at": [10,5] }     (a sketch point: a hole centre, a pattern place, an anchor; never profile)
+  { "id": "el1", "type": "ellipse", "center": [0,0], "major": [30,0], "minor": 12 }
+      (major: the end of the major semi-axis: its distance from center is the major radius, its direction the tilt;
+      minor: the minor radius, square to it. Area exactly pi*a*b. With "startAngle": 0, "endAngle": 90 (both, degrees)
+      it is a partial ellipse (an elliptical arc) running counter-clockwise between those parameter angles: the point at
+      angle t is center + a*cos(t) along the major axis + minor*sin(t) along the minor axis (90 is the minor end))
+  { "id": "sp1", "type": "spline", "points": [[0,0],[10,8],[25,5],[40,12]] }
+      (a smooth curve (cubic, curvature continuous) through every point in order; "closed": true runs on from the last
+      point back to the first smoothly (3 points at least) and makes a profile loop of its own. An open spline has
+      natural ends unless "startTangent" / "endTangent" (degrees from the sketch x axis, the way it runs) set them;
+      a "tangent" relation to a line, arc or circle at an end does that for you. Joined end to end with lines and arcs
+      (coincident ends) it is part of a profile like any other curve.)
 Closed loops become the profile; a loop inside another is a hole in it.
 rect and slot are single entities kept for older documents: they can't be trimmed or partly dimensioned. Build new
 outlines from lines and arcs with relations, as the app's tools do:
@@ -79,7 +90,13 @@ outlines from lines and arcs with relations, as the app's tools do:
   polygon: N equal lines (coincident ends, "equal" to the first) with their corners "pointOn" a construction circle;
   slot: 2 lines and 2 arcs joined by coincident ends, each line "tangent" to both arcs, the arcs "equal", their centres
     coincident with the ends of a construction centreline.
-Constraints are the standard CAD sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2, point at) or "origin".
+Constraints are the standard CAD sketch relations and dimensions. They are checked on rebuild (the stored geometry must satisfy them); addConstraint and setDimension re-solve the sketch so they hold. Point refs are "<entity>.<point>" (line start/end, arc start/end/center, circle and rect center, slot center1/center2, point at, ellipse center/major/minorEnd (and start/end on a partial ellipse), spline p0, p1, … one per point (its points[i])) or "origin".
+Ellipses: dimension the radii as distances ({ "type": "distance", "points": ["el1.center", "el1.major"] } major,
+["el1.center", "el1.minorEnd"] minor); "horizontal"/"vertical" level its major axis; "tangent" to a line; "concentric"
+with a circle, arc or ellipse; "equal" with another ellipse (both radii); "pointOn" it. Splines: drag or dimension
+their points (p0, p1, …), "pointOn" one, "tangent" at an end to a line, arc, circle or another spline's end.
+Trim, extend, split and offset don't take ellipses or splines (they refuse them); mirror, move, rotate, scale, copy
+and the patterns do.
 Dimensions (mm; angles in degrees). Each may carry "name" and "driven": true (see Dimension names, driven dimensions).
   { "type": "distanceX" | "distanceY" | "distance", "entity": "r1", "value": 80 }   (or "points": ["l1.start","l1.end"])
   { "type": "distance", "point": "c1.center", "line": "l1", "value": 12 }   (square to the line, extended; "X"/"Y" are the sketch axes)

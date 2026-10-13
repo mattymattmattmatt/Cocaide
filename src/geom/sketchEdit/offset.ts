@@ -43,7 +43,7 @@ export function chainOf(entities: SketchEntity[], id: string, among?: ReadonlySe
   const e = entities.find((x) => x.id === id);
   if (!e) return `there is no entity "${id}"`;
   if (e.type === "circle") return { links: [{ id, reversed: false }], closed: true };
-  if (!chainable(e)) return `${id} is a ${e.type}: offset takes lines, arcs and circles`;
+  if (!chainable(e)) return `${id} is ${e.type === "ellipse" ? "an" : "a"} ${e.type}: offset takes lines, arcs and circles`;
   const kind = !!e.construction;
   const pool = entities.filter((x): x is Open => chainable(x) && !!x.construction === kind && (!among || among.has(x.id)));
   const used = new Set([id]);

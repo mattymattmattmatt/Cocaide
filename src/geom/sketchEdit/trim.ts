@@ -170,6 +170,10 @@ function editable(state: SketchState, id: string, what: string): SketchEntity | 
   if (!e) return `there is no entity "${id}"`;
   if (e.ref) return `${id} follows the model (a reference): it can't be ${what}; Convert Entities makes a copy that can`;
   if (e.type === "point") return `${id} is a point: there is nothing to ${what === "trimmed" ? "trim" : what === "extended" ? "extend" : "split"}`;
+  // Ellipses and splines are drawn whole: these tools cut and grow lines, arcs and circles only.
+  if (e.type === "ellipse" || e.type === "spline") {
+    return `${id} is ${e.type === "ellipse" ? "an ellipse" : "a spline"}: it can't be ${what} (only lines, arcs and circles can); ${e.type === "ellipse" ? "draw a partial ellipse for part of one" : "move its points, or delete it and draw it again"}`;
+  }
   return e;
 }
 
