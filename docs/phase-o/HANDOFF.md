@@ -24,11 +24,15 @@ Done and pushed on ccr-851589c3-2dh2fn:
   sketch's points, through all, up to next); patterns of several features with skipped instances and directions from
   edges/axes/faces; mirror of several features about a face; sketch-driven pattern; face selectors that survive the
   face moving; rollback bar, measure, mass properties, section view, display styles, drag handles, command palette.
+- Wave 6 (built and tested, reviews deferred to Wave 7): AI inspection tools (faces, edges, measure, sketches, face
+  planes, datums, part summary, screenshots), all-or-nothing batch with dry run, sketchProfile / fullyDefine / hole
+  layout helpers, plan + self-check with a bigger build budget, sectioned reference with worked examples, new chips;
+  ellipse, partial ellipse and spline sketch entities end to end.
 - Every mention of a commercial CAD product was removed from the repo; the mouse scheme is now "standard".
 
 Next (briefs in docs/phase-o/briefs/, contract in DESIGN.md, APIs in api.md, wave list in waves.md):
-- Wave 6: AI tools ∥ ellipse and spline.
-- Wave 7: whole-diff review, README/roadmap, regenerate docs screenshots, final verification.
+- Wave 7: adversarial review of the whole Phase O diff (Wave 5 and 6 reviews were cut short or deferred), fixes,
+  README/roadmap, regenerate docs screenshots, final verification.
 
 Resuming an interrupted wave: commit the worktrees' partial work, then `python3 mkresume.py <n> <run id prefix, e.g. wf_816890cf-bba>`
 and run wave<n>r.js. Union-merged files (icons.tsx, styles.css, index files) can come out mangled when both

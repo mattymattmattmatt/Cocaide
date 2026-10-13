@@ -599,3 +599,53 @@ Open follow-ups from Wave 5 (its two reviews were cut short by a usage limit aft
 - Box select runs only with the standard mouse scheme (the trackpad scheme's left drag turns the view). With no filter it selects faces only; planes are never boxed.
 - In the dimensions-on-model view the depth handle's label can overlap the depth dimension's label.
 - The full e2e run rewrites some docs/*.png screenshots (existing specs do it); those were reverted, so docs screenshots do not show the new UI yet.
+
+## Wave 6 (merged, not yet reviewed): AI tools + ellipse and spline
+
+Tool specs shared by the right-click agent and the MCP server: SPECS in src/ask/tools/specs.ts (partSummary, listFaces, listEdges, measureBetween, getSketch, facePlane, listDatums, reference, plan, batch, sketchProfile, fullyDefine, holes). anthropicTool(name) turns a spec into an Anthropic tool. The MCP server spreads SPECS into TOOLS; its VERSION is now 0.5.0.
+- Batch: planBatch(doc, kernel, steps) in src/ask/tools/batch.ts. Each step is { tool, ...args }, and the call takes dryRun?: boolean. It is all-or-nothing, and the result gives ok, volume and what each step made.
+- Prompt: BATCH_STEP_TOOLS is exported from src/ask/prompt.ts. toolsFor(mode, kind, { part, drawing, build? }) adds plan only when build is set. coreReference() in src/mcp/sections.ts is the core reference the prompt carries; the reference tool fetches the other sections.
+- Budget: budgetFor({ target, reach, mode, build }) in src/ask/agent.ts. A build gets 40 turns, 16000 max tokens and at least medium effort; a whole-part ("wide") ask gets 20 turns and 12000 tokens; a surgical one 8 turns and 8000. runAsk takes build?: boolean, and buildOther in src/ask/part.ts passes build: true. ModelRequest has maxTokens? and minEffort?, and atLeast(effort, min) is exported from src/ask/model.ts.
+- Kernel: KernelPort.inspect(doc, InspectQuery) is new, implemented in src/kernel/agentQueries.ts. The worker forwards it through its generic method dispatch.
+- Worked examples: WORKED_EXAMPLES in src/mcp/examples.ts. tests/agent-reference.test.ts builds every one and checks its volume.
+
+Entity types in `src/doc/types.ts`:
+- `EllipseEntity { id, type: "ellipse", center: Vec2, major: Vec2, minor: number, startAngle?: number, endAngle?: number }`. `major` is the end of the major semi-axis. With both angles set it is an elliptical arc: parameter angles in degrees, running counter-clockwise.
+- `SplineEntity { id, type: "spline", points: Vec2[], closed?: boolean, startTangent?: number, endTangent?: number }`. Tangents are in degrees from the sketch x axis.
+- Id prefixes are "el" and "sp".
+
+Point refs:
+- Ellipse: "<id>.center", "<id>.major", "<id>.minorEnd", and on an arc "<id>.start" / "<id>.end".
+- Spline: "<id>.p0", "<id>.p1", … for points[i].
+- Expression-fixed fields use "<id>.p<i>.<0|1>".
+
+`src/geom/curves.ts` exports:
+- Named points: `pointNames(e)`, `entityPoint(e, name)`, `withPointAt(e, name, p)`, `endRefs(e)`, `isFreeCurve(e)`.
+- Ellipse: `ellipseGeom`, `ellipsePoint`, `ellipseParam`, `closestOnEllipse`, `ellipseArea`, `ellipseLength`, `ellipseSpan`, `isEllipticalArc`.
+- Spline: `splineOf`, `splinePointName`, `splinePointIndex`, `splineEndTangent`.
+- Both: `movedCurve(e, f, k)`.
+
+`src/geom/spline.ts` exports `interpolate(points, closed, startTangent?, endTangent?) -> SplineCurve { points, closed, knots, derivs, spans: Bezier[] }`, `splineArea`, `splineLength`, `splinePoint`, `closestOnSpline`, `reverseSpline`, and `SplineError`.
+
+`src/geom/solver.ts` exports `fieldsOf(e): [field, 1|2][]`; it replaces the old FIELDS record.
+
+`src/geom/profile.ts`:
+- `Seg` has two new kinds: `{ kind: "ellipse", c, u, rx, ry, a, b, start, sweep }` and `{ kind: "spline", a, b, curve }`.
+- Now exported: `ellipseSeg`, `splineSeg`, `segArea`, `reverseSeg`, `intersect`, `segPolyline`, `distanceToSeg`, `segLength`, `segTangent`, `translateSeg`.
+
+`src/kernel/ops.ts` exports `curveEdge(oc, s, frame, seg)`.
+
+Sketch tools (`src/ui/sketcher/tools/curves.ts`):
+- "spline" (sketch.spline, Shift+S), "ellipse" (sketch.ellipse, Shift+E) and "ellipse-arc" (sketch.ellipseArc, no key), all in flyout id "curve" (test id `tool-curve-flyout`).
+- Also exported: `minorThrough` and `splineFrom`.
+- `SketchToolDef.open?: boolean` marks a tool that takes any number of clicks: double-click or Enter finishes; clicking the first point closes it.
+
+Open follow-ups from Wave 6:
+- No live-model run was made; everything was checked with scripted models only.
+- The plan checks re-run after the agent stops (src/ask/tools/plan.ts) are exercised in unit tests, but the e2e only covers the passing case.
+- The screenshot is returned as an image block in the right-click agent and the MCP server; whether a given MCP client shows it depends on that client.
+- Trim, Extend, Split and Offset refuse ellipses and splines (with clear messages); support could follow: trimming an ellipse into an elliptical arc, and offsetting through the kernel's offset.
+- Intersections and winding numbers involving splines, and ellipse–ellipse/arc/spline intersections, use fine polylines rather than exact solves (line–ellipse is exact). This is fine for the cross/touch checks, a few micrometres off in the reported crossing points.
+- Ellipse relations that don't exist yet: tangent to circles, arcs or other ellipses (validation refuses these); spline curvature-continuous joins; and dimensioning a spline's end tangent angle directly (it is set through a tangent relation or the startTangent/endTangent fields).
+- The sketch toolbar is now packed tight at the 1500 px e2e window: one more top-level button would wrap it again, so the next new tool should go into an existing flyout.
+- Sketching on a model face and referencing an elliptical model edge (Convert Entities) still refuses tilted circles and freeform edges, as before.
