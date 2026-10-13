@@ -110,8 +110,10 @@ export function MeasurePanel({ result, busy, error, onClose, onClear }: { result
 }
 
 /** "48,000" with grouping, to `digits` decimals. */
-function num(x: number, digits = 3): string {
-  return x.toLocaleString("en-GB", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+export function num(x: number, digits = 3): string {
+  // Rounded first and + 0, so round-off below the shown digits never reads "-0".
+  const f = 10 ** digits;
+  return (Math.round(x * f) / f + 0).toLocaleString("en-GB", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
 /** The lines Mass Properties shows for one body (or all of them), as text: what Copy puts on the clipboard. */

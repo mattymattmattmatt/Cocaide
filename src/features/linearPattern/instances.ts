@@ -34,8 +34,7 @@ export function patternRows(f: Raw): InstanceRow[] {
     for (let k = 0; k < count; k++) rows.push({ n: k + 1, label: `${k + 1} (${round(k * step)}°)`, skipped: skip.includes(k + 1) });
     return rows;
   }
-  const two = f.count2 !== undefined && (f.direction2 !== undefined || f.along2 !== undefined);
-  const count2 = two ? Math.max(1, Math.floor(num(f.count2, 1))) : 1;
+  const { two, count2 } = gridOf(f);
   for (let j = 0; j < count2; j++) {
     for (let i = 0; i < count; i++) {
       const n = 1 + i + j * count;
@@ -43,6 +42,13 @@ export function patternRows(f: Raw): InstanceRow[] {
     }
   }
   return rows;
+}
+
+/** A linear pattern's grid: whether it has a second direction, and the counts each way (a circular one is one row). */
+function gridOf(f: Raw): { two: boolean; count: number; count2: number } {
+  const count = Math.max(1, Math.floor(num(f.count, 1)));
+  const two = f.op !== "circularPattern" && f.count2 !== undefined && (f.direction2 !== undefined || f.along2 !== undefined);
+  return { two, count, count2: two ? Math.max(1, Math.floor(num(f.count2, 1))) : 1 };
 }
 
 /** A sketch-driven pattern's instances: 1 the seed, then 2, 3 ... the other places (labelled with where they are). */
@@ -67,15 +73,28 @@ export function skipPatch(f: Raw, rows: InstanceRow[], n: number, on: boolean): 
 }
 
 /**
- * A count's patch: the new count, with the skipped instances that no longer
- * exist (or that now leave no copy) dropped, so the pattern stays valid.
+ * A count's patch: the new count, with the skipped instances kept where they
+ * are. A grid numbers its instances row by row, so a skipped one is found by
+ * its place ([i, j]) and numbered again with the new count; those that no
+ * longer exist (or that now leave no copy) are dropped, so the pattern stays
+ * valid.
  */
 export function countPatch(f: Raw, key: "count" | "count2", value: unknown): Raw {
   const patch: Raw = { [key]: value };
   if (typeof value !== "number" || !Array.isArray(f.skip)) return patch;
   const next = { ...f, [key]: value };
   const total = patternRows(next).length;
-  const skip = (f.skip as number[]).filter((n) => n <= total);
+  const before = gridOf(f);
+  const after = gridOf(next);
+  const renumber = (n: number): number | null => {
+    const i = (n - 1) % before.count;
+    const j = Math.floor((n - 1) / before.count);
+    return i < after.count && j < after.count2 ? 1 + i + j * after.count : null;
+  };
+  const skip = (f.skip as number[])
+    .map((n) => (before.two ? renumber(n) : n))
+    .filter((n): n is number => n !== null && n > 1 && n <= total)
+    .sort((a, b) => a - b);
   patch.skip = skip.length && skip.length < total - 1 ? skip : null;
   return patch;
 }

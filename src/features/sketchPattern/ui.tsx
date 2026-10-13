@@ -7,7 +7,7 @@ import type { FieldProps, FieldSpec } from "../../ui/props/spec";
 import { InstanceChecks, seedsField } from "../linearPattern/fields";
 import { placeRows, seedsOf } from "../linearPattern/instances";
 import type { UiOp } from "../uiDefs";
-import { copyPlaces } from "./doc";
+import { copyIndices, copyPlaces } from "./doc";
 
 type Raw = Record<string, unknown>;
 type Vec2 = [number, number];
@@ -51,10 +51,23 @@ function SeedAt(p: FieldProps) {
 function Places(p: FieldProps) {
   const table = Array.isArray(p.f.positions) ? (p.f.positions as NumberValue[][]) : null;
   const points = sketchPointList(p.before, p.resolved.sketch);
-  // Fewer places: the skips past the new last instance go (the pattern stays valid).
-  const set = (rows: NumberValue[][]) => {
-    const places = rows.map((r) => r.map((x) => (typeof x === "number" ? x : NaN)) as Vec2);
-    p.update({ positions: rows, ...keptSkips(p.f, copyPlaces(places, fromOf(p.resolved, places)).length) });
+  const was = placesOf(p.resolved, p.before);
+  const wasAt = { places: was, from: fromOf(p.resolved, was) };
+  // The skipped copies follow their places (`row`: a row's index before to after, null when removed);
+  // a row given as an expression stands where it resolved to.
+  const set = (rows: NumberValue[][], row: (i: number) => number | null = (i) => i) => {
+    const oldRow = new Map(was.map((_, i) => [row(i), i]));
+    const places = rows.map((r, k) => (r.every((x) => typeof x === "number") ? (r as Vec2) : (was[oldRow.get(k) ?? -1] ?? ([NaN, NaN] as Vec2))));
+    p.update({ positions: rows, ...followedSkips(p.f, wasAt, { places, from: fromOf(p.resolved, places) }, row) });
+  };
+  // Back to the sketch's points: a skipped copy stays skipped where a point is at its place.
+  const toPoints = () => {
+    const at = points.map(([, a]) => a);
+    const row = (i: number) => {
+      const k = at.findIndex((q) => same(q, was[i]));
+      return k < 0 ? null : k;
+    };
+    return { positions: null, from: null, ...followedSkips(p.f, wasAt, { places: at, from: undefined }, row) };
   };
   return (
     <>
@@ -66,7 +79,7 @@ function Places(p: FieldProps) {
             ["table", "A table of positions"],
           ]}
           // A new table starts from the sketch's points as they are, so nothing moves.
-          onChange={(v) => p.update(v === "table" ? { positions: points.length ? points.map(([, at]) => at) : [[0, 0], [10, 0]] } : { positions: null, from: null, ...keptSkips(p.f, copyPlaces(points.map(([, at]) => at), undefined).length) })}
+          onChange={(v) => p.update(v === "table" ? { positions: points.length ? points.map(([, at]) => at) : [[0, 0], [10, 0]] } : toPoints())}
           testId="prop-sketch-pattern-places"
         />
       </Field>
@@ -78,7 +91,7 @@ function Places(p: FieldProps) {
                 <span className="set-text">{i + 1}.</span>
                 <NumberInput value={row[0]} onCommit={(v) => set(table.map((r, k) => (k === i ? [v, r[1]] : r)))} testId={`prop-position-x-${i}`} ariaLabel={`Position ${i + 1} x`} />
                 <NumberInput value={row[1]} onCommit={(v) => set(table.map((r, k) => (k === i ? [r[0], v] : r)))} testId={`prop-position-y-${i}`} ariaLabel={`Position ${i + 1} y`} />
-                <button type="button" className="selector-remove" aria-label={`Remove position ${i + 1}`} disabled={table.length <= 2} onClick={() => set(table.filter((_, k) => k !== i))} data-testid={`prop-position-remove-${i}`}>
+                <button type="button" className="selector-remove" aria-label={`Remove position ${i + 1}`} disabled={table.length <= 2} onClick={() => set(table.filter((_, k) => k !== i), (r) => (r < i ? r : r === i ? null : r - 1))} data-testid={`prop-position-remove-${i}`}>
                   ×
                 </button>
               </span>
@@ -100,10 +113,44 @@ function Places(p: FieldProps) {
  * the skips that still exist, or none when they would leave no copy. Empty when nothing changes.
  */
 export function keptSkips(f: Raw, copies: number): Raw {
+  return remapSkips(f, (n) => n, copies);
+}
+
+/**
+ * The `skip` patch when the instances are numbered again: `to` gives each
+ * skipped instance's new number (null: it is gone), and the pattern now
+ * makes `copies` copies. Empty when nothing changes; none when the skips
+ * would leave no copy.
+ */
+export function remapSkips(f: Raw, to: (n: number) => number | null, copies: number): Raw {
   if (!Array.isArray(f.skip)) return {};
-  const kept = (f.skip as unknown[]).filter((n): n is number => typeof n === "number" && n >= 2 && n <= copies + 1);
-  if (kept.length === f.skip.length && kept.length < copies) return {};
+  const skip = f.skip as unknown[];
+  const kept = skip
+    .flatMap((n) => (typeof n === "number" ? [to(n)] : []))
+    .filter((n): n is number => n !== null && n >= 2 && n <= copies + 1)
+    .sort((a, b) => a - b);
+  if (kept.length === skip.length && kept.every((n, i) => n === skip[i]) && kept.length < copies) return {};
   return { skip: kept.length && kept.length < copies ? kept : null };
+}
+
+type Placed = { places: Vec2[]; from: Vec2 | undefined };
+
+/**
+ * The skips when the places change: each skipped copy follows its place
+ * (`row` takes a place's index before to its index after, null when it was
+ * removed) and is numbered again among the copies after; a place that is now
+ * the seed's, or gone, is no longer skipped.
+ */
+export function followedSkips(f: Raw, before: Placed, after: Placed, row: (i: number) => number | null): Raw {
+  const was = copyIndices(before.places, before.from);
+  const now = copyIndices(after.places, after.from);
+  const to = (n: number) => {
+    const i = was[n - 2];
+    const j = i === undefined ? null : row(i);
+    const k = j === null ? -1 : now.indexOf(j);
+    return k < 0 ? null : k + 2;
+  };
+  return remapSkips(f, to, now.length);
 }
 
 /** A new table row: one step on from the last, by the step between the last two. */
