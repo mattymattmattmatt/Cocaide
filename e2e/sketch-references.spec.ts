@@ -87,6 +87,8 @@ test("dimension a circle to a model edge: the hole follows the edge when the pla
   await page.keyboard.press("Escape");
   await page.mouse.move(10, 10);
   await page.screenshot({ path: "out/e2e/sketch-references.png" });
+  // The README picture of a sketch dimensioned to a model edge.
+  await page.screenshot({ path: "docs/phase-o-sketch-references.png" });
 
   // Finish, and cut it through the plate.
   await page.getByTestId("finish-sketch").click();
