@@ -451,7 +451,7 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 
 Phase O turns the modeller into a full parametric part modeller. Everything below is a field in the same JSON document, so the right-click AI and the MCP server can use all of it too. The model toolbar is in tabs: **Features** (shape, dress and pattern features), **Reference** (planes, axes, points), **Bodies**, **Weldments** and **Evaluate** (Measure, Mass Properties, Section); **Sketch** is pinned to the left of them. Ctrl+K opens the command palette, which finds and runs any tool by name.
 
-![The Hole Wizard: three M6 counterbores at a sketch's points, the numbers from the ISO table, the drawing callout below](docs/phase-o-hole-wizard.png)
+![The Hole Wizard: three M6 counterbores at a sketch's points, the numbers from the ISO table and the callout in Properties](docs/phase-o-hole-wizard.png)
 
 ### Sketching
 

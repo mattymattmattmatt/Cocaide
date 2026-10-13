@@ -390,7 +390,8 @@ Left for later (the full lists are in api.md and HANDOFF.md):
   shift-drag extend in power trim; patterned copies that cannot turn; offset
   side from the pointer; draggable dimension text; Fully Define schemes
   (baseline, chain, ordinate); grouping relation glyphs at crowded joints;
-  an intersection curve.
+  an intersection curve; Convert Entities of tilted circles and freeform
+  edges; exact (not polyline) intersections with ellipses and splines.
 - **Features.** A standalone helix curve; loft guide curves and end
   tangency; rib end arcs extended to the walls; twist on paths with corners;
   draft with a slanted start or a thin wall; picking extrude regions in the
@@ -399,9 +400,12 @@ Left for later (the full lists are in api.md and HANDOFF.md):
   modelled threads; thin revolve of splines.
 - **Robustness.** Face selectors made from picks can record a position, so
   "up to surface" can lose a face that moves; datum and point references are
-  not checked for dangling before the rebuild.
+  not checked for dangling before the rebuild; the tree's parent/child
+  highlight follows explicit references only, not face or edge selectors.
 - **UI.** Drag handles for revolve angles, fillet radii and the like; box
   select with the trackpad scheme; Enter on a toolbar dropdown; the tree
-  summary chips that are cut short; the sketch toolbar is full at 1500 px.
+  summary chips that are cut short (a hole at sketch points can't show its
+  count); a right-click "Extrude up to this face"; the sketch toolbar is full
+  at 1500 px, so new sketch tools go in a flyout.
 - **AI.** A run against the live model (all checks so far use scripted
-  models).
+  models); the plan self-check's failing case is covered by unit tests only.

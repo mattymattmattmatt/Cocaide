@@ -32,7 +32,8 @@ Done and pushed on ccr-851589c3-2dh2fn:
 - Wave 7: adversarial review of the whole Phase O diff in four areas (sketch, kernel, UI, AI), with Waves 5 and 6
   reviewed in full for the first time. Every finding was fixed on two branches and merged (see the two Wave 7
   sections of api.md); README and roadmap updated; docs screenshots regenerated with the new UI, plus new README
-  pictures of the Hole Wizard (docs/phase-o-hole-wizard.png) and the section view (docs/phase-o-section.png).
+  pictures of the Hole Wizard (docs/phase-o-hole-wizard.png) and the section view (docs/phase-o-section.png) and a sketch dimensioned to a model edge
+  (docs/phase-o-sketch-references.png).
   tsc, the whole Vitest suite and the whole e2e suite pass.
 
 **Phase O is finished.** The briefs (docs/phase-o/briefs/), the contract (DESIGN.md) and the API notes (api.md) stay
@@ -42,15 +43,17 @@ Remaining follow-ups (none blocks use; details in the "Open follow-ups" lists of
 - Sketch: trim/extend/split/offset of ellipses and splines; ellipse tangency to circles, arcs and ellipses; spline
   curvature-continuous joins and a direct end-tangent dimension; an intersection curve; dynamic mirror; shift-drag
   extend in power trim; patterned line/arc copies that cannot turn; offset side from the pointer; draggable
-  dimension text; Fully Define schemes; relation glyphs crowding at joints; reference names could say left/right.
+  dimension text; Fully Define schemes; relation glyphs crowding at joints; reference names could say left/right;
+  Convert Entities of tilted circles and freeform edges; exact intersections with ellipses and splines.
 - Features: a standalone helix curve; loft guide curves and end tangency; rib end arcs; twist with sharp corners;
   draft with a slanted start or thin wall; thin revolve of splines; picking extrude regions in the view; the pattern
   instance variable and "up to reference" spacing; skipping instances by clicking them; inch holes, modelled threads.
 - Robustness: face selectors synthesised from picks can depend on position ("up to surface" loses a moved face);
-  dangling detection covers edge references only.
+  dangling detection covers edge references only; the tree's parent/child highlight ignores face and edge selectors.
 - UI: more drag handles (revolve angle, fillet radius); box select with the trackpad scheme; Enter on a toolbar
-  dropdown doesn't open it; mirror validation message should mention revolve; tree chips cut short; the sketch
-  toolbar is full at 1500 px (put new sketch tools in a flyout).
+  dropdown doesn't open it; mirror validation message should mention revolve; tree chips cut short (a hole at
+  sketch points shows no count); no right-click "Extrude up to this face"; the sketch toolbar is full at 1500 px
+  (put new sketch tools in a flyout).
 - AI: no live-model run yet (scripted models only); the plan checks' failing case is unit-tested only.
 
 How it was run, for a later phase built the same way:
