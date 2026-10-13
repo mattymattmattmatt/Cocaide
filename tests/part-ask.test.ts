@@ -102,7 +102,7 @@ describe("part-level prompt", () => {
     const r = await runPartAsk({ doc: bracket, text: "What is this part?", model, kernel });
     expect(r).toMatchObject({ outcome: "answer", mode: "explain", proposal: null });
     expect(model.intentRequests).toHaveLength(0);
-    expect(model.requests[0].tools.map((t) => t.name)).toEqual(["measure", "getFeature", "escalate"]);
+    expect(model.requests[0].tools.map((t) => t.name)).toEqual(["measure", "getFeature", "escalate", "partSummary", "listFaces", "listEdges", "measureBetween", "getSketch", "facePlane", "listDatums", "screenshot", "reference"]);
     expect(r.packet!.target).toMatchObject({ kind: "part", label: "the whole part" });
     expect(r.packet!.writeScope).toEqual(["*"]);
     expect((r.packet!.part as { features: unknown[] }).features).toHaveLength(3);

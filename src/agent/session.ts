@@ -31,6 +31,11 @@ import { encodePNG } from "../render/png";
 import { VIEWS, type Camera } from "../render/raster";
 import { encodeSTL } from "../render/stl";
 import { selectorHealth } from "./health";
+import { LocalKernel } from "../ask/kernel";
+import { commandMade, expandTool, planBatch } from "../ask/tools/batch";
+import { facePlane, getSketch, listDatums, listEdges, listFaces, measureBetween, partSummary } from "../ask/tools/inspect";
+import { planReply, readPlan, runChecks, type Plan } from "../ask/tools/plan";
+import { referenceSection, sectionIndex } from "../mcp/sections";
 
 export interface SessionOptions {
   /** The starting document (parsed JSON). */
@@ -85,8 +90,33 @@ export const EDIT_TOOLS = [
   "deleteConstraint",
   "undo",
   "redo",
+  "batch",
+  "sketchProfile",
+  "fullyDefine",
+  "holes",
 ] as const;
-export const READ_TOOLS = ["listFeatures", "getFeature", "validate", "rebuild", "measure", "exportSTEP", "exportSTL", "screenshot", "drawing", "exportDrawing", "saveBody"] as const;
+export const READ_TOOLS = [
+  "listFeatures",
+  "getFeature",
+  "validate",
+  "rebuild",
+  "measure",
+  "exportSTEP",
+  "exportSTL",
+  "screenshot",
+  "drawing",
+  "exportDrawing",
+  "saveBody",
+  "partSummary",
+  "listFaces",
+  "listEdges",
+  "measureBetween",
+  "getSketch",
+  "facePlane",
+  "listDatums",
+  "reference",
+  "plan",
+] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
 export interface LogSession {
@@ -135,6 +165,10 @@ export class AgentSession {
   private seq = 0;
   private readonly outDir: string;
   private readonly cameras: Record<string, Camera>;
+  /** The AI tools' kernel queries (listFaces, measureBetween ...): the shared tools over a port on this session's kernel. */
+  private readonly inspector: LocalKernel;
+  /** The agent's build plan, when it made one: partSummary runs its checks on the part as it is. */
+  private plan: Plan | null = null;
 
   private constructor(
     private readonly opts: SessionOptions,
@@ -148,6 +182,7 @@ export class AgentSession {
     this.hash = sha256(text);
     this.history = createHistory(text);
     this.built = rebuild(doc, oc);
+    this.inspector = new LocalKernel(() => this.oc);
     this.outDir = resolve(opts.outDir ?? (opts.docPath ? dirname(opts.docPath) : process.cwd()));
     this.cameras = { ...VIEWS, ...opts.cameras };
     this.log({
@@ -185,6 +220,7 @@ export class AgentSession {
   /** Frees the kernel objects this session holds. */
   close(): void {
     this.built.dispose();
+    this.inspector.reset();
   }
 
   get text(): string {
@@ -307,6 +343,42 @@ export class AgentSession {
         return this.exportFile(tool as "exportSTEP" | "exportSTL", a.file);
       case "screenshot":
         return this.screenshot(a);
+      case "batch":
+        return this.batch(a);
+      case "sketchProfile":
+      case "fullyDefine":
+      case "holes":
+        return this.helper(tool, a);
+      case "partSummary": {
+        // With a plan, its checks on the part as it is now: the self-check of a build.
+        const out = await partSummary(this.doc, this.inspector);
+        if (this.plan?.checks.length) out.planChecks = runChecks(this.plan.checks, this.built.measurements);
+        return { result: out };
+      }
+      case "listFaces":
+        return { result: await listFaces(this.doc, this.inspector, a) };
+      case "listEdges":
+        return { result: await listEdges(this.doc, this.inspector, a) };
+      case "measureBetween":
+        return { result: await measureBetween(this.doc, this.inspector, a) };
+      case "getSketch":
+        return { result: await getSketch(this.doc, this.inspector, a) };
+      case "facePlane":
+        return { result: await facePlane(this.doc, this.inspector, a) };
+      case "listDatums":
+        return { result: await listDatums(this.doc, this.inspector) };
+      case "reference": {
+        const section = typeof a.section === "string" ? a.section : "";
+        const text = section ? referenceSection(section) : null;
+        if (text) return { result: { ok: true, section, text } };
+        return section ? this.fail(`reference: no section "${section}"; sections:\n${sectionIndex()}`) : { result: { ok: true, sections: sectionIndex() } };
+      }
+      case "plan": {
+        const p = readPlan(a);
+        if (typeof p === "string") return this.fail(p);
+        this.plan = p;
+        return { result: planReply(p, this.built.measurements) };
+      }
       default:
         return this.fail(`unknown tool "${tool}" (tools: ${[...EDIT_TOOLS, ...READ_TOOLS].join(", ")})`);
     }
@@ -316,31 +388,92 @@ export class AgentSession {
 
   /** The transaction: apply (scope and schema checked), rebuild, commit only if no feature newly fails. */
   private edit(cmd: Command): CallResult {
+    return this.editMany([cmd]);
+  }
+
+  /**
+   * Several commands as one transaction: applied in order (scope and schema
+   * checked; a feature an earlier one added is the session's to change),
+   * rebuilt once, committed as one revision (one undo step) only if no
+   * feature newly fails. A dry run reports the rebuild and keeps nothing.
+   */
+  private editMany(cmds: Command[], opts: { dryRun?: boolean; extra?: Record<string, unknown> } = {}): CallResult {
     const scope = this.writeScope ? [...this.writeScope, ...this.owned] : undefined;
-    const applied = apply(this.doc, cmd, { writeScope: scope });
-    if (!applied.ok) return this.fail(applied.error);
-    if (geometryKey(applied.doc) === geometryKey(this.doc)) {
-      // Only the drawing changed: the part is as it was.
-      const text = formatDocument(applied.doc);
-      if (text === this.history.present) return { result: { ok: true, changed: false, ...this.status() } };
-      this.history = record(this.history, text);
-      this.commit(applied.doc, text, null);
-      return { result: { ok: true, changed: true, ...this.status(), ...this.drawingStatus(cmd) } };
+    let doc = this.doc;
+    let made: Record<string, unknown> = {};
+    for (const cmd of cmds) {
+      const applied = apply(doc, cmd, { writeScope: scope });
+      if (!applied.ok) return this.fail(applied.error);
+      // A single edit says what it made: an entity's id and solved geometry, a constraint's index.
+      if (cmds.length === 1 && cmd.type !== "addFeature") made = commandMade(doc, applied.doc, cmd);
+      if (cmd.type === "addFeature") scope?.push(String((cmd.feature as Record<string, unknown>).id));
+      doc = applied.doc;
     }
-    const next = rebuild(applied.doc, this.oc);
+    const what = cmds.length === 1 ? cmds[0].type : "batch";
+    const extra = { ...made, ...opts.extra };
+    if (geometryKey(doc) === geometryKey(this.doc)) {
+      // Only the drawing changed: the part is as it was.
+      const text = formatDocument(doc);
+      if (opts.dryRun) return { result: { ok: true, dryRun: true, kept: false, ...this.status(), ...extra } };
+      if (text === this.history.present) return { result: { ok: true, changed: false, ...this.status(), ...extra } };
+      this.history = record(this.history, text);
+      this.commit(doc, text, null);
+      return { result: { ok: true, changed: true, ...this.status(), ...this.drawingStatus(cmds[cmds.length - 1]), ...extra } };
+    }
+    const next = rebuild(doc, this.oc);
     const broke = newFailures(this.built, next);
     if (broke.length) {
       next.dispose();
-      return this.fail(`${cmd.type} rolled back: ${broke.join("; ")}`);
+      return { result: { ...this.fail(`${what} rolled back: ${broke.join("; ")}`).result, ...(extra.results ? { results: extra.results } : {}) } };
     }
-    const text = formatDocument(applied.doc);
+    if (opts.dryRun) {
+      const m = next.measurements;
+      const result = {
+        ok: true,
+        dryRun: true,
+        kept: false,
+        revision: this.revision,
+        ...(m ? { volume: round6(m.volume), size: m.boundingBox?.size.map(round6) } : { solid: false }),
+        ...(next.errors.length ? { errors: next.errors } : {}),
+        ...extra,
+        note: "a dry run: it rebuilds as reported, and nothing was kept; run it again without dryRun to keep it",
+      };
+      next.dispose();
+      return { result };
+    }
+    const text = formatDocument(doc);
     if (text === this.history.present) {
       next.dispose();
-      return { result: { ok: true, changed: false, ...this.status() } };
+      return { result: { ok: true, changed: false, ...this.status(), ...extra } };
     }
     this.history = record(this.history, text);
-    this.commit(applied.doc, text, next);
-    return { result: { ok: true, changed: true, ...this.status() } };
+    this.commit(doc, text, next);
+    for (const cmd of cmds) if (cmd.type === "addFeature") this.owned.add(String((cmd.feature as Record<string, unknown>).id));
+    return { result: { ok: true, changed: true, ...this.status(), ...extra } };
+  }
+
+  /** A batch: its steps planned on a copy (see src/ask/tools/batch.ts), then one transaction. */
+  private async batch(a: Record<string, unknown>): Promise<CallResult> {
+    const scope = this.writeScope ? [...this.writeScope, ...this.owned] : undefined;
+    const planned = await planBatch(this.doc, this.inspector, a.commands, { scope });
+    if (!planned.ok) return { result: { ...this.fail(planned.error).result, results: planned.results } };
+    return this.editMany(planned.commands, { dryRun: a.dryRun === true, extra: { results: planned.results } });
+  }
+
+  /** A helper (sketchProfile, fullyDefine, holes): the commands it stands for, as one transaction. */
+  private async helper(tool: string, a: Record<string, unknown>): Promise<CallResult> {
+    const x = await expandTool(this.doc, this.inspector, tool, a);
+    if (typeof x === "string") return this.fail(x);
+    if (!x.commands.length) return { result: { ok: true, changed: false, ...this.status(), ...x.info } };
+    // What each command made (an id, an entity), as the result reports it.
+    let doc = this.doc;
+    for (const cmd of x.commands) {
+      const r = apply(doc, cmd);
+      if (!r.ok) break;
+      Object.assign(x.info, commandMade(doc, r.doc, cmd));
+      doc = r.doc;
+    }
+    return this.editMany(x.commands, { extra: x.info });
   }
 
   private step(which: "undo" | "redo"): CallResult {
@@ -642,6 +775,7 @@ export class AgentSession {
   private async maybeRecycle() {
     if (heapBytes(this.oc) < (this.opts.recycleBytes ?? RECYCLE_HEAP_BYTES)) return;
     this.built.dispose();
+    this.inspector.reset();
     this.oc = await recycleOC();
     this.built = rebuild(this.doc, this.oc);
   }

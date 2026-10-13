@@ -15,6 +15,10 @@ export interface ModelRequest {
   system: string;
   messages: Anthropic.MessageParam[];
   tools: Anthropic.Tool[];
+  /** Output room for one turn (default 8000). A whole-part build writes long batches. */
+  maxTokens?: number;
+  /** The least effort this ask needs: the user's setting is raised to it, never lowered. */
+  minEffort?: Effort;
 }
 
 export interface IntentRequest {
@@ -63,13 +67,13 @@ export class AnthropicModel implements AskModel {
     return this.client.messages.create(
       {
         model: this.name,
-        max_tokens: 8000,
+        max_tokens: req.maxTokens ?? 8000,
         system: req.system,
         tools: req.tools,
         messages: req.messages,
         // The system prompt and tools are the same on every ask: cache them.
         cache_control: { type: "ephemeral" },
-        ...(effort ? { output_config: { effort: this.effort } } : {}),
+        ...(effort ? { output_config: { effort: atLeast(this.effort, req.minEffort) } } : {}),
       },
       { signal },
     );
@@ -91,6 +95,13 @@ export class AnthropicModel implements AskModel {
     if (!response.parsed_output) throw new Error("the model's reading of the request did not match the intent schema");
     return response.parsed_output;
   }
+}
+
+const EFFORTS: Effort[] = ["low", "medium", "high"];
+
+/** The higher of two efforts. */
+export function atLeast(effort: Effort, min?: Effort): Effort {
+  return min && EFFORTS.indexOf(min) > EFFORTS.indexOf(effort) ? min : effort;
 }
 
 // ------------------------------------------------------------------ tests

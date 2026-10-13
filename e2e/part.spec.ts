@@ -142,5 +142,5 @@ test("a question about the whole part is answered without writing", async ({ pag
   await page.getByTestId("ask-action-explain-this-part").click();
   await expect(page.getByTestId("ask-outcome")).toHaveText("Answer");
   await expect(page.getByTestId("ask-text")).toContainText("80 × 40 × 6 plate");
-  expect(sent[0].body.tools.map((t) => t.name)).toEqual(["measure", "getFeature", "escalate"]);
+  expect(sent[0].body.tools.map((t) => t.name)).toEqual(["measure", "getFeature", "escalate", "partSummary", "listFaces", "listEdges", "measureBetween", "getSketch", "facePlane", "listDatums", "screenshot", "reference"]);
 });

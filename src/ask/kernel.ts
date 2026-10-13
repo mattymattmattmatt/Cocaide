@@ -9,6 +9,7 @@ import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel"
 import { projectViews, type ProjectedView } from "../kernel/project";
 import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
 import { rebuild, type HoleRecord, type RebuildResult } from "../kernel/rebuild";
+import { inspectQuery, type InspectQuery, type InspectResult } from "../kernel/agentQueries";
 import type { OC } from "../kernel/oc";
 import { encodePNG } from "../render/png";
 
@@ -60,7 +61,11 @@ export interface KernelPort {
   screenshot(doc: unknown, opts: ShotOptions): Promise<Shot>;
   /** The part projected for a drawing's views. Null when nothing built. */
   project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null>;
+  /** The AI tools' other questions: closest points, sketch frames, mass (src/kernel/agentQueries.ts). */
+  inspect(doc: unknown, query: InspectQuery): Promise<InspectResult>;
 }
+
+export type { InspectQuery, InspectResult };
 
 export type KernelMethod = keyof KernelPort;
 
@@ -128,6 +133,10 @@ export class LocalKernel implements KernelPort {
     const fresh = views.filter((v) => !this.looks.has(v.look));
     for (const p of projectViews(this.oc(), r.bodies, [...new Map(fresh.map((v) => [v.look, v])).values()])) this.looks.set(p.look, p);
     return { views: views.map((v) => ({ ...this.looks.get(v.look)!, id: v.id })), holes: r.holes };
+  }
+
+  async inspect(doc: unknown, query: InspectQuery): Promise<InspectResult> {
+    return inspectQuery(this.oc(), this.built(doc), doc, query);
   }
 
   async screenshot(doc: unknown, opts: ShotOptions): Promise<Shot> {

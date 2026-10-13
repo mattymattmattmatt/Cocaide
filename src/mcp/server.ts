@@ -15,8 +15,9 @@ import { AgentSession, type CallResult } from "../agent/session";
 import { parseDocumentText } from "../doc/format";
 import { VIEWS, type Camera } from "../render/raster";
 import { INSTRUCTIONS, REFERENCE } from "./reference";
+import { SPECS } from "../ask/tools/specs";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const obj = z.record(z.string(), z.unknown());
 const vec3 = z.array(z.number()).length(3);
@@ -103,7 +104,7 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { sketch: z.string(), index: z.number().int().optional(), name: z.string().optional(), driven: z.boolean() },
   },
   addEntity: {
-    description: "Add an entity (line, circle, arc, point; rect and slot for older documents) to a sketch; id is optional. The sketch re-solves.",
+    description: "Add an entity (line, circle, arc, point; rect and slot for older documents) to a sketch; id is optional. The sketch re-solves; the result gives the entity's id and solved geometry.",
     input: { sketch: z.string(), entity: obj },
   },
   updateEntity: {
@@ -115,7 +116,7 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { sketch: z.string(), id: z.string() },
   },
   addConstraint: {
-    description: "Add a constraint to a sketch; the geometry moves to meet it. A constraint the sketch already implies, or that contradicts it, is refused.",
+    description: "Add a constraint to a sketch; the geometry moves to meet it. A constraint the sketch already implies, or that contradicts it, is refused. The result gives its index.",
     input: { sketch: z.string(), constraint: obj },
   },
   deleteConstraint: {
@@ -190,6 +191,8 @@ export const TOOLS: Record<string, ToolSpec> = {
   },
   undo: { description: "Step back to the previous revision." },
   redo: { description: "Step forward again after undo." },
+  // The tools for building whole parts (inspection, batch, helpers), shared with the right-click agent.
+  ...Object.fromEntries(SPECS.map((s) => [s.name, { description: s.description, input: s.input, readOnly: s.readOnly }])),
 };
 
 export function createServer(session: AgentSession): McpServer {

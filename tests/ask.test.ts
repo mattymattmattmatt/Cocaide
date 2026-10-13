@@ -107,7 +107,7 @@ describe("right-click ask", () => {
     expect(r).toMatchObject({ outcome: "answer", mode: "explain", visual: true, proposal: null, calls: [] });
     expect(r.text).toContain("top face");
     const tools = toolNames(model);
-    expect(tools).toEqual(["measure", "getFeature", "escalate"]);
+    expect(tools).toEqual(["measure", "getFeature", "escalate", "partSummary", "listFaces", "listEdges", "measureBetween", "getSketch", "facePlane", "listDatums", "screenshot", "reference"]);
     const content = model.requests[0].messages[0].content as Anthropic.ContentBlockParam[];
     expect(content.filter((b) => b.type === "image")).toHaveLength(1);
     const text = firstUserText(model);
