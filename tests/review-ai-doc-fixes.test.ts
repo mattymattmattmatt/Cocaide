@@ -5,8 +5,11 @@
 // reading every point an ellipse or a spline has, and the holes helper in a
 // right-click face ask.
 
+import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
+import { runAsk } from "../src/ask/agent";
 import { LocalKernel } from "../src/ask/kernel";
+import { ScriptedModel, say, use } from "../src/ask/model";
 import { measureBetween } from "../src/ask/tools/inspect";
 import { sketchProfile } from "../src/ask/tools/sketchProfile";
 import { apply, references, type RawDocument } from "../src/doc/commands";
@@ -133,6 +136,57 @@ describe("measureBetween and the points of ellipses and splines", () => {
     const e = await measureBetween(d, kernel, { a: { sketch: "sk", point: "el.p0" }, b: [0, 0, 0] });
     expect(e.error).toContain("el.minorEnd");
     expect(e.error).toContain("el.start");
+  });
+});
+
+describe("the holes helper in a right-click face ask", () => {
+  const bracket = JSON.parse(readFileSync(new URL("../examples/bracket.cocaide.json", import.meta.url), "utf8")) as RawDocument;
+  const holesCall = (pattern?: boolean) => ({
+    face: { type: "planar", normal: [0, 0, 1], pick: "largest" },
+    size: "M4",
+    at: { circle: { center: [-20, 0], diameter: 14, count: 4 } },
+    ...(pattern === undefined ? {} : { pattern }),
+  });
+  const ask = async (calls: [string, unknown][]) => {
+    const kernel = new LocalKernel(getOC);
+    const t = (await kernel.topology(bracket))!;
+    const face = t.faces.findIndex((f) => f.type === "plane" && f.normal![2] > 0.99);
+    const model = new ScriptedModel([...calls.map(([tool, args]) => () => [use(tool, args)]), () => [say("Done.")]]);
+    return runAsk({ doc: bracket, target: { kind: "face", index: face }, text: "add a bolt circle of M4 holes", model, kernel });
+  };
+
+  it("accepts a hole and the pattern of it, the helper's default", async () => {
+    const r = await ask([["holes", holesCall()]]);
+    expect(r.calls[0]).toMatchObject({ ok: true, revision: 1 });
+    expect(r.proposal!.changes.map((c) => c.kind)).toEqual(["added", "added"]);
+    expect(r.proposal!.changes.map((c) => c.id).some((id) => id.includes("hole"))).toBe(true);
+  });
+
+  it("still with pattern false", async () => {
+    const r = await ask([["holes", holesCall(false)]]);
+    expect(r.calls[0]).toMatchObject({ ok: true, revision: 1 });
+  });
+
+  const hole = { id: "h", op: "hole", face: { type: "planar", normal: [0, 0, 1], pick: "largest" }, center: [-20, 7], diameter: 4.5, depth: "through" };
+  const pattern = (id: string, count: number) => ({ id, op: "circularPattern", feature: "h", axis: { origin: [-20, 0, 0], direction: [0, 0, 1] }, count, angle: 360 });
+
+  it("a hole and then a pattern of it in a later call also counts as one", async () => {
+    const r = await ask([
+      ["addFeature", { feature: hole }],
+      ["addFeature", { feature: pattern("pat", 4) }],
+    ]);
+    expect(r.calls.map((c) => c.ok)).toEqual([true, true]);
+  });
+
+  it("a second pattern of the hole does not", async () => {
+    const r = await ask([["batch", { commands: [{ tool: "addFeature", feature: hole }, { tool: "addFeature", feature: pattern("pat", 4) }, { tool: "addFeature", feature: pattern("pat2", 3) }] }]]);
+    expect(r.calls[0].ok).toBe(false);
+    expect(r.calls[0].error).toMatch(/^batch step 3 \(addFeature\): from a face, the ask adds one feature; pat is it/);
+  });
+
+  it("a pattern of something the ask did not add is still refused", async () => {
+    const r = await ask([["addFeature", { feature: { id: "pat", op: "circularPattern", feature: "hole_1", axis: { origin: [-20, 0, 0], direction: [0, 0, 1] }, count: 4, angle: 360 } }]]);
+    expect(r.calls[0].ok).toBe(false);
   });
 });
 
