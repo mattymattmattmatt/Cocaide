@@ -652,6 +652,16 @@ const ICONS = {
       <path d="M11 11l7 3-3 1-1 3z" fill="currentColor" fillOpacity={0.4} />
     </>
   ),
+  // Phase O wave 6: partial ellipse (an elliptical arc).
+  ellipseArc: (
+    <>
+      <path d="M3 12a9 5.5 0 0 1 18 0" />
+      <path d="M21 12a9 5.5 0 0 1-9 5.5" style={dash} />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" />
+      <circle cx="3" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="21" cy="12" r="1.5" fill="currentColor" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

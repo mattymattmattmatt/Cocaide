@@ -470,6 +470,15 @@ export function SketchCanvas(props: Props) {
     const next = [...clicks, s];
     // A chain's first click: where clicking again closes it.
     if (def.chain && clicks.length === 0) chainStart.current = s.p;
+    if (def.open) {
+      // As many points as given: the last one clicked again (a double-click) finishes, the first one closes.
+      const again = clicks.length > 0 && dist2(s.p, clicks[clicks.length - 1].p) <= 3 * unit;
+      const closes = clicks.length >= 3 && dist2(s.p, clicks[0].p) < 1e-9;
+      if (again && clicks.length >= def.clicks) return afterPlacement(finishPlacement(clicks), s);
+      if (closes) return afterPlacement(finishPlacement(next), s);
+      if (!again) setClicks(next);
+      return;
+    }
     if (next.length < def.clicks) {
       setClicks(next);
       return;
@@ -559,6 +568,13 @@ export function SketchCanvas(props: Props) {
       // On-screen numeric input: a number typed while the last click is being placed opens the box at the pointer.
       if (!typing && !typed && def?.typed && clicks.length > 0 && clicks.length === def.clicks - 1 && !e.ctrlKey && !e.metaKey && !e.altKey && /^[0-9.]$/.test(e.key)) {
         setTyped({ values: def.typed.fields.map((_, i) => (i === 0 ? e.key : "")), field: 0 });
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // An open tool (a spline) finishes on Enter with the points placed so far.
+      if (e.key === "Enter" && !typing && def?.open && clicks.length >= def.clicks) {
+        afterPlacement(finishPlacement(clicks), clicks[clicks.length - 1]);
         e.preventDefault();
         e.stopPropagation();
         return;

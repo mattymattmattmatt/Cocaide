@@ -106,6 +106,11 @@ export interface SketchToolDef {
   prompts: string[];
   /** Keeps drawing from the last end: double-click, Esc or clicking where the chain started ends it. */
   chain?: boolean;
+  /**
+   * Takes as many points as the user gives (a spline): `clicks` is the least. Clicking the last point
+   * again (a double-click) or Enter finishes; a click its own snap puts on the first point closes it.
+   */
+  open?: boolean;
   options?: ToolOption[];
   /** A click it cannot use (a tangent arc must start at an end): why, shown to the user; null takes it. */
   accept?(click: Click, index: number, ctx: ToolContext): string | null;
