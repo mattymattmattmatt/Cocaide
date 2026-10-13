@@ -146,8 +146,8 @@ export const COMMANDS: CommandDef[] = [
 
   { id: "sketch.fullyDefine", label: "Fully define the sketch", group: "Sketch", key: null },
 
-  { id: "sketch.ellipse", label: "Ellipse", group: "Sketch", key: null, planned: true },
-  { id: "sketch.spline", label: "Spline", group: "Sketch", key: null, planned: true },
+  { id: "sketch.ellipse", label: "Ellipse", group: "Sketch", key: "Shift+E" },
+  { id: "sketch.spline", label: "Spline", group: "Sketch", key: "Shift+S" },
   { id: "sketch.explode", label: "Explode a rectangle or slot into lines and arcs", group: "Sketch", key: null },
   { id: "sketch.check", label: "Check sketch for feature", group: "Sketch", key: null },
 
@@ -170,6 +170,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "rollback.previous", label: "Roll back one feature", group: "Model tools", key: null },
   { id: "rollback.next", label: "Roll forward one feature", group: "Model tools", key: null },
   { id: "rollback.end", label: "Roll to end", group: "Model tools", key: null },
+  { id: "sketch.ellipseArc", label: "Partial ellipse (elliptical arc)", group: "Sketch", key: null },
 ];
 
 export interface InputPrefs {

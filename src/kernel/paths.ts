@@ -14,7 +14,7 @@ import { to3D, type Frame } from "../geom/frame";
 import { arcMid } from "../geom/profile";
 import { add3, cross3, dist3, dot3, len3, normalize3, scale3, sub3 } from "../geom/vec";
 import type { OC, Scope } from "./oc";
-import { dir, OpError, pnt } from "./ops";
+import { curveEdge, dir, OpError, pnt } from "./ops";
 
 /** A path as one wire, its edges in order of travel (each oriented the way it is travelled). */
 export interface PathShape {
@@ -49,6 +49,12 @@ const SMOOTH_TOL = 1e-3;
 export function chainEdges(oc: OC, s: Scope, frame: Frame, chain: Chain): TopoDS_Edge[] {
   return chain.segs.map((seg) => {
     let mk;
+    if (seg.kind === "ellipse" || seg.kind === "spline") {
+      const made = curveEdge(oc, s, frame, seg);
+      if (!made.mk.IsDone()) throw new OpError(`could not build an edge for "${seg.entity}"`);
+      const e = s.track(made.mk.Edge());
+      return made.reversed ? s.track(oc.TopoDS.Edge(s.track(e.Reversed()))) : e;
+    }
     if (seg.kind === "line") {
       mk = s.track(new oc.BRepBuilderAPI_MakeEdge(pnt(oc, s, to3D(frame, seg.a)), pnt(oc, s, to3D(frame, seg.b))));
     } else if (Math.abs(seg.sweep) >= 2 * Math.PI - 1e-12) {

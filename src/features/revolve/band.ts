@@ -11,7 +11,7 @@
 
 import type { SketchEntity, Vec2 } from "../../doc/types";
 import type { Loop, Region, Seg } from "../../geom/profile";
-import { sampleSeg } from "../../geom/profile";
+import { reverseSeg, sampleSeg, segArea, segLength } from "../../geom/profile";
 import type { THIN_SIDES } from "./doc";
 import { add2, angleOf, cross2, dist2, dot2, len2, polar, scale2, sub2, wrapAngle } from "../../geom/vec";
 
@@ -96,12 +96,17 @@ function entitySeg(e: SketchEntity): Seg | null {
     const sweep = e.clockwise ? -wrapAngle(start - end) : wrapAngle(end - start);
     return { kind: "arc", entity: e.id, c: e.center, r, a: e.start, b: e.end, start, sweep };
   }
+  if (e.type === "ellipse" || e.type === "spline") throw new BandError(`"${e.id}" is ${e.type === "ellipse" ? "an ellipse" : "a spline"}: a thin feature thickens a chain of lines and arcs only`);
   return null;
 }
 
 function reversed(s: Seg): Seg {
-  if (s.kind === "line") return { ...s, a: s.b, b: s.a };
-  return { ...s, a: s.b, b: s.a, start: s.start + s.sweep, sweep: -s.sweep };
+  return reverseSeg(s);
+}
+
+/** A thin wall is offset exactly from lines and arcs; an ellipse's or a spline's offset is no such curve. */
+function noFreeCurve(s: Seg): never {
+  throw new BandError(`"${s.entity}" is ${s.kind === "ellipse" ? "an ellipse" : "a spline"}: a thin feature offsets lines and arcs only (use a closed profile drawn with an offset instead)`);
 }
 
 /**
@@ -149,6 +154,7 @@ export function openChain(entities: readonly SketchEntity[], skip?: string): Seg
 
 /** The left normal of travel along a segment at its start or end. */
 function leftNormal(s: Seg, at: "a" | "b"): Vec2 {
+  if (s.kind === "ellipse" || s.kind === "spline") return noFreeCurve(s);
   if (s.kind === "line") {
     const d = sub2(s.b, s.a);
     const l = len2(d);
@@ -162,6 +168,7 @@ function leftNormal(s: Seg, at: "a" | "b"): Vec2 {
 
 /** The segment moved `d` to the left of its travel (a concentric arc for an arc). */
 function offsetSeg(s: Seg, d: number): Seg {
+  if (s.kind === "ellipse" || s.kind === "spline") return noFreeCurve(s);
   if (s.kind === "line") {
     const n = leftNormal(s, "a");
     return { ...s, a: add2(s.a, scale2(n, d)), b: add2(s.b, scale2(n, d)) };
@@ -173,6 +180,8 @@ function offsetSeg(s: Seg, d: number): Seg {
 
 /** Where the curves under two segments cross (lines endless, arcs as whole circles). */
 function crossings(p: Seg, q: Seg): Vec2[] {
+  if (p.kind === "ellipse" || p.kind === "spline") return noFreeCurve(p);
+  if (q.kind === "ellipse" || q.kind === "spline") return noFreeCurve(q);
   if (p.kind === "line" && q.kind === "line") {
     const u = sub2(p.b, p.a);
     const v = sub2(q.b, q.a);
@@ -204,6 +213,7 @@ function crossings(p: Seg, q: Seg): Vec2[] {
 
 /** The segment with its end (or start) moved to `p`, which lies on its curve. */
 function trimmed(s: Seg, which: "a" | "b", p: Vec2): Seg {
+  if (s.kind === "ellipse" || s.kind === "spline") return noFreeCurve(s);
   if (s.kind === "line") {
     const next = which === "a" ? { ...s, a: p } : { ...s, b: p };
     if (dot2(sub2(next.b, next.a), sub2(s.b, s.a)) <= 0) throw new BandError(`the wall is thicker than "${s.entity}" is long: make it thinner`);
@@ -257,13 +267,6 @@ export function offsetChain(chain: readonly Seg[], d: number, closed: boolean): 
   return out;
 }
 
-/** Green's theorem contribution of a segment: ½∮(x dy − y dx). */
-function segArea(s: Seg): number {
-  if (s.kind === "line") return 0.5 * cross2(s.a, s.b);
-  const { c, r, a, b, sweep } = s;
-  return 0.5 * (r * r * sweep + c[0] * (b[1] - a[1]) - c[1] * (b[0] - a[0]));
-}
-
 function loopOf(segs: Seg[]): Loop {
   return { segs, area: segs.reduce((t, s) => t + segArea(s), 0) };
 }
@@ -302,7 +305,7 @@ export function awayFromAxis(chain: readonly Seg[], axis: Line2): 1 | -1 {
       along += dot2(n, axis.u) * l;
     }
   }
-  const total = chain.reduce((t, s) => t + (s.kind === "line" ? dist2(s.a, s.b) : Math.abs(s.sweep) * s.r), 0);
+  const total = chain.reduce((t, s) => t + segLength(s), 0);
   if (Math.abs(radial) > 1e-9 * Math.max(1, total)) return radial > 0 ? 1 : -1;
   return along >= 0 ? 1 : -1;
 }

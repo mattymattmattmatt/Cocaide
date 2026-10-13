@@ -7,8 +7,8 @@
 //   - for a rib standing out of the plane: the band of the line's thickness.
 
 import type { Vec2 } from "../../doc/types";
-import type { Loop, Region, Seg } from "../../geom/profile";
-import { add2, cross2, dist2, len2, scale2, sub2 } from "../../geom/vec";
+import { segArea, translateSeg, type Loop, type Region, type Seg } from "../../geom/profile";
+import { add2, dist2, len2, scale2, sub2 } from "../../geom/vec";
 import { openBand } from "../revolve/band";
 import type { Chain } from "../sweep/chain";
 import { reverseSeg } from "../sweep/chain";
@@ -40,21 +40,13 @@ export function chainLeft(c: Chain): Vec2 {
   return [-d[1] / l, d[0] / l];
 }
 
-/** Green's theorem contribution of a segment: ½∮(x dy − y dx). */
-function segArea(s: Seg): number {
-  if (s.kind === "line") return 0.5 * cross2(s.a, s.b);
-  const { c, r, a, b, sweep } = s;
-  return 0.5 * (r * r * sweep + c[0] * (b[1] - a[1]) - c[1] * (b[0] - a[0]));
-}
-
 function ccwLoop(segs: Seg[]): Loop {
   const area = segs.reduce((t, s) => t + segArea(s), 0);
   return area >= 0 ? { segs, area } : { segs: segs.map(reverseSeg).reverse(), area: -area };
 }
 
 function moved(s: Seg, v: Vec2): Seg {
-  if (s.kind === "line") return { ...s, a: add2(s.a, v), b: add2(s.b, v) };
-  return { ...s, c: add2(s.c, v), a: add2(s.a, v), b: add2(s.b, v) };
+  return translateSeg(s, v);
 }
 
 /**

@@ -15,6 +15,9 @@ import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
 import { sketchDof } from "../geom/solver";
 import { dist2 } from "../geom/vec";
+import type { Vec2 } from "../doc/types";
+import { ellipseArea, ellipseGeom, ellipseLength, entityPoint, isEllipticalArc, splineEndTangent, splineOf } from "../geom/curves";
+import { splineArea, splineLength } from "../geom/spline";
 import { edgeSummary, faceSummary, measurementSummary, round6 } from "../kernel/inspect";
 import { describeEdgeSelector } from "../kernel/selectors";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
@@ -698,5 +701,34 @@ function entityMeasurements(e: SketchEntity): Record<string, unknown> {
       return { length: round6(dist2(e.center1, e.center2) + e.width), width: e.width };
     case "point":
       return { at: [round6(e.at[0]), round6(e.at[1])], fromOrigin: round6(Math.hypot(e.at[0], e.at[1])) };
+    case "ellipse": {
+      // Its radii, tilt and size, and where an arc's ends are (they are worked out from its angles).
+      const g = ellipseGeom(e);
+      const pt = (p: Vec2) => [round6(p[0]), round6(p[1])];
+      const out: Record<string, unknown> = {
+        majorRadius: round6(g.a),
+        minorRadius: round6(g.b),
+        majorAxisAngleDeg: round6((Math.atan2(g.u[1], g.u[0]) * 180) / Math.PI),
+        center: pt(e.center),
+        minorEnd: pt(entityPoint(e, "minorEnd")!),
+        length: round6(ellipseLength(e)),
+      };
+      if (isEllipticalArc(e)) Object.assign(out, { start: pt(entityPoint(e, "start")!), end: pt(entityPoint(e, "end")!) });
+      else out.area = round6(ellipseArea(e));
+      return out;
+    }
+    case "spline":
+      try {
+        const s = splineOf(e);
+        const t = (end: boolean) => splineEndTangent(e, end);
+        const deg = (v: Vec2) => round6((Math.atan2(v[1], v[0]) * 180) / Math.PI);
+        return {
+          points: e.points.length,
+          length: round6(splineLength(s)),
+          ...(e.closed ? { closed: true, area: round6(Math.abs(splineArea(s))) } : { startTangentDeg: deg(t(false)), endTangentDeg: deg(t(true)) }),
+        };
+      } catch (err) {
+        return { points: e.points.length, problem: (err as Error).message };
+      }
   }
 }

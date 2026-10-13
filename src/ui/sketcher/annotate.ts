@@ -7,6 +7,8 @@ import type { Constraint, ConstraintType, SketchEntity, Vec2 } from "../../doc/t
 import { isDriven, withAxes } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
+import { ellipseGeom, ellipsePoint, ellipseSpan, entityPoint, isEllipticalArc, pointNames, splineOf } from "../../geom/curves";
+import { splinePoint } from "../../geom/spline";
 import type { IconName } from "../icons";
 
 /** Each constraint type's name and icon, as on the relation and dimension lists. */
@@ -66,7 +68,8 @@ export interface DimensionShape {
 export function dimensionShapes(entities: SketchEntity[], constraints: Constraint[], px: number): DimensionShape[] {
   // A dimension from the sketch's X or Y axis measures to it as to any line.
   const byId = new Map(withAxes(entities).map((e) => [e.id, e]));
-  const pts = entities.flatMap((e) => Object.values(e).filter((v): v is Vec2 => Array.isArray(v)));
+  // Every named point (a spline's points one by one: its `points` field is a list of them, not a point).
+  const pts = entities.flatMap((e) => pointNames(e).flatMap((n): Vec2[] => { const p = entityPoint(e, n); return p ? [p] : []; }));
   const middle: Vec2 = pts.length ? [avg(pts.map((p) => p[0])), avg(pts.map((p) => p[1]))] : [0, 0];
   const gap = 22 * px;
   const out: DimensionShape[] = [];
@@ -231,7 +234,7 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         // One dimension for the whole offset: across its first pair, from the base to the offset.
         const base = k.entities[0];
         const o = byId.get(k.offsets[0]);
-        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot") return;
+        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot" || o.type === "ellipse" || o.type === "spline") return;
         let p: Vec2 | null = null;
         let q: Vec2 | null = null;
         if (o.type === "line") {
@@ -505,6 +508,18 @@ function anchorOf(e: SketchEntity): Vec2 {
       return [(e.center1[0] + e.center2[0]) / 2, (e.center1[1] + e.center2[1]) / 2 + e.width / 2];
     case "point":
       return e.at;
+    case "ellipse": {
+      // An arc's middle; a whole ellipse's rim down to the right, as a circle's.
+      const { start, sweep } = ellipseSpan(e);
+      return ellipsePoint(ellipseGeom(e), isEllipticalArc(e) ? start + sweep / 2 : -Math.PI / 4);
+    }
+    case "spline":
+      try {
+        const s = splineOf(e);
+        return splinePoint(s, s.knots[s.knots.length - 1] / 2);
+      } catch {
+        return e.points[0];
+      }
   }
 }
 

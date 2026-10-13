@@ -11,7 +11,7 @@
 //     band geometry: lines offset to lines, arcs to concentric arcs).
 
 import type { SketchEntity, Vec2 } from "../../doc/types";
-import { reverseLoop, sampleSeg, windingNumber, type Loop, type Region, type Seg } from "../../geom/profile";
+import { distanceToSeg, reverseLoop, sampleSeg, windingNumber, type Loop, type Region, type Seg } from "../../geom/profile";
 import { add2, angleOf, dist2, dot2, len2, scale2, sub2, wrapAngle } from "../../geom/vec";
 import { BandError, closedBands, openBand, openChain, wallOffsets, type ThinSide } from "../revolve/band";
 
@@ -141,6 +141,7 @@ function onSeg(s: Seg, p: Vec2): boolean {
     const t = dot2(sub2(p, s.a), d) / (l * l);
     return t >= -tol && t <= 1 + tol && dist2(add2(s.a, scale2(d, t)), p) <= tol;
   }
+  if (s.kind === "ellipse" || s.kind === "spline") return distanceToSeg(s, p) <= tol;
   if (Math.abs(dist2(p, s.c) - s.r) > tol) return false;
   if (Math.abs(s.sweep) >= 2 * Math.PI - 1e-12) return true;
   const angle = angleOf(sub2(p, s.c));

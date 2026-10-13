@@ -1158,6 +1158,7 @@ svg.icon { flex: none; display: block; }
 /* The sketch toolbar gained Convert: its buttons sit a little closer, so it stays on one row. */
 .sketch-toolbar .tool { padding: 0 5px; min-width: 48px; }
 .sketch-toolbar .sep { margin: 0 3px; }
+.sketch-toolbar { gap: 0; padding-left: 6px; padding-right: 6px; }
 /* ======================================================= Phase O wave 3: sketch edit tools, shaded regions, check sketch */
 :root { --sketch-region: rgb(31 79 191 / 0.08); --sketch-warning: #d97706; --sketch-goes: #cf222e; }
 @media (prefers-color-scheme: dark) { :root { --sketch-region: rgb(122 167 255 / 0.1); --sketch-warning: #f5a524; --sketch-goes: #ff6b6b; } }
@@ -1411,3 +1412,9 @@ svg.icon { flex: none; display: block; }
 .palette-label { flex: 1; }
 .palette-group { color: var(--muted); font-size: 12px; }
 .palette-none { padding: 8px 12px; }
+
+/* Phase O wave 6: the Curve flyout (spline, ellipse) joins the sketch toolbar; its big buttons sit a little closer so it stays one row. */
+.sketch-toolbar .tool:not(.small) { min-width: 44px; padding: 0 5px; }
+.sketch-toolbar .flyout > .tool:not(.small) { padding-right: 13px; }
+.sketch-toolbar .sep { margin: 0 3px; }
+.sketch-toolbar { gap: 0; padding-left: 6px; padding-right: 6px; }

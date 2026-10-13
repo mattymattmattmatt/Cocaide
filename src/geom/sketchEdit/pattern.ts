@@ -18,6 +18,7 @@
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { isAxisId } from "../axes";
 import { add2, dist2, polar, sub2 } from "../vec";
+import { movedCurve } from "../curves";
 import { TOL } from "./curve";
 import { explodeAll } from "./explode";
 import { freshIds, mapRefs, pointAtRef, PREFIX, settle, type Edit, type SketchState } from "./relations";
@@ -47,7 +48,8 @@ type Move = (p: Vec2) => Vec2;
 
 /** The point a pattern's places are measured to: a circle's or arc's centre, a line's start, a point. */
 function keyRef(e: SketchEntity): string {
-  if (e.type === "circle" || e.type === "arc" || e.type === "rect") return `${e.id}.center`;
+  if (e.type === "circle" || e.type === "arc" || e.type === "rect" || e.type === "ellipse") return `${e.id}.center`;
+  if (e.type === "spline") return `${e.id}.p0`;
   if (e.type === "line") return `${e.id}.start`;
   if (e.type === "slot") return `${e.id}.center1`;
   return `${e.id}.at`;
@@ -69,6 +71,9 @@ function moved(e: SketchEntity, f: Move, id: string): SketchEntity {
       return { id, type: "rect", center: f(e.center), w: e.w, h: e.h, ...base };
     case "slot":
       return { id, type: "slot", center1: f(e.center1), center2: f(e.center2), width: e.width, ...base };
+    case "ellipse":
+    case "spline":
+      return { ...movedCurve(e, f), id, ...base } as SketchEntity;
   }
 }
 
@@ -117,7 +122,7 @@ function copies(state: SketchState, seed: SketchEntity[], moves: Map<number, Mov
       const c = moved(e, f, fresh(PREFIX[e.type]));
       ids.set(e.id, c.id);
       made.push(c);
-      if (e.type === "line" || e.type === "arc" || e.type === "circle") hard.push({ type: "equal", entities: [c.id, e.id] });
+      if (e.type === "line" || e.type === "arc" || e.type === "circle" || e.type === "ellipse") hard.push({ type: "equal", entities: [c.id, e.id] });
       if (e.type === "line") soft.push({ type: "parallel", entities: [c.id, e.id] });
     }
     keys.set(k, `${ids.get(seed[0].id)}${keyRef(seed[0]).slice(seed[0].id.length)}`);

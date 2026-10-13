@@ -492,7 +492,45 @@ export interface PointEntity extends EntityBase {
   at: Vec2;
 }
 
-export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity;
+/**
+ * An ellipse, or an elliptical arc. `major` is the end of the major semi-axis:
+ * its direction from `center` is the ellipse's tilt and its distance the
+ * major radius; `minor` is the minor radius, square to it (on its left).
+ * With `startAngle` and `endAngle` (both or neither) it is an elliptical arc
+ * running counter-clockwise from start to end. They are parameter angles in
+ * degrees: the point at angle t is center + major radius · cos t along the
+ * major axis + minor · sin t along the minor axis (0 is the major end, 90 the
+ * minor end). Point refs: "<id>.center", "<id>.major", "<id>.minorEnd"
+ * (center + minor along the minor axis), and an arc's "<id>.start", "<id>.end".
+ */
+export interface EllipseEntity extends EntityBase {
+  type: "ellipse";
+  center: Vec2;
+  major: Vec2;
+  minor: number;
+  startAngle?: number;
+  endAngle?: number;
+}
+
+/**
+ * A smooth curve through `points` in order (a cubic spline, curvature
+ * continuous, parameterised by chord length). Open by default, with natural
+ * ends (no bending there) unless `startTangent` / `endTangent` give the
+ * direction it leaves its first point / arrives at its last, in degrees from
+ * the sketch's x axis the way it runs (a tangent relation to a line at an end
+ * sets these). `closed`: it runs on from the last point back to the first,
+ * smoothly (at least three points; no end tangents). Point refs: "<id>.p0",
+ * "<id>.p1", … for points[0], points[1], ….
+ */
+export interface SplineEntity extends EntityBase {
+  type: "spline";
+  points: Vec2[];
+  closed?: boolean;
+  startTangent?: number;
+  endTangent?: number;
+}
+
+export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity | EllipseEntity | SplineEntity;
 export type SketchEntityType = SketchEntity["type"];
 
 /** "entityId.point", e.g. "l1.end", "a2.center", "s1.center2", "p1.at", or "origin" for the sketch origin. */

@@ -10,6 +10,7 @@ import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { constraintTargets, isAxisId } from "../axes";
 import { buildProfile, sampleSeg, type Region } from "../profile";
 import { dist2 } from "../vec";
+import { endRefs, withPointAt } from "../curves";
 import { curveOf, curvesOf, distanceTo, meet, sameCarrier, TOL, type Curve } from "./curve";
 import { mapRefs, pointAtRef, pointNames, relationKey, settle, type Edit, type SketchState } from "./relations";
 
@@ -80,7 +81,16 @@ export function checkSketch(entities: SketchEntity[], opts: { gap?: number } = {
   const rest = live.filter((e) => !zero.has(e.id) && !dupes.has(e.id));
 
   // Ends: each line's and arc's two ends must meet exactly one other end.
-  const ends = rest.flatMap((e) => (e.type === "line" || e.type === "arc" ? END_NAMES.map((n) => ({ ref: `${e.id}.${n}`, id: e.id, name: n, p: e[n] })) : []));
+  const ends = rest.flatMap((e) => {
+    if (e.type === "line" || e.type === "arc") return END_NAMES.map((n) => ({ ref: `${e.id}.${n}`, id: e.id, name: n as string, p: e[n] }));
+    // An elliptical arc's and an open spline's ends too (a spline's are its first and last points).
+    const refs = endRefs(e);
+    if (!refs) return [];
+    return refs.flatMap((ref, k) => {
+      const p = pointAtRef(rest, ref);
+      return p ? [{ ref, id: e.id, name: END_NAMES[k] as string, p }] : [];
+    });
+  });
   const joinedAt = (i: number) => ends.filter((o, j) => j !== i && dist2(o.p, ends[i].p) <= 10 * TOL);
   const seenNode = new Set<number>();
   const gapped = new Set<number>();
@@ -195,6 +205,10 @@ function anchor(e: SketchEntity): Vec2 {
       return e.center1;
     case "point":
       return e.at;
+    case "ellipse":
+      return e.major;
+    case "spline":
+      return e.points[0];
   }
 }
 
@@ -324,7 +338,7 @@ export function fixProblem(state: SketchState, problem: SketchProblem): Edit | n
       let out = e;
       for (const ref of [r1, r2]) {
         const [id, name] = ref.split(".");
-        if (out.id === id) out = { ...out, [name]: mid } as SketchEntity;
+        if (out.id === id) out = withPointAt(out, name, mid);
       }
       return out;
     });

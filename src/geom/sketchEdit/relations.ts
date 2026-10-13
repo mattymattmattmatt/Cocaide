@@ -9,6 +9,7 @@
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { constraintTargets, isAxisId } from "../axes";
 import { measureConstraint, point as pointOf } from "../constraints";
+import { pointNames as curvePointNames } from "../curves";
 
 export interface SketchState {
   entities: SketchEntity[];
@@ -46,6 +47,9 @@ export function pointNames(e: SketchEntity): string[] {
       return ["center1", "center2"];
     case "point":
       return ["at"];
+    case "ellipse":
+    case "spline":
+      return curvePointNames(e);
   }
 }
 
@@ -212,7 +216,7 @@ export function freshIds(entities: { id: string }[]): (prefix: string) => string
 }
 
 /** The id prefix for each entity type. */
-export const PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p" };
+export const PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p", ellipse: "el", spline: "sp" };
 
 /** The entities with one replaced (by id), or several. */
 export function replaced(entities: SketchEntity[], ...next: SketchEntity[]): SketchEntity[] {

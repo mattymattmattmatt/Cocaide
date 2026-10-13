@@ -11,7 +11,8 @@
 
 import type { SketchEntity, Vec2, Vec3 } from "../../doc/types";
 import { to3D, type Frame } from "../../geom/frame";
-import { buildProfile, sampleSeg, type Seg } from "../../geom/profile";
+import { buildProfile, ellipseSeg, reverseSeg as reverseProfileSeg, sampleSeg, segLength, segPolyline, segTangent as profileSegTangent, splineSeg, type Seg } from "../../geom/profile";
+import { isEllipticalArc } from "../../geom/curves";
 import { add2, angleOf, dist2, dot2, dot3, len2, scale2, sub2, sub3, wrapAngle } from "../../geom/vec";
 
 /** Positional tolerance (mm), as the profile builder's. */
@@ -45,8 +46,7 @@ function arcSeg(e: Extract<SketchEntity, { type: "arc" }>): Seg {
 }
 
 export function reverseSeg(s: Seg): Seg {
-  if (s.kind === "line") return { ...s, a: s.b, b: s.a };
-  return { ...s, a: s.b, b: s.a, start: s.start + s.sweep, sweep: -s.sweep };
+  return reverseProfileSeg(s);
 }
 
 /** The chain the other way round. */
@@ -66,7 +66,7 @@ const fmt = (p: Vec2) => `[${fmtN(p[0])}, ${fmtN(p[1])}]`;
 export function sketchChain(entities: readonly SketchEntity[], what: string, closedOk = true): Chain {
   const live = entities.filter((e) => !isConstruction(e) && e.type !== "point");
   if (live.length === 0) throw new ChainError(`the sketch has no curves for ${what} (construction lines and points do not count)`);
-  const shapes = live.filter((e) => e.type === "circle" || e.type === "rect" || e.type === "slot");
+  const shapes = live.filter((e) => e.type === "circle" || e.type === "rect" || e.type === "slot" || (e.type === "ellipse" && !isEllipticalArc(e)) || (e.type === "spline" && e.closed));
   if (shapes.length > 0) {
     if (!closedOk) throw new ChainError(`"${shapes[0].id}" is a closed shape: ${what} needs an open chain of lines and arcs`);
     if (live.length > 1) throw new ChainError(`"${shapes[0].id}" is a closed shape and the sketch has other curves too: ${what} follows one chain`);
@@ -74,7 +74,18 @@ export function sketchChain(entities: readonly SketchEntity[], what: string, clo
     if (!p.ok) throw new ChainError(p.error);
     return { segs: p.regions[0].outer.segs, closed: true };
   }
-  const segs = live.map((e) => (e.type === "line" ? lineSeg(e) : arcSeg(e as Extract<SketchEntity, { type: "arc" }>)));
+  const segs = live.map((e): Seg => {
+    if (e.type === "line") return lineSeg(e);
+    if (e.type === "ellipse") return ellipseSeg(e);
+    if (e.type === "spline") {
+      try {
+        return splineSeg(e);
+      } catch (err) {
+        throw new ChainError((err as Error).message);
+      }
+    }
+    return arcSeg(e as Extract<SketchEntity, { type: "arc" }>);
+  });
   const nodes: Vec2[] = [];
   const nodeOf = (p: Vec2) => {
     const i = nodes.findIndex((q) => dist2(p, q) <= TOL);
@@ -117,18 +128,12 @@ function components(ends: readonly (readonly [number, number])[], n: number): nu
 
 /** The unit tangent of travel along a segment, at its start or end. */
 export function segTangent(s: Seg, at: "a" | "b"): Vec2 {
-  if (s.kind === "line") {
-    const d = sub2(s.b, s.a);
-    return scale2(d, 1 / len2(d));
-  }
-  const angle = at === "a" ? s.start : s.start + s.sweep;
-  const sign = s.sweep > 0 ? 1 : -1;
-  return [-Math.sin(angle) * sign, Math.cos(angle) * sign];
+  return profileSegTangent(s, at);
 }
 
 /** The chain's length. */
 export function chainLength(c: Chain): number {
-  return c.segs.reduce((t, s) => t + (s.kind === "line" ? dist2(s.a, s.b) : Math.abs(s.sweep) * s.r), 0);
+  return c.segs.reduce((t, s) => t + segLength(s), 0);
 }
 
 /** Do neighbouring pieces meet tangentially everywhere (a closed chain also where it closes)? */
@@ -180,6 +185,18 @@ function crossings(frame: Frame, plane: Plane3, s: Seg): Vec2[] {
     const t = da / (da - db);
     return [add2(s.a, scale2(sub2(s.b, s.a), t))];
   }
+  if (s.kind === "ellipse" || s.kind === "spline") {
+    // Along a fine polyline of the curve: where it changes side.
+    const out: Vec2[] = [];
+    const pts = segPolyline(s);
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const da = d0 + dot2(g, pts[i]);
+      const db = d0 + dot2(g, pts[i + 1]);
+      if (da * db > 0 || Math.abs(da - db) < 1e-15) continue;
+      out.push(add2(pts[i], scale2(sub2(pts[i + 1], pts[i]), da / (da - db))));
+    }
+    return out;
+  }
   // The line d = 0 against the arc's circle.
   const u = scale2(g, 1 / gl);
   const dc = (d0 + dot2(g, s.c)) / gl; // the centre's distance from the line, along u
@@ -207,6 +224,9 @@ function splitSeg(s: Seg, q: Vec2): Seg[] {
       { ...s, b: q },
       { ...s, a: q },
     ].filter((x) => dist2(x.a, x.b) > TOL);
+  }
+  if (s.kind === "ellipse" || s.kind === "spline") {
+    throw new ChainError(`the closed path would have to start partway along "${s.entity}", where it crosses the profile's plane: put a point of the path on that plane (split the curve there, or move the profile to one of its ends)`);
   }
   const full = Math.abs(s.sweep) >= 2 * Math.PI - 1e-12;
   const angle = angleOf(sub2(q, s.c));

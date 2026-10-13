@@ -12,6 +12,7 @@
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { constraintTargets, isAxisId } from "../axes";
 import { dist2, sub2 } from "../vec";
+import { movedCurve } from "../curves";
 import { explodeAll } from "./explode";
 import { freshIds, mapRefs, PREFIX, settle, type Edit, type SketchState } from "./relations";
 
@@ -59,6 +60,9 @@ function transformed(e: SketchEntity, f: (p: Vec2) => Vec2, k: number, id: strin
       return { ...e, id, center: f(e.center), w: e.w * k, h: e.h * k };
     case "slot":
       return { ...e, id, center1: f(e.center1), center2: f(e.center2), width: e.width * k };
+    case "ellipse":
+    case "spline":
+      return { ...movedCurve(e, f, k), id };
   }
 }
 

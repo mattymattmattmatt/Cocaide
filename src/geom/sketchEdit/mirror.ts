@@ -11,6 +11,7 @@
 import type { Constraint, SketchEntity, Vec2 } from "../../doc/types";
 import { AXIS_LINES, isAxisId } from "../axes";
 import { add2, dist2, dot2, scale2, sub2 } from "../vec";
+import { entityPoint } from "../curves";
 import { TOL } from "./curve";
 import { explodeAll } from "./explode";
 import { freshIds, mapRefs, PREFIX, pointNames, settle, type Edit, type SketchState } from "./relations";
@@ -57,6 +58,26 @@ function mirrored(e: SketchEntity, line: [Vec2, Vec2], id: string): { entity: Sk
       };
     case "point":
       return { entity: { id, type: "point", at: m(e.at), ...base }, names: { at: "at" } };
+    case "ellipse": {
+      // A mirror turns the ellipse's sense: the point at parameter t lands on the image's point at −t, so an arc's ends swap.
+      const arc = e.startAngle !== undefined && e.endAngle !== undefined ? { startAngle: -e.endAngle, endAngle: -e.startAngle } : {};
+      return {
+        entity: { id, type: "ellipse", center: m(e.center), major: m(e.major), minor: e.minor, ...arc, ...base },
+        names: { center: "center", major: "major", minorEnd: "minorEnd", start: "end", end: "start" },
+      };
+    }
+    case "spline": {
+      // Its points mirrored in order; an end tangent's direction mirrored too.
+      const [a, b] = line;
+      const axis = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+      const turn = (deg: number | undefined) => (deg === undefined ? {} : { v: 2 * axis - deg });
+      const st = turn(e.startTangent);
+      const et = turn(e.endTangent);
+      return {
+        entity: { id, type: "spline", points: e.points.map(m), ...(e.closed ? { closed: true } : {}), ...("v" in st ? { startTangent: st.v } : {}), ...("v" in et ? { endTangent: et.v } : {}), ...base },
+        names: Object.fromEntries(e.points.map((_, i) => [`p${i}`, `p${i}`])),
+      };
+    }
     default:
       return null;
   }
@@ -87,7 +108,7 @@ export function mirrorEntities(stateIn: SketchState, ids: string[], about: strin
     made.push(m.entity);
     images.set(id, { id: m.entity.id, names: m.names });
   }
-  if (!made.length) return "nothing there can be mirrored: pick lines, arcs, circles or points";
+  if (!made.length) return "nothing there can be mirrored: pick lines, arcs, circles, ellipses, splines or points";
   const imageRef = (ref: string): string | null => {
     const [owner, name] = ref.split(".");
     const im = images.get(owner);
@@ -106,6 +127,15 @@ export function mirrorEntities(stateIn: SketchState, ids: string[], about: strin
     const e = byId.get(orig)!;
     return e.type === "point" ? { type: "symmetric", points: [`${orig}.at`, `${im.id}.at`], line: about } : { type: "symmetric", entities: [orig, im.id], line: about };
   });
+  // An ellipse's and a spline's image is held by its points mirrored (and an ellipse's equal radii).
+  for (const [i, k] of hard.entries()) {
+    if (k.type !== "symmetric" || !k.entities) continue;
+    const e = byId.get(k.entities[0])!;
+    if (e.type !== "ellipse" && e.type !== "spline") continue;
+    const im = k.entities[1];
+    const names = e.type === "ellipse" ? ["center", "major"] : e.points.map((_, n) => `p${n}`);
+    hard.splice(i, 1, ...names.map((n): Constraint => ({ type: "symmetric", points: [`${e.id}.${n}`, `${im}.${n}`], line: about })), ...(e.type === "ellipse" ? [{ type: "equal", entities: [e.id, im] } as Constraint] : []));
+  }
   const entities = [...state.entities, ...made];
   // Where an image's point lands on a point of the originals (on the mirror line), the two join.
   const soft: Constraint[] = [];
@@ -127,6 +157,7 @@ export function mirrorEntities(stateIn: SketchState, ids: string[], about: strin
 }
 
 function pointOf(e: SketchEntity, name: string): Vec2 | null {
+  if (e.type === "ellipse" || e.type === "spline") return entityPoint(e, name) ?? null;
   const v = (e as unknown as Record<string, unknown>)[name];
   return Array.isArray(v) && v.length === 2 ? (v as Vec2) : null;
 }

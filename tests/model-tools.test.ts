@@ -120,9 +120,8 @@ describe("the registry", () => {
     const planned = COMMANDS.filter((c) => c.planned).map((c) => c.id);
     // Sweep, Loft and Rib landed in wave 4; the sketch-driven pattern, Measure and Section in wave 5.
     for (const id of ["tool.sketchPattern", "tool.measure", "tool.section", "tool.massProperties"]) expect(planned).not.toContain(id);
-    // The sketch edit tools (trim … copy) landed in wave 3, Fully Define in wave 4.
-    const sketch = ["ellipse", "spline"];
-    expect(planned.filter((id) => id.startsWith("sketch.")).sort()).toEqual(sketch.map((s) => `sketch.${s}`).sort());
+    // The sketch edit tools (trim … copy) landed in wave 3, Fully Define in wave 4, Ellipse and Spline in wave 6.
+    expect(planned.filter((id) => id.startsWith("sketch."))).toEqual([]);
   });
 });
 
