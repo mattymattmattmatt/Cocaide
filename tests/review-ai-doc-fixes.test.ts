@@ -147,7 +147,7 @@ describe("the holes helper in a right-click face ask", () => {
     at: { circle: { center: [-20, 0], diameter: 14, count: 4 } },
     ...(pattern === undefined ? {} : { pattern }),
   });
-  const ask = async (calls: [string, unknown][]) => {
+  const ask = async (calls: [string, Record<string, unknown>][]) => {
     const kernel = new LocalKernel(getOC);
     const t = (await kernel.topology(bracket))!;
     const face = t.faces.findIndex((f) => f.type === "plane" && f.normal![2] > 0.99);
