@@ -251,7 +251,27 @@ describe("switching a reference feature's type in its properties", () => {
   it("keeps the references that fit, fills the rest with defaults, drops the old mode's fields", () => {
     const f = { id: "plane_1", op: "plane", mode: "offset", refs: [{ datum: "Front" }], distance: 20 };
     expect(switchMode(f, "angle", PLANE_MODE_SPECS, before(doc), { distance: 10, angle: 45 })).toEqual({ mode: "angle", refs: [{ datum: "Front" }, { datum: "X" }], distance: null, angle: 45, t: null });
-    expect(switchMode(f, "threePoints", PLANE_MODE_SPECS, before(doc))).toMatchObject({ refs: [{ datum: "Origin" }, { datum: "Origin" }, { datum: "Origin" }] });
+    // Three different points, not on one line (the origin three times would never build).
+    expect(switchMode(f, "threePoints", PLANE_MODE_SPECS, before(doc))).toMatchObject({ refs: [{ datum: "Origin" }, { point: [10, 0, 0] }, { point: [0, 10, 0] }] });
+    // A midplane is never between a plane and itself.
+    expect(switchMode({ ...f, refs: [{ datum: "Top" }] }, "midplane", PLANE_MODE_SPECS, before(doc))).toMatchObject({ refs: [{ datum: "Top" }, { datum: "Front" }] });
+  });
+
+  it("every type switched to from offset (on a face, or on Top) builds", () => {
+    const face = { face: { type: "planar", normal: [0, 0, 1], pick: "largest" } };
+    for (const start of [face, { datum: "Top" }]) {
+      let f: Record<string, unknown> = { id: "plane_9", op: "plane", mode: "offset", refs: [start], distance: 5 };
+      for (const mode of ["angle", "threePoints", "midplane", "parallelThroughPoint", "offset"]) {
+        f = { ...f, ...switchMode(f, mode, PLANE_MODE_SPECS, before(doc), { distance: 10, angle: 45 }) };
+        for (const k of Object.keys(f)) if (f[k] === null) delete f[k];
+        const r = rebuild({ ...doc, features: [...doc.features, f] }, oc);
+        try {
+          expect([mode, r.errors]).toEqual([mode, []]);
+        } finally {
+          r.dispose();
+        }
+      }
+    }
   });
 
   it("a type that needs picked geometry (a cylinder's face, an edge) takes what is selected, else says what to select", () => {

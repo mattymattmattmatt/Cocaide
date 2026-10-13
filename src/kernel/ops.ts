@@ -328,16 +328,17 @@ export interface Drilled {
  * The hole as one solid of revolution: a closed (radius, depth) profile spun
  * about the hole axis. depth 0 is the face, positive goes into the material.
  */
-export function holeTool(oc: OC, s: Scope, f: Pick<HoleFeature, "diameter" | "counterbore" | "countersink">, entry: Vec3, into: Vec3, radial: Vec3, length: number) {
+export function holeTool(oc: OC, s: Scope, f: Pick<HoleFeature, "diameter" | "counterbore" | "countersink">, entry: Vec3, into: Vec3, radial: Vec3, length: number, wall = length) {
+  // `wall` is where the first material along the axis ends: a counterbore or countersink must stop inside it.
   const r = f.diameter / 2;
   const profile: Vec2[] = [[0, 0]];
   if (f.counterbore) {
-    if (f.counterbore.depth >= length) throw new OpError("the counterbore reaches through the part");
+    if (f.counterbore.depth >= Math.min(length, wall)) throw new OpError("the counterbore reaches through the part");
     profile.push([f.counterbore.diameter / 2, 0], [f.counterbore.diameter / 2, f.counterbore.depth], [r, f.counterbore.depth]);
   } else if (f.countersink) {
     const rs = f.countersink.diameter / 2;
     const sink = (rs - r) / Math.tan(((f.countersink.angle / 2) * Math.PI) / 180);
-    if (sink >= length) throw new OpError("the countersink reaches through the part");
+    if (sink >= Math.min(length, wall)) throw new OpError("the countersink reaches through the part");
     profile.push([rs, 0], [r, sink]);
   } else {
     profile.push([r, 0]);

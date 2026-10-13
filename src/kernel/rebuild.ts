@@ -14,6 +14,7 @@ import { validateDocument } from "../doc/validate";
 import type { Datum } from "../features/datum";
 import { runKernelOp, type RebuildCtx } from "../features/kernelDefs";
 import { checkConstraints } from "../geom/constraints";
+import { roundTo } from "../geom/vec";
 import { to3D, type Frame } from "../geom/frame";
 import { placeSection } from "../geom/member";
 import { buildProfile, entityPolylines } from "../geom/profile";
@@ -235,7 +236,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   const profiles = new Map<string, SketchProfile | null>();
   /** The tool of each extrude, cut and hole, and where it went, for patterns. Disposed before returning. */
   const tools = new Map<string, Seed>();
-  /** Extrudes that intersect: they leave no tool, so a pattern of one says why. */
+  /** Features that intersect: they leave no tool, so a pattern of one says why. */
   const intersected = new Set<string>();
   /** The face signatures each feature made that a fillet or chamfer treats "the edges of" (its features field). */
   const madeFaces = new Map<string, Set<string>>();
@@ -324,6 +325,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       tools.get(id)?.tool.delete();
       tools.set(id, { ...seed, tool: copyOut(seed.tool) });
     },
+    setIntersected: (id) => intersected.add(id),
     repeat: (s, instances, seed, nameOf, what, changed) => repeat(s, instances, seed, nameOf, what, changed),
     holes: {
       record(h, names) {
@@ -359,7 +361,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   /** The tool an earlier feature left for patterns and mirrors, or why there is none. */
   const seedOf = (id: string, verb: "repeat" | "mirror"): Seed => {
     const seed = tools.get(id);
-    if (!seed && intersected.has(id)) throw new OpError(`"${id}" is an intersecting extrude: it keeps an overlap and adds no tool to ${verb}; ${verb === "repeat" ? "pattern" : "mirror"} the bodies instead`);
+    if (!seed && intersected.has(id)) throw new OpError(`"${id}" is an intersecting ${v.features.find((vf) => vf.id === id)?.op ?? "feature"}: it keeps an overlap and adds no tool to ${verb}; ${verb === "repeat" ? "pattern" : "mirror"} the bodies instead`);
     if (!seed) throw new OpError(`${missing(id, "feature")}, so there is nothing to ${verb}`);
     return seed;
   };
@@ -419,6 +421,11 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
               commit(new Map([[name, commonWith(oc, s, name, into!, tool, "extrusion")]]));
               intersected.add(raw.id);
               return;
+            }
+            if (!raw.newBody && !raw.body && !into && bodies.size > 0) {
+              // Naming no body, it starts "main" next to the bodies there are: it must not overlap them unasked.
+              const hit = interference(oc, s, new Map([[name, tool], ...bodies])).find((i) => i.bodies[0] === name);
+              if (hit) throw new OpError(`names no body, so it starts body "${name}", but that overlaps body "${hit.bodies[1]}" (by ${roundTo(hit.volume, 3)} mm³): add to it with "body": "${hit.bodies[1]}", or start a separate body with "newBody"`);
             }
             commit(new Map([[name, fuseInto(oc, s, into, tool, "extrusion")]]));
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", into: raw.newBody ? undefined : name, newBody: raw.newBody });

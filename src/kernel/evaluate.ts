@@ -15,7 +15,7 @@ import type { TopoDS_Shape } from "replicad-opencascadejs";
 import type { Material, Vec3 } from "../doc/types";
 import { combine, tensorFromMoments, inertiaOf, type MassBody } from "../geom/inertia";
 import { add3, cross3, dist3, normalize3, scale3 } from "../geom/vec";
-import { boundingBoxOf, DEFAULT_MATERIAL } from "./measure";
+import { boundingBoxOf, DEFAULT_MATERIAL, volumePropsOf } from "./measure";
 import { type OC, type Scope, scoped } from "./oc";
 import { dir, pnt } from "./ops";
 import { listEdges, listFaces } from "./topology";
@@ -111,8 +111,7 @@ export function massProperties(
 }
 
 function bodyMass(oc: OC, s: Scope, name: string, shape: TopoDS_Shape, material: Material): MassBody {
-  const props = s.track(new oc.GProp_GProps());
-  oc.BRepGProp.VolumeProperties(shape, props, false, false, false);
+  const props = volumePropsOf(oc, s, shape);
   const volume = props.Mass();
   const c = s.track(props.CentreOfMass());
   const centre: Vec3 = [c.X(), c.Y(), c.Z()];

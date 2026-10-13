@@ -219,8 +219,40 @@ function circleWire(ctx: RebuildCtx, s: Scope, path: PathShape, r: number): Topo
   return s.track(s.track(new oc.BRepBuilderAPI_MakeWire(edge)).Wire());
 }
 
-/** One closed loop carried along the path into a solid. */
+/** Why a path with a sharp corner beside a curve failed: the corner modes cannot join a curved piece cleanly. */
+const CURVED_CORNER = "the path has a sharp corner next to a curve, which the profile cannot turn: round the corner with a sketch fillet";
+
+/** Does the path have a piece that is not a straight line (an arc, ellipse, spline or helix)? */
+function hasCurvedPiece(ctx: RebuildCtx, s: Scope, path: PathShape): boolean {
+  const { oc } = ctx;
+  return path.edges.some((e) => s.track(new oc.BRepAdaptor_Curve(e)).GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line);
+}
+
+/**
+ * One closed loop carried along the path into a solid. Sharp corners are
+ * rounded; where that fails (a corner beside a curved piece), the pieces are
+ * met at a mitre before giving up.
+ */
 function pipe(ctx: RebuildCtx, s: Scope, f: SweepFeature, built: Built, wire: TopoDS_Wire, what: string): TopoDS_Shape {
+  const { oc } = ctx;
+  const { path } = built;
+  const T = oc.BRepBuilderAPI_TransitionMode;
+  if (path.smooth) return pipeWith(ctx, s, f, built, wire, what, T.BRepBuilderAPI_RoundCorner, false);
+  let first: unknown = null;
+  // Not BRepBuilderAPI_Transformed: it lets the profile lean off square to the path, and the solid comes out short.
+  for (const mode of [T.BRepBuilderAPI_RoundCorner, T.BRepBuilderAPI_RightCorner]) {
+    try {
+      return pipeWith(ctx, s, f, built, wire, what, mode, true);
+    } catch (e) {
+      first ??= e;
+    }
+  }
+  if (hasCurvedPiece(ctx, s, path)) throw new OpError(CURVED_CORNER);
+  throw first;
+}
+
+/** pipe with one transition mode at the corners; `checked`: refuse an invalid solid here (so another mode can be tried). */
+function pipeWith(ctx: RebuildCtx, s: Scope, f: SweepFeature, built: Built, wire: TopoDS_Wire, what: string, mode: unknown, checked: boolean): TopoDS_Shape {
   const { oc } = ctx;
   const { path } = built;
   const ps = s.track(new oc.BRepOffsetAPI_MakePipeShell(path.wire));
@@ -236,12 +268,13 @@ function pipe(ctx: RebuildCtx, s: Scope, f: SweepFeature, built: Built, wire: To
     ps.SetMode(false);
   }
   ps.Add(wire, false, false);
-  ps.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RoundCorner);
+  ps.SetTransitionMode(mode as Parameters<typeof ps.SetTransitionMode>[0]);
   ps.Build(s.track(new oc.Message_ProgressRange()));
   if (!ps.IsDone()) throw new OpError(`could not sweep ${what} along the path: ${selfCrossing(f)}`);
   if (!ps.MakeSolid()) throw new OpError(`sweeping ${what} along the path did not close into a solid`);
   let solid = s.track(ps.Shape());
   if (volumeOf(oc, s, solid) < 0) solid = s.track(solid.Reversed());
   if (volumeOf(oc, s, solid) <= 1e-9) throw new OpError(`sweeping ${what} along the path makes no volume`);
+  if (checked && !isValidShape(oc, s, solid)) throw new OpError(`the sweep makes an invalid solid: ${selfCrossing(f)}`);
   return solid;
 }

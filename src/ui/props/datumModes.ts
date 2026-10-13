@@ -40,11 +40,24 @@ export function fits(ref: DatumRef, slot: RefSlot, before: Raw[]): boolean {
   return !slot.kinds || kindsOfRef(ref, before).some((k) => slot.kinds!.includes(k));
 }
 
-/** A reference that builds for a slot when nothing chosen fits: Top for a plane, X for an axis, the origin for a point. */
-function defaultFor(slot: RefSlot): DatumRef | null {
-  if (slot.forms && !slot.forms.includes("datum")) return null;
+/** The stand-ins for a slot of each kind, in the order they are tried. */
+const DEFAULT_REFS: Record<DatumKind, DatumRef[]> = {
+  plane: [{ datum: "Top" }, { datum: "Front" }, { datum: "Right" }],
+  axis: [{ datum: "X" }, { datum: "Y" }, { datum: "Z" }],
+  // The origin, then points on X and Y: three that are not on one line.
+  point: [{ datum: "Origin" }, { point: [10, 0, 0] }, { point: [0, 10, 0] }],
+};
+
+/**
+ * A reference that builds for a slot when nothing chosen fits: Top for a
+ * plane, X for an axis, the origin for a point; or the next one along when
+ * that is already one of the feature's references (`taken`), so three points
+ * are never one point and a midplane is never between a plane and itself.
+ */
+function defaultFor(slot: RefSlot, taken: DatumRef[]): DatumRef | null {
   const kind = slot.kinds?.[0] ?? "point";
-  return { datum: kind === "plane" ? "Top" : kind === "axis" ? "X" : "Origin" };
+  const same = (a: DatumRef, b: DatumRef) => JSON.stringify(a) === JSON.stringify(b);
+  return DEFAULT_REFS[kind].find((d) => (!slot.forms || slot.forms.includes(refForm(d))) && !taken.some((t) => same(t, d))) ?? null;
 }
 
 /**
@@ -74,7 +87,7 @@ export function switchMode(
     const k = pool.findIndex((r) => fits(r, slot, before));
     if (k >= 0) return void refs.push(pool.splice(k, 1)[0]);
     if (i >= min) return;
-    const d = defaultFor(slot);
+    const d = defaultFor(slot, refs);
     if (d) return void refs.push(d);
     // Nothing chosen fits and no default can stand in: what is selected, if it fits.
     const r = !selectionUsed && picked ? refFromSelection(picked.selection, picked.view, slot.kinds ?? ["plane", "axis", "point"], before) : null;

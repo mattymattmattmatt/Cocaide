@@ -15,7 +15,8 @@
 // A start other than the sketch plane is a parallel plane (startOffset, a
 // vertex, a parallel plane) where the prism simply begins, or a slanted plane
 // it is trimmed by. Draft tapers the sides about the start (OCCT DraftAngle on
-// the prism's side faces). Each direction is built on its own and the two are
+// the prism's side faces; sides it cannot tilt, an ellipse's or a spline's, by
+// a ruled loft from each loop to its offset at the far end). Each direction is built on its own and the two are
 // fused.
 
 import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
@@ -318,7 +319,7 @@ class Builder {
     let solid = this.prism(lo, hi);
     if (draft) {
       if (!parallelStart) throw new OpError(`${label}draft needs a flat start parallel to the sketch (the sketch plane, an offset of it, or a vertex): leave the draft out, or start from the sketch plane`);
-      solid = this.drafted(solid, dd, start, draft, label);
+      solid = this.drafted(solid, dd, start, draft, label, a, b);
     }
     // The start: the prism begins there, or is trimmed by it.
     let startShape: TopoDS_Shape = compoundOf(oc, s, this.facesAt(a));
@@ -336,9 +337,10 @@ class Builder {
   }
 
   /** The prism with its side faces tapered by the draft angle about the start plane. */
-  private drafted(solid: TopoDS_Shape, dd: Vec3, start: Plane, draft: ExtrudeDraft, label: string): TopoDS_Shape {
+  private drafted(solid: TopoDS_Shape, dd: Vec3, start: Plane, draft: ExtrudeDraft, label: string, a: number, b: number): TopoDS_Shape {
     const { oc, s } = this;
     const angle = ((draft.outward ? -1 : 1) * draft.angle * Math.PI) / 180;
+    if (this.hasFreeformSides(solid)) return this.loftDrafted(a, b, angle, draft, label);
     const neutral = s.track(new oc.gp_Pln(pnt(oc, s, start.point), dir(oc, s, start.normal)));
     const pull = dir(oc, s, dd);
     const dr = s.track(new oc.BRepOffsetAPI_DraftAngle(solid));
@@ -358,6 +360,73 @@ class Builder {
     if (!dr.IsDone()) throw new OpError(`${label}draft: the ${roundTo(draft.angle, 6)}° draft failed in the kernel: try a smaller angle or a shorter extrude`);
     const out = s.track(dr.Shape());
     if (!isValidShape(oc, s, out)) throw new OpError(`${label}draft: at ${roundTo(draft.angle, 6)}° the sides meet before the end: make the angle smaller or the extrude shorter`);
+    return out;
+  }
+
+  /** Does the prism have a side OCCT's draft cannot tilt (not a plane, cylinder or cone: an ellipse's or a spline's)? */
+  private hasFreeformSides(solid: TopoDS_Shape): boolean {
+    const { oc, s } = this;
+    const tiltable: unknown[] = [oc.GeomAbs_SurfaceType.GeomAbs_Plane, oc.GeomAbs_SurfaceType.GeomAbs_Cylinder, oc.GeomAbs_SurfaceType.GeomAbs_Cone];
+    const ex = s.track(new oc.TopExp_Explorer(solid, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
+    for (; ex.More(); ex.Next()) {
+      const face = s.track(oc.TopoDS.Face(s.track(ex.Current())));
+      if (!tiltable.includes(s.track(new oc.BRepAdaptor_Surface(face, true)).GetType())) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The drafted prism as ruled lofts: each loop of the profile at the start
+   * (t = a) to the same loop offset by the taper at the far end (t = b), holes
+   * cut from their outer loop. A ruled surface between a curve and its offset
+   * is exactly the side tilted by the angle.
+   */
+  private loftDrafted(a: number, b: number, angle: number, draft: ExtrudeDraft, label: string): TopoDS_Shape {
+    const { oc, s } = this;
+    const deg = roundTo(draft.angle, 6);
+    const meet = `${label}draft: at ${deg}° the sides meet before the end: make the angle smaller or the extrude shorter`;
+    if (Math.abs(Math.abs(dot3(this.d, this.frame.z)) - 1) > 1e-9) {
+      throw new OpError(`${label}draft: on ellipse or spline sides a draft needs the extrude square to the sketch: leave out the direction, or draw the profile with lines and arcs`);
+    }
+    // How far each side moves in at the far end (out, for an outward draft).
+    const inset = Math.abs(b - a) * Math.tan(angle);
+    const tr = s.track(new oc.gp_Trsf());
+    tr.SetTranslation(vec(oc, s, scale3(this.d, b - a)));
+    const loft = (wire: TopoDS_Shape, by: number): TopoDS_Shape => {
+      const face = s.track(s.track(new oc.BRepBuilderAPI_MakeFace(s.track(oc.TopoDS.Wire(wire)), true)).Face());
+      const mo = s.track(new oc.BRepOffsetAPI_MakeOffset(face, oc.GeomAbs_JoinType.GeomAbs_Intersection, false));
+      mo.Perform(by, 0);
+      if (!mo.IsDone()) throw new OpError(meet);
+      const far = s.track(s.track(new oc.BRepBuilderAPI_Transform(s.track(mo.Shape()), tr, true, false)).Shape());
+      // One loop, offset: two or none means the sides met (the loop pinched in two, or vanished).
+      const wires = s.track(new oc.TopExp_Explorer(far, oc.TopAbs_ShapeEnum.TopAbs_WIRE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
+      if (!wires.More()) throw new OpError(meet);
+      const first = s.track(wires.Current());
+      wires.Next();
+      if (wires.More()) throw new OpError(meet);
+      const ts = s.track(new oc.BRepOffsetAPI_ThruSections(true, true, 1e-6));
+      ts.AddWire(s.track(oc.TopoDS.Wire(wire)));
+      ts.AddWire(s.track(oc.TopoDS.Wire(first)));
+      ts.Build(s.track(new oc.Message_ProgressRange()));
+      if (!ts.IsDone()) throw new OpError(`${label}draft: the ${deg}° draft failed in the kernel: make the angle smaller or the extrude shorter`);
+      let solid = s.track(ts.Shape());
+      if (volumeOf(oc, s, solid) < 0) solid = s.track(solid.Reversed());
+      return solid;
+    };
+    const solids = this.facesAt(a).map((shape) => {
+      const face = s.track(oc.TopoDS.Face(shape));
+      const outer = s.track(oc.BRepTools.OuterWire(face));
+      let solid = loft(outer, -inset);
+      const ex = s.track(new oc.TopExp_Explorer(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
+      // A hole grows as the material round it draws in.
+      for (; ex.More(); ex.Next()) {
+        const w = s.track(ex.Current());
+        if (!w.IsSame(outer)) solid = boolean(oc, s, "cut", solid, loft(w, inset));
+      }
+      return solid;
+    });
+    const out = compoundOf(oc, s, solids);
+    if (!isValidShape(oc, s, out) || volumeOf(oc, s, out) <= 1e-9) throw new OpError(meet);
     return out;
   }
 

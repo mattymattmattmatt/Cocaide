@@ -28,8 +28,13 @@ export const SAME_PLACE = 1e-9;
 
 /** The places a sketch pattern copies to, in order: its positions or the sketch's points, less the seed's own. */
 export function copyPlaces(places: readonly Vec2[], from: Vec2 | undefined): Vec2[] {
+  return copyIndices(places, from).map((i) => places[i]);
+}
+
+/** Which of the places get a copy, by index (instance k + 2 is at places[copyIndices(...)[k]]). */
+export function copyIndices(places: readonly Vec2[], from: Vec2 | undefined): number[] {
   const at = from ?? places[0];
-  return at ? places.filter((p) => Math.hypot(p[0] - at[0], p[1] - at[1]) > SAME_PLACE) : [...places];
+  return places.flatMap((p, i) => (!at || Math.hypot(p[0] - at[0], p[1] - at[1]) > SAME_PLACE ? [i] : []));
 }
 
 /** The points of a sketch the document holds (validated), in order. */

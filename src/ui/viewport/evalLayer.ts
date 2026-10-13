@@ -178,6 +178,7 @@ export class EvalLayer {
       this.arrows.set(h.id, { shaft, head, mat, lineMat });
       const { h: spec, value } = dragging?.h.id === h.id ? dragging : { h, value: h.value };
       const el = this.tag(`${h.label} ${handleText(h, value)}`, `eval-label handle-label${h.locked ? " locked" : ""}`, `handle-label-${h.id}`);
+      // A locked label still answers a click: the app says why it cannot be typed into.
       el.title = h.locked ?? "Drag the arrow, or click here to type a value";
       el.addEventListener("click", (e) => {
         e.stopPropagation();

@@ -490,6 +490,18 @@ export function App() {
     if (typeof s === "string") return setNotice({ kind: "error", text: s });
     setSection(s);
   };
+  // A section on a plane feature follows it: moved with it when it changes, closed when it is gone.
+  useEffect(() => {
+    if (!section || !view || section.on === "face" || Object.hasOwn(DEFAULT_DATUMS, section.on)) return;
+    const d = view.datums?.[section.on];
+    if (d?.kind !== "plane") {
+      setSection(null);
+      setNotice({ kind: "info", text: `Section view closed: its plane ${section.on} is no longer in the part.` });
+      return;
+    }
+    const same = (a: readonly number[], b: readonly number[]) => a.every((x, i) => Math.abs(x - b[i]) < 1e-9);
+    if (!same(d.origin, section.origin) || !same(d.normal, section.normal)) setSection({ ...section, origin: d.origin, normal: d.normal });
+  }, [view, section]);
   const sectionPlaneTo = (on: string) => {
     const face = selection.faces.length === 1 ? view?.faces[selection.faces[0]] : undefined;
     const s = sectionOn(on, view?.datums ?? {}, box, face);
@@ -1713,7 +1725,8 @@ export function App() {
                   onDimension={(dim, x, y) => setValueBox({ x, y, dim })}
                   handles={handles}
                   onHandle={onHandle}
-                  onHandleLabel={(handle, x, y) => setValueBox({ x, y, handle })}
+                  // A locked handle's value is set by an expression: typing a number here would replace it.
+                  onHandleLabel={(handle, x, y) => (handle.locked ? setNotice({ kind: "info", text: handle.locked }) : setValueBox({ x, y, handle }))}
                   filter={filter}
                   onFilter={setFilter}
                   onBox={(sel, additive) => setSelection((prev) => mergeBox(prev, sel, additive))}

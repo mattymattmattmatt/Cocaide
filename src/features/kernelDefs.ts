@@ -95,6 +95,8 @@ export interface RebuildCtx {
    * out, and dropped again if the feature fails afterwards.
    */
   setSeed(id: string, seed: Seed): void;
+  /** Marks a feature that intersected: it leaves no tool, so a pattern or mirror of it says why. */
+  setIntersected(id: string): void;
   /**
    * A seed applied once per instance: added to the body it went into, as new
    * bodies (nameOf(k) for the k-th copy), or cut from the bodies it cut. Every

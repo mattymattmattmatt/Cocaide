@@ -129,7 +129,9 @@ export function drillHoles(oc: OC, s: Scope, f: HoleFeature, sites: HoleSite[], 
       throw new OpError(`the hole at ${site.label} meets no material ${within}: sketch its point over the part (drilled against the sketch's normal), or flip the sketch's plane`);
     }
     drilled?.({ entry: site.entry, into: site.into, length });
-    return holeTool(oc, s, f, site.entry, site.into, site.radial, length);
+    // Through all reaches past the part: the counterbore or countersink must still stop inside the first wall.
+    const wall = f.depth === "through" && (f.counterbore || f.countersink) ? materialAlong(oc, s, reach, site.entry, site.into, length)[0]?.[1] : undefined;
+    return holeTool(oc, s, f, site.entry, site.into, site.radial, length, wall ?? length);
   });
   if (tools.length === 1) return tools[0];
   // Holes that overlap (counterbores closer than their diameter) are fused into one tool: a cut by a
