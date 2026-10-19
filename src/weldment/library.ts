@@ -7,6 +7,7 @@ import { documentParameters, parameterRefs, type Parameters } from "../doc/param
 import type { ProfileDef, ProfileSize } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { sectionAt } from "../geom/section";
+import { standardLibrary } from "./standard";
 
 export interface LibraryEntry extends ProfileDef {
   /** Stable across versions: a part's copy names it. */
@@ -17,6 +18,10 @@ export interface LibraryEntry extends ProfileDef {
   /** How many members have been made with it, for ordering. */
   uses: number;
   updatedAt: string;
+  /** The standard a built-in family is from ("AS/NZS 3679.1"); user profiles have none. */
+  group?: string;
+  /** A standard family every user has: it can't be deleted, and isn't exported. */
+  builtin?: boolean;
 }
 
 /** The parameters a sketch's dimensions use, with the part's values: its size parameters. */
@@ -67,7 +72,7 @@ export function toEntry(def: ProfileDef, previous: LibraryEntry | undefined, id:
 
 /** The copy a part keeps: the profile, and which library entry and version it is. */
 export function partCopy(entry: LibraryEntry): ProfileDef {
-  const { id, version, favourite: _f, uses: _u, updatedAt: _t, ...def } = entry;
+  const { id, version, favourite: _f, uses: _u, updatedAt: _t, group: _g, builtin: _b, ...def } = entry;
   return { ...def, library: { id, version } };
 }
 
@@ -77,10 +82,22 @@ export function partCopy(entry: LibraryEntry): ProfileDef {
  */
 export function searchLibrary(entries: LibraryEntry[], query: string): LibraryEntry[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const haystack = (e: LibraryEntry) => [e.name, ...e.sizes.map((s) => s.designation), ...e.tags, e.material ?? ""].join(" ").toLowerCase();
+  const haystack = (e: LibraryEntry) => [entryText(e), ...e.sizes.map((s) => s.designation)].join(" ").toLowerCase();
   return entries
     .filter((e) => words.every((w) => haystack(e).includes(w)))
     .sort((a, b) => Number(b.favourite) - Number(a.favourite) || b.uses - a.uses || a.name.localeCompare(b.name));
+}
+
+/** What a family is searched by, besides its sizes: name, tags, material, standard. */
+export function entryText(e: LibraryEntry): string {
+  return [e.name, ...e.tags, e.material ?? "", e.group ?? ""].join(" ").toLowerCase();
+}
+
+/** The sizes of an entry the query names: all of them, unless a word is found only in some designations. */
+export function matchingSizes(e: LibraryEntry, query: string): LibraryEntry["sizes"] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = entryText(e);
+  return e.sizes.filter((s) => words.every((w) => text.includes(w) || s.designation.toLowerCase().includes(w)));
 }
 
 /** Another entry already has this name: names are unique in the library. */
@@ -95,7 +112,7 @@ export interface LibraryFile {
 }
 
 export function exportLibrary(entries: LibraryEntry[]): LibraryFile {
-  return { cocaide: "sections", version: 1, profiles: entries };
+  return { cocaide: "sections", version: 1, profiles: entries.filter((e) => !e.builtin) };
 }
 
 /** Why a library entry is not a profile a part could hold, or null. */
@@ -103,7 +120,7 @@ export function entryProblem(e: unknown): string | null {
   const x = e as Partial<LibraryEntry> | null;
   if (!x || typeof x !== "object" || typeof x.id !== "string" || !x.id || typeof x.name !== "string") return "not a library entry";
   if (!Number.isInteger(x.version) || (x.version as number) < 1) return `${x.name}: version must be 1 or more`;
-  const { id: _i, version: _v, favourite: _f, uses: _u, updatedAt: _t, ...def } = x;
+  const { id: _i, version: _v, favourite: _f, uses: _u, updatedAt: _t, group: _g, builtin: _b, ...def } = x;
   const errors = validateDocument({ version: 1, units: "mm", name: "check", profiles: { [x.name]: def }, features: [] }).headerErrors;
   return errors.length ? errors[0].replace(/^document: /, "") : null;
 }
@@ -202,4 +219,19 @@ export function updatePartCopy(doc: RawDocument, entry: LibraryEntry): { ok: tru
   const [name] = held;
   const r = apply(doc, { type: "setProfile", name, profile: { ...partCopy(entry), name } });
   return r.ok ? { ok: true, doc: r.doc, name } : r;
+}
+
+/**
+ * The library a user sees: the standard families, then their own profiles.
+ * A stored copy of a standard family (kept when it is starred or used) keeps
+ * its star and count; the family itself always comes from the code.
+ */
+export function withStandard(stored: LibraryEntry[]): LibraryEntry[] {
+  const byId = new Map(stored.map((e) => [e.id, e]));
+  const standard = standardLibrary().map((s) => {
+    const own = byId.get(s.id);
+    return own ? { ...s, favourite: own.favourite === true, uses: Number.isInteger(own.uses) ? own.uses : 0 } : s;
+  });
+  const ids = new Set(standard.map((s) => s.id));
+  return [...standard, ...stored.filter((e) => !ids.has(e.id) && !e.builtin)];
 }

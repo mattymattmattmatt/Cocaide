@@ -219,8 +219,10 @@ export interface ProfileDef {
   /** What sits on a member's line: the section's centroid, or the sketch origin. */
   anchor: "centroid" | "origin";
   tags: string[];
-  /** A note, like a drawing's material note. It does not set the density. */
+  /** A note, like a drawing's material note. It does not set the density: `density` does. */
   material?: string;
+  /** kg/m³: when set, members of this profile weigh this, whatever the part's material (catalogue steel, timber). */
+  density?: number;
   /** The library entry this copy came from. */
   library?: { id: string; version: number };
 }
@@ -230,7 +232,7 @@ export interface ProfileSize {
   values: Record<string, number>;
 }
 
-export const PROFILE_KEYS = ["name", "entities", "constraints", "parameters", "sizes", "anchor", "tags", "material", "library"] as const;
+export const PROFILE_KEYS = ["name", "entities", "constraints", "parameters", "sizes", "anchor", "tags", "material", "density", "library"] as const;
 
 /**
  * A photo the part was estimated from (spec 5.3). The document keeps what the

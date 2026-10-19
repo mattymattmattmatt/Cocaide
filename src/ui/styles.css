@@ -1418,3 +1418,5 @@ svg.icon { flex: none; display: block; }
 .sketch-toolbar .flyout > .tool:not(.small) { padding-right: 13px; }
 .sketch-toolbar .sep { margin: 0 3px; }
 .sketch-toolbar { gap: 0; padding-left: 6px; padding-right: 6px; }
+
+.section-group-head { margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }

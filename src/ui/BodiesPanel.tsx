@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { Material } from "../doc/types";
 import type { Measurements } from "../kernel";
 import { cutList } from "../weldment/cutlist";
+import { TIMBER_MATERIALS } from "../weldment/standard";
 import type { BodyRange } from "../kernel/bodies";
 import { BODY_COLORS } from "./Viewport";
 import { Section } from "./Section";
@@ -38,6 +39,7 @@ export const MATERIALS: Material[] = [
   { name: "copper", densityKgPerM3: 8960 },
   { name: "titanium", densityKgPerM3: 4430 },
   { name: "nylon", densityKgPerM3: 1150 },
+  ...TIMBER_MATERIALS,
 ];
 
 const n = (x: number, digits = 3) => x.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: digits });

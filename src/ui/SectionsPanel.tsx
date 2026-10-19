@@ -7,7 +7,12 @@ import { useMemo, useRef, useState } from "react";
 import type { RawDocument } from "../doc/commands";
 import type { ProfileDef } from "../doc/types";
 import { kgPerMetre, sectionAt, sizedEntities } from "../geom/section";
-import { searchLibrary, type LibraryEntry } from "../weldment/library";
+import {
+  matchingSizes,
+  searchLibrary,
+  type LibraryEntry,
+} from "../weldment/library";
+import { STANDARD_GROUPS } from "../weldment/standard";
 import { ProfileDrawing } from "./ProfileDrawing";
 
 interface Props {
@@ -26,23 +31,113 @@ interface Props {
   onImport(file: File): void;
 }
 
-const n = (x: number, digits = 3) => x.toLocaleString("en-US", { maximumFractionDigits: digits });
+const MINE = "My sections";
 
-export function SectionsPanel({ entries, error, doc, density, highlight, onAddMember, onFavourite, onDelete, onUpdatePart, onExport, onImport }: Props) {
+/** Section properties, worked out once per entry and size. */
+const measured = new WeakMap<
+  LibraryEntry,
+  Map<string, ReturnType<typeof sectionAt>>
+>();
+function propsOf(e: LibraryEntry, designation: string) {
+  let m = measured.get(e);
+  if (!m) measured.set(e, (m = new Map()));
+  let r = m.get(designation);
+  if (!r) m.set(designation, (r = sectionAt(e, designation)));
+  return r;
+}
+
+const n = (x: number, digits = 3) =>
+  x.toLocaleString("en-US", { maximumFractionDigits: digits });
+
+export function SectionsPanel({
+  entries,
+  error,
+  doc,
+  density,
+  highlight,
+  onAddMember,
+  onFavourite,
+  onDelete,
+  onUpdatePart,
+  onExport,
+  onImport,
+}: Props) {
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [group, setGroup] = useState("");
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const file = useRef<HTMLInputElement>(null);
-  const found = useMemo(() => searchLibrary(entries, query), [entries, query]);
+  const found = useMemo(
+    () =>
+      searchLibrary(entries, query).filter(
+        (e) => !group || (e.group ?? MINE) === group,
+      ),
+    [entries, query, group],
+  );
+  const groups = useMemo(() => {
+    const order = [MINE, ...STANDARD_GROUPS] as string[];
+    const by = new Map<string, LibraryEntry[]>();
+    for (const e of found) {
+      const g = e.group ?? MINE;
+      if (!order.includes(g)) order.push(g);
+      by.set(g, [...(by.get(g) ?? []), e]);
+    }
+    return order
+      .filter((g) => by.has(g))
+      .map((g) => ({ name: g, entries: by.get(g)! }));
+  }, [found]);
+  const mine = entries.filter((e) => !e.builtin);
+  const toggle = (id: string) =>
+    setOpen((o) => {
+      const x = new Set(o);
+      if (x.has(id)) x.delete(id);
+      else x.add(id);
+      return x;
+    });
   const copies = (doc?.profiles ?? {}) as Record<string, ProfileDef>;
 
   return (
-    <section className="panel sections" aria-label="Section library" data-testid="sections">
+    <section
+      className="panel sections"
+      aria-label="Section library"
+      data-testid="sections"
+    >
       <div className="sections-head">
-        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, size or tag" aria-label="Search the section library" data-testid="sections-search" />
-        <button onClick={onExport} disabled={!entries.length} title="Save the library as a file" data-testid="sections-export">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search name, size or tag"
+          aria-label="Search the section library"
+          data-testid="sections-search"
+        />
+        <select
+          value={group}
+          onChange={(e) => setGroup(e.target.value)}
+          aria-label="Show one standard"
+          data-testid="sections-group"
+        >
+          <option value="">All</option>
+          <option value={MINE}>{MINE}</option>
+          {STANDARD_GROUPS.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={onExport}
+          disabled={!mine.length}
+          title="Save the library as a file"
+          data-testid="sections-export"
+        >
           Export
         </button>
-        <button onClick={() => file.current?.click()} title="Merge a library file in" data-testid="sections-import">
+        <button
+          onClick={() => file.current?.click()}
+          title="Merge a library file in"
+          data-testid="sections-import"
+        >
           Import
         </button>
         <input
@@ -63,93 +158,189 @@ export function SectionsPanel({ entries, error, doc, density, highlight, onAddMe
           {error}
         </div>
       )}
-      {!entries.length && !error && (
+      {!mine.length && !error && (
         <p className="muted small" data-testid="sections-empty">
-          No sections yet. Draw one as a normal sketch, tick <strong>Weldment profile</strong> and finish it: it goes in here, for this part and the
-          next.
+          No sections yet. Draw one as a normal sketch, tick{" "}
+          <strong>Weldment profile</strong> and finish it: it goes in here, for
+          this part and the next. The standard sections below are always here.
         </p>
       )}
-      {entries.length > 0 && !found.length && <p className="muted small">Nothing matches “{query}”.</p>}
-      <ul className="section-list">
-        {found.map((e) => {
-          const first = e.sizes[0] ? sizedEntities(e, e.sizes[0]) : null;
-          const copy = Object.values(copies).find((p) => p.library?.id === e.id);
-          return (
-            <li key={e.id} className={`section-entry${highlight === e.id ? " highlight" : ""}`} data-testid={`section-${e.name}`}>
-              <div className="section-top">
-                {first?.ok ? <ProfileDrawing entities={first.entities} size={56} /> : <div className="profile-drawing empty" />}
-                <div className="section-title">
-                  <div>
-                    <strong>{e.name}</strong> <span className="muted small">v{e.version}</span>
-                  </div>
-                  <div className="tag-chips small">
-                    {e.tags.map((t) => (
-                      <button key={t} className="chip" onClick={() => setQuery(t)} title={`Show sections tagged ${t}`}>
-                        {t}
-                      </button>
-                    ))}
-                    {e.material && <span className="muted small">{e.material}</span>}
-                  </div>
-                </div>
-                <button className={`star${e.favourite ? " on" : ""}`} aria-pressed={e.favourite} aria-label={`Favourite ${e.name}`} onClick={() => onFavourite(e)} data-testid={`section-favourite-${e.name}`}>
-                  {e.favourite ? "★" : "☆"}
-                </button>
-              </div>
-              <table className="section-sizes">
-                <tbody>
-                  {e.sizes.map((s) => {
-                    const m = sectionAt(e, s.designation);
-                    return (
-                      <tr key={s.designation} data-testid={`section-size-${s.designation}`}>
-                        <td>{s.designation}</td>
-                        <td className="num">{m.ok ? `${n(m.props.area, 1)} mm²` : "—"}</td>
-                        <td className="num">{m.ok ? `${n(kgPerMetre(m.props.area, density), 2)} kg/m` : ""}</td>
-                        <td>
-                          <button className="small" onClick={() => onAddMember(e, s.designation)} disabled={!doc || !m.ok} title={m.ok ? `Add a member of ${s.designation} to the part` : m.error} data-testid={`section-add-${s.designation}`}>
-                            + Member
+      {entries.length > 0 && !found.length && (
+        <p className="muted small">Nothing matches “{query}”.</p>
+      )}
+      {groups.map((g) => (
+        <div
+          key={g.name}
+          className="section-group"
+          data-testid={`sections-group-${g.name}`}
+        >
+          <h4 className="section-group-head muted small">{g.name}</h4>
+          <ul className="section-list">
+            {g.entries.map((e) => {
+              const first = e.sizes[0] ? sizedEntities(e, e.sizes[0]) : null;
+              const copy = Object.values(copies).find(
+                (p) => p.library?.id === e.id,
+              );
+              const sizes = query.trim() ? matchingSizes(e, query) : e.sizes;
+              const shown =
+                !e.builtin ||
+                open.has(e.id) ||
+                (query.trim() !== "" && sizes.length <= 40);
+              const kgDensity = e.density ?? density;
+              return (
+                <li
+                  key={e.id}
+                  className={`section-entry${highlight === e.id ? " highlight" : ""}`}
+                  data-testid={`section-${e.name}`}
+                >
+                  <div className="section-top">
+                    {first?.ok ? (
+                      <ProfileDrawing entities={first.entities} size={56} />
+                    ) : (
+                      <div className="profile-drawing empty" />
+                    )}
+                    <div className="section-title">
+                      <div>
+                        <strong>{e.name}</strong>{" "}
+                        <span className="muted small">v{e.version}</span>
+                      </div>
+                      <div className="tag-chips small">
+                        {e.tags.map((t) => (
+                          <button
+                            key={t}
+                            className="chip"
+                            onClick={() => setQuery(t)}
+                            title={`Show sections tagged ${t}`}
+                          >
+                            {t}
                           </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="section-foot muted small">
-                {copy ? (
-                  copy.library!.version < e.version ? (
-                    <>
-                      This part has v{copy.library!.version}.{" "}
-                      <button className="link" onClick={() => onUpdatePart(e)} data-testid={`section-update-${e.name}`}>
-                        Update the part's copy
+                        ))}
+                        {e.material && (
+                          <span className="muted small">{e.material}</span>
+                        )}
+                      </div>
+                      {e.builtin && (
+                        <button
+                          className="link small"
+                          onClick={() => toggle(e.id)}
+                          aria-expanded={shown}
+                          data-testid={`section-expand-${e.name}`}
+                        >
+                          {shown
+                            ? "Hide sizes"
+                            : `${sizes.length} size${sizes.length === 1 ? "" : "s"}`}
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      className={`star${e.favourite ? " on" : ""}`}
+                      aria-pressed={e.favourite}
+                      aria-label={`Favourite ${e.name}`}
+                      onClick={() => onFavourite(e)}
+                      data-testid={`section-favourite-${e.name}`}
+                    >
+                      {e.favourite ? "★" : "☆"}
+                    </button>
+                  </div>
+                  {shown && (
+                    <table className="section-sizes">
+                      <tbody>
+                        {sizes.map((s) => {
+                          const m = propsOf(e, s.designation);
+                          return (
+                            <tr
+                              key={s.designation}
+                              data-testid={`section-size-${s.designation}`}
+                            >
+                              <td>{s.designation}</td>
+                              <td className="num">
+                                {m.ok ? `${n(m.props.area, 1)} mm²` : "—"}
+                              </td>
+                              <td className="num">
+                                {m.ok
+                                  ? `${n(kgPerMetre(m.props.area, kgDensity), 2)} kg/m`
+                                  : ""}
+                              </td>
+                              <td>
+                                <button
+                                  className="small"
+                                  onClick={() => onAddMember(e, s.designation)}
+                                  disabled={!doc || !m.ok}
+                                  title={
+                                    m.ok
+                                      ? `Add a member of ${s.designation} to the part`
+                                      : m.error
+                                  }
+                                  data-testid={`section-add-${s.designation}`}
+                                >
+                                  + Member
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                  <div className="section-foot muted small">
+                    {copy ? (
+                      copy.library!.version < e.version ? (
+                        <>
+                          This part has v{copy.library!.version}.{" "}
+                          <button
+                            className="link"
+                            onClick={() => onUpdatePart(e)}
+                            data-testid={`section-update-${e.name}`}
+                          >
+                            Update the part's copy
+                          </button>
+                        </>
+                      ) : (
+                        <span>In this part</span>
+                      )
+                    ) : (
+                      <span>
+                        {e.uses
+                          ? `${e.uses} member${e.uses === 1 ? "" : "s"} made`
+                          : "Not used yet"}
+                      </span>
+                    )}
+                    <span className="sep" />
+                    {e.builtin ? (
+                      <span>Standard</span>
+                    ) : confirmDelete === e.id ? (
+                      <>
+                        <span>Parts keep their copies.</span>
+                        <button
+                          className="link danger"
+                          onClick={() => onDelete(e)}
+                          data-testid={`section-delete-confirm-${e.name}`}
+                        >
+                          Delete
+                        </button>
+                        <button
+                          className="link"
+                          onClick={() => setConfirmDelete(null)}
+                        >
+                          Keep
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="link"
+                        onClick={() => setConfirmDelete(e.id)}
+                        data-testid={`section-delete-${e.name}`}
+                      >
+                        Delete…
                       </button>
-                    </>
-                  ) : (
-                    <span>In this part</span>
-                  )
-                ) : (
-                  <span>{e.uses ? `${e.uses} member${e.uses === 1 ? "" : "s"} made` : "Not used yet"}</span>
-                )}
-                <span className="sep" />
-                {confirmDelete === e.id ? (
-                  <>
-                    <span>Parts keep their copies.</span>
-                    <button className="link danger" onClick={() => onDelete(e)} data-testid={`section-delete-confirm-${e.name}`}>
-                      Delete
-                    </button>
-                    <button className="link" onClick={() => setConfirmDelete(null)}>
-                      Keep
-                    </button>
-                  </>
-                ) : (
-                  <button className="link" onClick={() => setConfirmDelete(e.id)} data-testid={`section-delete-${e.name}`}>
-                    Delete…
-                  </button>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }

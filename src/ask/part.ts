@@ -159,7 +159,9 @@ export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
 /** What a frame can be made of: every size in the section library, and the part's own copies that aren't from it. */
 export function sectionOptions(doc: RawDocument, library: LibraryEntry[] = []): SectionOption[] {
   const out: SectionOption[] = [];
-  for (const e of library) for (const s of e.sizes) out.push({ value: `lib|${e.id}|${s.designation}`, profile: e.name, designation: s.designation, from: "library" });
+  // The user's own profiles first, then the standard ones.
+  const ordered = [...library.filter((e) => !e.builtin), ...library.filter((e) => e.builtin)];
+  for (const e of ordered) for (const s of e.sizes) out.push({ value: `lib|${e.id}|${s.designation}`, profile: e.name, designation: s.designation, from: "library", ...(e.builtin ? { standard: true } : {}) });
   const ids = new Set(library.map((e) => e.id));
   for (const [name, p] of Object.entries((doc.profiles ?? {}) as Record<string, ProfileDef>)) {
     if (p.library && ids.has(p.library.id)) continue;

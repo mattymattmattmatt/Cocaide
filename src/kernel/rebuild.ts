@@ -8,7 +8,7 @@
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import type { ThreadSpec } from "../features/hole/standards";
-import { seedIds, DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
+import { seedIds, DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type Material, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
 import { expressionFields, isConstruction, isReference } from "../doc/sketch";
 import { validateDocument } from "../doc/validate";
 import type { Datum } from "../features/datum";
@@ -151,7 +151,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       ok: errors.length === 0 && solid !== null,
       solid,
       bodies: ranges.map((r) => ({ ...r, shape: bodies.get(r.name)! })),
-      measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies, v.bodyMaterials))) : null,
+      measurements: solid ? scoped((s) => withMembers(s, measure(oc, s, solid, v.material, bodies, materialsWithMembers()))) : null,
       holes: drilled.filter((h) => features.find((f) => f.id === h.feature)?.ok && holeBodies.get(h)?.size !== 0),
       errors,
       features,
@@ -165,6 +165,16 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       },
     };
   };
+
+  /** The bodies' own materials, and a member body of a profile with a density weighing that (catalogue steel, timber). */
+  function materialsWithMembers(): Record<string, Material> {
+    const out: Record<string, Material> = { ...v.bodyMaterials };
+    for (const [name, mb] of memberBodies) {
+      const p = v.profiles[mb.profile];
+      if (!out[name] && p?.density) out[name] = { name: p.material ?? mb.profile, densityKgPerM3: p.density };
+    }
+    return out;
+  }
 
   /**
    * The members: each body that is a member, or a copy or piece of one, with

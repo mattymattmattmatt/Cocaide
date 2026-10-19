@@ -70,6 +70,8 @@ export interface SectionOption {
   profile: string;
   designation: string;
   from: "library" | "part";
+  /** A size from the standard sections every user has: the user's own sizes win a tie. */
+  standard?: boolean;
 }
 
 export const EMPTY_LIBRARY = "The section library is empty, so there is nothing to build the frame from. Draw the section as a sketch, tick Weldment profile, save it, then ask again.";
@@ -296,14 +298,38 @@ export function sectionKey(s: string): string {
 
 /** The library sizes the user's words name: the same words, or the same numbers in the named family. */
 export function matchSection(words: string, options: SectionOption[]): SectionOption[] {
+  const found = matchAll(words, options);
+  // The user's own sizes (drawn, or in this part) before the standard ones that read the same.
+  const own = found.filter((o) => !o.standard);
+  return own.length ? own : found;
+}
+
+/** The letters of a designation's code: "200UB25.4" → "ub", "90x45 MGP10" → "mgp", "50x50x3.0 SHS" → "shs". */
+export function sectionCode(designation: string): string {
+  return designation
+    .toLowerCase()
+    .replace(/\d+(\.\d+)?(\s*x\s*\d+(\.\d+)?)*/g, " ")
+    .replace(/[^a-z]+/g, " ")
+    .trim();
+}
+
+function matchAll(words: string, options: SectionOption[]): SectionOption[] {
   const key = sectionKey(words);
   const exact = options.filter((o) => sectionKey(o.designation) === key);
   if (exact.length) return exact;
   const nums = numbersIn(words);
   if (!nums.length) return [];
-  const families = [...new Set(options.map((o) => o.profile.toLowerCase()))].filter((f) => new RegExp(`\\b${f.replace(/[^a-z0-9]/g, "")}\\b`).test(words.toLowerCase()));
+  const lower = words.toLowerCase();
+  const named = (f: string) => !!f && new RegExp(`\\b${f.replace(/[^a-z0-9]/g, "")}\\b`).test(lower);
+  const families = [...new Set(options.map((o) => o.profile.toLowerCase()))].filter(named);
+  // A code in the words ("UB", "SHS", "MGP"), read like a family: "200 UB 25.4", "SHS 50 x 50 x 3".
+  const codes = [...new Set(options.map((o) => sectionCode(o.designation)))].filter((c) => !!c && c.split(" ").every(named));
+  const hasCode = (o: SectionOption) => {
+    const c = sectionCode(o.designation);
+    return !!c && codes.includes(c);
+  };
   return options.filter((o) => {
-    if (families.length && !families.includes(o.profile.toLowerCase())) return false;
+    if ((families.length || codes.length) && !families.includes(o.profile.toLowerCase()) && !hasCode(o)) return false;
     const own = numbersIn(o.designation);
     return own.length === nums.length && own.every((x, i) => Math.abs(x - nums[i]) < 1e-9);
   });

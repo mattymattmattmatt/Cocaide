@@ -2,7 +2,7 @@
 // private window): the library is then empty and saving says so; parts are
 // unaffected, since each keeps its own copies.
 
-import type { LibraryEntry } from "./library";
+import { withStandard, type LibraryEntry } from "./library";
 
 const DB = "cocaide-sections";
 const STORE = "profiles";
@@ -32,9 +32,9 @@ async function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
 
 export async function listProfiles(): Promise<LibraryEntry[]> {
   try {
-    return ((await run<LibraryEntry[]>("readonly", (s) => s.getAll())) ?? []) as LibraryEntry[];
+    return withStandard(((await run<LibraryEntry[]>("readonly", (s) => s.getAll())) ?? []) as LibraryEntry[]);
   } catch {
-    return [];
+    return withStandard([]);
   }
 }
 
@@ -44,7 +44,8 @@ export async function saveProfile(entry: LibraryEntry): Promise<void> {
 
 export async function saveProfiles(entries: LibraryEntry[]): Promise<void> {
   await run("readwrite", (s) => {
-    for (const e of entries) s.put(e);
+    // A standard family is stored only for its star and count.
+    for (const e of entries) if (!e.builtin || e.favourite || e.uses) s.put(e);
   });
 }
 

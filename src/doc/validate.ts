@@ -1729,6 +1729,7 @@ export function validateProfile(input: unknown, path: string, c: Checker): Profi
   if (input.anchor !== "centroid" && input.anchor !== "origin") c.fail(`${path}.anchor`, `must be "centroid" or "origin" (got ${describe(input.anchor)})`);
   if (!Array.isArray(input.tags) || !input.tags.every((t) => typeof t === "string")) c.fail(`${path}.tags`, `must be a list of words (got ${describe(input.tags)})`);
   if (input.material !== undefined && typeof input.material !== "string") c.fail(`${path}.material`, `must be a string (got ${describe(input.material)})`);
+  if (input.density !== undefined && (typeof input.density !== "number" || !Number.isFinite(input.density) || input.density <= 0)) c.fail(`${path}.density`, `must be a density in kg/m³ greater than 0 (got ${describe(input.density)})`);
   const library = input.library === undefined ? undefined : libraryRef(input.library, `${path}.library`, c);
   if (c.errors.length > before) return null;
   const def: ProfileDef = {
@@ -1741,6 +1742,7 @@ export function validateProfile(input: unknown, path: string, c: Checker): Profi
     tags: input.tags as string[],
   };
   if (typeof input.material === "string") def.material = input.material;
+  if (typeof input.density === "number") def.density = input.density;
   if (library) def.library = library;
   return def;
 }

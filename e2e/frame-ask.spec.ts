@@ -69,7 +69,10 @@ test("the table frame prompt builds after the card, from the library's profile",
   await expect(page.getByTestId("intent-input-frame.height")).toHaveValue("900");
   const section = page.getByTestId("intent-input-frame.section");
   await expect(section).toHaveValue(/^lib\|.+\|SHS 40x40x3$/);
-  await expect(section.locator("option")).toHaveText(["choose…", "SHS 40x40x3", "SHS 50x50x3"]);
+  // The user's own sizes first, then the standard library's.
+  const options = await section.locator("option").allTextContents();
+  expect(options.slice(0, 4)).toEqual(["choose…", "SHS 40x40x3", "SHS 50x50x3", "610UB125"]);
+  expect(options).toContain("90x45 MGP10");
   await expect(page.getByTestId("intent-row-frame.section")).toContainText("SHS 40x40x3, from the section library");
   await expect(page.getByTestId("intent-row-frame.corners")).toHaveClass(/blank/);
   await expect(page.getByTestId("intent-build")).toHaveText("Confirm and build");
