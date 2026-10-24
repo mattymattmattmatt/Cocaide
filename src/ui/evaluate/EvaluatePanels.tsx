@@ -11,7 +11,7 @@ import { NumberInput, type NumberValue } from "../fields";
 import { Icon } from "../icons";
 import { fmt } from "../model/selection";
 import { rowText, type MeasureResult, type MeasureRow } from "./measure";
-import { extentAlong, type SectionState } from "./section";
+import { extentAlong, MAX_SECTION_PLANES, MAX_TILT, removePlane, setPlane, tiltLabels, type SectionState, type SectionView } from "./section";
 
 /** Copies text to the clipboard; says so for a moment. */
 function CopyButton({ text, testId, label = "Copy" }: { text: string; testId?: string; label?: string }) {
@@ -191,64 +191,209 @@ export function MassPanel({ mass, error, busy, onClose }: { mass: MassProperties
   );
 }
 
-/** Section view: which plane, how far along it, which side is cut away. */
+/**
+ * Section view: up to three planes (Section 1/2/3), each with its plane, its
+ * offset (or drag its arrow in the view), its tilt about its own two axes,
+ * flip and on/off; then what all share: the planes drawn, the cap colour,
+ * which bodies are cut. Folds to its title; closing it turns the section off
+ * (the view bar's Section button brings it back as it was).
+ */
 export function SectionPanel({
   section,
   choices,
   faceOk,
   box,
+  bodies,
   onPlane,
   onChange,
+  onAdd,
   onClose,
 }: {
-  section: SectionState;
+  section: SectionView;
   choices: { id: string; label: string }[];
   /** A flat face is selected: "Selected face" can be chosen. */
   faceOk: boolean;
   box: { min: Vec3; max: Vec3 } | null;
-  onPlane(on: string): void;
-  onChange(next: SectionState): void;
+  /** The part's bodies (a choice of which to cut when there are several). */
+  bodies: string[];
+  /** Plane i onto a default plane, a plane feature or the selected face. */
+  onPlane(i: number, on: string): void;
+  onChange(next: SectionView): void;
+  onAdd(): void;
   onClose(): void;
 }) {
-  const ext = extentAlong(section.normal, section.origin, box);
-  const lo = Math.floor(Math.min(ext.min, section.offset));
-  const hi = Math.ceil(Math.max(ext.max, section.offset));
+  const i = Math.min(section.active, section.planes.length - 1);
+  const plane = section.planes[i];
+  const update = (next: SectionState) => onChange(setPlane(section, i, next));
+  const ext = extentAlong(plane.normal, plane.origin, box);
+  const lo = Math.floor(Math.min(ext.min, plane.offset));
+  const hi = Math.ceil(Math.max(ext.max, plane.offset));
   const step = hi - lo > 200 ? 1 : hi - lo > 20 ? 0.5 : 0.1;
+  const [tiltA, tiltB] = plane.tilt ?? [0, 0];
+  const [labelA, labelB] = tiltLabels(plane);
+  const setTilt = (k: 0 | 1, v: number) => {
+    const t: [number, number] = [tiltA, tiltB];
+    t[k] = Math.max(-MAX_TILT, Math.min(MAX_TILT, v));
+    const { tilt: _old, ...rest } = plane;
+    void _old;
+    update(t[0] || t[1] ? { ...rest, tilt: t } : rest);
+  };
+  const cut = section.bodies;
+  const summary = section.planes.map((p, k) => `${section.planes.length > 1 ? `${k + 1}: ` : ""}${p.label}${p.enabled === false ? " (off)" : ""}`).join(" · ");
   return (
-    <Panel title="Section view" icon="section" testId="section-panel" onClose={onClose}>
-      <label className="eval-field">
-        <span>Plane</span>
-        <select value={section.on} onChange={(e) => onPlane(e.target.value)} data-testid="section-plane">
-          {choices.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-          <option value="face" disabled={!faceOk && section.on !== "face"}>
-            {section.on === "face" ? "Selected face" : faceOk ? "Selected face" : "Selected face (click a flat face first)"}
-          </option>
-        </select>
-      </label>
-      <label className="eval-field">
-        <span>Offset</span>
-        <input
-          type="range"
-          min={lo}
-          max={hi}
-          step={step}
-          value={section.offset}
-          onChange={(e) => onChange({ ...section, offset: Number(e.target.value) })}
-          aria-label="Section offset"
-          data-testid="section-offset-range"
-        />
-        <NumberInput value={Math.round(section.offset * 1000) / 1000} onCommit={(v: NumberValue) => typeof v === "number" && onChange({ ...section, offset: v })} testId="section-offset" ariaLabel="Section offset, mm" />
-        <span className="unit">mm</span>
-      </label>
-      <label className="eval-check">
-        <input type="checkbox" checked={section.flip} onChange={(e) => onChange({ ...section, flip: e.target.checked })} data-testid="section-flip" />
-        Flip: cut away the other side
-      </label>
-      <p className="muted small">The cut faces show hatched. Picking skips what is cut away. Close to see the whole part again.</p>
+    <Panel
+      title="Section view"
+      icon="section"
+      testId="section-panel"
+      onClose={onClose}
+      actions={
+        <button
+          className="link"
+          onClick={() => onChange({ ...section, collapsed: !section.collapsed })}
+          title={section.collapsed ? "Show the section's settings" : "Fold the panel to its title: the section stays on"}
+          aria-expanded={!section.collapsed}
+          data-testid="section-collapse"
+        >
+          <Icon name={section.collapsed ? "down" : "up"} size={13} />
+        </button>
+      }
+    >
+      {section.collapsed ? (
+        <p className="muted small section-summary" data-testid="section-summary">
+          {summary}
+        </p>
+      ) : (
+        <>
+          <div className="section-tabs" role="tablist" aria-label="Section planes">
+            {section.planes.map((p, k) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={k === i}
+                className={p.enabled === false ? "off" : undefined}
+                onClick={() => onChange({ ...section, active: k })}
+                title={`${p.label}${p.enabled === false ? " (off)" : ""}`}
+                data-testid={`section-tab-${k}`}
+              >
+                Section {k + 1}
+              </button>
+            ))}
+            {section.planes.length < MAX_SECTION_PLANES && (
+              <button className="section-add" onClick={onAdd} title="Another plane: the part is cut where it is on the cut side of every plane (a corner cut)" data-testid="section-add">
+                <Icon name="plus" size={12} />
+                Add
+              </button>
+            )}
+          </div>
+          <label className="eval-field">
+            <span>Plane</span>
+            <select value={plane.on} onChange={(e) => onPlane(i, e.target.value)} data-testid="section-plane">
+              {choices.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+              <option value="face" disabled={!faceOk && plane.on !== "face"}>
+                {plane.on === "face" ? "Selected face" : faceOk ? "Selected face" : "Selected face (click a flat face first)"}
+              </option>
+            </select>
+          </label>
+          <label className="eval-field">
+            <span>Offset</span>
+            <input
+              type="range"
+              min={lo}
+              max={hi}
+              step={step}
+              value={plane.offset}
+              onChange={(e) => update({ ...plane, offset: Number(e.target.value) })}
+              aria-label="Section offset"
+              data-testid="section-offset-range"
+            />
+            <NumberInput value={Math.round(plane.offset * 1000) / 1000} onCommit={(v: NumberValue) => typeof v === "number" && update({ ...plane, offset: v })} testId="section-offset" ariaLabel="Section offset, mm" />
+            <span className="unit">mm</span>
+          </label>
+          <div className="eval-field section-tilt">
+            <span title="Turn the plane about its own axes, about the point the offset puts it at">Tilt</span>
+            <label title={`${labelA}, degrees`}>
+              <span className="tilt-axis">{labelA.replace("Tilt about ", "")}</span>
+              <NumberInput value={tiltA} onCommit={(v: NumberValue) => typeof v === "number" && setTilt(0, v)} testId="section-tilt-a" ariaLabel={`${labelA}, degrees`} />
+            </label>
+            <label title={`${labelB}, degrees`}>
+              <span className="tilt-axis">{labelB.replace("Tilt about ", "")}</span>
+              <NumberInput value={tiltB} onCommit={(v: NumberValue) => typeof v === "number" && setTilt(1, v)} testId="section-tilt-b" ariaLabel={`${labelB}, degrees`} />
+            </label>
+            <span className="unit">°</span>
+          </div>
+          <div className="section-plane-checks">
+            <label className="eval-check">
+              <input type="checkbox" checked={plane.flip} onChange={(e) => update({ ...plane, flip: e.target.checked })} data-testid="section-flip" />
+              Flip: cut away the other side
+            </label>
+            {section.planes.length > 1 && (
+              <span className="section-plane-actions">
+                <label className="eval-check" title="Off: this plane cuts nothing (its settings are kept)">
+                  <input
+                    type="checkbox"
+                    checked={plane.enabled !== false}
+                    onChange={(e) => {
+                      const { enabled: _was, ...rest } = plane;
+                      void _was;
+                      update(e.target.checked ? rest : { ...rest, enabled: false });
+                    }}
+                    data-testid="section-enabled"
+                  />
+                  On
+                </label>
+                <button className="link" onClick={() => onChange(removePlane(section, i))} title={`Remove Section ${i + 1}`} data-testid="section-remove">
+                  Remove
+                </button>
+              </span>
+            )}
+          </div>
+          <div className="section-shared">
+            <label className="eval-check">
+              <input type="checkbox" checked={section.showPlane} onChange={(e) => onChange({ ...section, showPlane: e.target.checked })} data-testid="section-show-plane" />
+              Show plane (drag its arrow to move it)
+            </label>
+            <label className="eval-field">
+              <span>Cap</span>
+              <select value={section.capColour} onChange={(e) => onChange({ ...section, capColour: e.target.value === "bodies" ? "bodies" : "single" })} data-testid="section-cap-colour">
+                <option value="single">One colour, hatched</option>
+                <option value="bodies" disabled={bodies.length < 2}>
+                  Each body&apos;s colour{bodies.length < 2 ? " (one body)" : ""}
+                </option>
+              </select>
+            </label>
+            {bodies.length > 1 && (
+              <details className="section-bodies" open={!!cut} data-testid="section-bodies">
+                <summary>Section bodies: {cut ? `${cut.length} of ${bodies.length}` : "all"}</summary>
+                <div className="section-body-list">
+                  {bodies.map((b) => (
+                    <label key={b} className="eval-check">
+                      <input
+                        type="checkbox"
+                        checked={!cut || cut.includes(b)}
+                        onChange={(e) => {
+                          const now = cut ?? bodies;
+                          const next = e.target.checked ? [...now.filter((x) => x !== b), b] : now.filter((x) => x !== b);
+                          // Every body ticked: back to "all" (a body added later is cut too).
+                          onChange({ ...section, bodies: bodies.every((x) => next.includes(x)) ? null : bodies.filter((x) => next.includes(x)) });
+                        }}
+                        data-testid={`section-body-${b}`}
+                      />
+                      {b}
+                    </label>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+          <p className="muted small">
+            {section.planes.length > 1 ? "Cut away where every plane that is on cuts: a corner cut. " : ""}The cut faces show hatched; picking and measuring skip what is cut away. Close (×) turns the section off; the view bar&apos;s Section button brings it back.
+          </p>
+        </>
+      )}
     </Panel>
   );
 }

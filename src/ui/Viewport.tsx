@@ -8,11 +8,25 @@ import { DEFAULT_DATUMS, type Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo } from "../kernel";
 import type { RebuildView } from "../worker/protocol";
 import { CadControls } from "./cadControls";
-import { DEFAULT_DISPLAY, DISPLAY_STYLES, loadView, pushView, saveView, type CameraState, type DisplayState, type DisplayStyle } from "./evaluate/display";
+import {
+  DEFAULT_DISPLAY,
+  DISPLAY_STYLES,
+  loadView,
+  nextViewName,
+  pushView,
+  removeNamedView,
+  renameNamedView,
+  saveNamedView,
+  saveView,
+  type CameraState,
+  type DisplayState,
+  type DisplayStyle,
+  type NamedView,
+} from "./evaluate/display";
 import type { Dimension3D } from "./evaluate/dimensions3d";
 import { allows, boxOf, boxSelect, FILTER_KINDS, NO_FILTER, type Projected, type SelectFilter } from "./evaluate/filter";
 import { alongAxis, dragValue, type HandleSpec } from "./evaluate/handles";
-import { sectionPlane, type SectionState } from "./evaluate/section";
+import { activePlanes, cutsBody, offsetArrow, sectionPlane, setPlane, type SectionView } from "./evaluate/section";
 import { Icon, type IconName } from "./icons";
 import { inputPrefs, keyHint, pointer, useCommands, useInputPrefs } from "./input";
 import { datumShapes, datumVisible, DEFAULT_DATUM_VIEW, DEFAULT_PLANES, type DatumShape, type DatumView } from "./model/datumDisplay";
@@ -20,11 +34,16 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
-import { SectionCaps } from "./viewport/sectionCaps";
+import { areaZoom, blendRig, ease, framePoints, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
+import { SectionCaps, type CapSource } from "./viewport/sectionCaps";
+import { clipMaterial, clipPlanesOf, SectionPlanes } from "./viewport/sectionLayer";
+import { nextBehind, otherLabel, underPointer, type UnderPointer } from "./viewport/selectOther";
 import { adjacency, silhouette, type Adjacency } from "./viewport/silhouette";
+import { Triad, ViewCube, type CubeTurn } from "./viewport/viewCube";
+import { reducedMotion, setViewPrefs, useViewPrefs, viewPrefs } from "./viewport/viewPrefs";
+import { triadView, upFor, VIEW_LABEL, VIEW_ORDER, VIEWS, type ViewName } from "./viewport/views";
 
-/** The seven standard views, in this part's axes (Z up; Front looks along +Y). */
-export type ViewName = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso";
+export type { ViewName } from "./viewport/views";
 
 // What a click picks and what is selected: plain data, in a pure module (src/ui/model/selection.ts).
 export { EMPTY_SELECTION, type PickTarget, type Selection } from "./model/selection";
@@ -64,8 +83,8 @@ interface Props {
   nodes?: FrameNode[];
   /** A short note for the user (a view command that needs a selection, say). */
   onMessage?(text: string): void;
-  /** Set by the view: runs one of its commands ("view.fit", "view.normal", "view.top"…), for the right-click menu. */
-  commandsRef?: { current: ((id: string) => void) | null };
+  /** Set by the view: runs one of its commands ("view.fit", "view.normal", "view.top"…), for the right-click menu; `at` is where it was asked (Select Other lists what is under it). */
+  commandsRef?: { current: ((id: string, at?: { x: number; y: number }) => void) | null };
   /** What is shown of the reference geometry (planes, axes, points, the origin): view state, kept by the app. */
   datumView?: DatumView;
   /** The "Planes" toggle (and its key): every plane, axis and point shown or hidden. */
@@ -75,8 +94,12 @@ interface Props {
   onDisplay?(next: DisplayState): void;
   /** The document's name: the camera is remembered under it in this browser, and comes back when the view does. */
   memoryKey?: string;
-  /** A section through the part (null: none). */
-  section?: SectionState | null;
+  /** The section view (null: none set up; off: set up but not shown). */
+  section?: SectionView | null;
+  /** The section changed in the view: a plane's arrow dragged (live), its label clicked (that plane to the panel). */
+  onSection?(next: SectionView): void;
+  /** The view bar's Section toggle: on or off, or set up when there is none. */
+  onSectionToggle?(): void;
   /** The Evaluate tools' marks: measured lines, points, the centre of mass. */
   overlay?: EvalOverlay | null;
   /** A feature's dimensions shown on the model; a double-click on one asks to edit it. */
@@ -125,20 +148,8 @@ interface Hover {
   target: PickTarget;
 }
 
-/** Where each view looks from (toward the camera), and which way is up on the screen. */
-const VIEWS: Record<ViewName, { dir: Vec3; up: Vec3 }> = {
-  front: { dir: [0, -1, 0], up: [0, 0, 1] },
-  back: { dir: [0, 1, 0], up: [0, 0, 1] },
-  left: { dir: [-1, 0, 0], up: [0, 0, 1] },
-  right: { dir: [1, 0, 0], up: [0, 0, 1] },
-  // Third-angle: the top view's bottom edge is the front, and the bottom view's top edge is.
-  top: { dir: [0, 0, 1], up: [0, 1, 0] },
-  bottom: { dir: [0, 0, -1], up: [0, -1, 0] },
-  iso: { dir: [1, -1, 0.8], up: [0, 0, 1] },
-};
-const VIEW_ORDER: ViewName[] = ["front", "back", "left", "right", "top", "bottom", "iso"];
-const VIEW_ICON: Record<ViewName, IconName> = { front: "front", back: "front", left: "right", right: "right", top: "top", bottom: "top", iso: "iso" };
-const VIEW_LABEL: Record<ViewName, string> = { front: "Front", back: "Back", left: "Left", right: "Right", top: "Top", bottom: "Bottom", iso: "Isometric" };
+// The standard views (where each looks from, which way is up) are in src/ui/viewport/views.ts.
+const VIEW_ICON: Record<ViewName, IconName> = { front: "front", back: "front", left: "right", right: "right", top: "top", bottom: "top", iso: "iso", dimetric: "iso", trimetric: "iso" };
 /** The quick buttons under the view. */
 const QUICK_VIEWS: ViewName[] = ["iso", "top", "front", "right"];
 const FILTER_ICON: Record<string, IconName> = { faces: "filterFaces", edges: "filterEdges", vertices: "filterVertices", planes: "filterPlanes" };
@@ -165,14 +176,16 @@ interface ViewportApi {
   fit(dir?: Vec3, up?: Vec3): void;
   /** Square to a face: from its outside, or from behind if already looking at it. */
   normalTo(normal: Vec3): void;
-  /** Keyboard view moves: degrees, pixels, a zoom factor. */
+  /** Frames the part from a standard view (gliding, unless `instant`); a standard view unpins the rotation centre. */
+  orient(name: ViewName, instant?: boolean): void;
+  /** Keyboard view moves: degrees (about the rotation centre), pixels, a zoom factor. */
   turn(yawDeg: number, pitchDeg: number): void;
   pan(dx: number, dy: number): void;
   zoom(factor: number): void;
   roll(deg: number): void;
   /** How the part is drawn. */
   setDisplay(d: DisplayState): void;
-  setSection(s: SectionState | null): void;
+  setSection(s: SectionView | null): void;
   setOverlay(o: EvalOverlay | null): void;
   setDims(d: Dimension3D[]): void;
   setHandles(h: HandleSpec[]): void;
@@ -181,10 +194,25 @@ interface ViewportApi {
   zoomToSelection(sel: Selection): boolean;
   /** Back to the view before this one. False when there is none. */
   previousView(): boolean;
+  /** The camera now, to save under a name. */
+  camera(): CameraState;
+  /** Glides to a saved camera. */
+  goTo(c: CameraState): void;
+  /** A view cube click or arrow, or a triad click. */
+  look(dir: Vec3, up: Vec3): void;
+  cubeTurn(kind: CubeTurn): void;
+  /** Zoom to area: the next left-drag draws the area (true), or not. */
+  setAreaMode(on: boolean): void;
+  /** Every face and edge under these client pixels, nearest first (Select Other). */
+  under(clientX: number, clientY: number): UnderPointer[];
+  /** Lights one up while the Select Other list is hovered (null: none). */
+  preview(t: PickTarget | null): void;
+  setCubeVisible(v: boolean): void;
   dispose(): void;
 }
 
 const NO_BODIES: ReadonlySet<string> = new Set();
+const NO_PLANES: THREE.Plane[] = [];
 
 export function Viewport({
   view,
@@ -204,6 +232,8 @@ export function Viewport({
   onDisplay,
   memoryKey = "",
   section = null,
+  onSection,
+  onSectionToggle,
   overlay = null,
   dims = NO_DIMS,
   onDimension,
@@ -224,11 +254,15 @@ export function Viewport({
   const photoPointRef = useRef(onPhotoPoint);
   photoPointRef.current = onPhotoPoint;
   // Read by the view's own listeners, which are made once: always the newest.
-  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage });
-  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage };
+  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, section, onArea: (on: boolean) => setAreaMode(on) });
+  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, section, onArea: (on: boolean) => setAreaMode(on) };
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
-  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean } | null>(null);
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
+  /** Zoom to area is waiting for its box. */
+  const [areaMode, setAreaMode] = useState(false);
+  /** Select Other's list, at the pointer. */
+  const [others, setOthers] = useState<{ x: number; y: number; list: UnderPointer[] } | null>(null);
   const infoRef = useRef<{ faces: FaceInfo[]; edges: EdgeInfo[]; datums: Record<string, Datum> }>({ faces: [], edges: [], datums: {} });
   infoRef.current = { faces: view?.faces ?? [], edges: view?.edges ?? [], datums: view?.datums ?? {} };
   /** The camera as it is when the view mounts: none remembered, or the one this document's view was left at. */
@@ -248,7 +282,7 @@ export function Viewport({
     // Orthographic view: the same eye, target and up as the perspective camera (which the controls move),
     // its frame the size the perspective one sees at the target. Zoom, pan and rotate work the same either way.
     const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
-    let perspective = true;
+    let perspective = DEFAULT_DISPLAY.perspective;
     /** The camera that draws and picks: perspective or orthographic. */
     const eye = (): THREE.PerspectiveCamera | THREE.OrthographicCamera => (perspective ? camera : ortho);
 
@@ -272,23 +306,31 @@ export function Viewport({
     const nodeGroup = new THREE.Group(); // a frame's nodes
     // Planes, axes, points and the origin triad.
     const datums = new DatumLayer({ plane: 0x4f7fbf, border: 0x3a6aa6, axis: 0x3a4a63, point: 0x2f4f7f, select: SELECT_COLOR, hover: HOVER_COLOR });
-    // The section's cap, and the Evaluate tools' marks, handles and labels.
-    const caps = new SectionCaps(cssColor(el, "--section-cap", "#e9a23b"), cssColor(el, "--section-hatch", "#9a5b10"));
+    // The section's caps and drawn planes, and the Evaluate tools' marks, handles and labels.
+    const capColor = cssColor(el, "--section-cap", "#e9a23b");
+    const capHatch = cssColor(el, "--section-hatch", "#9a5b10");
+    const caps = new SectionCaps();
+    const sectionPlanes = new SectionPlanes({ fill: cssColor(el, "--section-plane", "#3a8dde"), border: cssColor(el, "--section-plane-border", "#2f74c0"), active: cssColor(el, "--section-plane-active", "#1c64b8") });
     const evalLayer = new EvalLayer(el, {
       onDimension: (d, x, y) => live.current.onDimension?.(d, x, y),
       onHandleLabel: (h, x, y) => live.current.onHandleLabel?.(h, x, y),
     });
-    scene.add(helpers, photoGroup, model, datums.group, caps.group, overlays, marks, nodeGroup, evalLayer.group);
+    scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group);
     let photoMesh: THREE.Mesh | null = null;
     let photo: Underlay | null = null;
     let photoTexture: { url: string; texture: THREE.Texture } | null = null;
 
     let mesh: THREE.Mesh | null = null;
+    /** Every edge, body by body (a material each, so a section can leave a body whole). */
     let edgeLines: THREE.LineSegments | null = null;
     /** The edges again, dashed, drawn only where they are hidden (Hidden lines visible). */
     let hiddenLines: THREE.LineSegments | null = null;
-    /** The outlines of curved faces, for the line styles; recomputed as the view turns. */
-    let outline: { adj: Adjacency; seen: THREE.LineSegments; hidden: THREE.LineSegments } | null = null;
+    /** Which body each of the edge lines' material groups is. */
+    let edgeGroupBodies: (string | undefined)[] = [];
+    /** The outlines of curved faces, for the line styles; recomputed as the view turns. Two when a section leaves some bodies whole: the cut bodies', the others'. */
+    let outlines: { adj: Adjacency; seen: THREE.LineSegments; hidden: THREE.LineSegments; cut: boolean }[] = [];
+    /** The section's bodies when the outlines were made (they split by it). */
+    let outlineCutKey = "";
     /** Segment index -> B-rep edge index, for the drawn (non-seam) edges. */
     let segmentEdge: Int32Array = new Int32Array(0);
     let faceRanges: { start: number; count: number }[] = [];
@@ -300,17 +342,29 @@ export function Viewport({
     let vertices: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
     let hidden: ReadonlySet<string> = NO_BODIES;
+    /** Per mesh vertex: the index of its body (as in view.bodies; 0 for a part of one), or −1 in a hidden body. */
+    let vertexBody: Int16Array = new Int16Array(0);
+    /** The visible bodies' bounding box: what a rotation turns about while it is on screen, and what Fit frames. */
+    let visibleBox: THREE.Box3 | null = null;
     let style: DisplayStyle = DEFAULT_DISPLAY.style;
     let pickFilter: SelectFilter = NO_FILTER;
     let handleList: HandleSpec[] = [];
-    /** The section's clipping plane (keeps where its signed distance is ≥ 0), while a section is on. */
-    const clip = new THREE.Plane();
-    let sectionState: SectionState | null = null;
-    const clipping = () => (sectionState ? [clip] : []);
+    /** The section view, and its active planes as three clips with them (keeps where the distance is ≥ 0): the same array while only their numbers change. */
+    let sectionState: SectionView | null = null;
+    let clipPlanes: THREE.Plane[] = [];
+    /** The planes that clip this body: none for a body the section leaves whole. */
+    const clipFor = (body: string | undefined): THREE.Plane[] => (cutsBody(sectionState, body) ? clipPlanes : NO_PLANES);
     /** Is this face or edge in a hidden body? */
     const isHidden = (body: string | undefined) => body !== undefined && hidden.has(body);
-    /** Is this point on the side the section cuts away? */
-    const cutAway = (p: THREE.Vector3 | Vec3) => !!sectionState && clip.distanceToPoint(Array.isArray(p) ? new THREE.Vector3(...p) : p) < -1e-6;
+    /** The active planes' equations (normal into the cut side; normal·p > c is cut), for testing points quickly. */
+    let cutTests: { n: Vec3; c: number }[] = [];
+    /** Is this point cut away by the section (on the cut side of every active plane, in a body it cuts)? Same rule as cutAwayBy. */
+    const cutAway = (p: THREE.Vector3 | Vec3, body?: string) => {
+      if (!cutTests.length || !cutsBody(sectionState, body)) return false;
+      const [x, y, z] = Array.isArray(p) ? p : [p.x, p.y, p.z];
+      return cutTests.every((t) => t.n[0] * x + t.n[1] * y + t.n[2] * z - t.c > 1e-6);
+    };
+    const bodyName = (i: number): string | undefined => shownView?.bodies?.[i]?.name;
 
     let radius = 50;
     let center = new THREE.Vector3();
@@ -383,18 +437,19 @@ export function Viewport({
 
     /** The outline of the curved faces as seen now (line styles only). */
     const updateOutline = () => {
-      if (!outline) return;
       const want = style === "hiddenRemoved" || style === "hiddenVisible" || style === "wireframe";
-      outline.seen.visible = want;
-      outline.hidden.visible = want && style === "hiddenVisible";
-      if (!want) return;
       const look = controls.target.clone().sub(camera.position).normalize();
-      const segs = silhouette(outline.adj, perspective ? (camera.position.toArray() as Vec3) : null, look.toArray() as Vec3);
-      for (const obj of [outline.seen, outline.hidden]) {
-        obj.geometry.setAttribute("position", new THREE.BufferAttribute(segs, 3));
-        obj.geometry.computeBoundingSphere();
+      for (const outline of outlines) {
+        outline.seen.visible = want;
+        outline.hidden.visible = want && style === "hiddenVisible";
+        if (!want) continue;
+        const segs = silhouette(outline.adj, perspective ? (camera.position.toArray() as Vec3) : null, look.toArray() as Vec3);
+        for (const obj of [outline.seen, outline.hidden]) {
+          obj.geometry.setAttribute("position", new THREE.BufferAttribute(segs, 3));
+          obj.geometry.computeBoundingSphere();
+        }
+        outline.hidden.computeLineDistances();
       }
-      outline.hidden.computeLineDistances();
     };
 
     const render = () => {
@@ -404,6 +459,8 @@ export function Viewport({
       evalLayer.update(eye(), controls.worldPerPixel(), el.clientWidth, el.clientHeight);
       placeLabels();
       placeDatumLabels();
+      cube.update(camera);
+      triad.update(camera);
       settleSoon();
     };
 
@@ -420,35 +477,154 @@ export function Viewport({
         if (live.current.memoryKey && mesh) saveView(live.current.memoryKey, { camera: cam });
       }, 400);
     };
-    const restoreCamera = (c: CameraState) => {
+    const poseOfCamera = (c: CameraState): Pose | null => {
       const target = new THREE.Vector3(...c.target);
-      const from = new THREE.Vector3(...c.position).sub(target);
-      const dist = from.length();
-      if (dist < 1e-9) return;
-      controls.place(target, from.normalize(), dist, new THREE.Vector3(...c.up));
+      if (new THREE.Vector3(...c.position).distanceTo(target) < 1e-9) return null;
+      return { position: new THREE.Vector3(...c.position), target, up: new THREE.Vector3(...c.up) };
+    };
+    const restoreCamera = (c: CameraState, instant = false) => {
+      const p = poseOfCamera(c);
+      if (p) glideTo(p, instant);
     };
 
-    /** The point the next rotation turns about, after a middle click on the part. */
+    // View changes glide (Settings > Mouse, on by default; never with the system's reduce motion): the orientation
+    // turns the short way round, the target and distance ease. In the automated tests they jump, unless a test
+    // turns gliding on through the hook (and it can finish one at once).
+    const automated = new URLSearchParams(location.search).has("e2e");
+    let testGlides = false;
+    let glideAnim: { at: (t: number) => Pose; frame: number } | null = null;
+    const glides = () => viewPrefs().animate && !reducedMotion() && (!automated || testGlides);
+    /** Ends a glide now, at the view it was going to. */
+    const finishGlide = () => {
+      if (!glideAnim) return;
+      const a = glideAnim;
+      glideAnim = null;
+      cancelAnimationFrame(a.frame);
+      controls.setPose(a.at(1));
+    };
+    /** Moves the camera through at(t) for t from 0 to 1 (eased), or straight to at(1). */
+    const glide = (at: (t: number) => Pose, instant = false) => {
+      finishGlide();
+      if (instant || !glides()) return controls.setPose(at(1));
+      const start = performance.now();
+      const step = () => {
+        if (!glideAnim) return;
+        const t = Math.min(1, (performance.now() - start) / VIEW_GLIDE_MS);
+        if (t >= 1) {
+          glideAnim = null;
+          controls.setPose(at(1));
+          return;
+        }
+        controls.setPose(at(ease(t)));
+        glideAnim.frame = requestAnimationFrame(step);
+      };
+      glideAnim = { at, frame: requestAnimationFrame(step) };
+    };
+    /** Glides from the camera now to `to`, ending exactly there. */
+    const glideTo = (to: Pose, instant = false) => {
+      const a = rigOf(controls.pose());
+      const b = rigOf(to);
+      glide((t) => (t >= 1 ? to : poseOf(blendRig(a, b, t))), instant);
+    };
+
+    // The pinned rotation centre: a ring round a dot, the same size at any zoom, drawn over the part.
     const pivotGroup = new THREE.Group();
     scene.add(pivotGroup);
+    const pivotTexture = (() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 64;
+      const g = c.getContext("2d");
+      if (!g) return null;
+      g.lineWidth = 7;
+      g.strokeStyle = "rgba(255,255,255,0.95)";
+      g.beginPath();
+      g.arc(32, 32, 20, 0, Math.PI * 2);
+      g.stroke();
+      g.lineWidth = 4;
+      g.strokeStyle = "#1c64b8";
+      g.beginPath();
+      g.arc(32, 32, 20, 0, Math.PI * 2);
+      g.stroke();
+      g.fillStyle = "#1c64b8";
+      g.beginPath();
+      g.arc(32, 32, 6.5, 0, Math.PI * 2);
+      g.fill();
+      g.lineWidth = 2.5;
+      g.strokeStyle = "#fff";
+      g.stroke();
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+
+    // What the last rotation turned about, and why (for the tests).
+    let lastCentre: { point: THREE.Vector3; why: CentreWhy } | null = null;
+    /** The centre a rotation starting now turns about: the pinned point, the visible part's middle while it is mostly on screen, else the part under the middle of the view (or the nearest point of it). */
+    const centreNow = (): THREE.Vector3 => {
+      if (!perspective) syncOrtho();
+      const cam = eye();
+      cam.updateMatrixWorld();
+      const rect = renderer.domElement.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const r = rotationCentre({
+        camera: cam,
+        box: visibleBox,
+        pinned: controls.pinned,
+        underCentre: () => {
+          aim(cx, cy);
+          const hit = pickPart(cx, cy, true);
+          return hit ? new THREE.Vector3(...hit.target.point) : null;
+        },
+        nearestToCentre: () => {
+          const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+          if (!pos) return null;
+          aim(cx, cy);
+          const arr = pos.array as ArrayLike<number>;
+          return nearestToRay(arr, raycaster.ray.origin, raycaster.ray.direction, {
+            ahead: perspective,
+            keep: (i) => vertexBody[i] >= 0 && !cutAway([arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]], bodyName(vertexBody[i])),
+          });
+        },
+        fallback: controls.target,
+      });
+      lastCentre = r;
+      return r.point;
+    };
+
+    // The view cube (top right) and the orientation triad (bottom left), turning with the camera.
+    const cube = new ViewCube(el, {
+      pick: (t) => look(t.dir, t.up),
+      turn: (kind) => cubeTurn(kind),
+      home: () => orient("iso"),
+    });
+    cube.setVisible(viewPrefs().viewCube);
+    const triad = new Triad(el, (axis) => {
+      const v = triadView(axis, camera.position.clone().sub(controls.target).toArray() as Vec3);
+      look(v.dir, v.up);
+    });
+
     const controls = new CadControls(camera, renderer.domElement, {
       pick: (x, y) => {
         const t = pickAt(x, y, true);
-        return t ? new THREE.Vector3(...t.point) : null;
+        return t && t.kind !== "datum" ? new THREE.Vector3(...t.point) : null;
       },
       fit: () => fit(),
       showPivot: (p) => {
         disposeGroup(pivotGroup);
         if (p) {
           const g = new THREE.BufferGeometry().setFromPoints([p]);
-          const dot = new THREE.Points(g, new THREE.PointsMaterial({ color: SELECT_COLOR, size: 10, sizeAttenuation: false, depthTest: false }));
-          dot.renderOrder = 5;
+          const dot = new THREE.Points(g, new THREE.PointsMaterial({ map: pivotTexture ?? undefined, color: pivotTexture ? 0xffffff : 0x1c64b8, size: 22, sizeAttenuation: false, depthTest: false, transparent: true }));
+          dot.renderOrder = 11;
           pivotGroup.add(dot);
         }
         render();
       },
+      centre: centreNow,
+      interrupt: finishGlide,
       changed: render,
     });
+    controls.orthographic = !perspective;
 
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = el;
@@ -459,6 +635,7 @@ export function Viewport({
       for (const m of fatMaterials) m.resolution.set(w, h);
       datums.resize(w, h);
       evalLayer.resize(w, h);
+      sectionPlanes.resize(w, h);
       render();
     };
     const ro = new ResizeObserver(resize);
@@ -477,10 +654,12 @@ export function Viewport({
       }
     };
 
-    const fatMaterials = [SELECT_COLOR, HOVER_COLOR, SCALE_COLOR, SCALE_CONFIRMED_COLOR].map(
+    // Fat lines for the selection and the hover, and the photo's scale line. The selection's and hover's come twice:
+    // clipped by the section, and whole (for an edge of a body the section leaves whole).
+    const fatMaterials = [SELECT_COLOR, HOVER_COLOR, SCALE_COLOR, SCALE_CONFIRMED_COLOR, SELECT_COLOR, HOVER_COLOR].map(
       (color) => new LineMaterial({ color, linewidth: 3.5, depthTest: false, transparent: true }),
     );
-    const [selectEdgeMat, hoverEdgeMat, scaleMat, scaleConfirmedMat] = fatMaterials;
+    const [selectEdgeMat, hoverEdgeMat, scaleMat, scaleConfirmedMat, selectEdgeWhole, hoverEdgeWhole] = fatMaterials;
 
     const rebuildHelpers = () => {
       disposeGroup(helpers);
@@ -494,15 +673,61 @@ export function Viewport({
       // The origin's triad is drawn with the reference geometry (the datum layer).
     };
 
-    /** Frames the part (or `on`) from `dir`, or from where the camera is now. */
-    const fit = (dir?: Vec3, on = { center, radius }, up?: Vec3) => {
+    type Frame = { center: THREE.Vector3; radius: number } | { points: ArrayLike<number> };
+    /**
+     * The camera that frames the part (or `on`: a sphere, or points) from `dir`, or from where the camera looks
+     * now: tight on what you see from there (the visible bodies' own outline, not a sphere round them).
+     */
+    const framed = (dir?: Vec3, on?: Frame, up?: Vec3): Pose => {
       const d = new THREE.Vector3(...(dir ?? (camera.position.clone().sub(controls.target).toArray() as Vec3)));
       if (d.lengthSq() === 0) d.set(...VIEWS.iso.dir);
       d.normalize();
       // Looking straight down or up, +Y is up the screen (-Y from below); otherwise +Z.
-      const u = new THREE.Vector3(...(up ?? (dir ? (Math.abs(d.z) > 0.999 ? [0, Math.sign(d.z), 0] : [0, 0, 1]) : (camera.up.toArray() as Vec3))));
-      const dist = (on.radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
-      controls.place(on.center, d, dist, u);
+      const u = new THREE.Vector3(...(up ?? (dir ? upFor(d.toArray() as Vec3) : (camera.up.toArray() as Vec3))));
+      const sphere = (c: THREE.Vector3, r: number): Pose => {
+        const dist = (r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
+        return { position: c.clone().addScaledVector(d, dist), target: c.clone(), up: u };
+      };
+      if (on && "center" in on) return sphere(on.center, on.radius);
+      const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+      const pts = on ? on.points : (pos?.array as ArrayLike<number> | undefined);
+      const f = pts ? framePoints(pts, d, u, camera.aspect, camera.fov, { perspective, keep: on ? undefined : (i) => vertexBody[i] >= 0 }) : null;
+      if (!f) return sphere(center, radius);
+      return { position: f.target.clone().addScaledVector(d, f.dist), target: f.target, up: u };
+    };
+    /** Frames the part (or `on`) from `dir`, or from where the camera is now: gliding there unless `instant`. */
+    const fit = (dir?: Vec3, on?: Frame, up?: Vec3, instant = false) => glideTo(framed(dir, on, up), instant);
+    /** A standard view: from its direction, the part fitted; it unpins the rotation centre. */
+    const orient = (name: ViewName, instant = false) => {
+      controls.pin(null);
+      fit(VIEWS[name].dir, undefined, VIEWS[name].up, instant);
+    };
+    /** A view cube or triad click: look from `dir` with this up, the part fitted (a standard view: unpins). */
+    const look = (dir: Vec3, up: Vec3) => {
+      controls.pin(null);
+      fit(dir, undefined, up);
+    };
+    /** Turns about the rotation centre (degrees), gliding: the arrow keys, the cube's arrows. */
+    const turnBy = (yawDeg: number, pitchDeg: number) => {
+      finishGlide();
+      const c = centreNow();
+      const start = controls.pose();
+      const yaw = THREE.MathUtils.degToRad(yawDeg);
+      const pitch = THREE.MathUtils.degToRad(pitchDeg);
+      glide((t) => controls.turned(yaw * t, pitch * t, c, start));
+    };
+    const rollBy = (deg: number) => {
+      finishGlide();
+      const start = controls.pose();
+      const a = THREE.MathUtils.degToRad(deg);
+      glide((t) => controls.rolled(a * t, start));
+    };
+    const cubeTurn = (kind: CubeTurn) => {
+      if (kind === "left") turnBy(90, 0);
+      else if (kind === "right") turnBy(-90, 0);
+      else if (kind === "up") turnBy(0, 90);
+      else if (kind === "down") turnBy(0, -90);
+      else rollBy(kind === "ccw" ? 90 : -90);
     };
 
     /** Triangles of some faces, sharing the part's vertex buffer. */
@@ -523,38 +748,58 @@ export function Viewport({
       g.setIndex(new THREE.BufferAttribute(merged, 1));
       return g;
     };
+    /** Splits faces or edges by whether the section cuts their body. */
+    const byCut = (indices: number[], bodyOf: (i: number) => string | undefined): [number[], number[]] => {
+      const cut: number[] = [];
+      const whole: number[] = [];
+      for (const i of indices) (cutsBody(sectionState, bodyOf(i)) ? cut : whole).push(i);
+      return [cut, whole];
+    };
+    const faceBody = (i: number) => shownView?.faces[i]?.body;
+    const edgeBody = (i: number) => shownView?.edges[i]?.body;
+    /** Faces lit up (selected, hovered), clipped with their bodies. */
     const faceMesh = (indices: number[], color: number, opacity: number) => {
-      const g = faceGeometry(indices);
-      if (!g) return null;
-      const m = new THREE.Mesh(
-        g,
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, clippingPlanes: clipping() }),
-      );
-      m.renderOrder = 4;
-      return m;
+      const group = new THREE.Group();
+      byCut(indices, faceBody).forEach((list, k) => {
+        const g = faceGeometry(list);
+        if (!g) return;
+        const m = new THREE.Mesh(
+          g,
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, clippingPlanes: k === 0 ? clipPlanes : NO_PLANES, clipIntersection: clipPlanes.length > 1 }),
+        );
+        m.renderOrder = 4;
+        group.add(m);
+      });
+      return group.children.length ? group : null;
     };
 
-    /** Fat lines along some B-rep edges. */
-    const edgeMarks = (indices: number[], material: LineMaterial) => {
-      const pts: number[] = [];
-      for (const i of indices) {
-        const r = edgeRanges[i];
-        if (!r) continue;
-        for (let k = r.start * 6; k < (r.start + r.count) * 6; k++) pts.push(edgeSegments[k]);
-      }
-      if (pts.length === 0) return null;
-      const g = new LineSegmentsGeometry();
-      g.setPositions(pts);
-      const line = new LineSegments2(g, material);
-      line.renderOrder = 5;
-      return line;
+    /** Fat lines along some B-rep edges (`whole`: the material for edges of bodies the section leaves whole). */
+    const edgeMarks = (indices: number[], material: LineMaterial, whole: LineMaterial) => {
+      const group = new THREE.Group();
+      byCut(indices, edgeBody).forEach((list, k) => {
+        const pts: number[] = [];
+        for (const i of list) {
+          const r = edgeRanges[i];
+          if (!r) continue;
+          for (let n = r.start * 6; n < (r.start + r.count) * 6; n++) pts.push(edgeSegments[n]);
+        }
+        if (pts.length === 0) return;
+        const g = new LineSegmentsGeometry();
+        g.setPositions(pts);
+        const line = new LineSegments2(g, k === 0 ? material : whole);
+        line.renderOrder = 5;
+        group.add(line);
+      });
+      return group.children.length ? group : null;
     };
 
     /** Dots on vertices (selected, or the one under the pointer). */
     const vertexDots = (points: Vec3[], color: number, size: number) => {
       if (!points.length) return null;
       const g = new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p)));
-      const dots = new THREE.Points(g, new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, clippingPlanes: clipping() }));
+      // A section that leaves some bodies whole doesn't clip the dots (picking already skips what is cut away).
+      const planes = sectionState?.bodies ? NO_PLANES : clipPlanes;
+      const dots = new THREE.Points(g, new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, clippingPlanes: planes, clipIntersection: planes.length > 1 }));
       dots.renderOrder = 6;
       return dots;
     };
@@ -563,12 +808,12 @@ export function Viewport({
       disposeGroup(marks);
       const edges = shownView?.edges ?? [];
       const pickedVertices = (selection.vertices ?? []).map((v) => vertexPoint(v, edges)).filter((p): p is Vec3 => !!p);
-      const sel = [faceMesh(selection.faces, SELECT_COLOR, 0.45), edgeMarks(selection.edges, selectEdgeMat), vertexDots(pickedVertices, SELECT_COLOR, 10)];
+      const sel = [faceMesh(selection.faces, SELECT_COLOR, 0.45), edgeMarks(selection.edges, selectEdgeMat, selectEdgeWhole), vertexDots(pickedVertices, SELECT_COLOR, 10)];
       const hov =
         hovered?.kind === "face" && !selection.faces.includes(hovered.index)
           ? faceMesh([hovered.index], HOVER_COLOR, 0.3)
           : hovered?.kind === "edge" && !selection.edges.includes(hovered.index)
-            ? edgeMarks([hovered.index], hoverEdgeMat)
+            ? edgeMarks([hovered.index], hoverEdgeMat, hoverEdgeWhole)
             : hovered?.kind === "vertex"
               ? vertexDots([hovered.point], HOVER_COLOR, 10)
               : null;
@@ -578,6 +823,7 @@ export function Viewport({
       render();
     };
 
+    const edgeMaterials = (obj: THREE.LineSegments | null) => (obj ? ([obj.material].flat() as THREE.LineBasicMaterial[]) : []);
     /** Draws the part the way the display style says: surfaces, edges, hidden edges dashed, outlines. */
     const applyDisplay = () => {
       if (mesh) {
@@ -592,64 +838,156 @@ export function Viewport({
       }
       if (edgeLines) {
         edgeLines.visible = style !== "shaded";
-        const mat = edgeLines.material as THREE.LineBasicMaterial;
-        mat.depthTest = style !== "wireframe";
-        mat.needsUpdate = true;
+        for (const mat of edgeMaterials(edgeLines)) {
+          mat.depthTest = style !== "wireframe";
+          mat.needsUpdate = true;
+        }
       }
       if (hiddenLines) hiddenLines.visible = style === "hiddenVisible";
-      if (outline) {
+      for (const outline of outlines) {
         (outline.seen.material as THREE.LineBasicMaterial).depthTest = style !== "wireframe";
         (outline.seen.material as THREE.Material).needsUpdate = true;
       }
       render();
     };
 
-    /** The visible bodies' triangles (what the section caps). */
-    const visibleGeometry = () => {
-      if (!mesh) return null;
-      const faces = shownView?.faces ?? [];
-      if (!faces.some((f) => isHidden(f.body))) return mesh.geometry;
-      return faceGeometry(faces.map((f, i) => (isHidden(f.body) ? -1 : i)).filter((i) => i >= 0));
+    // ------------------------------------------------------------ the section view
+
+    /** What the caps are made from, kept while the part, the hidden bodies, the bodies cut and the cap colour stay the same (so a drag never rebuilds them). */
+    let capCache: { key: string; sources: CapSource[] } | null = null;
+    const dropCapCache = () => {
+      for (const src of capCache?.sources ?? []) if (src.geometry !== mesh?.geometry) src.geometry.dispose();
+      capCache = null;
     };
-    let capGeometry: THREE.BufferGeometry | null = null;
-    /** The section on the part: every material clipped, the cut capped. */
-    const applySection = () => {
-      if (sectionState) {
-        const p = sectionPlane(sectionState);
-        // three keeps where the signed distance is positive: the side away from the normal.
-        clip.set(new THREE.Vector3(...p.normal).negate(), p.constant);
-      }
-      const planes = clipping();
-      const clipAll = (g: THREE.Object3D) =>
-        g.traverse((o) => {
-          const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
-          for (const m of [mat ?? []].flat()) {
-            m.clippingPlanes = planes;
-            m.needsUpdate = true;
-          }
+    let modelVersion = 0;
+    const capSources = (): CapSource[] => {
+      if (!mesh || !sectionState || !clipPlanes.length) return [];
+      const perBody = sectionState.capColour === "bodies" && (shownView?.bodies.length ?? 0) > 1;
+      const key = JSON.stringify([modelVersion, [...hidden].sort(), sectionState.bodies, perBody]);
+      if (capCache?.key === key) return capCache.sources;
+      dropCapCache();
+      const faces = shownView?.faces ?? [];
+      const capped = (f: FaceInfo) => !isHidden(f.body) && cutsBody(sectionState, f.body);
+      const sources: CapSource[] = [];
+      if (perBody) {
+        (shownView?.bodies ?? []).forEach((b, i) => {
+          if (hidden.has(b.name) || !cutsBody(sectionState, b.name)) return;
+          const g = faceGeometry(Array.from({ length: b.faces[1] - b.faces[0] }, (_, k) => b.faces[0] + k));
+          const color = new THREE.Color(BODY_COLORS[i % BODY_COLORS.length]);
+          if (g) sources.push({ geometry: g, color, hatch: color.clone().multiplyScalar(0.62) });
         });
-      clipAll(model);
-      clipAll(marks);
-      for (const m of fatMaterials) {
-        m.clippingPlanes = planes;
-        m.needsUpdate = true;
+      } else {
+        const all = faces.every(capped);
+        const g = all ? mesh.geometry : faceGeometry(faces.map((f, i) => (capped(f) ? i : -1)).filter((i) => i >= 0));
+        if (g) sources.push({ geometry: g, color: capColor, hatch: capHatch });
       }
-      if (capGeometry && capGeometry !== mesh?.geometry) capGeometry.dispose();
-      capGeometry = sectionState ? visibleGeometry() : null;
-      caps.set(capGeometry, sectionState ? clip : null, radius + center.length());
+      capCache = { key, sources };
+      return sources;
+    };
+
+    /** The visible box as plain numbers (where the section's planes are drawn and their slider runs). */
+    const boxNow = (): { min: Vec3; max: Vec3 } | null => (visibleBox && !visibleBox.isEmpty() ? { min: visibleBox.min.toArray() as Vec3, max: visibleBox.max.toArray() as Vec3 } : null);
+    /** The section's drag arrows: one per active plane, while the planes are drawn. */
+    let sectionHandles: HandleSpec[] = [];
+    const makeSectionHandles = (): HandleSpec[] => {
+      const v = sectionState;
+      if (!v?.on || !v.showPlane) return [];
+      return v.planes.flatMap((s, i): HandleSpec[] => {
+        if (s.enabled === false) return [];
+        const a = offsetArrow(s, boxNow());
+        if (!a) return [];
+        return [{ id: `section:${i}`, feature: "", key: "offset", origin: a.origin, dir: a.dir, value: s.offset, scale: a.scale, min: null, label: v.planes.length > 1 ? `Section ${i + 1}` : "Section", kind: "section", plane: i }];
+      });
+    };
+    /** Every handle drawn: the feature's, then the section's. */
+    const allHandles = () => [...handleList, ...sectionHandles];
+    const refreshHandles = () => {
+      const all = allHandles();
+      // While one is dragged, it keeps its drag (the new numbers are the drag's own).
+      const still = drag ? all.find((x) => x.id === drag!.h.id) : undefined;
+      if (drag && !still) drag = null;
+      evalLayer.setHandles(all, drag ? { h: drag.h, value: drag.value } : null);
+    };
+
+    /** Clips each body's materials: by the active planes, or not at all for a body the section leaves whole. */
+    const clipModel = () => {
+      if (mesh) {
+        const mats = [mesh.material].flat() as THREE.Material[];
+        const bodies = shownView?.bodies ?? [];
+        mats.forEach((m, i) => clipMaterial(m, clipFor(mats.length > 1 ? bodies[i]?.name : bodies[0]?.name)));
+      }
+      for (const obj of [edgeLines, hiddenLines]) edgeMaterials(obj).forEach((m, k) => clipMaterial(m, clipFor(edgeGroupBodies[k])));
+      for (const o of outlines) for (const m of [o.seen.material, o.hidden.material] as THREE.Material[]) clipMaterial(m, o.cut ? clipPlanes : NO_PLANES);
+      for (const m of [selectEdgeMat, hoverEdgeMat]) clipMaterial(m, clipPlanes);
+    };
+
+    /** The section on the part: each cut body's materials clipped, the cuts capped, the planes and their arrows drawn. */
+    const applySection = () => {
+      const planes = clipPlanesOf(sectionState);
+      cutTests = activePlanes(sectionState).map((s) => {
+        const p = sectionPlane(s);
+        return { n: p.normal, c: p.constant };
+      });
+      // The same planes moved: their numbers change in place (every material reading them sees it, nothing recompiles).
+      const moved = planes.length === clipPlanes.length && planes.length > 0;
+      if (moved) planes.forEach((p, i) => clipPlanes[i].copy(p));
+      else clipPlanes = planes;
+      const cutKey = JSON.stringify(sectionState?.bodies ?? null);
+      if (cutKey !== outlineCutKey) buildOutlines();
+      clipModel();
+      if (!moved) redrawMarks();
+      caps.set(capSources(), clipPlanes, visibleBox && !visibleBox.isEmpty() ? visibleBox.getCenter(new THREE.Vector3()) : center, radius * 2 + 1);
+      sectionPlanes.set(sectionState, boxNow());
+      sectionHandles = makeSectionHandles();
+      refreshHandles();
       render();
     };
 
+    /** The curved faces' outlines (seen, and hidden dashed), for the line styles: split by whether the section cuts their body. */
+    const buildOutlines = () => {
+      for (const o of outlines) {
+        model.remove(o.seen, o.hidden);
+        o.seen.geometry.dispose();
+        o.hidden.geometry.dispose();
+        (o.seen.material as THREE.Material).dispose();
+        (o.hidden.material as THREE.Material).dispose();
+      }
+      outlines = [];
+      outlineCutKey = JSON.stringify(sectionState?.bodies ?? null);
+      const v = shownView;
+      if (!v?.mesh || !mesh) return;
+      const edgeColor = cssColor(el, "--edge", "#1f2937");
+      for (const cut of sectionState?.bodies ? [true, false] : [true]) {
+        const curved = v.faces.map((f) => f.type !== "plane" && !isHidden(f.body) && cutsBody(sectionState, f.body) === cut);
+        if (!curved.some(Boolean)) continue;
+        const adj = adjacency(v.mesh.positions, v.mesh.indices, faceRanges, curved);
+        const seen = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: edgeColor }));
+        const hiddenOutline = new THREE.LineSegments(new THREE.BufferGeometry(), dashedMaterial(edgeColor));
+        hiddenOutline.renderOrder = 1;
+        model.add(seen, hiddenOutline);
+        outlines.push({ adj, seen, hidden: hiddenOutline, cut });
+      }
+      for (const o of outlines) (o.seen.material as THREE.LineBasicMaterial).depthTest = style !== "wireframe";
+    };
+    /** Hidden lines: dashed and fainter, drawn only where something is in front of them. */
+    const dashedMaterial = (color: THREE.Color) =>
+      new THREE.LineDashedMaterial({ color, dashSize: radius / 45, gapSize: radius / 70, transparent: true, opacity: 0.45, depthFunc: THREE.GreaterDepth, depthWrite: false });
+
     const setModel = (v: RebuildView | null) => {
       shownView = v;
+      modelVersion++;
+      dropCapCache();
       disposeGroup(model);
       disposeGroup(overlays);
       mesh = null;
       edgeLines = null;
       hiddenLines = null;
-      outline = null;
+      edgeGroupBodies = [];
+      outlines = [];
       hovered = null;
       vertices = [];
+      vertexBody = new Int16Array(0);
+      visibleBox = null;
       faceRanges = v?.mesh?.faceRanges ?? [];
       edgeRanges = v?.mesh?.edgeRanges ?? [];
       edgeSegments = v?.mesh?.edges ?? new Float32Array(0);
@@ -660,7 +998,7 @@ export function Viewport({
         g.setIndex(new THREE.BufferAttribute(v.mesh.indices, 1));
         g.computeBoundingSphere();
         const surface = (color: THREE.ColorRepresentation, visible = true) =>
-          new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, visible, clippingPlanes: clipping() });
+          new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, visible });
         // A part of several bodies: one colour each, as triangle groups (each body's faces are contiguous).
         const bodies = v.bodies ?? [];
         if (bodies.length > 1) {
@@ -674,53 +1012,70 @@ export function Viewport({
           mesh = new THREE.Mesh(g, surface(cssColor(el, "--part", "#c4cad3")));
         }
         model.add(mesh);
-        // Draw every edge except seams; remember which edge each segment belongs to.
-        const pts: number[] = [];
-        const owners: number[] = [];
-        edgeRanges.forEach((r, i) => {
-          if (v.edges[i]?.seam || isHidden(v.edges[i]?.body)) return;
-          for (let k = r.start; k < r.start + r.count; k++) {
-            for (let c = 0; c < 6; c++) pts.push(edgeSegments[k * 6 + c]);
-            owners.push(i);
+        // Which body each vertex is in (−1: hidden), and the visible bodies' box: the rotation centre and Fit use them.
+        const bodyIndex = new Map(bodies.map((b, i) => [b.name, i]));
+        vertexBody = new Int16Array(v.mesh.positions.length / 3).fill(-1);
+        const box = new THREE.Box3();
+        const p = new THREE.Vector3();
+        const idx = v.mesh.indices;
+        const pos = v.mesh.positions;
+        v.faces.forEach((f, i) => {
+          if (isHidden(f.body) || !faceRanges[i]) return;
+          const b = f.body !== undefined ? (bodyIndex.get(f.body) ?? 0) : 0;
+          const r = faceRanges[i];
+          for (let t = r.start; t < r.start + r.count; t++) {
+            const vi = idx[t];
+            if (vertexBody[vi] >= 0) continue;
+            vertexBody[vi] = b;
+            box.expandByPoint(p.set(pos[vi * 3], pos[vi * 3 + 1], pos[vi * 3 + 2]));
           }
         });
+        visibleBox = box.isEmpty() ? null : box;
+        // Draw every edge except seams, body by body (a material each); remember which edge each segment belongs to.
+        const names = bodies.length > 1 ? bodies.map((b) => b.name) : [undefined];
+        const known = new Set(names);
+        const groupOf = (body: string | undefined) => (names.length > 1 && body !== undefined && known.has(body) ? body : names.length > 1 ? undefined : names[0]);
+        const pts: number[] = [];
+        const owners: number[] = [];
+        const groups: { start: number; count: number; body: string | undefined }[] = [];
+        for (const name of names.length > 1 ? [...names, undefined] : names) {
+          const first = owners.length;
+          edgeRanges.forEach((r, i) => {
+            const e = v.edges[i];
+            if (e?.seam || isHidden(e?.body) || groupOf(e?.body) !== name) return;
+            for (let k = r.start; k < r.start + r.count; k++) {
+              for (let c = 0; c < 6; c++) pts.push(edgeSegments[k * 6 + c]);
+              owners.push(i);
+            }
+          });
+          if (owners.length > first) groups.push({ start: first * 2, count: (owners.length - first) * 2, body: name });
+        }
         segmentEdge = Int32Array.from(owners);
+        edgeGroupBodies = groups.map((gr) => gr.body);
         // The part's vertices: the ends of its drawn edges (not a whole circle's seam point), one edge standing for each.
         const seen = new Map<string, VertexPick & { p: Vec3 }>();
         v.edges.forEach((e, i) => {
           if (e.seam || isHidden(e.body) || Math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1], e.end[2] - e.start[2]) < 1e-6) return;
           for (const at of ["start", "end"] as const) {
-            const p = at === "start" ? e.start : e.end;
-            const key = p.map((x) => Math.round(x * 1e4)).join(",");
-            if (!seen.has(key)) seen.set(key, { edge: i, at, p });
+            const q = at === "start" ? e.start : e.end;
+            const key = q.map((x) => Math.round(x * 1e4)).join(",");
+            if (!seen.has(key)) seen.set(key, { edge: i, at, p: q });
           }
         });
         vertices = [...seen.values()];
         const edgeColor = cssColor(el, "--edge", "#1f2937");
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-        edgeLines = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: edgeColor, clippingPlanes: clipping() }));
+        groups.forEach((gr, k) => eg.addGroup(gr.start, gr.count, k));
+        edgeLines = new THREE.LineSegments(eg, groups.length ? groups.map(() => new THREE.LineBasicMaterial({ color: edgeColor })) : new THREE.LineBasicMaterial({ color: edgeColor }));
         model.add(edgeLines);
         center = g.boundingSphere!.center.clone();
         radius = Math.max(1, g.boundingSphere!.radius);
-        // Hidden lines, dashed and fainter, drawn only where something is in front of them.
-        const dashed = (geometry: THREE.BufferGeometry) =>
-          new THREE.LineSegments(
-            geometry,
-            new THREE.LineDashedMaterial({ color: edgeColor, dashSize: radius / 45, gapSize: radius / 70, transparent: true, opacity: 0.45, depthFunc: THREE.GreaterDepth, depthWrite: false, clippingPlanes: clipping() }),
-          );
-        hiddenLines = dashed(eg);
+        hiddenLines = new THREE.LineSegments(eg, groups.length ? groups.map(() => dashedMaterial(edgeColor)) : dashedMaterial(edgeColor));
         hiddenLines.computeLineDistances();
         hiddenLines.renderOrder = 1;
         model.add(hiddenLines);
-        // The curved faces' outlines (seen, and hidden dashed), for the line styles.
-        const curved = v.faces.map((f) => f.type !== "plane" && !isHidden(f.body));
-        const adj = adjacency(v.mesh.positions, v.mesh.indices, faceRanges, curved);
-        const seenOutline = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: edgeColor, clippingPlanes: clipping() }));
-        const hiddenOutline = dashed(new THREE.BufferGeometry());
-        hiddenOutline.renderOrder = 1;
-        model.add(seenOutline, hiddenOutline);
-        outline = { adj, seen: seenOutline, hidden: hiddenOutline };
+        buildOutlines();
       }
       for (const sk of v?.sketches ?? []) {
         for (const pl of sk.polylines) {
@@ -747,8 +1102,11 @@ export function Viewport({
           overlays.add(dots);
         }
       }
+      // A rotation centre pinned on a part that has since changed may now be in empty space: it stays until you clear it.
       rebuildHelpers();
       applyDisplay();
+      // The materials are new: clip them afresh (applySection would see unchanged planes and only move them).
+      clipPlanes = [];
       applySection();
       redrawMarks();
     };
@@ -832,20 +1190,24 @@ export function Viewport({
       const rect = renderer.domElement.getBoundingClientRect();
       return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
     };
+    /** The face a ray hit's triangle belongs to (−1: none). */
+    const faceAt = (h: THREE.Intersection) => {
+      if (h.faceIndex === undefined || h.faceIndex === null) return -1;
+      const tri = h.faceIndex * 3;
+      return faceRanges.findIndex((r) => tri >= r.start && tri < r.start + r.count);
+    };
     const pickPart = (clientX: number, clientY: number, everything = false): { target: PickTarget; distance: number } | null => {
       if (!mesh) return null;
       const may = (kind: PickTarget["kind"]) => everything || allows(pickFilter, kind);
-      const faceAt = (h: THREE.Intersection) => {
-        if (h.faceIndex === undefined || h.faceIndex === null) return -1;
-        const tri = h.faceIndex * 3;
-        return faceRanges.findIndex((r) => tri >= r.start && tri < r.start + r.count);
-      };
       // Hidden bodies are still in the mesh: look through them, and through what a section cuts away.
-      const faceHit = raycaster.intersectObject(mesh, false).find((h) => !isHidden(shownView?.faces[faceAt(h)]?.body) && !cutAway(h.point));
+      const faceHit = raycaster.intersectObject(mesh, false).find((h) => {
+        const body = faceBody(faceAt(h));
+        return !isHidden(body) && !cutAway(h.point, body);
+      });
       const worldPerPixel = controls.worldPerPixel();
       const slack = 2 * PICK_PIXELS * worldPerPixel;
       raycaster.params.Line = { threshold: PICK_PIXELS * worldPerPixel };
-      const edgeHit = edgeLines && may("edge") ? raycaster.intersectObject(edgeLines, false).find((h) => !cutAway(h.point)) : undefined;
+      const edgeHit = edgeLines && may("edge") ? raycaster.intersectObject(edgeLines, false).find((h) => h.index !== undefined && !cutAway(h.point, edgeBody(segmentEdge[Math.floor(h.index / 2)]))) : undefined;
       const frontEdge = edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + slack);
       let hit: { target: PickTarget; distance: number } | null = null;
       if (frontEdge && edgeHit.index !== undefined) {
@@ -860,7 +1222,7 @@ export function Viewport({
       let best: { v: VertexPick & { p: Vec3 }; d: number } | null = null;
       if (may("vertex")) {
         for (const v of vertices) {
-          if (cutAway(v.p)) continue;
+          if (cutAway(v.p, edgeBody(v.edge))) continue;
           const s = project(v.p);
           if (!s) continue;
           const d = Math.hypot(s.x - clientX, s.y - clientY);
@@ -882,6 +1244,28 @@ export function Viewport({
       if (part) return part.target;
       return datum ? { kind: "datum", id: datum.id, point: datum.point } : null;
     };
+    /** Every face and edge under these client pixels (not hidden, not cut away), nearest first, each once: Select Other's list, and Alt+click's. */
+    const underAt = (clientX: number, clientY: number): UnderPointer[] => {
+      if (!mesh) return [];
+      aim(clientX, clientY);
+      const hits: UnderPointer[] = [];
+      for (const h of raycaster.intersectObject(mesh, false)) {
+        const index = faceAt(h);
+        const body = faceBody(index);
+        if (index < 0 || isHidden(body) || cutAway(h.point, body)) continue;
+        hits.push({ target: { kind: "face", index, point: h.point.toArray() as Vec3 }, distance: h.distance });
+      }
+      if (edgeLines) {
+        raycaster.params.Line = { threshold: PICK_PIXELS * controls.worldPerPixel() };
+        for (const h of raycaster.intersectObject(edgeLines, false)) {
+          if (h.index === undefined) continue;
+          const index = segmentEdge[Math.floor(h.index / 2)];
+          if (cutAway(h.point, edgeBody(index))) continue;
+          hits.push({ target: { kind: "edge", index, point: h.point.toArray() as Vec3 }, distance: h.distance });
+        }
+      }
+      return underPointer(hits);
+    };
 
     /** The part on screen, for a box: each face's triangles, each edge's segments, each vertex (null: off screen or cut away). */
     const projected = (): Projected => {
@@ -890,19 +1274,20 @@ export function Viewport({
       const pos = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
       const idx = mesh.geometry.getIndex()!.array as Uint32Array;
       const cache = new Map<number, Vec2 | null>();
-      const at = (p: Vec3): Vec2 | null => {
-        if (cutAway(p)) return null;
+      const at = (p: Vec3, body: string | undefined): Vec2 | null => {
+        if (cutAway(p, body)) return null;
         const s = project(p);
         return s ? [s.x, s.y] : null;
       };
-      const vertexAt = (i: number) => {
-        if (!cache.has(i)) cache.set(i, at([pos.getX(i), pos.getY(i), pos.getZ(i)]));
+      const vertexAt = (i: number, body: string | undefined) => {
+        if (!cache.has(i)) cache.set(i, at([pos.getX(i), pos.getY(i), pos.getZ(i)], body));
         return cache.get(i)!;
       };
       out.faces = faceRanges.map((r, f) => {
-        if (isHidden(shownView!.faces[f]?.body)) return [];
+        const body = shownView!.faces[f]?.body;
+        if (isHidden(body)) return [];
         const tris: (Vec2 | null)[][] = [];
-        for (let t = r.start; t < r.start + r.count; t += 3) tris.push([vertexAt(idx[t]), vertexAt(idx[t + 1]), vertexAt(idx[t + 2])]);
+        for (let t = r.start; t < r.start + r.count; t += 3) tris.push([vertexAt(idx[t], body), vertexAt(idx[t + 1], body), vertexAt(idx[t + 2], body)]);
         return tris;
       });
       out.edges = edgeRanges.map((r, e) => {
@@ -912,11 +1297,11 @@ export function Viewport({
         for (let k = r.start; k < r.start + r.count; k++) {
           const a: Vec3 = [edgeSegments[k * 6], edgeSegments[k * 6 + 1], edgeSegments[k * 6 + 2]];
           const b: Vec3 = [edgeSegments[k * 6 + 3], edgeSegments[k * 6 + 4], edgeSegments[k * 6 + 5]];
-          segs.push([at(a), at(b)]);
+          segs.push([at(a, info.body), at(b, info.body)]);
         }
         return segs;
       });
-      out.vertices = vertices.map((v) => ({ edge: v.edge, at: v.at, p: at(v.p) }));
+      out.vertices = vertices.map((v) => ({ edge: v.edge, at: v.at, p: at(v.p, edgeBody(v.edge)) }));
       return out;
     };
 
@@ -925,10 +1310,18 @@ export function Viewport({
     const sameTarget = (a: PickTarget | null, b: PickTarget | null) => targetKey(a) === targetKey(b);
     // A handle being dragged: which one, how far along its arrow the drag started, and the value now.
     let drag: { h: HandleSpec; t0: number; value: number; id: number } | null = null;
+    // Zoom to area: the next left-drag draws the area to zoom to (Esc or the button again cancels).
+    let areaOn = false;
+    const setArea = (on: boolean) => {
+      areaOn = on;
+      controls.leftTaken = on;
+      renderer.domElement.style.cursor = on ? "zoom-in" : "";
+      live.current.onArea(on);
+    };
     const onMove = (e: PointerEvent) => {
       if (drag) return;
       if (boxing) return moveBox(e);
-      if (e.buttons !== 0 || photoPointRef.current) return;
+      if (e.buttons !== 0 || photoPointRef.current || areaOn) return;
       // A handle under the pointer lights up, and the pointer says it can be dragged.
       const hot = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
       if (evalLayer.setHot(hot?.id ?? null)) render();
@@ -948,7 +1341,8 @@ export function Viewport({
     };
     // A click is a press and release without dragging; drags orbit the view.
     // Right-drag pans; a right press and release in place is a right-click.
-    // A left drag on the view (the standard mouse) draws a selection box.
+    // A left drag on the view (the standard mouse) draws a selection box, or with Zoom to area on, the area.
+    // Alt+click picks the face behind the one picked (again: the one behind that).
     let down: { x: number; y: number; button: number; shift: boolean } | null = null;
     let boxing = false;
     const onDown = (e: PointerEvent) => {
@@ -962,7 +1356,23 @@ export function Viewport({
       if (!down) return;
       const rect = renderer.domElement.getBoundingClientRect();
       const b = boxOf([down.x - rect.left, down.y - rect.top], [e.clientX - rect.left, e.clientY - rect.top]);
-      setBox({ ...b.rect, crossing: b.crossing });
+      setBox({ ...b.rect, crossing: !areaOn && b.crossing, area: areaOn });
+    };
+    /** Zooms to a box dragged on the view (client pixels): its middle to the middle of the view, filling it. */
+    const zoomToArea = (x0: number, y0: number, x1: number, y1: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const z = areaZoom({ x0: x0 - rect.left, y0: y0 - rect.top, x1: x1 - rect.left, y1: y1 - rect.top }, rect.width, rect.height);
+      if (!z) return false;
+      const pose = controls.pose();
+      const { up, right, forward } = controls.axes();
+      const dist = pose.position.distanceTo(pose.target);
+      const halfH = controls.worldPerPixel() * (rect.height / 2);
+      const halfW = halfH * (rect.width / rect.height);
+      // Where the box's middle is, at the look-at depth (orthographic and perspective alike, at that depth).
+      const at = pose.target.clone().addScaledVector(right, z.ndc[0] * halfW).addScaledVector(up, z.ndc[1] * halfH);
+      const nextDist = Math.max(dist * z.factor, 1e-3);
+      glideTo({ position: at.clone().addScaledVector(forward, -nextDist), target: at, up: pose.up.clone() });
+      return true;
     };
     const onUp = (e: PointerEvent) => {
       if (!down || e.button !== down.button) return;
@@ -974,23 +1384,35 @@ export function Viewport({
       if (wasBox) {
         setBox(null);
         if (renderer.domElement.hasPointerCapture(e.pointerId)) renderer.domElement.releasePointerCapture(e.pointerId);
+        if (areaOn) {
+          setArea(false);
+          zoomToArea(start.x, start.y, e.clientX, e.clientY);
+          return;
+        }
         const b = boxOf([start.x, start.y], [e.clientX, e.clientY]);
         live.current.onBox?.(boxSelect(b.rect, b.crossing, projected(), pickFilter), start.shift);
         return;
       }
       if (moved > 4) return;
+      // Waiting for an area: a click is not a pick.
+      if (areaOn && e.button === 0) return;
       if (e.button === 0 && photoPointRef.current) {
         const px = photoPixelAt(e.clientX, e.clientY);
         if (px) photoPointRef.current(px);
         return;
       }
+      const additive = e.shiftKey || e.ctrlKey || e.metaKey;
       if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
-      else pickRef.current(pickAt(e.clientX, e.clientY), e.shiftKey || e.ctrlKey || e.metaKey);
+      else if (e.altKey) {
+        // Alt+click: the next face behind the one picked.
+        const next = nextBehind(underAt(e.clientX, e.clientY), selection);
+        pickRef.current(next ? next.target : pickAt(e.clientX, e.clientY), additive);
+      } else pickRef.current(pickAt(e.clientX, e.clientY), additive);
     };
-    // A left press that travels starts a box (the standard mouse: the trackpad scheme's left drag turns the view).
+    // A left press that travels starts a box (the standard mouse: the trackpad scheme's left drag turns the view, unless an area is wanted).
     const onBoxMove = (e: PointerEvent) => {
       if (!down || down.button !== 0 || boxing || drag || photoPointRef.current) return;
-      if (inputPrefs().mouse !== "standard" || e.pointerType === "touch" || !live.current.onBox) return;
+      if (!areaOn && (inputPrefs().mouse !== "standard" || e.pointerType === "touch" || !live.current.onBox)) return;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < BOX_SLOP) return;
       boxing = true;
       if (hovered) onLeave();
@@ -998,7 +1420,7 @@ export function Viewport({
       moveBox(e);
     };
     const onDblClick = (e: MouseEvent) => {
-      if (photoPointRef.current) return;
+      if (photoPointRef.current || areaOn) return;
       live.current.onDoubleClick?.(pickAt(e.clientX, e.clientY));
     };
     const canvas = renderer.domElement;
@@ -1009,9 +1431,18 @@ export function Viewport({
     canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("dblclick", onDblClick);
 
+    /** A section arrow dragged: its plane's offset, live; cancelled, back to where it was. */
+    const dragSection = (h: HandleSpec, phase: HandlePhase, value: number) => {
+      const v = live.current.section;
+      const i = h.plane ?? 0;
+      if (!v?.planes[i]) return;
+      live.current.onSection?.(setPlane(v, i, { ...v.planes[i], offset: phase === "cancel" ? h.value : value }));
+    };
+    const handleEvent = (h: HandleSpec, phase: HandlePhase, value: number) => (h.kind === "section" ? dragSection(h, phase, value) : live.current.onHandle?.(h, phase, value));
+
     // Handles are grabbed before anything else sees the press (the controls would turn the view, a click would pick).
     const handleDown = (e: PointerEvent) => {
-      if (e.button !== 0 || !handleList.length) return;
+      if (e.button !== 0 || !allHandles().length || areaOn) return;
       const h = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
       if (!h) return;
       e.stopPropagation();
@@ -1026,13 +1457,14 @@ export function Viewport({
         live.current.onMessage?.("That arrow points straight at you: turn the view a little to drag it.");
         return;
       }
+      finishGlide();
       drag = { h, t0, value: h.value, id: e.pointerId };
       el.setPointerCapture?.(e.pointerId);
       renderer.domElement.style.cursor = "grabbing";
       hovered = null;
       setHover(null);
-      evalLayer.setHandles(handleList, { h, value: h.value });
-      live.current.onHandle?.(h, "start", h.value);
+      evalLayer.setHandles(allHandles(), { h, value: h.value });
+      handleEvent(h, "start", h.value);
       render();
     };
     const handleMove = (e: PointerEvent) => {
@@ -1044,8 +1476,8 @@ export function Viewport({
       const value = dragValue(drag.h, drag.h.value, t - drag.t0, e.shiftKey);
       if (value === drag.value) return;
       drag.value = value;
-      evalLayer.setHandles(handleList, { h: drag.h, value });
-      live.current.onHandle?.(drag.h, "move", value);
+      evalLayer.setHandles(allHandles(), { h: drag.h, value });
+      handleEvent(drag.h, "move", value);
       render();
     };
     const endDrag = (e: PointerEvent | KeyboardEvent, phase: "end" | "cancel") => {
@@ -1054,8 +1486,8 @@ export function Viewport({
       drag = null;
       if ("pointerId" in e && el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
       renderer.domElement.style.cursor = "";
-      evalLayer.setHandles(handleList, null);
-      live.current.onHandle?.(d.h, phase, phase === "end" ? d.value : d.h.value);
+      evalLayer.setHandles(allHandles(), null);
+      handleEvent(d.h, phase, phase === "end" ? d.value : d.h.value);
       render();
     };
     const handleUp = (e: PointerEvent) => {
@@ -1069,24 +1501,35 @@ export function Viewport({
         endDrag(e, "cancel");
       }
     };
+    // Esc (not while typing): stops waiting for an area, else unpins the rotation centre.
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (areaOn) return setArea(false);
+      controls.pin(null);
+    };
     el.addEventListener("pointerdown", handleDown, true);
     el.addEventListener("pointermove", handleMove, true);
     el.addEventListener("pointerup", handleUp, true);
     window.addEventListener("keydown", handleKey, true);
+    window.addEventListener("keydown", escape);
 
     // Automation hook for end-to-end tests (only with ?e2e in the URL): world point -> client pixels.
-    if (new URLSearchParams(location.search).has("e2e")) {
+    if (automated) {
       const toScreen = (p: Vec3): [number, number] => {
+        if (!perspective) syncOrtho();
+        eye().updateMatrixWorld();
         const v = new THREE.Vector3(...p).project(eye());
         const rect = canvas.getBoundingClientRect();
         return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
       };
+      const r4 = (v: THREE.Vector3 | Vec3) => (Array.isArray(v) ? v : v.toArray()).map((x) => Math.round(x * 1e4) / 1e4 + 0) as Vec3;
       (window as unknown as { __cocaideViewport?: unknown }).__cocaideViewport = {
         project: toScreen,
         /** Where the camera is, what it looks at, and which way is up. */
         camera() {
-          const r = (v: THREE.Vector3) => v.toArray().map((x) => Math.round(x * 1e4) / 1e4 + 0) as Vec3;
-          return { position: r(camera.position), target: r(controls.target), up: r(camera.up) };
+          return { position: r4(camera.position), target: r4(controls.target), up: r4(camera.up) };
         },
         /** The reference geometry drawn now, by id ("Top", "plane_1", "Origin"). */
         datums(): string[] {
@@ -1103,17 +1546,25 @@ export function Viewport({
         /** A pixel of the pinned photo -> client pixels. */
         photoPoint(px: Vec2): [number, number] | null {
           if (!photo) return null;
-          const v = photoToWorld(photo, px, -Math.max(0.05, radius * 0.002)).project(eye());
-          const rect = canvas.getBoundingClientRect();
-          return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
+          return toScreen(photoToWorld(photo, px, -Math.max(0.05, radius * 0.002)).toArray() as Vec3);
         },
         /** How the part is drawn now. */
         display() {
           return { style, perspective, edgesShown: edgeLines?.visible ?? false, surfacesShown: !!mesh?.visible && ([mesh.material].flat() as THREE.Material[])[0]?.colorWrite !== false };
         },
-        /** The section on now: the plane's normal (into the part kept) and constant, and whether the cap is drawn. */
+        /** The section's first active plane: its normal (into the part kept) and constant, and whether the caps are drawn. */
         section() {
-          return sectionState ? { normal: clip.normal.toArray().map((x) => x + 0), constant: clip.constant + 0, capped: caps.group.visible } : null;
+          const p = clipPlanes[0];
+          return p ? { normal: p.normal.toArray().map((x) => Math.round(x * 1e9) / 1e9 + 0), constant: Math.round(p.constant * 1e9) / 1e9 + 0, capped: caps.group.visible } : null;
+        },
+        /** Every active plane (as section() gives one), the bodies cut (null: all), and whether the caps are drawn. */
+        sections() {
+          return {
+            planes: clipPlanes.map((p) => ({ normal: p.normal.toArray().map((x) => Math.round(x * 1e9) / 1e9 + 0), constant: Math.round(p.constant * 1e9) / 1e9 + 0 })),
+            bodies: sectionState?.bodies ?? null,
+            capped: caps.group.visible,
+            planesDrawn: sectionPlanes.group.children.length / 2,
+          };
         },
         /** Where a drag handle's arrow is (client pixels), to grab it. */
         handlePoint(id: string): [number, number] | null {
@@ -1123,6 +1574,33 @@ export function Viewport({
         /** What a click at these client pixels would pick. */
         pick(x: number, y: number) {
           return pickAt(x, y);
+        },
+        /** The visible bodies' box. */
+        visibleBox() {
+          return visibleBox ? { min: r4(visibleBox.min), max: r4(visibleBox.max) } : null;
+        },
+        /** The centre a rotation starting now would turn about, and why (pinned, box, under, nearest, target). */
+        rotationCentre() {
+          const p = centreNow();
+          return { point: r4(p), why: lastCentre?.why ?? "target" };
+        },
+        /** The pinned rotation centre, if any. */
+        pinned() {
+          return controls.pinned ? r4(controls.pinned) : null;
+        },
+        /** View changes glide in the tests only when turned on here. */
+        glides(on: boolean) {
+          testGlides = on;
+        },
+        /** Is a view change gliding now? */
+        gliding() {
+          return !!glideAnim;
+        },
+        /** Ends a glide now, at the view it was going to. */
+        finishGlide,
+        /** What is under these client pixels, nearest first (Select Other's list). */
+        under(x: number, y: number) {
+          return underAt(x, y).map((h) => ({ ...h.target, label: otherLabel(h.target, shownView?.faces ?? [], shownView?.edges ?? []) }));
         },
       };
     }
@@ -1190,7 +1668,11 @@ export function Viewport({
         hidden = next;
         setModel(shownView);
       },
-      fit: (dir?: Vec3, up?: Vec3) => fit(dir, undefined, up),
+      fit: (dir?: Vec3, up?: Vec3) => {
+        controls.pin(null);
+        fit(dir, undefined, up);
+      },
+      orient,
       normalTo(n: Vec3) {
         const normal = new THREE.Vector3(...n).normalize();
         const { forward, up } = controls.axes();
@@ -1199,22 +1681,29 @@ export function Viewport({
         // Keep the screen's up as near as it was.
         const u = up.clone().addScaledVector(from, -up.dot(from));
         if (u.lengthSq() < 1e-6) u.set(...(Math.abs(from.z) > 0.999 ? ([0, 1, 0] as Vec3) : ([0, 0, 1] as Vec3)));
-        fit(from.toArray() as Vec3, { center: controls.target.clone(), radius }, u.normalize().toArray() as Vec3);
+        fit(from.toArray() as Vec3, undefined, u.normalize().toArray() as Vec3);
       },
-      turn: (yaw: number, pitch: number) => controls.turn(THREE.MathUtils.degToRad(yaw), THREE.MathUtils.degToRad(pitch)),
-      pan: (dx: number, dy: number) => controls.pan(dx, dy),
-      zoom: (f: number) => controls.zoom(f),
-      roll: (deg: number) => controls.roll(THREE.MathUtils.degToRad(deg)),
+      turn: turnBy,
+      pan: (dx: number, dy: number) => {
+        finishGlide();
+        controls.pan(dx, dy);
+      },
+      zoom: (f: number) => {
+        finishGlide();
+        controls.zoom(f);
+      },
+      roll: rollBy,
       setDisplay(d: DisplayState) {
         style = d.style;
         perspective = d.perspective;
+        controls.orthographic = !perspective;
         applyDisplay();
       },
-      setSection(s: SectionState | null) {
+      setSection(s: SectionView | null) {
         sectionState = s;
         applySection();
         // What is cut away can't stay under the pointer.
-        if (hovered && "point" in hovered && cutAway(hovered.point)) onLeave();
+        if (hovered && "point" in hovered && cutAway(hovered.point, hovered.kind === "face" ? faceBody(hovered.index) : hovered.kind === "edge" ? edgeBody(hovered.index) : undefined)) onLeave();
       },
       setOverlay(o: EvalOverlay | null) {
         evalLayer.setOverlay(o);
@@ -1226,10 +1715,7 @@ export function Viewport({
       },
       setHandles(h: HandleSpec[]) {
         handleList = h;
-        // While one is dragged, it keeps its drag (the app's new numbers are the drag's own).
-        const still = drag ? h.find((x) => x.id === drag!.h.id) : undefined;
-        if (drag && !still) drag = null;
-        evalLayer.setHandles(h, drag ? { h: drag.h, value: drag.value } : null);
+        refreshHandles();
         render();
       },
       setFilter(f: SelectFilter) {
@@ -1237,33 +1723,34 @@ export function Viewport({
         if (hovered && !allows(f, hovered.kind)) onLeave();
       },
       zoomToSelection(sel: Selection) {
-        const pts: THREE.Vector3[] = [];
+        const pts: number[] = [];
         const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
         const idx = mesh?.geometry.getIndex()?.array as Uint32Array | undefined;
         if (pos && idx) {
           for (const f of sel.faces) {
             const r = faceRanges[f];
             if (!r) continue;
-            for (let t = r.start; t < r.start + r.count; t++) pts.push(new THREE.Vector3(pos.getX(idx[t]), pos.getY(idx[t]), pos.getZ(idx[t])));
+            for (let t = r.start; t < r.start + r.count; t++) pts.push(pos.getX(idx[t]), pos.getY(idx[t]), pos.getZ(idx[t]));
           }
         }
         for (const e of sel.edges) {
           const r = edgeRanges[e];
           if (!r) continue;
-          for (let k = r.start * 6; k < (r.start + r.count) * 6; k += 3) pts.push(new THREE.Vector3(edgeSegments[k], edgeSegments[k + 1], edgeSegments[k + 2]));
+          for (let k = r.start * 6; k < (r.start + r.count) * 6; k++) pts.push(edgeSegments[k]);
         }
         for (const v of sel.vertices ?? []) {
           const p = vertexPoint(v, shownView?.edges ?? []);
-          if (p) pts.push(new THREE.Vector3(...p));
+          if (p) pts.push(...p);
         }
         for (const id of sel.datums ?? []) {
           const d = Object.hasOwn(DEFAULT_DATUMS, id) ? DEFAULT_DATUMS[id] : shownView?.datums?.[id];
-          if (d) pts.push(new THREE.Vector3(...(d.kind === "point" ? d.at : d.origin)));
+          if (d) pts.push(...(d.kind === "point" ? d.at : d.origin));
         }
         if (!pts.length) return false;
-        const sphere = new THREE.Sphere().setFromPoints(pts);
-        // A vertex or a point alone: close in on it, but not to nothing.
-        fit(undefined, { center: sphere.center, radius: Math.max(sphere.radius, radius * 0.05, 0.5) });
+        const sphere = new THREE.Sphere().setFromPoints(Array.from({ length: pts.length / 3 }, (_, i) => new THREE.Vector3(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2])));
+        // A vertex or a point alone (or a tiny thing): close in on it, but not to nothing. Else tight on what is selected.
+        const least = Math.max(radius * 0.05, 0.5);
+        fit(undefined, sphere.radius < least ? { center: sphere.center, radius: least } : { points: pts });
         return true;
       },
       previousView() {
@@ -1272,9 +1759,27 @@ export function Viewport({
         restoreCamera(history[history.length - 1]);
         return true;
       },
+      camera: cameraState,
+      goTo: (c: CameraState) => restoreCamera(c),
+      look,
+      cubeTurn,
+      setAreaMode: (on: boolean) => {
+        if (on !== areaOn) setArea(on);
+      },
+      under: underAt,
+      preview(t: PickTarget | null) {
+        if (sameTarget(t, hovered)) return;
+        hovered = t;
+        redrawMarks();
+      },
+      setCubeVisible(v: boolean) {
+        cube.setVisible(v);
+        render();
+      },
       dispose() {
         ro.disconnect();
         if (settleTimer) clearTimeout(settleTimer);
+        if (glideAnim) cancelAnimationFrame(glideAnim.frame);
         canvas.removeEventListener("pointermove", onBoxMove);
         canvas.removeEventListener("pointermove", onMove);
         canvas.removeEventListener("pointerleave", onLeave);
@@ -1285,6 +1790,7 @@ export function Viewport({
         el.removeEventListener("pointermove", handleMove, true);
         el.removeEventListener("pointerup", handleUp, true);
         window.removeEventListener("keydown", handleKey, true);
+        window.removeEventListener("keydown", escape);
         controls.dispose();
         disposeGroup(model);
         disposeGroup(overlays);
@@ -1293,10 +1799,14 @@ export function Viewport({
         disposeGroup(photoGroup);
         disposeGroup(nodeGroup);
         disposeGroup(pivotGroup);
+        pivotTexture?.dispose();
         datums.dispose();
+        dropCapCache();
         caps.dispose();
-        if (capGeometry && capGeometry !== mesh?.geometry) capGeometry.dispose();
+        sectionPlanes.dispose();
         evalLayer.dispose();
+        cube.dispose();
+        triad.dispose();
         labels.remove();
         datumTags.remove();
         photoTexture?.texture.dispose();
@@ -1307,11 +1817,11 @@ export function Viewport({
     };
     resize();
     rebuildHelpers();
-    fit(VIEWS.iso.dir);
+    fit(VIEWS.iso.dir, undefined, undefined, true);
     // The view this document was left at in this browser, if it was (after a sketch, or a reload).
     const remembered = live.current.memoryKey ? loadView(live.current.memoryKey).camera : undefined;
     if (remembered) {
-      restoreCamera(remembered);
+      restoreCamera(remembered, true);
       restoredAtMount.current = true;
     }
     return () => api.current?.dispose();
@@ -1336,7 +1846,7 @@ export function Viewport({
   // Re-frame when the app asks (a part opened); not when the view comes back with the camera it remembered.
   const fitSeen = useRef(fitToken);
   useEffect(() => {
-    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current)) api.current?.fit(VIEWS.iso.dir);
+    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current)) api.current?.orient("iso", true);
     fitSeen.current = fitToken;
   }, [fitToken]);
 
@@ -1391,9 +1901,13 @@ export function Viewport({
   }, [shapes, originSize]);
 
   const prefs = useInputPrefs();
+  const vp = useViewPrefs();
+  useEffect(() => {
+    api.current?.setCubeVisible(vp.viewCube);
+  }, [vp.viewCube]);
   const [viewMenu, setViewMenu] = useState<{ x: number; y: number; above?: boolean } | null>(null);
   const [styleMenu, setStyleMenu] = useState<{ x: number; y: number } | null>(null);
-  const orient = (name: ViewName) => api.current?.fit(VIEWS[name].dir, VIEWS[name].up);
+  const orient = (name: ViewName) => api.current?.orient(name);
   /** The one flat face or plane selected, for Normal to. */
   const normalFace = (): Vec3 | null => {
     const only = selection.faces.length + selection.edges.length + (selection.vertices?.length ?? 0) + (selection.datums?.length ?? 0) === 1;
@@ -1420,6 +1934,40 @@ export function Viewport({
   const previousView = () => {
     if (!api.current?.previousView()) onMessage?.("There is no previous view yet.");
   };
+  const toggleArea = () => api.current?.setAreaMode(!areaMode);
+  const toggleCube = () => setViewPrefs({ ...vp, viewCube: !vp.viewCube });
+
+  // Named views: saved per document in this browser, in the Views menu (and the Space menu, the same one).
+  const [named, setNamed] = useState<NamedView[]>(() => (memoryKey ? (loadView(memoryKey).views ?? []) : []));
+  useEffect(() => setNamed(memoryKey ? (loadView(memoryKey).views ?? []) : []), [memoryKey]);
+  const storeNamed = (next: NamedView[]) => {
+    setNamed(next);
+    saveView(memoryKey, { views: next });
+  };
+  /** Saving a view: the name being typed (null: not saving); renaming one: its name and the new one. */
+  const [saving, setSaving] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ from: string; to: string; error?: string } | null>(null);
+  const saveCurrentView = (name: string) => {
+    const cam = api.current?.camera();
+    if (!cam || !name.trim()) return;
+    storeNamed(saveNamedView(named, name, cam));
+    setSaving(null);
+    onMessage?.(`View saved as ${name.trim()}: it is in the Views menu (and the Space menu).`);
+  };
+  const openViewMenu = (at: { x: number; y: number; above?: boolean }) => {
+    setSaving(null);
+    setRenaming(null);
+    setViewMenu(at);
+  };
+
+  /** Select Other at these client pixels (the pointer's, from a key or the palette): every face and edge there, nearest first. */
+  const selectOther = (at?: { x: number; y: number }) => {
+    const p = at ?? { x: pointer.x, y: pointer.y };
+    const list = api.current?.under(p.x, p.y) ?? [];
+    if (!list.length) return onMessage?.("Select other lists the faces and edges under the pointer: there are none there.");
+    setOthers({ x: p.x, y: p.y, list });
+  };
+
   // The standard view keys: Ctrl+1 to Ctrl+8, F, Z and Shift+Z, the arrows, and Space for the view menu.
   const viewCommands: Record<string, () => void> = {
     "view.front": () => orient("front"),
@@ -1429,8 +1977,10 @@ export function Viewport({
     "view.top": () => orient("top"),
     "view.bottom": () => orient("bottom"),
     "view.iso": () => orient("iso"),
+    "view.dimetric": () => orient("dimetric"),
+    "view.trimetric": () => orient("trimetric"),
     "view.normal": normalTo,
-    "view.orientation": () => setViewMenu({ x: pointer.x, y: pointer.y }),
+    "view.orientation": () => openViewMenu({ x: pointer.x, y: pointer.y }),
     "view.fit": () => api.current?.fit(),
     "view.zoomIn": () => api.current?.zoom(1.25),
     "view.zoomOut": () => api.current?.zoom(0.8),
@@ -1452,10 +2002,18 @@ export function Viewport({
     "view.zoomSelection": zoomSelection,
     "view.previous": previousView,
     "view.perspective": togglePerspective,
+    "view.zoomArea": toggleArea,
+    "view.selectOther": () => selectOther(),
+    "view.saveView": () => {
+      openViewMenu({ x: pointer.x, y: pointer.y });
+      setSaving(nextViewName(named));
+    },
+    "view.cube": toggleCube,
+    "view.section": () => onSectionToggle?.(),
     ...Object.fromEntries(DISPLAY_STYLES.map((s) => [s.command, () => setStyle(s.style)])),
   };
   useCommands(viewCommands);
-  if (commandsRef) commandsRef.current = (id) => viewCommands[id]?.();
+  if (commandsRef) commandsRef.current = (id, at) => (id === "view.selectOther" ? selectOther(at) : viewCommands[id]?.());
 
   const picking = !!onPhotoPoint;
   useEffect(() => {
@@ -1464,16 +2022,31 @@ export function Viewport({
   }, [picking, view]);
 
   const current = DISPLAY_STYLES.find((s) => s.style === display.style) ?? DISPLAY_STYLES[0];
+  const sectionPlanesOn = activePlanes(section).length;
+  const faces = view?.faces ?? [];
+  const edges = view?.edges ?? [];
 
   return (
-    <div className={`viewport${picking ? " picking-photo" : ""}`}>
+    <div className={`viewport${picking ? " picking-photo" : ""}${vp.viewCube ? " with-cube" : ""}`}>
       <div ref={host} className="viewport-canvas" data-testid="viewport" />
       {box && (
         <div
-          className={`box-select ${box.crossing ? "crossing" : "window"}`}
+          className={`box-select ${box.area ? "area" : box.crossing ? "crossing" : "window"}`}
           style={{ left: box.x0, top: box.y0, width: box.x1 - box.x0, height: box.y1 - box.y0 }}
-          data-testid="box-select"
+          data-testid={box.area ? "zoom-area-box" : "box-select"}
         />
+      )}
+      {areaMode && (
+        <div className="view-hint" role="status" data-testid="zoom-area-hint">
+          <Icon name="zoomArea" />
+          Drag a box round the area to zoom to. Esc cancels.
+        </div>
+      )}
+      {sectionPlanesOn > 0 && (
+        <div className="section-tag" role="status" data-testid="section-tag" title="The section view is on: the view bar's Section button turns it off (its planes are kept)">
+          <Icon name="section" size={13} />
+          Section{sectionPlanesOn > 1 ? ` · ${sectionPlanesOn} planes` : ""}
+        </div>
       )}
       {onFilter && (
         <div className="filter-buttons" role="toolbar" aria-label="Selection filter" onMouseDown={(e) => e.preventDefault()}>
@@ -1501,17 +2074,23 @@ export function Viewport({
       )}
       <div className="view-buttons" role="toolbar" aria-label="Views" onMouseDown={(e) => e.preventDefault()}>
         {QUICK_VIEWS.map((name) => (
-          <button key={name} onClick={() => orient(name)} title={`${name === "iso" ? "Look from the front, right and above" : `Look from the ${name}`}${keyHint(`view.${name}`, prefs)}`}>
+          <button
+            key={name}
+            className="icon-only"
+            onClick={() => orient(name)}
+            aria-label={name === "iso" ? "Iso" : VIEW_LABEL[name]}
+            title={`${name === "iso" ? "Isometric: from the front, right and above" : `${VIEW_LABEL[name]}: look from the ${name}`}${keyHint(`view.${name}`, prefs)}`}
+            data-testid={`quick-view-${name}`}
+          >
             <Icon name={VIEW_ICON[name]} />
-            {name[0].toUpperCase() + name.slice(1)}
           </button>
         ))}
         <button
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            setViewMenu({ x: r.left, y: r.top, above: true });
+            openViewMenu({ x: r.left, y: r.top, above: true });
           }}
-          title={`Every view, and Normal to the selected face${keyHint("view.orientation", prefs)}`}
+          title={`Every view, Normal to, your saved views, the view cube${keyHint("view.orientation", prefs)}`}
           aria-haspopup="menu"
           data-testid="view-menu-open"
         >
@@ -1520,14 +2099,23 @@ export function Viewport({
           <Icon name="up" size={10} className="caret" />
         </button>
         <span className="sep" />
-        <button onClick={() => api.current?.fit()} title={`Frame the whole part from the current direction${keyHint("view.fit", prefs)}`}>
+        <button className="icon-only" onClick={() => api.current?.fit()} aria-label="Fit" title={`Zoom to fit: frame the whole part from the current direction${keyHint("view.fit", prefs)}; a middle double-click does it too`} data-testid="view-fit">
           <Icon name="fit" />
-          Fit
         </button>
-        <button onClick={zoomSelection} title={`Frame what is selected${keyHint("view.zoomSelection", prefs)}`} aria-label="Zoom to selection" data-testid="view-zoom-selection">
+        <button className="icon-only" onClick={zoomSelection} title={`Zoom to selection: frame what is selected${keyHint("view.zoomSelection", prefs)}`} aria-label="Zoom to selection" data-testid="view-zoom-selection">
           <Icon name="zoomSelection" />
         </button>
-        <button onClick={previousView} title={`Back to the view before${keyHint("view.previous", prefs)}`} aria-label="Previous view" data-testid="view-previous">
+        <button
+          className="icon-only"
+          onClick={toggleArea}
+          aria-pressed={areaMode}
+          title={`Zoom to area: drag a box round what you want to see${keyHint("view.zoomArea", prefs)}`}
+          aria-label="Zoom to area"
+          data-testid="view-zoom-area"
+        >
+          <Icon name="zoomArea" />
+        </button>
+        <button className="icon-only" onClick={previousView} title={`Previous view: back to the view before${keyHint("view.previous", prefs)}`} aria-label="Previous view" data-testid="view-previous">
           <Icon name="previousView" />
         </button>
         <span className="sep" />
@@ -1536,40 +2124,62 @@ export function Viewport({
             const r = e.currentTarget.getBoundingClientRect();
             setStyleMenu({ x: r.left, y: r.top });
           }}
-          title="Display style: shaded, with edges, hidden lines, wireframe"
+          title={`Display style: ${current.label} (shaded, with edges, hidden lines, wireframe)`}
+          aria-label={`Display style: ${current.label}`}
           aria-haspopup="menu"
           data-testid="display-style"
         >
           <Icon name={current.icon} />
-          <span className="label">{current.label}</span>
           <Icon name="up" size={10} className="caret" />
         </button>
         <button
+          className="icon-only"
           aria-pressed={!display.perspective}
           onClick={togglePerspective}
-          title={`${display.perspective ? "Perspective: click for orthographic (parallel lines stay parallel)" : "Orthographic: click for perspective"}${keyHint("view.perspective", prefs)}`}
+          title={`${display.perspective ? "Perspective: click for orthographic (parallel lines stay parallel, as on a drawing)" : "Orthographic: click for perspective"}${keyHint("view.perspective", prefs)}`}
           aria-label={display.perspective ? "Perspective" : "Orthographic"}
           data-testid="view-perspective"
         >
           <Icon name={display.perspective ? "perspective" : "orthographic"} />
         </button>
         <span className="sep" />
-        <button aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} title="Show or hide sketch geometry and the frame's nodes">
-          <Icon name={showSketches ? "eye" : "eyeOff"} />
-          Sketches
+        <button
+          className="icon-only"
+          aria-pressed={sectionPlanesOn > 0}
+          onClick={() => onSectionToggle?.()}
+          title={`Section view ${sectionPlanesOn > 0 ? "on: click to see the whole part (its planes are kept)" : section ? "off: click to cut the part again" : ": cut the part to see inside"}${keyHint("view.section", prefs)}`}
+          aria-label="Section view"
+          data-testid="view-section"
+        >
+          <Icon name="section" />
+        </button>
+        <button className="icon-only" aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} aria-label="Sketches" title="Sketches: show or hide sketch geometry and the frame's nodes" data-testid="view-sketches">
+          <Icon name="sketch" />
         </button>
         <button
+          className="icon-only"
           aria-pressed={datumView.planes}
           onClick={togglePlanes}
-          title={`Show or hide the planes, axes and points (a selected one always shows; each has its own eye in the tree)${keyHint("view.planes", prefs)}`}
+          aria-label="Planes"
+          title={`Planes: show or hide the planes, axes and points (a selected one always shows; each has its own eye in the tree)${keyHint("view.planes", prefs)}`}
           data-testid="view-planes"
         >
-          <Icon name={datumView.planes ? "eye" : "eyeOff"} />
-          Planes
+          <Icon name="plane" />
         </button>
       </div>
       {viewMenu && (
-        <Popup x={viewMenu.x} y={viewMenu.y} above={viewMenu.above} onClose={() => setViewMenu(null)} label="View orientation" testId="view-menu">
+        <Popup
+          x={viewMenu.x}
+          y={viewMenu.y}
+          above={viewMenu.above}
+          onClose={() => {
+            setViewMenu(null);
+            setSaving(null);
+            setRenaming(null);
+          }}
+          label="View orientation"
+          testId="view-menu"
+        >
           {(close) => (
             <>
               {VIEW_ORDER.map((name) => (
@@ -1577,7 +2187,8 @@ export function Viewport({
                   key={name}
                   icon={VIEW_ICON[name]}
                   label={VIEW_LABEL[name]}
-                  shortcut={keyHint(`view.${name}`, prefs).slice(2, -1)}
+                  hint={name === "iso" ? "Equal angles to X, Y and Z" : name === "dimetric" ? "X and Z full size, Y at half" : name === "trimetric" ? "Each axis shortened differently" : undefined}
+                  shortcut={keyHint(`view.${name}`, prefs).slice(2, -1) || undefined}
                   onClick={() => {
                     close();
                     orient(name);
@@ -1597,6 +2208,78 @@ export function Viewport({
                 }}
                 testId="view-normal"
               />
+              <div className="menu-sep" />
+              <div className="context-heading">Saved views</div>
+              {saving === null ? (
+                <MenuItem icon="plus" label="Save view…" hint="Keep this view under a name, for this part in this browser" onClick={() => setSaving(nextViewName(named))} testId="view-save" />
+              ) : (
+                <form
+                  className="menu-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    saveCurrentView(saving);
+                    close();
+                  }}
+                >
+                  <input autoFocus value={saving} onChange={(e) => setSaving(e.target.value)} onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setSaving(null))} aria-label="Name of the view" data-testid="view-save-name" />
+                  <button type="submit" className="primary" disabled={!saving.trim()} data-testid="view-save-ok">
+                    Save
+                  </button>
+                </form>
+              )}
+              {named.length === 0 && saving === null && <div className="menu-note">None yet: Save view… keeps the one you are looking at.</div>}
+              {named.map((v) =>
+                renaming?.from === v.name ? (
+                  <form
+                    key={v.name}
+                    className="menu-form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const next = renameNamedView(named, v.name, renaming.to);
+                      if (typeof next === "string") return setRenaming({ ...renaming, error: next });
+                      storeNamed(next);
+                      setRenaming(null);
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={renaming.to}
+                      onChange={(e) => setRenaming({ from: v.name, to: e.target.value })}
+                      onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), setRenaming(null))}
+                      aria-label={`New name for ${v.name}`}
+                      aria-invalid={!!renaming.error || undefined}
+                      title={renaming.error}
+                      data-testid={`named-view-name-${v.name}`}
+                    />
+                    <button type="submit" className="primary" data-testid={`named-view-rename-ok-${v.name}`}>
+                      Rename
+                    </button>
+                    {renaming.error && <div className="menu-error">{renaming.error}</div>}
+                  </form>
+                ) : (
+                  <div key={v.name} className="named-view" data-testid={`named-view-${v.name}`}>
+                    <button
+                      className="named-view-go"
+                      onClick={() => {
+                        close();
+                        api.current?.goTo(v.camera);
+                      }}
+                      title={`Go to ${v.name}`}
+                    >
+                      <Icon name="view" />
+                      <span>{v.name}</span>
+                    </button>
+                    <button className="named-view-act" aria-label={`Rename ${v.name}`} title="Rename" onClick={() => setRenaming({ from: v.name, to: v.name })} data-testid={`named-view-rename-${v.name}`}>
+                      <Icon name="note" size={13} />
+                    </button>
+                    <button className="named-view-act" aria-label={`Delete ${v.name}`} title="Delete" onClick={() => storeNamed(removeNamedView(named, v.name))} data-testid={`named-view-delete-${v.name}`}>
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
+                ),
+              )}
+              <div className="menu-sep" />
+              <MenuItem icon="viewCube" label={`${vp.viewCube ? "✓ " : ""}View cube`} hint="The cube in the top right corner: click a face, an edge or a corner" onClick={toggleCube} testId="view-cube-toggle" />
             </>
           )}
         </Popup>
@@ -1633,8 +2316,46 @@ export function Viewport({
           )}
         </Popup>
       )}
-      <SelectionChip selection={selection} faces={view?.faces ?? []} edges={view?.edges ?? []} datums={view?.datums ?? {}} />
-      {hover && !box && <PickTip hover={hover} info={infoRef.current} />}
+      {others && (
+        <Popup
+          x={others.x}
+          y={others.y}
+          onClose={() => {
+            api.current?.preview(null);
+            setOthers(null);
+          }}
+          label="Select other"
+          testId="select-other"
+        >
+          {(close) => (
+            <>
+              <div className="context-heading">Under the pointer, nearest first</div>
+              {others.list.map((h, i) => (
+                <button
+                  key={`${h.target.kind}:${h.target.index}`}
+                  role="menuitem"
+                  title={`${i === 0 ? "The one a plain click picks. " : ""}Click to select it; Ctrl-click to add it to the selection`}
+                  onPointerEnter={() => api.current?.preview(h.target)}
+                  onPointerLeave={() => api.current?.preview(null)}
+                  onFocus={() => api.current?.preview(h.target)}
+                  onClick={(e) => {
+                    api.current?.preview(null);
+                    close();
+                    onPick(h.target, e.ctrlKey || e.shiftKey || e.metaKey);
+                  }}
+                  data-testid={`select-other-${i}`}
+                >
+                  <Icon name={h.target.kind === "face" ? "filterFaces" : "filterEdges"} />
+                  <span>{otherLabel(h.target, faces, edges)}</span>
+                  {i === 0 && <span className="menu-note-inline">front</span>}
+                </button>
+              ))}
+            </>
+          )}
+        </Popup>
+      )}
+      <SelectionChip selection={selection} faces={faces} edges={edges} datums={view?.datums ?? {}} />
+      {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} />}
     </div>
   );
 }

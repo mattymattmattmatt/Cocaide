@@ -1,13 +1,22 @@
 // The 3D view's mouse, the standard CAD way: the middle button rotates, with
-// Ctrl it pans, with Shift it zooms and with Alt it rolls; a middle click on
-// the part makes the next rotation turn about that point, and a middle
-// double-click fits the part. The wheel zooms at the pointer. Rotation is
-// free (no fixed up), so the part turns any way you drag it. Right-drag pans.
-// The trackpad scheme adds left-drag to rotate and Shift+left-drag to pan.
-// A press and release in place is still a click: picking is the viewport's.
+// Ctrl it pans, with Shift it zooms and with Alt it rolls; the wheel zooms at
+// the pointer; right-drag pans; a middle double-click fits the part. The
+// trackpad scheme adds left-drag to rotate and Shift+left-drag to pan. A press
+// and release in place is still a click: picking is the viewport's.
+//
+// The part spins in place: a rotation turns about a centre chosen when it
+// starts (src/ui/viewport/orbit.ts: the pinned point, else the middle of the
+// part while it is on screen, else the part under the middle of the view),
+// never about the look-at point, which panning and zooming at the pointer
+// move off into empty space. A middle-click on the part pins the centre there
+// (a marker shows it) until a middle-click on empty space, Esc, Fit or a
+// standard view. Dragging across the view's height turns half a turn (times
+// the speed in Settings > Mouse); "Keep Z up" makes it a turntable.
 
 import * as THREE from "three";
 import { inputPrefs, wheelZoom } from "./input";
+import { clonePose, orbit, poseAxes, reseat, turnPerPixel, type Pose } from "./viewport/orbit";
+import { viewPrefs } from "./viewport/viewPrefs";
 
 type Gesture = "rotate" | "pan" | "zoom" | "roll";
 
@@ -16,21 +25,27 @@ interface Hooks {
   pick(clientX: number, clientY: number): THREE.Vector3 | null;
   /** Fit the part (a middle double-click). */
   fit(): void;
-  /** Show or clear the point the next rotation turns about. */
+  /** Show or clear the pinned rotation centre. */
   showPivot(p: THREE.Vector3 | null): void;
+  /** The centre a rotation starting now turns about (the pinned one, the part's middle, the part under the middle of the view). */
+  centre(): THREE.Vector3;
+  /** The user takes the view: a glide still running ends now. */
+  interrupt?(): void;
   changed(): void;
 }
 
-/** Radians a pixel of drag turns the view. */
-const TURN = 0.0075;
 /** Pixels before a press becomes a drag. */
 const SLOP = 4;
 
 export class CadControls {
-  /** What the camera looks at: the point rotations and zooms are about when nothing else is. */
+  /** What the camera looks at: the depth panning and zooming work at; never the rotation centre on its own. */
   readonly target = new THREE.Vector3();
-  private pivot: THREE.Vector3 | null = null;
-  private drag: { gesture: Gesture | null; button: number; x: number; y: number; lastX: number; lastY: number; id: number; moving: boolean; usedPivot: boolean } | null = null;
+  /** Orthographic: the eye's distance is the zoom (the frame is what the perspective camera sees at the target). */
+  orthographic = false;
+  /** While set, the left button is the viewport's (zoom to area): no left-drag rotation in the trackpad scheme. */
+  leftTaken = false;
+  private pinnedAt: THREE.Vector3 | null = null;
+  private drag: { gesture: Gesture | null; button: number; x: number; y: number; lastX: number; lastY: number; id: number; moving: boolean; centre: THREE.Vector3 | null } | null = null;
   private lastMiddleClick = 0;
 
   constructor(
@@ -60,34 +75,63 @@ export class CadControls {
     this.dom.removeEventListener("auxclick", this.noMiddle);
   }
 
-  /** Points the camera from `dir` (unit, toward the camera) at `center`, `dist` away, with this up. */
-  place(center: THREE.Vector3, dir: THREE.Vector3, dist: number, up: THREE.Vector3) {
-    this.target.copy(center);
-    this.camera.position.copy(center).addScaledVector(dir, dist);
-    this.camera.up.copy(up);
+  /** The pinned rotation centre, if one is pinned. */
+  get pinned(): THREE.Vector3 | null {
+    return this.pinnedAt;
+  }
+
+  /** Pins the rotation centre at p (null: unpinned, the centre is chosen afresh each time). */
+  pin(p: THREE.Vector3 | null) {
+    if (!p && !this.pinnedAt) return;
+    this.pinnedAt = p ? p.clone() : null;
+    this.hooks.showPivot(this.pinnedAt);
+  }
+
+  /** Is a drag moving the view now? */
+  get busy(): boolean {
+    return !!this.drag?.moving;
+  }
+
+  /** The camera as it is: where it is, what it looks at, which way is up. */
+  pose(): Pose {
+    return { position: this.camera.position.clone(), target: this.target.clone(), up: this.camera.up.clone() };
+  }
+
+  /** Puts the camera at a pose. */
+  setPose(p: Pose) {
+    this.camera.position.copy(p.position);
+    this.target.copy(p.target);
+    this.camera.up.copy(p.up).normalize();
     this.camera.lookAt(this.target);
     this.settle();
   }
 
-  /** Turns the view about the screen's up (yaw) and right (pitch) axes, radians. */
-  turn(yaw: number, pitch: number, about: THREE.Vector3 = this.target) {
-    const { up, right } = this.axes();
-    const q = new THREE.Quaternion().setFromAxisAngle(up, yaw).multiply(new THREE.Quaternion().setFromAxisAngle(right, pitch));
-    // A copy: `about` may be the target itself, which moves below.
-    const c = about.clone();
-    this.camera.position.sub(c).applyQuaternion(q).add(c);
-    this.target.sub(c).applyQuaternion(q).add(c);
-    this.camera.up.copy(up).applyQuaternion(q);
-    this.camera.lookAt(this.target);
-    this.settle();
+  /** Points the camera from `dir` (unit, toward the camera) at `center`, `dist` away, with this up. */
+  place(center: THREE.Vector3, dir: THREE.Vector3, dist: number, up: THREE.Vector3) {
+    this.setPose({ position: center.clone().addScaledVector(dir, dist), target: center.clone(), up: up.clone() });
+  }
+
+  /** The pose turned about `centre` (radians: yaw about the screen's up, or Z keeping Z up; pitch about its right), with the look-at point re-seated at the centre's depth. */
+  turned(yaw: number, pitch: number, centre: THREE.Vector3, from: Pose = this.pose()): Pose {
+    return orbit(reseat(from, centre, this.orthographic), centre, yaw, pitch, viewPrefs().turntable);
+  }
+
+  /** Turns the view about `about` (default: the rotation centre the view chooses), radians. */
+  turn(yaw: number, pitch: number, about?: THREE.Vector3) {
+    this.setPose(this.turned(yaw, pitch, about ?? this.hooks.centre()));
   }
 
   /** Turns the view in the plane of the screen, radians, clockwise positive. */
   roll(angle: number) {
-    const { forward } = this.axes();
-    this.camera.up.applyAxisAngle(forward, angle);
-    this.camera.lookAt(this.target);
-    this.settle();
+    this.setPose(this.rolled(angle));
+  }
+
+  /** The pose rolled in the plane of the screen (about the line of sight through the look-at point). */
+  rolled(angle: number, from: Pose = this.pose()): Pose {
+    const { forward } = poseAxes(from);
+    const p = clonePose(from);
+    p.up.applyAxisAngle(forward, angle);
+    return p;
   }
 
   /** Moves the view by screen pixels: the part follows the pointer. */
@@ -112,7 +156,7 @@ export class CadControls {
     this.settle();
   }
 
-  /** World units per screen pixel at the target's depth. */
+  /** World units per screen pixel at the target's depth (and everywhere, orthographic). */
   worldPerPixel(): number {
     const h = this.dom.clientHeight || 1;
     return (2 * this.camera.position.distanceTo(this.target) * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / h;
@@ -120,11 +164,7 @@ export class CadControls {
 
   /** The camera's forward, true up and right, unit. */
   axes() {
-    const forward = this.target.clone().sub(this.camera.position).normalize();
-    const right = forward.clone().cross(this.camera.up).normalize();
-    if (right.lengthSq() < 1e-12) right.set(1, 0, 0);
-    const up = right.clone().cross(forward).normalize();
-    return { forward, up, right };
+    return poseAxes(this.pose());
   }
 
   private settle() {
@@ -132,6 +172,7 @@ export class CadControls {
     this.camera.near = Math.max(dist / 500, 1e-4);
     this.camera.far = dist * 500;
     this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
     this.hooks.changed();
   }
 
@@ -141,16 +182,24 @@ export class CadControls {
     if (hit) return hit;
     const rect = this.dom.getBoundingClientRect();
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.axes().forward, this.target);
+    if (this.orthographic) {
+      // Parallel rays: straight in from where the pointer is on the frame.
+      const { up, right, forward } = this.axes();
+      const halfH = this.worldPerPixel() * ((rect.height || 1) / 2);
+      const halfW = halfH * ((rect.width || 1) / (rect.height || 1));
+      const origin = this.target.clone().addScaledVector(right, ndc.x * halfW).addScaledVector(up, ndc.y * halfH);
+      return new THREE.Ray(origin.addScaledVector(forward, -1), forward).intersectPlane(plane, new THREE.Vector3()) ?? this.target.clone();
+    }
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
-    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.axes().forward, this.target);
     return ray.ray.intersectPlane(plane, new THREE.Vector3()) ?? this.target.clone();
   }
 
   private gestureFor(e: PointerEvent): Gesture | null {
     if (e.button === 1) return e.ctrlKey || e.metaKey ? "pan" : e.shiftKey ? "zoom" : e.altKey ? "roll" : "rotate";
     if (e.button === 2) return "pan";
-    if (e.button === 0 && (inputPrefs().mouse === "trackpad" || e.pointerType === "touch")) return e.shiftKey ? "pan" : "rotate";
+    if (e.button === 0 && !this.leftTaken && (inputPrefs().mouse === "trackpad" || e.pointerType === "touch")) return e.shiftKey ? "pan" : "rotate";
     return null;
   }
 
@@ -158,7 +207,8 @@ export class CadControls {
     if (e.button === 1) e.preventDefault();
     const gesture = this.gestureFor(e);
     if (!gesture && e.button !== 1) return;
-    this.drag = { gesture, button: e.button, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, id: e.pointerId, moving: false, usedPivot: false };
+    this.hooks.interrupt?.();
+    this.drag = { gesture, button: e.button, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, id: e.pointerId, moving: false, centre: null };
   };
 
   private onMove = (e: PointerEvent) => {
@@ -174,10 +224,16 @@ export class CadControls {
     d.lastX = e.clientX;
     d.lastY = e.clientY;
     switch (d.gesture) {
-      case "rotate":
-        d.usedPivot = d.usedPivot || !!this.pivot;
-        this.turn(-dx * TURN, -dy * TURN, this.pivot ?? this.target);
+      case "rotate": {
+        // The centre is chosen once, as the rotation starts; the look-at point moves to its depth (the view does not change).
+        if (!d.centre) {
+          d.centre = this.hooks.centre();
+          this.setPose(reseat(this.pose(), d.centre, this.orthographic));
+        }
+        const rate = turnPerPixel(this.dom.clientHeight, viewPrefs().rotateSpeed);
+        this.setPose(orbit(this.pose(), d.centre, -dx * rate, -dy * rate, viewPrefs().turntable));
         break;
+      }
       case "pan":
         this.pan(dx, dy);
         break;
@@ -185,7 +241,7 @@ export class CadControls {
         this.zoom(Math.exp(-dy * 0.01));
         break;
       case "roll":
-        this.roll(-dx * TURN);
+        this.roll(-dx * turnPerPixel(this.dom.clientHeight, viewPrefs().rotateSpeed));
         break;
     }
   };
@@ -195,31 +251,22 @@ export class CadControls {
     if (!d || e.pointerId !== d.id) return;
     this.drag = null;
     if (this.dom.hasPointerCapture?.(e.pointerId)) this.dom.releasePointerCapture(e.pointerId);
-    if (d.moving) {
-      // The point a middle click picked is for one rotation.
-      if (d.usedPivot) this.setPivot(null);
-      return;
-    }
-    if (d.button !== 1) return;
-    // A middle click: twice quickly fits the part; once on the part turns the next rotation about that point.
+    if (d.moving || d.button !== 1) return;
+    // A middle click: twice quickly fits the part; once on the part pins the rotation centre there, on empty space unpins it.
     const now = performance.now();
     if (now - this.lastMiddleClick < 350) {
       this.lastMiddleClick = 0;
-      this.setPivot(null);
+      this.pin(null);
       this.hooks.fit();
       return;
     }
     this.lastMiddleClick = now;
-    this.setPivot(this.hooks.pick(e.clientX, e.clientY));
+    this.pin(this.hooks.pick(e.clientX, e.clientY));
   };
-
-  private setPivot(p: THREE.Vector3 | null) {
-    this.pivot = p;
-    this.hooks.showPivot(p);
-  }
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
+    this.hooks.interrupt?.();
     this.zoom(wheelZoom(e, inputPrefs()), e.clientX, e.clientY);
   };
 

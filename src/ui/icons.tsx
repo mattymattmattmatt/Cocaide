@@ -662,6 +662,21 @@ const ICONS = {
       <circle cx="21" cy="12" r="1.5" fill="currentColor" />
     </>
   ),
+  // Phase P: zoom to area (a box dragged round what to see), the view cube.
+  zoomArea: (
+    <>
+      <path d="M3 13V4h11v4" style={dash} />
+      <circle cx="14" cy="14" r="5" />
+      <path d="M17.6 17.6 21 21 M11.8 14h4.4 M14 11.8v4.4" />
+    </>
+  ),
+  viewCube: (
+    <>
+      <path d="M12 12 4 7.5 12 3l8 4.5z" {...face} fillOpacity={0.4} />
+      <path d={CUBE} />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

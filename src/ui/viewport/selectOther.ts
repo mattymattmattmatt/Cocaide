@@ -46,7 +46,7 @@ export function otherLabel(t: PickTarget, faces: readonly FaceInfo[], edges: rea
     const what = !e ? "" : e.kind === "line" ? `straight, ${fmt(e.length)} mm` : e.kind === "circle" ? `circle Ø${fmt(2 * (e.radius ?? 0))}` : `curved, ${fmt(e.length)} mm`;
     return `Edge ${t.index + 1}${what ? ` (${what})` : ""}`;
   }
-  return t.kind === "vertex" ? "Vertex" : t.id;
+  return t.kind === "vertex" ? "Vertex" : t.kind === "datum" ? t.id : "";
 }
 
 /**

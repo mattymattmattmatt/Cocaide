@@ -17,8 +17,8 @@ export interface HandleSpec {
   /** "<feature>:<key>" */
   id: string;
   feature: string;
-  /** The parameter it drives: "distance" (a top-level field) or "direction2.distance". */
-  key: "distance" | "direction2.distance";
+  /** The parameter it drives: "distance" (a top-level field) or "direction2.distance"; a section plane's "offset". */
+  key: "distance" | "direction2.distance" | "offset";
   /** Where the parameter is 0 along the arrow, and the arrow's unit direction. */
   origin: Vec3;
   dir: Vec3;
@@ -32,7 +32,14 @@ export interface HandleSpec {
   locked?: string;
   /** "Depth", "Offset", "Depth (second direction)". */
   label: string;
+  /** A section plane's arrow (view state, not a feature): the view moves the plane itself. */
+  kind?: "section";
+  /** Which section plane (0–2). */
+  plane?: number;
 }
+
+/** A feature's handle (never a section plane's): its key is a feature parameter. */
+export type FeatureHandle = HandleSpec & { key: "distance" | "direction2.distance" };
 
 /** Where the arrow's tip is now: the end the parameter puts it at. */
 export function handleTip(h: HandleSpec, value = h.value): Vec3 {
@@ -58,7 +65,7 @@ const raw = (f: Raw, key: string): unknown => (key.includes(".") ? (f[key.split(
  * evaluated (its numbers place the arrows); `rawFeature` is the document's
  * (an expression there locks the handle).
  */
-export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView | null): HandleSpec[] {
+export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView | null): FeatureHandle[] {
   const id = String(resolved.id);
   const locked = (key: string) => {
     const v = raw(rawFeature, key);
@@ -70,7 +77,7 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     const d = normalize3((resolved.direction as Vec3 | undefined) ?? anchor.normal);
     const start = add3(anchor.at, scale3(anchor.normal, typeof resolved.startOffset === "number" ? resolved.startOffset : 0));
     const extent = (resolved.extent as string | undefined) ?? "blind";
-    const out: HandleSpec[] = [];
+    const out: FeatureHandle[] = [];
     if ((extent === "blind" || extent === "midplane") && typeof resolved.distance === "number") {
       out.push({
         id: `${id}:distance`,

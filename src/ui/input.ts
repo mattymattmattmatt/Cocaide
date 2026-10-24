@@ -171,6 +171,14 @@ export const COMMANDS: CommandDef[] = [
   { id: "rollback.next", label: "Roll forward one feature", group: "Model tools", key: null },
   { id: "rollback.end", label: "Roll to end", group: "Model tools", key: null },
   { id: "sketch.ellipseArc", label: "Partial ellipse (elliptical arc)", group: "Sketch", key: null },
+  // Phase P: the view.
+  { id: "view.dimetric", label: "Dimetric", group: "View", key: null },
+  { id: "view.trimetric", label: "Trimetric", group: "View", key: null },
+  { id: "view.zoomArea", label: "Zoom to area (drag a box)", group: "View", key: null },
+  { id: "view.selectOther", label: "Select other: every face and edge under the pointer", group: "View", key: null },
+  { id: "view.saveView", label: "Save the view under a name", group: "View", key: null },
+  { id: "view.cube", label: "Show or hide the view cube", group: "View", key: null },
+  { id: "view.section", label: "Section view on or off", group: "View", key: null },
 ];
 
 export interface InputPrefs {
