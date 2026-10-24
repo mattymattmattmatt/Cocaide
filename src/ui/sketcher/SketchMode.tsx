@@ -36,6 +36,8 @@ import { NO_PICKS, type EditInput, type EditPicks, type EditToolDef } from "./ed
 import type { Edit } from "../../geom/sketchEdit/relations";
 import { explodable, explodeAll } from "../../geom/sketchEdit/explode";
 import { checkSketch, fixAll, fixProblem, problemSummary, type SketchProblem } from "../../geom/sketchEdit/check";
+import { dxfToSketch } from "../../io/dxfSketch";
+import type { SketchInsert } from "../files/useFiles";
 
 export interface SketchSession {
   /** Existing feature id, or the id the new sketch will get. */
@@ -76,6 +78,12 @@ interface Props {
   onAsk?(target: { kind: "entity"; entity: string } | { kind: "constraint"; index: number } | { kind: "sketch" }, draft: SketchFeature, x: number, y: number): void;
   /** Set by the sketcher: replaces the draft with an accepted proposal's sketch (one sketch undo step). */
   applyRef?: { current: ((feature: SketchFeature) => void) | null };
+  /** Insert DXF…: the app asks for the file and its layers, then calls insertRef. */
+  onInsertDxf?(): void;
+  /** Export DXF: the draft's entities as they are now. */
+  onExportDxf?(entities: SketchEntity[]): void;
+  /** Set by the sketcher: puts a DXF's geometry into the draft (one sketch undo step) and says what came in. */
+  insertRef?: { current: SketchInsert | null };
 }
 
 interface DraftState {
@@ -93,7 +101,7 @@ const MODES: [Tool, string, string, IconName][] = [
   ["convert", "Convert", "sketch.convert", "convertEntities"],
 ];
 
-export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef }: Props) {
+export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef, onInsertDxf, onExportDxf, insertRef }: Props) {
   const [past, setPast] = useState<DraftState[]>([]);
   const [future, setFuture] = useState<DraftState[]>([]);
   const [draft, setDraft] = useState<DraftState>(() => ({ entities: session.entities, constraints: session.isNew ? session.constraints : withOldNames(session.constraints) }));
@@ -188,6 +196,19 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       commit({ entities: f.entities, constraints });
       setSelection([]);
       setMessage(null);
+    };
+  }
+  /** Counted up when a DXF comes in: the canvas fits it into view. */
+  const [fitToken, setFitToken] = useState(0);
+  if (insertRef) {
+    insertRef.current = (read, opts) => {
+      // Beside what is there: new ids, ends joined, level and plumb lines held.
+      const made = dxfToSketch(read, draft.entities, opts);
+      commit({ entities: [...draft.entities, ...made.entities], constraints: [...draft.constraints, ...made.constraints] });
+      setSelection(made.entities.map((e) => ({ kind: "entity" as const, id: e.id })));
+      setMessage(null);
+      setFitToken((t) => t + 1);
+      return made.report;
     };
   }
   const undo = () => {
@@ -614,6 +635,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     "sketch.construction": () => toggleConstruction(editTool && editPicks.entities.length ? editPicks.entities.map((id) => ({ kind: "entity" as const, id })) : selection),
     "sketch.explode": () => explodeItems(),
     "sketch.check": () => setShowCheck((v) => !v),
+    "sketch.insertDxf": () => onInsertDxf?.(),
+    "sketch.exportDxf": () => onExportDxf?.(draft.entities),
     "sketch.fullyDefine": () => openFullyDefine(),
     "sketch.finish": finish,
     ...Object.fromEntries(MODES.map(([t, , id]) => [id, () => setTool(t)])),
@@ -768,6 +791,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           ...tools,
           "sep",
           { label: "Fully Define Sketch…", icon: "fullyDefine", onClick: openFullyDefine, testId: "ctx-fully-define" },
+          ...(onInsertDxf ? [{ label: "Insert DXF…", icon: "dxfInsert", onClick: onInsertDxf, testId: "ctx-insert-dxf" } as MenuEntry] : []),
+          ...(onExportDxf ? [{ label: "Export DXF", icon: "dxfExport", onClick: () => onExportDxf(draft.entities), testId: "ctx-export-dxf" } as MenuEntry] : []),
           { label: showRelations ? "Hide relations" : "Show relations", icon: showRelations ? "eyeOff" : "eye", onClick: () => setShowRelations((v) => !v), testId: "ctx-relations" },
           { label: "Undo", icon: "undo", disabled: !past.length, onClick: undo },
           "sep",
@@ -1004,6 +1029,26 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               title={`Check sketch for feature: open ends, gaps, crossings, overlaps, duplicates, with one-click fixes${keyHint("sketch.check", prefs)}`}
               testId="tool-check"
             />
+            {onInsertDxf && (
+              <IconTool
+                small
+                icon="dxfInsert"
+                label="Insert DXF"
+                onClick={onInsertDxf}
+                title={`Insert DXF…: a drawing's lines, arcs and curves into this sketch, ends joined (or drop a .dxf on the sketch)${keyHint("sketch.insertDxf", prefs)}`}
+                testId="tool-insert-dxf"
+              />
+            )}
+            {onExportDxf && (
+              <IconTool
+                small
+                icon="dxfExport"
+                label="Export DXF"
+                onClick={() => onExportDxf(draft.entities)}
+                title={`Export DXF: this sketch as a DXF in its own plane, mm${keyHint("sketch.exportDxf", prefs)}`}
+                testId="tool-export-dxf"
+              />
+            )}
             <IconTool small icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
             <IconTool small icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
           </ToolStack>
@@ -1052,6 +1097,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           )}
         </div>
         <SketchCanvas
+          fitToken={fitToken}
           entities={entities}
           constraints={shownConstraints}
           model={model}

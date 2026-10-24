@@ -18,11 +18,13 @@ interface Props {
   onSelect(id: string): void;
   onDownload(filename: string, text: string): void;
   fileBase: string;
+  /** Export plates (DXF): the part's flat plates for cutting (the Bodies tab's tool). */
+  onExportPlates?(): void;
 }
 
 const n = (x: number, digits = 1) => x.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: digits });
 
-export function CutListPanel({ doc, measurements, dispatch, onError, onSelect, onDownload, fileBase }: Props) {
+export function CutListPanel({ doc, measurements, dispatch, onError, onSelect, onDownload, fileBase, onExportPlates }: Props) {
   const items = cutList(measurements?.members ?? []);
   const welds = (Array.isArray(doc?.welds) ? doc.welds : []) as unknown as Weld[];
   const total = items.reduce((t, i) => t + i.kgTotal, 0);
@@ -39,6 +41,11 @@ export function CutListPanel({ doc, measurements, dispatch, onError, onSelect, o
         <button onClick={() => onDownload(`${fileBase}-cut-list.csv`, cutListCSV(items, csvHeaderRows(doc, typeof doc?.name === "string" ? doc.name : "part")))} disabled={!items.length} data-testid="cut-list-csv">
           Export CSV
         </button>
+        {onExportPlates && (
+          <button onClick={onExportPlates} title="Every flat plate (end caps, gussets, base plates, flat bars) as a DXF for cutting, with an overview and a cutting list" data-testid="cut-list-plates">
+            Plates (DXF)
+          </button>
+        )}
       </div>
       {items.length === 0 ? (
         <p className="muted small">No members yet. Members are measured on their trimmed bodies, so this list always matches the model.</p>

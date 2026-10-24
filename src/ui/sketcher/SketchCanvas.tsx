@@ -70,6 +70,8 @@ export interface CanvasEdit {
 }
 
 interface Props {
+  /** Changed (counted up) by the sketcher to fit the view to the sketch again: a DXF just came in. */
+  fitToken?: number;
   entities: SketchEntity[];
   constraints: Constraint[];
   /** The model's edges (and the faces along the sketch) projected into the sketch plane: drawn, hit, snapped to, related to. */
@@ -192,6 +194,9 @@ export function SketchCanvas(props: Props) {
     setView((autoFit.current = fitView(entities, model, size)));
     // fit once, on first layout
   }, [size]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (props.fitToken) setView((autoFit.current = fitView(entities, model, size)));
+  }, [props.fitToken]); // eslint-disable-line react-hooks/exhaustive-deps
   // An existing sketch opens before the part as it stood before it has come from the kernel: when its edges
   // arrive, fit them in too, unless the user has moved the view since.
   const modelSeen = useRef(model.edges.length > 0);

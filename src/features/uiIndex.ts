@@ -20,6 +20,7 @@ import { ui as loft } from "./loft/ui";
 import { ui as rib } from "./rib/ui";
 import { ui as sketchPattern } from "./sketchPattern/ui";
 import { ui as hole } from "./hole/ui";
+import { ui as importOp } from "./import/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -38,4 +39,5 @@ export const UI_OP_LIST: UiOp[] = [
   rib,
   sketchPattern,
   hole,
+  importOp,
 ];

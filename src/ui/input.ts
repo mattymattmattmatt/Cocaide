@@ -171,6 +171,11 @@ export const COMMANDS: CommandDef[] = [
   { id: "rollback.next", label: "Roll forward one feature", group: "Model tools", key: null },
   { id: "rollback.end", label: "Roll to end", group: "Model tools", key: null },
   { id: "sketch.ellipseArc", label: "Partial ellipse (elliptical arc)", group: "Sketch", key: null },
+  { id: "tool.importStep", label: "Import a STEP file as bodies", group: "Model tools", key: null },
+  { id: "tool.exportPlates", label: "Export plates for cutting (DXF)", group: "Model tools", key: null },
+  { id: "tool.exportFaceDxf", label: "Export a flat face as DXF", group: "Model tools", key: null },
+  { id: "sketch.insertDxf", label: "Insert a DXF drawing into the sketch", group: "Sketch", key: null },
+  { id: "sketch.exportDxf", label: "Export the sketch as DXF", group: "Sketch", key: null },
 ];
 
 export interface InputPrefs {

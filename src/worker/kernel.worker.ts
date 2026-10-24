@@ -5,7 +5,6 @@ import wasmUrl from "replicad-opencascadejs/wasm?url";
 import {
   describeEdges,
   describeFaces,
-  exportSTEP,
   heapBytes,
   loadOC,
   RECYCLE_HEAP_BYTES,
@@ -16,7 +15,8 @@ import {
   type RebuildResult,
 } from "../kernel";
 import { LocalKernel } from "../ask/kernel";
-import { exportRefusal, photoNote } from "../doc/photo";
+import { exportRefusal } from "../doc/photo";
+import { exportPartSTEP } from "../kernel/stepPart";
 import { labelBodies } from "../kernel/bodies";
 import { evaluate } from "./evaluate";
 import { rebuild } from "../kernel/rebuild";
@@ -118,7 +118,7 @@ async function handle(kernel: OC, req: KernelRequest) {
         post({ id: req.id, type: "step", ok: false, errors });
         return;
       }
-      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportSTEP(kernel, result.solid, result.name, photoNote(req.doc), result.bodies) });
+      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportPartSTEP(kernel, result, req.doc) });
     }
   } catch (e) {
     post({ id: req.id, type: "error", message: e instanceof Error ? e.message : String(e) });

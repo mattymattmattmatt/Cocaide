@@ -9,6 +9,7 @@ import type { LibraryEntry } from "../../weldment/library";
 import type { Command, RawDocument } from "../../doc/commands";
 import type { PlaneSpec } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
+import type { FlatQuery, FlatResult } from "../../kernel/flat";
 import type { IconName } from "../icons";
 import type { Selection } from "./selection";
 
@@ -68,6 +69,20 @@ export interface ToolCtx {
   setRightTab(tab: RightTab): void;
   /** Opens (or, open, closes) an Evaluate panel over the view: Measure, Mass Properties, Section view. */
   evaluate?(panel: EvaluatePanel): void;
+  /** Files in and out (STEP import, DXF export): App gives them; tools say so when they are absent. */
+  files?: ToolFiles;
+}
+
+/** What tools that read or write files use. */
+export interface ToolFiles {
+  /** The browser's file chooser (accept: ".step,.stp"); null when the person cancels. */
+  pick(accept: string): Promise<File | null>;
+  /** Saves text or bytes as a download. */
+  save(name: string, data: string | Uint8Array, type: string): void;
+  /** Flat outlines from the kernel (a planar face, the flat plates), on the part as it is shown. */
+  flat(query: FlatQuery): Promise<FlatResult>;
+  /** The base of an export's file name: the part number (and revision), else the part's name. */
+  base(): string;
 }
 
 /** The Evaluate tab's panels. */
