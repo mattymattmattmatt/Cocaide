@@ -14,7 +14,8 @@
 //   "body:<name>"   add features that touch only that body (sketches touch none); rename it; set its material
 //   "node:<name>"   move or rename that node
 //   "weld:<id>"     change or remove that weld in the weld table ("+" adds one)
-//   "drawing"       anything in the drawing (never the part's features)
+//   "drawing"       anything in the drawing (never the part's features), and the part's properties its title block shows
+//   "properties"    the part's properties (part number, description, revision, author, finish, custom)
 //   "view:<id>"     that view, the annotations in it, and new annotations in it
 //   "annotation:<id>" that annotation, in the view it is in
 //   "*"             anything (the whole part)
@@ -167,6 +168,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
     case "setSheet":
       what = cmd.type;
       allowed = has("drawing");
+      break;
+    case "setProperties":
+      // The part's number, description ...: they change no feature; the drawing's title block shows them.
+      what = "setProperties";
+      allowed = has("properties") || has("drawing");
       break;
     case "setView":
       what = `setView "${cmd.id}"`;

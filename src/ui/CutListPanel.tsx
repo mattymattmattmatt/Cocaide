@@ -3,6 +3,7 @@
 // notes in the document, edited here.
 
 import type { Command, RawDocument } from "../doc/commands";
+import { csvHeaderRows } from "../doc/properties";
 import { WELD_TYPES, type Weld } from "../doc/types";
 import type { Measurements } from "../kernel";
 import { anglesText, cutList, cutListCSV, weldTableCSV } from "../weldment/cutlist";
@@ -35,7 +36,7 @@ export function CutListPanel({ doc, measurements, dispatch, onError, onSelect, o
     <section className="panel cut-list" aria-label="Cut list" data-testid="cut-list">
       <div className="cut-list-head">
         <h2>Cut list</h2>
-        <button onClick={() => onDownload(`${fileBase}-cut-list.csv`, cutListCSV(items))} disabled={!items.length} data-testid="cut-list-csv">
+        <button onClick={() => onDownload(`${fileBase}-cut-list.csv`, cutListCSV(items, csvHeaderRows(doc, typeof doc?.name === "string" ? doc.name : "part")))} disabled={!items.length} data-testid="cut-list-csv">
           Export CSV
         </button>
       </div>

@@ -98,7 +98,7 @@ export interface ComposedSheet {
 }
 
 const BORDER = { left: 20, right: 10, bottom: 10, top: 10 };
-export const TITLE_BLOCK: Vec2 = [180, 30];
+export const TITLE_BLOCK: Vec2 = [180, 39];
 /** Between views (their annotations' room included), and from the border. */
 const GAP = 6;
 const INSET = 4;
@@ -992,38 +992,45 @@ class Composer {
     const b = this.titleBlock;
     const s = this.d.sheet;
     const m = this.ctx.measurements;
+    // The part's properties fill what the sheet does not say itself: its own number, revision and "drawn by" win.
+    const p = this.v.properties;
     const material = m?.mass.material ?? this.v.material?.name ?? "steel";
     const cells: { x: number; y: number; w: number; h: number; label: string; value: string; big?: boolean }[] = [];
     const [x0, y0] = b.min;
     const row1 = 12;
     const row = 9;
-    // Top row: the title and the drawing number.
-    cells.push({ x: x0, y: y0 + 2 * row, w: 120, h: row1, label: "TITLE", value: s.title ?? this.v.name, big: true });
-    cells.push({ x: x0 + 120, y: y0 + 2 * row, w: 60, h: row1, label: "DRAWING NO.", value: s.number ?? "" });
-    // Middle: what it is made of and how it is drawn.
-    let x = x0;
-    for (const [w, label, value] of [
-      [62, "MATERIAL", material],
+    const rows = (y: number, list: readonly (readonly [number, string, string])[]) => {
+      let x = x0;
+      for (const [w, label, value] of list) {
+        cells.push({ x, y, w, h: row, label, value });
+        x += w;
+      }
+    };
+    // Top row: the title and the part number.
+    cells.push({ x: x0, y: y0 + 3 * row, w: 110, h: row1, label: "TITLE", value: s.title ?? this.v.name, big: true });
+    cells.push({ x: x0 + 110, y: y0 + 3 * row, w: 70, h: row1, label: "PART NO.", value: p.partNumber ?? "" });
+    // What it is, the drawing's number and revision.
+    rows(y0 + 2 * row, [
+      [110, "DESCRIPTION", p.description ?? ""],
+      [45, "DRAWING NO.", s.number ?? p.partNumber ?? ""],
+      [25, "REV", s.revision ?? p.revision ?? ""],
+    ]);
+    // What it is made of and how it is drawn.
+    rows(y0 + row, [
+      [56, "MATERIAL", material],
+      [54, "FINISH", p.finish ?? ""],
       [30, "MASS", m ? `${m.mass.kg.toFixed(2)} kg` : ""],
-      [28, "SCALE", scaleText(scale)],
+      [20, "SCALE", scaleText(scale)],
       [20, "SIZE", s.size],
-      [20, "REV", s.revision ?? ""],
-      [20, "SHEET", "1 of 1"],
-    ] as const) {
-      cells.push({ x, y: y0 + row, w, h: row, label, value });
-      x += w;
-    }
-    // Bottom: who and when, and the projection.
-    x = x0;
-    for (const [w, label, value] of [
-      [40, "DRAWN", s.drawnBy ?? ""],
-      [36, "DATE", s.date ?? ""],
+    ]);
+    // Who and when, the projection, the sheet.
+    rows(y0, [
+      [36, "DRAWN", s.drawnBy ?? p.author ?? ""],
+      [28, "DATE", s.date ?? ""],
       [44, `${s.projection.toUpperCase()} ANGLE`, ""],
-      [60, "UNITS", "mm. Do not scale."],
-    ] as const) {
-      cells.push({ x, y: y0, w, h: row, label, value });
-      x += w;
-    }
+      [20, "SHEET", "1 of 1"],
+      [52, "UNITS", "mm. Do not scale."],
+    ]);
     const line = (pts: Vec2[], w: number = LINE.thin) => this.prims.push({ k: "line", pts, w, owner: "titleBlock" });
     line([b.min, [b.max[0], b.min[1]], b.max, [b.min[0], b.max[1]], b.min], LINE.visible);
     for (const c of cells) {

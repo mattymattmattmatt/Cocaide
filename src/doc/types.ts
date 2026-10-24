@@ -22,6 +22,8 @@ export interface CocaideDocument {
   bodyMaterials?: Record<string, Material>;
   /** Where the part came from, kept as notes (a drawing's title block). Stored, never simulated. */
   source?: DocumentSource;
+  /** The part's properties (Phase P): its number, description, revision ... The drawing's title block, the cut list and STEP export read them. */
+  properties?: PartProperties;
   /** A photo pinned under the part as a reference. Never geometry. */
   photo?: PhotoUnderlay;
   /** Weldment profiles the part uses, by name: its own copies, so it opens anywhere. */
@@ -296,6 +298,27 @@ export interface DocumentSource {
 }
 
 export const SOURCE_KEYS = ["drawing", "drawingNumber", "projection", "material", "units"] as const;
+
+/**
+ * The part's properties, as a fabricator keeps them: every one optional text.
+ * A drawing's title block shows them where its own sheet fields are not set
+ * (the sheet's number, revision and "drawn by" win over the part's), the cut
+ * list CSV starts with the part number and description, and STEP export names
+ * the product by the part number.
+ */
+export interface PartProperties {
+  partNumber?: string;
+  description?: string;
+  revision?: string;
+  /** Who drew it: the title block's "drawn by". */
+  author?: string;
+  /** Surface finish or coating: "Hot-dip galvanised", "Powder coat black". */
+  finish?: string;
+  /** Anything else, by name: "Customer": "Acme", "Job": "2417". */
+  custom?: Record<string, string>;
+}
+
+export const PROPERTY_KEYS = ["partNumber", "description", "revision", "author", "finish", "custom"] as const;
 
 export interface Material {
   name?: string;
