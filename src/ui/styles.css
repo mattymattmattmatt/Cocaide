@@ -1463,3 +1463,5 @@ svg.icon { flex: none; display: block; }
 .import-turns { display: flex; gap: 6px; padding-left: 118px; margin: -2px 0 4px; }
 .import-turns button { height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; }
 .import-turns button:hover { border-color: var(--accent); }
+.cut-list-head:has([data-testid="cut-list-plates"]) { justify-content: flex-start; gap: 6px; }
+.cut-list-head:has([data-testid="cut-list-plates"]) h2 { margin-right: auto; }

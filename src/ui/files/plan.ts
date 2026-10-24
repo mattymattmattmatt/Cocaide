@@ -46,9 +46,13 @@ export function bodyNameFor(fileName: string): string {
 /** Too big to keep, or big enough to warn about: what the person is told before the file goes into the part. */
 export function stepSizeProblem(chars: number): { refuse?: string; warn?: string } {
   if (chars > MAX_STEP_CHARS) return { refuse: `The STEP file is ${sizeText(chars)}: a part holds at most ${sizeText(MAX_STEP_CHARS)}. Simplify the model (fewer, simpler faces) or import it in parts.` };
-  if (chars > WARN_STEP_CHARS) return { warn: `The STEP file is ${sizeText(chars)}: the part holds the whole file, so saving, undo and rebuilds get slower. Keep imports to a few MB where you can.` };
+  if (chars > WARN_STEP_CHARS) return { warn: `The STEP file is ${sizeText(chars)}: the part holds the whole file, so saving, undo and rebuilds get slower. Keep imports to a few MB where you can, and Save the part to keep it (it is too big for this browser to keep between visits).` };
+  if (chars > KEEP_CHARS) return { warn: `The STEP file is ${sizeText(chars)}: too big for this browser to keep between visits. Save the part (.cocaide.json) to keep it.` };
   return {};
 }
+
+/** About what this browser keeps of the working part between visits (its local storage holds the text twice). */
+const KEEP_CHARS = 2 * 1024 * 1024;
 
 /**
  * The import feature for a STEP file added to `doc`: its bodies named after

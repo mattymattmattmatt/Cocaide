@@ -60,7 +60,7 @@ export function useFiles(o: Options) {
     const made = importFeature(latest.current.doc, fileName, text);
     if (typeof made === "string") return o.notice(made);
     latest.current.create(made.feature);
-    latest.current.notice(`Imported ${fileName}${made.warning ? `. ${made.warning}` : ": move or turn it in Properties"}`, made.warning ? "error" : "info");
+    latest.current.notice(`Imported ${fileName}${made.warning ? `. ${made.warning}` : ": move or turn it in Properties"}`, "info");
   };
 
   /** A STEP, DXF or part file from Open: a STEP or DXF opens as a new part (a DXF after its questions). True when it was one of these. */

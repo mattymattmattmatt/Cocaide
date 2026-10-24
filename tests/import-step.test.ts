@@ -195,6 +195,41 @@ describe("STEP import, kernel side", () => {
     expect(open.errors[0]).toMatch(/^import_1: the STEP file holds surfaces only \(5 faces\) and they do not close into a solid \(\d+ open edges after sewing\): export the part as a solid, or close the gaps in the program it came from$/);
   });
 
+  it("counts a part used twice in an assembly twice, as the reader makes it: the document and the kernel agree", () => {
+    // An assembly with one 10 x 20 x 30 block placed twice (two occurrences of one product), written with XCAF.
+    const text = scoped((s) => {
+      const box = s.track(new oc.BRepPrimAPI_MakeBox(10, 20, 30));
+      const solid = s.track(box.Shape());
+      const str = (v: string) => s.track(new oc.TCollection_ExtendedString(v, false));
+      const doc = new oc.TDocStd_Document(str("XmlXCAF"));
+      const shapes = oc.XCAFDoc_DocumentTool.ShapeTool(s.track(doc.Main()));
+      const assembly = s.track(shapes.NewShape());
+      oc.TDataStd_Name.Set(assembly, str("pair"));
+      const label = s.track(shapes.AddShape(solid, false, false));
+      oc.TDataStd_Name.Set(label, str("block"));
+      for (const x of [0, 50]) {
+        const t = s.track(new oc.gp_Trsf());
+        t.SetTranslation(s.track(new oc.gp_Vec(x, 0, 0)));
+        s.track(shapes.AddComponent(assembly, label, s.track(new oc.TopLoc_Location(t))));
+      }
+      shapes.UpdateAssemblies();
+      const writer = s.track(new oc.STEPCAFControl_Writer());
+      const path = "/pair.step";
+      if (!writer.Perform(doc, path, s.track(new oc.Message_ProgressRange()))) throw new Error("write failed");
+      const out = new TextDecoder().decode(oc.FS.readFile(path) as Uint8Array);
+      oc.FS.unlink(path);
+      return out;
+    });
+    expect(text.match(/MANIFOLD_SOLID_BREP/g)).toHaveLength(1);
+    expect(stepSolidCount(text)).toBe(2);
+    const b = built(part(imp({ fileName: "pair.step", newBody: "block" }, text)));
+    expect(b.errors).toEqual([]);
+    expect(b.bodies.map((x) => [x.name, x.volume, x.min[0]])).toEqual([
+      ["block", 6000, 0],
+      ["block_2", 6000, 50],
+    ]);
+  });
+
   it("says when a STEP file holds nothing to build", () => {
     const empty = "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nFILE_NAME('x','',(''),(''),'','','');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n";
     expect(() => readStepSolids(oc, empty)).toThrow(StepImportError);

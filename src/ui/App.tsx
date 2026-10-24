@@ -2002,7 +2002,7 @@ function Help() {
         )}
       </ol>
       <p className="muted small">
-        Select a feature in the tree to edit it. Every change can be undone (Ctrl+Z). Drop a part file, a drawing (PDF or image) or a photo of a part on the
+        Select a feature in the tree to edit it. Every change can be undone (Ctrl+Z). Drop a part file, a STEP file (as a part or a body), a DXF (as a sketch), a drawing (PDF or image) or a photo of a part on the
         window to start from it. All lengths are in millimetres.
       </p>
     </div>
