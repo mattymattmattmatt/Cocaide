@@ -28,7 +28,7 @@ uniform vec3 hatch;
 void main() {
   #include <clipping_planes_fragment>
   float s = step(0.78, fract((gl_FragCoord.x + gl_FragCoord.y) / 10.0));
-  gl_FragColor = vec4(mix(color, hatch, s), 1.0);
+  gl_FragColor = vec4(mix(color, hatch, s * 0.75), 1.0);
 }`;
 
 /** What a cap is made from: some of the part's triangles (a body, or every cut body), and their cap colours. */
