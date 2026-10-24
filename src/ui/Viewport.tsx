@@ -209,6 +209,8 @@ interface ViewportApi {
   under(clientX: number, clientY: number): UnderPointer[];
   /** Lights one up while the Select Other list is hovered (null: none). */
   preview(t: PickTarget | null): void;
+  /** Clears the pinned rotation centre. */
+  unpin(): void;
   setCubeVisible(v: boolean): void;
   dispose(): void;
 }
@@ -257,8 +259,8 @@ export function Viewport({
   const photoPointRef = useRef(onPhotoPoint);
   photoPointRef.current = onPhotoPoint;
   // Read by the view's own listeners, which are made once: always the newest.
-  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on) });
-  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on) };
+  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on) });
+  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on) };
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
@@ -266,6 +268,8 @@ export function Viewport({
   const [areaMode, setAreaMode] = useState(false);
   /** Select Other's list, at the pointer. */
   const [others, setOthers] = useState<{ x: number; y: number; list: UnderPointer[] } | null>(null);
+  /** A rotation centre is pinned (a middle-click on the part). */
+  const [pinned, setPinned] = useState(false);
   const infoRef = useRef<{ faces: FaceInfo[]; edges: EdgeInfo[]; datums: Record<string, Datum> }>({ faces: [], edges: [], datums: {} });
   infoRef.current = { faces: view?.faces ?? [], edges: view?.edges ?? [], datums: view?.datums ?? {} };
   /** The camera as it is when the view mounts: none remembered, or the one this document's view was left at. */
@@ -627,6 +631,7 @@ export function Viewport({
           dot.renderOrder = 11;
           pivotGroup.add(dot);
         }
+        live.current.onPinned(!!p);
         render();
       },
       centre: centreNow,
@@ -1801,6 +1806,7 @@ export function Viewport({
         if (on !== areaOn) setArea(on);
       },
       under: underAt,
+      unpin: () => controls.pin(null),
       preview(t: PickTarget | null) {
         if (sameTarget(t, peek)) return;
         peek = t;
@@ -2075,6 +2081,16 @@ export function Viewport({
         <div className="view-hint" role="status" data-testid="zoom-area-hint">
           <Icon name="zoomArea" />
           Drag a box round the area to zoom to. Esc cancels.
+        </div>
+      )}
+      {pinned && !areaMode && (
+        <div className="view-hint pinned-hint" role="status" data-testid="pinned-hint">
+          <span className="pin-dot" aria-hidden="true" />
+          Turning about the pinned point
+          <span className="muted">· middle-click empty space or Esc to clear</span>
+          <button onClick={() => api.current?.unpin()} onMouseDown={(e) => e.preventDefault()} aria-label="Clear the pinned rotation centre" title="Clear the pinned rotation centre (Esc)" data-testid="pinned-clear">
+            <Icon name="x" size={12} />
+          </button>
         </div>
       )}
       {sectionPlanesOn > 0 && (

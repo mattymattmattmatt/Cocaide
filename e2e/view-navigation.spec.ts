@@ -126,6 +126,7 @@ test("a middle-click on a vertex pins the rotation centre there (a marker shows 
   await page.mouse.click(at[0], at[1], { button: "middle" });
   expect(await call(page, "pinned")).toEqual(vertex);
   expect(await call(page, "pivotMarker")).toBe(true);
+  await expect(page.getByTestId("pinned-hint")).toContainText("Turning about the pinned point");
   expect((await call(page, "rotationCentre")).why).toBe("pinned");
   await shot(page, "pinned");
   // It stays pinned for more than one rotation, and the vertex keeps its place on the screen.
@@ -137,6 +138,7 @@ test("a middle-click on a vertex pins the rotation centre there (a marker shows 
   await page.keyboard.press("Escape");
   expect(await call(page, "pinned")).toBeNull();
   expect(await call(page, "pivotMarker")).toBe(false);
+  await expect(page.getByTestId("pinned-hint")).toHaveCount(0);
   // A middle-click on empty space clears it too, and a standard view.
   await page.mouse.click(at[0], at[1], { button: "middle" });
   const box = (await page.getByTestId("viewport").boundingBox())!;
@@ -148,6 +150,13 @@ test("a middle-click on a vertex pins the rotation centre there (a marker shows 
   await page.mouse.click(again[0], again[1], { button: "middle" });
   expect(await call(page, "pinned")).not.toBeNull();
   await page.keyboard.press("Control+7");
+  expect(await call(page, "pinned")).toBeNull();
+  // The hint's × clears it too.
+  const last = await project(page, vertex);
+  await page.waitForTimeout(400);
+  await page.mouse.click(last[0], last[1], { button: "middle" });
+  await expect(page.getByTestId("pinned-hint")).toBeVisible();
+  await page.getByTestId("pinned-clear").click();
   expect(await call(page, "pinned")).toBeNull();
 });
 

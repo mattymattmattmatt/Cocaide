@@ -1499,6 +1499,10 @@ svg.icon { flex: none; display: block; }
   box-shadow: 0 4px 14px rgb(0 0 0 / 0.1); pointer-events: none;
 }
 .view-hint .icon { color: var(--accent); }
+.view-hint.pinned-hint { pointer-events: auto; border-color: #1c64b8; padding-right: 6px; }
+.view-hint .pin-dot { width: 10px; height: 10px; border-radius: 50%; background: #1c64b8; box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px #1c64b8; flex: none; }
+.view-hint button { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.view-hint button:hover { background: var(--panel-2); color: var(--text); }
 /* the Section tag while a section is on */
 .section-tag {
   position: absolute; right: 12px; bottom: 12px; z-index: 3; display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px;
@@ -1542,3 +1546,8 @@ svg.icon { flex: none; display: block; }
 .settings-speed { display: flex; align-items: center; gap: 10px; }
 .settings-speed input[type="range"] { flex: 1; }
 .settings-speed output { min-width: 44px; text-align: right; font-family: var(--mono); font-size: 12px; }
+/* the triad's and cube's boxes let clicks through to the view; only their arrows, labels, cells and buttons take them */
+.view-triad { pointer-events: none; }
+.view-triad .triad-axis { pointer-events: auto; }
+.view-cube { pointer-events: none; }
+.view-cube .cube-cell, .view-cube .cube-turn { pointer-events: auto; }

@@ -54,17 +54,42 @@ export function useSectionView(docName: string, view: RebuildView | null, select
   const [panelOpen, setPanelOpen] = useState(() => !!section?.on);
   // Another part: its own section, as it was left.
   const loadedFor = useRef(docName);
+  const flushRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     if (loadedFor.current === docName) return;
     loadedFor.current = docName;
+    // The last part's section first, under its own name.
+    flushRef.current();
     const s = docName ? (loadView(docName).section ?? null) : null;
     setSectionState(s);
     setPanelOpen(!!s?.on);
   }, [docName]);
 
+  // Remembered a moment after it stops changing (a dragged arrow changes it every frame), and before the page goes.
+  const pending = useRef<{ name: string; section: SectionView | null } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flush = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    const p = pending.current;
+    pending.current = null;
+    if (p?.name) saveView(p.name, { section: p.section ?? undefined });
+  };
+  flushRef.current = flush;
+  useEffect(() => {
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const setSection = (next: SectionView | null) => {
     setSectionState(next);
-    if (docName) saveView(docName, { section: next ?? undefined });
+    if (!docName) return;
+    if (pending.current && pending.current.name !== docName) flush();
+    pending.current = { name: docName, section: next };
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, 250);
   };
 
   // Planes on plane features follow them, and go when they do.
