@@ -325,13 +325,12 @@ export function SectionPanel({
             </label>
             <span className="unit">°</span>
           </div>
-          <div className="section-plane-checks">
-            <label className="eval-check">
-              <input type="checkbox" checked={plane.flip} onChange={(e) => update({ ...plane, flip: e.target.checked })} data-testid="section-flip" />
-              Flip: cut away the other side
-            </label>
-            {section.planes.length > 1 && (
-              <span className="section-plane-actions">
+          <label className="eval-check">
+            <input type="checkbox" checked={plane.flip} onChange={(e) => update({ ...plane, flip: e.target.checked })} data-testid="section-flip" />
+            Flip: cut away the other side
+          </label>
+          {section.planes.length > 1 && (
+            <div className="section-plane-checks">
                 <label className="eval-check" title="Off: this plane cuts nothing (its settings are kept)">
                   <input
                     type="checkbox"
@@ -343,14 +342,13 @@ export function SectionPanel({
                     }}
                     data-testid="section-enabled"
                   />
-                  On
+                  Section {i + 1} cuts
                 </label>
                 <button className="link" onClick={() => onChange(removePlane(section, i))} title={`Remove Section ${i + 1}`} data-testid="section-remove">
-                  Remove
+                  Remove this plane
                 </button>
-              </span>
-            )}
-          </div>
+            </div>
+          )}
           <div className="section-shared">
             <label className="eval-check">
               <input type="checkbox" checked={section.showPlane} onChange={(e) => onChange({ ...section, showPlane: e.target.checked })} data-testid="section-show-plane" />

@@ -1502,7 +1502,7 @@ svg.icon { flex: none; display: block; }
 /* the Section tag while a section is on */
 .section-tag {
   position: absolute; right: 12px; bottom: 12px; z-index: 3; display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px;
-  border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text); pointer-events: auto; cursor: default;
+  border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--text); pointer-events: auto; cursor: pointer;
   background: color-mix(in srgb, var(--section-cap) 22%, var(--panel)); border: 1px solid var(--section-cap);
 }
 .section-tag .icon { color: var(--section-hatch); }
@@ -1538,3 +1538,7 @@ svg.icon { flex: none; display: block; }
 .section-body-list { display: flex; flex-direction: column; max-height: 132px; overflow: auto; padding-left: 4px; }
 .section-body-list .eval-check { margin: 2px 0; }
 .section-summary { margin: 0; }
+/* Settings > Mouse: the rotation speed */
+.settings-speed { display: flex; align-items: center; gap: 10px; }
+.settings-speed input[type="range"] { flex: 1; }
+.settings-speed output { min-width: 44px; text-align: right; font-family: var(--mono); font-size: 12px; }

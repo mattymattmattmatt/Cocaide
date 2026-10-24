@@ -20,14 +20,14 @@ void main() {
   #include <clipping_planes_vertex>
 }`;
 
-/** Diagonal hatching in screen space over the cap colour: reads as "cut material" at any zoom. */
+/** Thin diagonal hatching in screen space over the cap colour: reads as "cut material" at any zoom, without shouting. */
 const FRAGMENT = `
 #include <clipping_planes_pars_fragment>
 uniform vec3 color;
 uniform vec3 hatch;
 void main() {
   #include <clipping_planes_fragment>
-  float s = step(0.55, fract((gl_FragCoord.x + gl_FragCoord.y) / 9.0));
+  float s = step(0.78, fract((gl_FragCoord.x + gl_FragCoord.y) / 10.0));
   gl_FragColor = vec4(mix(color, hatch, s), 1.0);
 }`;
 

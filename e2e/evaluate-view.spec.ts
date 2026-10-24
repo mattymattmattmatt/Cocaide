@@ -178,7 +178,8 @@ test("section view through the hole: capped, moved, flipped, off again", async (
 
 test("display styles and perspective switch, and are remembered for the document", async ({ page }) => {
   const display = () => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.display());
-  expect(await display()).toEqual({ style: "shadedEdges", perspective: true, edgesShown: true, surfacesShown: true });
+  // Orthographic by default (Phase P); the toggle below turns perspective on.
+  expect(await display()).toEqual({ style: "shadedEdges", perspective: false, edgesShown: true, surfacesShown: true });
   const pick = async (style: string) => {
     await page.getByTestId("display-style").click();
     await page.getByTestId(`display-${style}`).click();
@@ -196,13 +197,13 @@ test("display styles and perspective switch, and are remembered for the document
   expect(await display()).toMatchObject({ style: "wireframe", edgesShown: true, surfacesShown: false });
   await shot(page, "display-wireframe");
   await page.getByTestId("view-perspective").click();
-  expect(await display()).toMatchObject({ perspective: false });
-  await shot(page, "display-orthographic");
+  expect(await display()).toMatchObject({ perspective: true });
+  await shot(page, "display-perspective");
 
   // Reloaded, the bracket comes back as it was left.
   await page.reload();
   await waitForRebuild(page);
-  expect(await display()).toMatchObject({ style: "wireframe", perspective: false });
+  expect(await display()).toMatchObject({ style: "wireframe", perspective: true });
   await pick("shadedEdges");
   expect(await display()).toMatchObject({ style: "shadedEdges", edgesShown: true, surfacesShown: true });
 

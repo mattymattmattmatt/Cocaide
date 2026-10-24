@@ -1699,6 +1699,7 @@ export function App() {
                   section={section}
                   onSection={sectionCtl.setSection}
                   onSectionToggle={sectionCtl.toggleShown}
+                  onSectionPanel={sectionCtl.openPanel}
                   overlay={overlay}
                   dims={dims}
                   onDimension={(dim, x, y) => setValueBox({ x, y, dim })}

@@ -100,6 +100,8 @@ interface Props {
   onSection?(next: SectionView): void;
   /** The view bar's Section toggle: on or off, or set up when there is none. */
   onSectionToggle?(): void;
+  /** Show the section's panel (its tag clicked, an arrow's value clicked). */
+  onSectionPanel?(): void;
   /** The Evaluate tools' marks: measured lines, points, the centre of mass. */
   overlay?: EvalOverlay | null;
   /** A feature's dimensions shown on the model; a double-click on one asks to edit it. */
@@ -234,6 +236,7 @@ export function Viewport({
   section = null,
   onSection,
   onSectionToggle,
+  onSectionPanel,
   overlay = null,
   dims = NO_DIMS,
   onDimension,
@@ -254,8 +257,8 @@ export function Viewport({
   const photoPointRef = useRef(onPhotoPoint);
   photoPointRef.current = onPhotoPoint;
   // Read by the view's own listeners, which are made once: always the newest.
-  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, section, onArea: (on: boolean) => setAreaMode(on) });
-  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, section, onArea: (on: boolean) => setAreaMode(on) };
+  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on) });
+  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on) };
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
@@ -313,7 +316,7 @@ export function Viewport({
     const sectionPlanes = new SectionPlanes({ fill: cssColor(el, "--section-plane", "#3a8dde"), border: cssColor(el, "--section-plane-border", "#2f74c0"), active: cssColor(el, "--section-plane-active", "#1c64b8") });
     const evalLayer = new EvalLayer(el, {
       onDimension: (d, x, y) => live.current.onDimension?.(d, x, y),
-      onHandleLabel: (h, x, y) => live.current.onHandleLabel?.(h, x, y),
+      onHandleLabel: (h, x, y) => (h.kind === "section" ? sectionLabel(h) : live.current.onHandleLabel?.(h, x, y)),
     });
     scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group);
     let photoMesh: THREE.Mesh | null = null;
@@ -1431,6 +1434,18 @@ export function Viewport({
     canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("dblclick", onDblClick);
 
+    /** A section arrow's value clicked: that plane in the panel, its offset ready to type. */
+    const sectionLabel = (h: HandleSpec) => {
+      const v = live.current.section;
+      if (!v) return;
+      live.current.onSection?.({ ...v, active: h.plane ?? 0, collapsed: false });
+      live.current.onSectionPanel?.();
+      setTimeout(() => {
+        const input = document.querySelector<HTMLInputElement>('input[data-testid="section-offset"]');
+        input?.focus();
+        input?.select();
+      }, 50);
+    };
     /** A section arrow dragged: its plane's offset, live; cancelled, back to where it was. */
     const dragSection = (h: HandleSpec, phase: HandlePhase, value: number) => {
       const v = live.current.section;
@@ -2043,10 +2058,19 @@ export function Viewport({
         </div>
       )}
       {sectionPlanesOn > 0 && (
-        <div className="section-tag" role="status" data-testid="section-tag" title="The section view is on: the view bar's Section button turns it off (its planes are kept)">
+        <button
+          className="section-tag"
+          onClick={() => {
+            if (section) onSection?.({ ...section, collapsed: false });
+            onSectionPanel?.();
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          title="The section view is on: click for its settings. The view bar's Section button turns it off (its planes are kept)."
+          data-testid="section-tag"
+        >
           <Icon name="section" size={13} />
           Section{sectionPlanesOn > 1 ? ` · ${sectionPlanesOn} planes` : ""}
-        </div>
+        </button>
       )}
       {onFilter && (
         <div className="filter-buttons" role="toolbar" aria-label="Selection filter" onMouseDown={(e) => e.preventDefault()}>

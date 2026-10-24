@@ -177,9 +177,9 @@ export class EvalLayer {
       this.handleGroup.add(shaft, head);
       this.arrows.set(h.id, { shaft, head, mat, lineMat });
       const { h: spec, value } = dragging?.h.id === h.id ? dragging : { h, value: h.value };
-      const el = this.tag(`${h.label} ${handleText(h, value)}`, `eval-label handle-label${h.locked ? " locked" : ""}`, `handle-label-${h.id}`);
+      const el = this.tag(h.kind === "section" ? `${h.label}: ${handleText(h, value)}` : `${h.label} ${handleText(h, value)}`, `eval-label handle-label${h.locked ? " locked" : ""}${h.kind === "section" ? " section-handle" : ""}`, `handle-label-${h.id}`);
       // A locked label still answers a click: the app says why it cannot be typed into.
-      el.title = h.locked ?? "Drag the arrow, or click here to type a value";
+      el.title = h.locked ?? (h.kind === "section" ? "Drag the arrow to move the plane (whole millimetres; Shift for tenths), or click here to type the offset" : "Drag the arrow, or click here to type a value");
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const r = el.getBoundingClientRect();

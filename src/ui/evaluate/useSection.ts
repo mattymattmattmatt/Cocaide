@@ -25,6 +25,8 @@ export interface SectionControl {
   toggleShown(): void;
   /** The panel's close: the section goes off (kept for next time) and the panel closes. */
   close(): void;
+  /** Opens the panel (the section's tag, an arrow's value clicked). */
+  openPanel(): void;
   /** Plane i moved onto a default plane, a plane feature or the selected face. */
   planeTo(i: number, on: string): void;
 }
@@ -112,6 +114,9 @@ export function useSectionView(docName: string, view: RebuildView | null, select
     close() {
       if (section) setSection({ ...section, on: false });
       setPanelOpen(false);
+    },
+    openPanel() {
+      setPanelOpen(true);
     },
     planeTo(i: number, on: string) {
       if (!section) return;

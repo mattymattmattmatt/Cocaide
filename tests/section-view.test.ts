@@ -152,18 +152,25 @@ describe("drawing and dragging a plane", () => {
     expect(sectionRect(top, box).corners[0][0]).toBeCloseTo(-58, 9);
   });
 
-  it("puts the drag arrow on the rectangle's middle along the offset's way; tilted, a mm of drag moves the offset 1/cos", () => {
+  it("puts the drag arrow on the middle of the rectangle's far edge, along the offset's way; tilted, a mm of drag moves the offset 1/cos", () => {
     const a = offsetArrow(top, box)!;
     close(a.dir, [0, 0, 1]);
     expect(a.scale).toBe(1);
-    close(a.tip, [0, 0, 4]);
+    // Top: the far edge along Y, 30 + 8 % of 100 out, at the plane's height.
+    close(a.tip, [0, 38, 4]);
     // Its foot at offset 0 is where the plane would be at offset 0.
-    close(a.origin, [0, 0, 0]);
+    close(a.origin, [0, 38, 0]);
     const t = offsetArrow({ ...top, tilt: [60, 0] }, box)!;
     expect(t.scale).toBeCloseTo(2, 12);
-    // The tip: origin + dir · offset / scale is on the tilted plane, over the part's middle.
+    // The tip: origin + dir · offset / scale is on the tilted plane, at its rectangle's far edge.
     const tip: Vec3 = [0, 1, 2].map((i) => t.origin[i] + t.dir[i] * (top.offset / t.scale)) as Vec3;
     close(tip, t.tip);
+    const f = sectionFrame({ ...top, tilt: [60, 0] });
+    expect(f.normal.reduce((sum, n, i) => sum + n * (tip[i] - f.point[i]), 0)).toBeCloseTo(0, 9);
+    // Moved by 10 mm of offset, the tilted plane moves 10 · cos 60° = 5 mm along its normal, and the tip with it.
+    const moved = offsetArrow({ ...top, offset: 14, tilt: [60, 0] }, box)!;
+    const shift = [0, 1, 2].map((i) => moved.tip[i] - t.tip[i]) as Vec3;
+    close(shift, [0, 1, 2].map((i) => t.dir[i] * 5) as Vec3);
     // Tilted almost square to its own offset: no arrow (type the offset).
     expect(offsetArrow({ ...top, tilt: [85, 0] }, box)).toBeNull();
   });

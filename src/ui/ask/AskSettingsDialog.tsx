@@ -8,6 +8,7 @@ import { Icon } from "../icons";
 import { bindKey, COMMAND_GROUPS, COMMANDS, keyFor, keyOf, resetInputPrefs, setInputPrefs, useInputPrefs, type MouseScheme } from "../input";
 import { logText, readLog } from "./log";
 import { loadSpin, saveSpin } from "../sketcher/modify";
+import { MAX_ROTATE_SPEED, MIN_ROTATE_SPEED, resetViewPrefs, setViewPrefs, useViewPrefs } from "../viewport/viewPrefs";
 import { HAS_PROXY, type AskSettings } from "./settings";
 
 export type SettingsTab = "units" | "mouse" | "keyboard" | "assistant";
@@ -126,7 +127,15 @@ export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "a
             </button>
           )}
           {(tab === "mouse" || tab === "keyboard") && (
-            <button type="button" onClick={resetInputPrefs} data-testid="settings-reset-input" title="The mouse and every key back to their defaults">
+            <button
+              type="button"
+              onClick={() => {
+                resetInputPrefs();
+                resetViewPrefs();
+              }}
+              data-testid="settings-reset-input"
+              title="The mouse, the view's rotation and every key back to their defaults"
+            >
               Reset to defaults
             </button>
           )}
@@ -200,31 +209,35 @@ function SpinSteps() {
 /** What each mouse action does, by scheme: the reference beside the choice. */
 const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
   standard: [
-    ["Middle-drag", "Rotate"],
+    ["Middle-drag", "Rotate: the part spins in place, about its middle (zoomed in, about the part in the middle of the view)"],
     ["Ctrl + middle-drag", "Pan"],
     ["Shift + middle-drag", "Zoom"],
     ["Alt + middle-drag", "Roll in the screen"],
-    ["Middle-click the part, then middle-drag", "Rotate about that point"],
+    ["Middle-click the part", "Pin the rotation centre there (a marker shows it); middle-click empty space or Esc to clear it"],
     ["Middle double-click", "Zoom to fit"],
     ["Wheel", "Zoom at the pointer: toward you zooms in"],
     ["Left-click", "Select; Ctrl- or Shift-click adds"],
-    ["Left-drag in a sketch", "Box select: left to right takes what is inside, right to left what it touches"],
-    ["Right-click", "The menu for what is under the pointer, with Ask AI…"],
+    ["Alt + left-click", "Select the face behind the one under the pointer (again: the next one behind)"],
+    ["Left-drag", "Box select: left to right takes what is inside, right to left what it touches"],
+    ["Right-click", "The menu for what is under the pointer: Select other…, Ask AI…"],
     ["Right-drag", "Pan"],
   ],
   trackpad: [
-    ["Drag", "Rotate (pan in a sketch or drawing)"],
+    ["Drag", "Rotate the part in place (pan in a sketch or drawing)"],
     ["Shift + drag", "Pan"],
     ["Two-finger scroll or pinch", "Zoom at the pointer"],
     ["Click", "Select; Ctrl- or Shift-click adds"],
-    ["Right-click (two-finger click)", "The menu for what is under the pointer, with Ask AI…"],
+    ["Alt + click", "Select the face behind the one under the pointer"],
+    ["Right-click (two-finger click)", "The menu for what is under the pointer: Select other…, Ask AI…"],
     ["Right-drag", "Pan"],
-    ["Middle button", "As in the standard scheme, if there is one"],
+    ["Middle button", "As in the standard scheme, if there is one: middle-click the part pins the rotation centre"],
   ],
 };
 
 function MouseTab() {
   const prefs = useInputPrefs();
+  const view = useViewPrefs();
+  const speed = Math.round(view.rotateSpeed * 100);
   return (
     <>
       <div className="field">
@@ -237,6 +250,32 @@ function MouseTab() {
       <label className="check settings-check">
         <input type="checkbox" checked={prefs.reverseWheel} onChange={(e) => setInputPrefs({ ...prefs, reverseWheel: e.target.checked })} data-testid="settings-reverse-wheel" />
         Reverse the wheel's zoom direction
+      </label>
+      <div className="field">
+        <span className="field-label">Rotation speed</span>
+        <span className="row settings-speed">
+          <input
+            type="range"
+            min={MIN_ROTATE_SPEED * 100}
+            max={MAX_ROTATE_SPEED * 100}
+            step={10}
+            value={speed}
+            onChange={(e) => setViewPrefs({ ...view, rotateSpeed: Number(e.target.value) / 100 })}
+            aria-label="Rotation speed, per cent"
+            aria-valuetext={`${speed} %`}
+            title="At 100 %, dragging across the view's height turns the part half a turn"
+            data-testid="settings-rotate-speed"
+          />
+          <output data-testid="settings-rotate-speed-value">{speed} %</output>
+        </span>
+      </div>
+      <label className="check settings-check" title="Rotating turns about the vertical (Z) and tips up and down, never rolling the part over: like a turntable">
+        <input type="checkbox" checked={view.turntable} onChange={(e) => setViewPrefs({ ...view, turntable: e.target.checked })} data-testid="settings-turntable" />
+        Keep Z up while rotating
+      </label>
+      <label className="check settings-check" title="Standard views, Fit, the view cube, named views and Previous view glide over a quarter of a second (never with the system's reduce motion)">
+        <input type="checkbox" checked={view.animate} onChange={(e) => setViewPrefs({ ...view, animate: e.target.checked })} data-testid="settings-animate" />
+        Animate view changes
       </label>
       <table className="settings-table" data-testid="mouse-table">
         <tbody>
