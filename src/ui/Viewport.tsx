@@ -298,7 +298,9 @@ export function Viewport({
     key.position.set(0.35, 1, 0.55);
     const fill = new THREE.DirectionalLight(0xffffff, 0.6);
     fill.position.set(-0.8, -0.3, 0.6);
-    camera.add(key, fill);
+    // Their targets ride with the camera too, so the light comes from the same side of the view however near the
+    // eye is to the part (zoomed in, or orthographic, where the eye's place along the line of sight is arbitrary).
+    camera.add(key, fill, key.target, fill.target);
     scene.add(camera);
 
     const model = new THREE.Group();
@@ -341,6 +343,8 @@ export function Viewport({
     let edgeSegments: Float32Array = new Float32Array(0);
     let selection: Selection = EMPTY_SELECTION;
     let hovered: PickTarget | null = null;
+    /** The row of Select Other's list under the pointer (shown through what is in front of it). */
+    let peek: PickTarget | null = null;
     /** One end of an edge per vertex of the part (the lowest edge that ends there stands for it), for picking vertices. */
     let vertices: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
@@ -495,6 +499,8 @@ export function Viewport({
     // turns gliding on through the hook (and it can finish one at once).
     const automated = new URLSearchParams(location.search).has("e2e");
     let testGlides = false;
+    /** How long a glide takes (a test may slow it down, to see it partway on a slow machine). */
+    let glideMs = VIEW_GLIDE_MS;
     let glideAnim: { at: (t: number) => Pose; frame: number } | null = null;
     const glides = () => viewPrefs().animate && !reducedMotion() && (!automated || testGlides);
     /** Ends a glide now, at the view it was going to. */
@@ -512,7 +518,7 @@ export function Viewport({
       const start = performance.now();
       const step = () => {
         if (!glideAnim) return;
-        const t = Math.min(1, (performance.now() - start) / VIEW_GLIDE_MS);
+        const t = Math.min(1, (performance.now() - start) / glideMs);
         if (t >= 1) {
           glideAnim = null;
           controls.setPose(at(1));
@@ -760,17 +766,17 @@ export function Viewport({
     };
     const faceBody = (i: number) => shownView?.faces[i]?.body;
     const edgeBody = (i: number) => shownView?.edges[i]?.body;
-    /** Faces lit up (selected, hovered), clipped with their bodies. */
-    const faceMesh = (indices: number[], color: number, opacity: number) => {
+    /** Faces lit up (selected, hovered), clipped with their bodies; `xray`: seen through whatever is in front (Select Other's list). */
+    const faceMesh = (indices: number[], color: number, opacity: number, xray = false) => {
       const group = new THREE.Group();
       byCut(indices, faceBody).forEach((list, k) => {
         const g = faceGeometry(list);
         if (!g) return;
         const m = new THREE.Mesh(
           g,
-          new THREE.MeshBasicMaterial({ color, transparent: true, opacity, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, clippingPlanes: k === 0 ? clipPlanes : NO_PLANES, clipIntersection: clipPlanes.length > 1 }),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthTest: !xray, side: xray ? THREE.DoubleSide : THREE.FrontSide, clippingPlanes: k === 0 ? clipPlanes : NO_PLANES, clipIntersection: clipPlanes.length > 1 }),
         );
-        m.renderOrder = 4;
+        m.renderOrder = xray ? 8 : 4;
         group.add(m);
       });
       return group.children.length ? group : null;
@@ -820,7 +826,9 @@ export function Viewport({
             : hovered?.kind === "vertex"
               ? vertexDots([hovered.point], HOVER_COLOR, 10)
               : null;
-      for (const o of [...sel, hov]) if (o) marks.add(o);
+      // Select Other's row under the pointer: lit up through whatever hides it.
+      const look = peek?.kind === "face" ? faceMesh([peek.index], HOVER_COLOR, 0.42, true) : peek?.kind === "edge" ? edgeMarks([peek.index], hoverEdgeMat, hoverEdgeWhole) : null;
+      for (const o of [...sel, hov, look]) if (o) marks.add(o);
       datums.mark(selection.datums ?? [], hovered?.kind === "datum" ? hovered.id : null);
       relabelDatums();
       render();
@@ -1252,7 +1260,13 @@ export function Viewport({
       if (!mesh) return [];
       aim(clientX, clientY);
       const hits: UnderPointer[] = [];
-      for (const h of raycaster.intersectObject(mesh, false)) {
+      // Faces turned away count too (the bottom of a plate, seen from above): the ray meets both sides for this.
+      const mats = [mesh.material].flat() as THREE.Material[];
+      const sides = mats.map((m) => m.side);
+      for (const m of mats) m.side = THREE.DoubleSide;
+      const faceHits = raycaster.intersectObject(mesh, false);
+      mats.forEach((m, i) => (m.side = sides[i]));
+      for (const h of faceHits) {
         const index = faceAt(h);
         const body = faceBody(index);
         if (index < 0 || isHidden(body) || cutAway(h.point, body)) continue;
@@ -1603,9 +1617,14 @@ export function Viewport({
         pinned() {
           return controls.pinned ? r4(controls.pinned) : null;
         },
+        /** Is the pinned centre's marker drawn? */
+        pivotMarker() {
+          return pivotGroup.children.length > 0;
+        },
         /** View changes glide in the tests only when turned on here. */
-        glides(on: boolean) {
+        glides(on: boolean, ms = VIEW_GLIDE_MS) {
           testGlides = on;
+          glideMs = ms;
         },
         /** Is a view change gliding now? */
         gliding() {
@@ -1783,8 +1802,9 @@ export function Viewport({
       },
       under: underAt,
       preview(t: PickTarget | null) {
-        if (sameTarget(t, hovered)) return;
-        hovered = t;
+        if (sameTarget(t, peek)) return;
+        peek = t;
+        hovered = null;
         redrawMarks();
       },
       setCubeVisible(v: boolean) {

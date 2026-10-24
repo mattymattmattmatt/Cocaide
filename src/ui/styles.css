@@ -1488,7 +1488,7 @@ svg.icon { flex: none; display: block; }
 .view-triad .triad-text { fill: currentColor; font: 700 9.5px/1 Inter, ui-sans-serif, system-ui, sans-serif; pointer-events: none; }
 .view-triad .triad-axis:hover .triad-dot { fill: currentColor; }
 .view-triad .triad-axis:hover .triad-text { fill: #fff; }
-.view-triad .triad-origin { fill: var(--muted); }
+.view-triad .triad-origin { fill: var(--muted); pointer-events: none; }
 /* the view bar: icons only, with tooltips */
 .view-buttons button.icon-only { padding: 0 7px; }
 /* zoom to area: the box, and the hint while waiting for it */

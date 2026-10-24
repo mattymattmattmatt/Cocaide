@@ -198,9 +198,11 @@ export class Triad {
     this.el.setAttribute("aria-label", "Orientation: click an axis to look along it, again for the other side");
     this.el.dataset.testid = "triad";
     for (const type of ["pointerdown", "pointerup", "dblclick", "wheel", "contextmenu"]) this.el.addEventListener(type, (e) => e.stopPropagation());
+    // The origin under the arms: an axis pointing straight at you is just its label, there, and still takes clicks.
     const origin = document.createElementNS(NS, "circle");
     origin.setAttribute("r", "2.6");
     origin.setAttribute("class", "triad-origin");
+    this.el.appendChild(origin);
     for (const { axis, color } of AXES) {
       const g = document.createElementNS(NS, "g");
       g.setAttribute("class", `triad-axis ${axis}`);
@@ -230,7 +232,6 @@ export class Triad {
       this.el.appendChild(g);
       this.arms.set(axis, { g, hit, line, head, dot, text });
     }
-    this.el.appendChild(origin);
     host.appendChild(this.el);
   }
 
@@ -269,7 +270,7 @@ export class Triad {
       a.text.setAttribute("y", String(ey + 0.5));
       a.g.style.opacity = z < -0.2 ? "0.6" : "1";
       // Painted far to near.
-      this.el.insertBefore(a.g, this.el.lastChild);
+      this.el.appendChild(a.g);
     }
   }
 
