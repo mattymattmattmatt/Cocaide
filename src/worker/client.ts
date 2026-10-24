@@ -93,6 +93,7 @@ export class KernelClient {
     screenshot: (doc, opts) => this.call("screenshot", [doc, opts]),
     project: (doc, views) => this.call("project", [doc, views]),
     inspect: (doc, query) => this.call("inspect", [doc, query]),
+    flat: (doc, query) => this.call("flat", [doc, query]),
   };
 
   private async call<T>(method: KernelMethod, args: unknown[]): Promise<T> {

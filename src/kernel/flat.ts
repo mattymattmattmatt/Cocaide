@@ -5,9 +5,9 @@
 // exact; other curves as fine polylines (within 0.005 mm). Plain data out
 // (src/io/dxf.ts entities, mm), so it crosses the worker boundary.
 
-import type { TopoDS_Edge, TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
+import type { BRepAdaptor_Curve, TopoDS_Edge, TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
 import type { Vec2, Vec3 } from "../doc/types";
-import { facePlaneFrame, planeFrame, to2D, type Frame } from "../geom/frame";
+import { facePlaneFrame, to2D, type Frame } from "../geom/frame";
 import { cross3, dot3, normalize3 } from "../geom/vec";
 import type { DxfEntity } from "../io/dxf";
 import { boundsOf, entityPoints, joinContours, transformEntity } from "../io/dxfGeom";
@@ -130,14 +130,14 @@ function edgeEntities(oc: OC, s: Scope, edge: TopoDS_Edge, frame: Frame): DxfEnt
     }
   }
   if (type === oc.GeomAbs_CurveType.GeomAbs_Ellipse) {
-    const e = ellipseIn(oc, s, curve, frame, t0, t1, at3);
+    const e = ellipseIn(s, curve, frame, t0, t1, at3);
     if (e) return [e];
   }
   return [{ type: "polyline", points: samplePoints(at, t0, t1, 0.005), layer: LAYER }];
 }
 
 /** The ellipse of an elliptical edge in the frame, checked against the edge's own points (null when they disagree). */
-function ellipseIn(oc: OC, s: Scope, curve: InstanceType<OC["BRepAdaptor_Curve"]>, frame: Frame, t0: number, t1: number, at3: (t: number) => Vec3): DxfEntity | null {
+function ellipseIn(s: Scope, curve: BRepAdaptor_Curve, frame: Frame, t0: number, t1: number, at3: (t: number) => Vec3): DxfEntity | null {
   const el = s.track(curve.Ellipse());
   const loc = s.track(el.Location());
   const xd = s.track(s.track(el.XAxis()).Direction());
@@ -153,7 +153,6 @@ function ellipseIn(oc: OC, s: Scope, curve: InstanceType<OC["BRepAdaptor_Curve"]
     const b = at3(t);
     if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 1e-6 * Math.max(1, R)) return null;
   }
-  void oc;
   const c2 = to2D(frame, C);
   const x2 = to2D(frame, [C[0] + X[0], C[1] + X[1], C[2] + X[2]]);
   const major: Vec2 = [(x2[0] - c2[0]) * R, (x2[1] - c2[1]) * R];
@@ -294,8 +293,3 @@ function polylineLength(pts: Vec2[]): number {
 }
 
 const round = (x: number) => Math.round(x * 1000) / 1000 + 0;
-
-/** A frame from a normal alone (the usual sketch rule), for callers that have no point. */
-export function frameFor(normal: Vec3, origin: Vec3 = [0, 0, 0]): Frame {
-  return planeFrame(normal, origin);
-}
