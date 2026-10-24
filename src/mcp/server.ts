@@ -17,7 +17,7 @@ import { VIEWS, type Camera } from "../render/raster";
 import { INSTRUCTIONS, REFERENCE } from "./reference";
 import { SPECS } from "../ask/tools/specs";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 
 const obj = z.record(z.string(), z.unknown());
 const vec3 = z.array(z.number()).length(3);
@@ -160,6 +160,18 @@ export const TOOLS: Record<string, ToolSpec> = {
   setBodyMaterial: {
     description: 'Give a body its own material ({ "name": "aluminium 6061", "densityKgPerM3": 2700 }), or put it back on the part\'s (material: null). Its mass, the part\'s and the cut list\'s follow.',
     input: { body: z.string(), material: obj.nullable() },
+  },
+  setProperties: {
+    description: 'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field. The drawing\'s title block, the cut list CSV, STEP export and export file names read them.',
+    input: { patch: obj },
+  },
+  importStep: {
+    description: "Read a STEP file (.step/.stp, any units) from disk into the part as an import feature: each solid becomes a body (newBody, newBody_2 ...), turned by rotate (degrees about X, then Y, then Z) and moved by at. A relative path is from the document's folder.",
+    input: { path: z.string(), newBody: z.string().optional(), at: vec3.optional(), rotate: vec3.optional() },
+  },
+  exportDxf: {
+    description: 'Write DXF (ASCII R2000 in mm, or version "R12") to the output folder: what "sketch" (a sketch in its own plane), "face" (a flat face\'s outline, by selector) or "plates" (every flat plate laid flat for cutting: a ZIP of one DXF per plate, an overview and a cutting list).',
+    input: { what: z.enum(["sketch", "face", "plates"]), sketch: z.string().optional(), face: selector.optional(), file: z.string().optional(), version: z.enum(["R2000", "R12"]).optional() },
   },
   saveBody: {
     description: "Write one body as a part of its own (.cocaide.json) to the output folder: a copy of this part that keeps only that body, in its material. Fully parametric; not a link.",

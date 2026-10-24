@@ -78,7 +78,7 @@ export function referenceSections(): Section[] {
 
 /** The ops' sections (each "## <op>" a feature op documents). */
 export function opSections(): Section[] {
-  const notOps = new Set(["document", "References", "Face", "Edge", "Tools", "examples", "strategy", "bodies", "frames", "multibody", "drawing", "member", ...SUBSECTIONS.map((s) => s.key)]);
+  const notOps = new Set(["document", "References", "Face", "Edge", "Tools", "examples", "strategy", "bodies", "frames", "multibody", "drawing", "member", "properties", "files", ...SUBSECTIONS.map((s) => s.key)]);
   return referenceSections().filter((s) => !notOps.has(s.key) && !s.key.includes(" "));
 }
 

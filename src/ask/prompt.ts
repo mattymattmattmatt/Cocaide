@@ -270,6 +270,12 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     description: "Add or replace a weld note in the weld table by id, or remove it (weld: null). Welds are notes, never modelled.",
     input_schema: obj({ id: { type: "string" }, weld: { type: ["object", "null"] } }, ["id", "weld"]),
   },
+  {
+    name: "setProperties",
+    description:
+      'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field; "custom" replaces the custom ones whole. The drawing\'s title block, the cut list CSV and STEP export read them.',
+    input_schema: obj({ patch: any }, ["patch"]),
+  },
 ];
 
 const SKETCH_TOOLS: Anthropic.Tool[] = [

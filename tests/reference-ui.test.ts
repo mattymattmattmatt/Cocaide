@@ -224,7 +224,8 @@ describe("the Reference tab's tools", () => {
   it("right-click entries worded for what was clicked", () => {
     const { ctx } = harness(doc, view);
     const labels = (t: Parameters<typeof contextEntries>[1]) => contextEntries(ctx, t).map((e) => e.item.label);
-    expect(labels({ kind: "face", index: topFace() })).toEqual(["Plane from this face"]);
+    // A flat face also offers its DXF (the Bodies tab's Face to DXF).
+    expect(labels({ kind: "face", index: topFace() })).toEqual(["Plane from this face", "Export face as DXF"]);
     expect(labels({ kind: "face", index: holeWall() })).toEqual(["Axis of this cylinder"]);
     expect(labels({ kind: "edge", index: frontTopEdge() })).toEqual(["Plane normal to this edge", "Axis along this edge"]);
     expect(labels({ kind: "edge", index: rim() })).toEqual(["Plane normal to this edge", "Axis of this circle", "Point at its centre"]);

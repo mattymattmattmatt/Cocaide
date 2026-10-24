@@ -27,6 +27,8 @@ import { DATUM_OPS, type Datum } from "../features/datum";
 import { holeCount, wizardSpec } from "../features/hole/wizard";
 import { threadCallout } from "../features/hole/standards";
 import { copyPlaces } from "../features/sketchPattern/doc";
+import { agentView } from "../features/import/doc";
+import { partProperties } from "../doc/properties";
 import { drawingPacket } from "./drawingPacket";
 import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 
@@ -258,7 +260,7 @@ export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: K
       return {
         target: { kind, id: target.id, op: f.op, label },
         ...base,
-        [isSketch ? "sketch" : "feature"]: f,
+        [isSketch ? "sketch" : "feature"]: agentView(f),
         ...usedParams(f),
         parent,
         children,
@@ -378,6 +380,7 @@ export function partOutline(doc: RawDocument, check: CheckResult): Record<string
   const params = documentParameters(doc);
   return {
     name: doc.name,
+    ...(Object.keys(partProperties(doc)).length ? { properties: partProperties(doc) } : {}),
     ...(Object.keys(params).length ? { parameters: params } : {}),
     features: doc.features.map((f) => {
       const s = status.get(String(f.id));
@@ -513,7 +516,7 @@ function jointDetails(doc: RawDocument, f: Raw, check: CheckResult): Raw {
 }
 
 function brief(f: Raw): Raw {
-  return f.op === "sketch" ? sketchBrief(f) : f;
+  return f.op === "sketch" ? sketchBrief(f) : agentView(f);
 }
 
 function sketchBrief(f: Raw): Raw {

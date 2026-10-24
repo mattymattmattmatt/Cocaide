@@ -51,6 +51,18 @@ export function sizeText(chars: number): string {
   return chars >= 1024 * 1024 ? `${(chars / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(chars / 1024))} kB`;
 }
 
+/**
+ * A feature as an agent reads it: an import's file text is megabytes of
+ * numbers no one reads, so it is left out (said: its size and solids). Other
+ * features are as they are.
+ */
+export function agentView<T>(f: T): T {
+  const r = f as Record<string, unknown>;
+  if (!r || typeof r !== "object" || r.op !== "import" || typeof r.data !== "string") return f;
+  const n = importSolidCount(r);
+  return { ...r, data: `<the STEP file's text, ${sizeText(r.data.length)}, ${n} solid${n === 1 ? "" : "s"}: kept in the document; read it again with Replace file in the app or importStep>` } as T;
+}
+
 export const def: FeatureDef<ImportFeature> = {
   op: "import",
   validate(raw, c, x) {

@@ -28,6 +28,7 @@ export const COMMAND_TOOLS = [
   "renameNode",
   "setWeld",
   "setBodyMaterial",
+  "setProperties",
   "setSheet",
   "setView",
   "setAnnotation",
@@ -85,6 +86,8 @@ export function toolCommand(name: string, a: Raw): Command | string {
       return { type: "setView", id: str("id"), view: obj("view") };
     case "setSheet":
       return obj("patch") ? { type: "setSheet", patch: obj("patch")! } : "setSheet: patch must be an object";
+    case "setProperties":
+      return obj("patch") ? { type: "setProperties", patch: obj("patch")! } : "setProperties: patch must be an object of part properties";
     case "setDimension":
       return { type: "setDimension", sketch: str("sketch"), ...which, value: a.value as number | string };
     case "renameDimension":
