@@ -34,6 +34,8 @@ interface Options {
   create(feature: Record<string, unknown>): void;
   /** The sketch being edited, if any. */
   sketching: boolean;
+  /** Fits the view to the part once the next rebuild comes in (a STEP's bodies can be far bigger than the part). */
+  fit?(): void;
 }
 
 type Dialog =
@@ -59,6 +61,7 @@ export function useFiles(o: Options) {
   const insertStep = (fileName: string, text: string) => {
     const made = importFeature(latest.current.doc, fileName, text);
     if (typeof made === "string") return o.notice(made);
+    latest.current.fit?.();
     latest.current.create(made.feature);
     latest.current.notice(`Imported ${fileName}${made.warning ? `. ${made.warning}` : ": move or turn it in Properties"}`, "info");
   };
@@ -153,6 +156,7 @@ export function useFiles(o: Options) {
     // A face by index belongs to the view's solid; plates are of the whole part, as STEP export is.
     flat: (query) => latest.current.kernel.flat(query.kind === "face" ? latest.current.viewDoc() : latest.current.doc, query),
     base,
+    fit: () => latest.current.fit?.(),
   };
 
   let dialogs: ReactNode = null;

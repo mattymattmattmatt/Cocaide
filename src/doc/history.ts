@@ -11,10 +11,11 @@ const LIMIT = 200;
 /**
  * Undo keeps whole documents, and a part holding an imported STEP file is
  * megabytes each: past this many characters in all, the oldest go (at least
- * MIN_KEEP stay), so a big import doesn't run the page out of memory.
+ * MIN_KEEP stay), so a big import doesn't run the page out of memory. A few
+ * steps are always kept: at the 50 MB a part may hold, that is 150 MB.
  */
 export const HISTORY_CHARS = 200 * 1024 * 1024;
-const MIN_KEEP = 10;
+const MIN_KEEP = 3;
 
 export function createHistory(present: string): History {
   return { past: [], present, future: [] };

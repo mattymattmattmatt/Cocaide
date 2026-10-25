@@ -9,7 +9,8 @@ import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { apply, type RawDocument } from "../src/doc/commands";
 import { allErrors, validateDocument } from "../src/doc/validate";
-import { importBodies } from "../src/features/import/doc";
+import { agentView, importBodies } from "../src/features/import/doc";
+import { othersHint } from "../src/features/import/ui";
 import { MAX_STEP_CHARS, stepProblem, stepSolidCount } from "../src/features/import/stepText";
 import { exportSTEP, loadOC, rebuild, scoped, type OC } from "../src/kernel";
 import { compoundOf } from "../src/kernel/ops";
@@ -121,6 +122,29 @@ describe("STEP import, document side", () => {
     // Renaming the first back and forth keeps it tidy: names that are the default again go.
     const back = apply(r.doc, { type: "renameBody", from: "upright", to: "s_2" });
     expect(back.ok && back.doc.features[0].names).toBeUndefined();
+  });
+
+  it("the name box says what the other bodies are called, before and after the first is renamed", () => {
+    expect(othersHint(["bracket"])).toBeUndefined();
+    expect(othersHint(["s", "s_2"])).toBe("This names the first body only; the other is s_2 (rename it in Bodies)");
+    // Renaming the first (Body name) renames it alone: the second keeps its name, and the hint says so.
+    const r = apply(part(imp({ newBody: "s", data: standStep })), { type: "renameBody", from: "s", to: "base" });
+    if (!r.ok) throw new Error(r.error);
+    const names = importBodies(r.doc.features[0], 2);
+    expect(names).toEqual(["base", "s_2"]);
+    expect(othersHint(names)).toBe("This names the first body only; the other is s_2 (rename it in Bodies)");
+    expect(othersHint(["a", "a_2", "a_3", "a_4", "a_5"])).toBe("This names the first body only; the others are a_2, a_3, a_4 … (rename them in Bodies)");
+  });
+
+  it("an agent sees a stand-in for the file's text, and gets told what to do when it sends that back", () => {
+    const seen = agentView(imp({ newBody: "s", data: standStep }));
+    expect(seen.data).toMatch(/^<the STEP file's text, \d+ kB, 2 solids: kept in the document/);
+    expect(errorsOf(part(seen))).toEqual([
+      "import_1: data: is the stand-in agents are shown, not the file's text: change the other fields with updateFeature and leave data out (importStep reads a new file)",
+    ]);
+    // updateFeature with only the fields to change keeps the file.
+    const r = apply(part(imp({ newBody: "s", data: standStep })), { type: "updateFeature", id: "import_1", patch: { at: [0, 0, 10] } });
+    expect(r.ok && r.doc.features[0].data).toBe(standStep);
   });
 });
 

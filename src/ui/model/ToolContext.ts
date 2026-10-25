@@ -83,6 +83,8 @@ export interface ToolFiles {
   flat(query: FlatQuery): Promise<FlatResult>;
   /** The base of an export's file name: the part number (and revision), else the part's name. */
   base(): string;
+  /** Fits the view to the part after the next rebuild (an import can be far bigger than what was there). */
+  fit?(): void;
 }
 
 /** The Evaluate tab's panels. */

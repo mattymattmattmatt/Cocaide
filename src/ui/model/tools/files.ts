@@ -21,14 +21,19 @@ export async function importStep(ctx: ToolCtx): Promise<void> {
   if (!file) return;
   const made = importFeature(ctx.doc, file.name, await file.text());
   if (typeof made === "string") return ctx.notice(made);
+  ctx.files.fit?.();
   ctx.create(made.feature);
-  if (made.warning) ctx.notice(made.warning, "info");
+  // As a drop says it: what came in, and where to place it.
+  ctx.notice(`Imported ${file.name}${made.warning ? `. ${made.warning}` : ": move or turn it in Properties"}`, "info");
 }
 
 /** Every flat plate as a DXF for cutting: one plate alone as its DXF; several as a ZIP with an overview and a cutting list. */
 export async function exportPlates(ctx: ToolCtx): Promise<void> {
   if (!ctx.files) return noFiles(ctx);
   if (!ctx.view?.bodies.length) return ctx.notice("There is no solid yet: make or import a plate first.");
+  // Named and weighed as the part is now, not as it may be when the kernel answers.
+  const base = ctx.files.base();
+  const density = (ctx.doc ? validateDocument(ctx.doc).material?.densityKgPerM3 : undefined) ?? 7850;
   const r = await ctx.files.flat({ kind: "plates" });
   if (r.kind === "error") return ctx.notice(`Plates not exported: ${r.error}.`);
   if (r.kind !== "plates") return;
@@ -37,8 +42,6 @@ export async function exportPlates(ctx: ToolCtx): Promise<void> {
     const why = r.others.length === 1 ? ` ${r.others[0].body} is ${r.others[0].why.replace(/^not a flat plate: /, "not one: ")}.` : others;
     return ctx.notice(`No flat plates to export: a plate is a flat body of one thickness with square edges (an end cap, gusset, base plate or flat bar).${why}`);
   }
-  const base = ctx.files.base();
-  const density = (ctx.doc ? validateDocument(ctx.doc).material?.densityKgPerM3 : undefined) ?? 7850;
   const files = plateFiles(r.plates, base, { density });
   if (r.plates.length === 1 && r.plates[0].bodies.length === 1) {
     ctx.files.save(files[0].name, files[0].data, "image/vnd.dxf");
@@ -54,10 +57,11 @@ export async function exportFaceDxf(ctx: ToolCtx, index = ctx.selection.faces[0]
   if (!ctx.files) return noFiles(ctx);
   const face = index === undefined ? undefined : ctx.view?.faces[index];
   if (!face || face.type !== "plane") return ctx.notice("Click a flat face first, then Face to DXF (or right-click the face).");
+  const base = ctx.files.base();
   const r = await ctx.files.flat({ kind: "face", face: index! });
   if (r.kind === "error") return ctx.notice(`Face not exported: ${r.error}.`);
   if (r.kind !== "face") return;
-  const name = `${ctx.files.base()}-face${r.body ? `-${r.body}` : ""}.dxf`;
+  const name = `${base}-face${r.body ? `-${r.body}` : ""}.dxf`;
   ctx.files.save(name, writeDxf({ entities: r.entities, layers: [{ name: "CUT", color: 7 }] }), "image/vnd.dxf");
   const loops = r.entities.filter((e) => e.type === "circle" || (e.type === "polyline" && e.closed) || e.type === "ellipse" || e.type === "spline").length;
   ctx.notice(`Exported ${name}: the face's outline${loops > 1 ? ` and ${loops - 1} inner loop${loops > 2 ? "s" : ""}` : ""} in its own plane, mm (the sketch frame of that face).`, "info");

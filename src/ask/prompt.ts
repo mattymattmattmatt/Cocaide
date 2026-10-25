@@ -219,6 +219,14 @@ const INSPECT_TOOLS: Anthropic.Tool[] = [
 /** Building: several edits as one transaction, and the helpers that write sketches and holes. */
 const BUILD_TOOLS: Anthropic.Tool[] = ["batch", "sketchProfile", "fullyDefine", "holes"].map(anthropicTool);
 
+/** The part's properties: a feature ask and a sheet ask (the title block shows them) may both set them. */
+const SET_PROPERTIES: Anthropic.Tool = {
+  name: "setProperties",
+  description:
+    'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field; "custom" replaces the custom ones whole. The drawing\'s title block (PART NO., DESCRIPTION, REV, DRAWN, FINISH where the sheet does not set its own), the cut list CSV and STEP export read them.',
+  input_schema: obj({ patch: any }, ["patch"]),
+};
+
 const FEATURE_TOOLS: Anthropic.Tool[] = [
   {
     name: "updateFeature",
@@ -270,12 +278,7 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     description: "Add or replace a weld note in the weld table by id, or remove it (weld: null). Welds are notes, never modelled.",
     input_schema: obj({ id: { type: "string" }, weld: { type: ["object", "null"] } }, ["id", "weld"]),
   },
-  {
-    name: "setProperties",
-    description:
-      'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field; "custom" replaces the custom ones whole. The drawing\'s title block, the cut list CSV and STEP export read them.',
-    input_schema: obj({ patch: any }, ["patch"]),
-  },
+  SET_PROPERTIES,
 ];
 
 const SKETCH_TOOLS: Anthropic.Tool[] = [
@@ -362,7 +365,8 @@ export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; d
   const read = [...READ_TOOLS, ...INSPECT_TOOLS];
   if (mode === "explain") return wide?.part || !drawingTarget ? read : READ_TOOLS.filter((t) => t.name === "escalate");
   if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
-  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS];
+  // The whole sheet (its title block among it) may change the part's properties; a view or an annotation may not.
+  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...(kind === "drawing" ? [SET_PROPERTIES] : [])];
   return [...read, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS];
 }
 

@@ -8,6 +8,7 @@ import { threadCallout } from "../features/hole/standards";
 import type { RawDocument } from "../doc/commands";
 import type { Annotation, Drawing, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
+import { partProperties } from "../doc/properties";
 import { drawingChecks } from "../drafting/checks";
 import { composeSheet, type ComposedSheet, type ComposedView } from "../drafting/compose";
 import { visibleLength } from "../drafting/plan";
@@ -54,7 +55,9 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     ...(sheet.cutList.length ? { cutList: sheet.cutList.map((i) => ({ item: i.item, size: i.designation, length: i.length, quantity: i.quantity, members: i.members })) } : {}),
   };
   const sheetBrief = { size: sheet.size, scale: sheet.scaleText, projection: sheet.projection, views: sheet.views.map((v) => ({ id: v.id, look: v.look, scale: v.scaleText })) };
-  const base = { units: "mm" as const, writeScope, checks, error: sheet.problems.length ? sheet.problems.join("; ") : null };
+  // The part's properties: the title block shows them where the sheet sets nothing of its own (setProperties changes them).
+  const properties = partProperties(doc);
+  const base = { units: "mm" as const, writeScope, checks, error: sheet.problems.length ? sheet.problems.join("; ") : null, ...(Object.keys(properties).length ? { properties } : {}) };
 
   if (target.kind === "drawing") {
     return {

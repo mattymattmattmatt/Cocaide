@@ -10,8 +10,9 @@
 // ellipses and splines become sketch entities, placed with the DXF origin on
 // the sketch origin (or centred on it), on the layers chosen. Ends that meet
 // (within `tolerance`) are snapped together and tied with coincident
-// relations, and lines that are exactly level or plumb get horizontal or
-// vertical, so the sketch closes into a profile and keeps its shape when it
+// relations, lines that are exactly level or plumb get horizontal or
+// vertical, and lines and arcs that run on smoothly where they meet get
+// tangent, so the sketch closes into a profile and keeps its shape when it
 // is edited. Pure.
 
 import type { ArcEntity, Constraint, EllipseEntity, LineEntity, SketchEntity, SplineEntity, Vec2 } from "../doc/types";
@@ -155,7 +156,10 @@ export function dxfToSketch(read: DxfRead, existing: SketchEntity[], opts: Inser
     else curvesSkipped++;
   }
   const constraints: Constraint[] = [];
-  const joined = joinEnds(made, tol, constraints);
+  const joints: string[][] = [];
+  const joined = joinEnds(made, tol, constraints, joints);
+  // Lines and arcs that run on smoothly where they meet (a corner radius, a slot's ends) stay tangent when edited.
+  constraints.push(...tangentJoints(made, joints));
   // Level and plumb lines say so, so dragging one keeps it square.
   for (const e of made) {
     if (e.type !== "line") continue;
@@ -382,7 +386,7 @@ function endsOf(e: SketchEntity): End[] {
  * freely) and ties each group with coincident relations. Returns how many
  * ends were joined.
  */
-function joinEnds(entities: SketchEntity[], tol: number, constraints: Constraint[]): number {
+function joinEnds(entities: SketchEntity[], tol: number, constraints: Constraint[], joints: string[][] = []): number {
   const ends = entities.flatMap(endsOf);
   // A grid of cells `tol` wide finds the neighbours of each end without comparing every pair.
   const cell = Math.max(tol, 1e-9);
@@ -419,6 +423,7 @@ function joinEnds(entities: SketchEntity[], tol: number, constraints: Constraint
     // Two ends of one entity (a line from a point back to it) are not a joint.
     const owners = new Set(g.map((i) => ends[i].ref.split(".")[0]));
     if (owners.size < 2) continue;
+    joints.push(g.map((i) => ends[i].ref));
     const anchor = g.reduce((best, i) => (ends[i].stiffness > ends[best].stiffness ? i : best), g[0]);
     const at = ends[anchor].at;
     for (const i of g) {
@@ -431,6 +436,57 @@ function joinEnds(entities: SketchEntity[], tol: number, constraints: Constraint
     }
   }
   return joined;
+}
+
+/** How far from square (a line on an arc's radius) or from in line (two arcs' radii) still counts as tangent: the file's rounding, no more. */
+const TANGENT_TOL = 1e-9;
+
+/**
+ * Tangent relations where a line meets an arc, or two arcs meet, running on
+ * smoothly (the arc's radius square to the line there, or the two radii in
+ * line), as the joints stand after joining. Two arcs on one centre (a circle
+ * drawn as arcs) need none: they are one curve already.
+ */
+export function tangentJoints(entities: SketchEntity[], joints: string[][]): Constraint[] {
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  const out: Constraint[] = [];
+  const seen = new Set<string>();
+  const unit = (v: Vec2): Vec2 | null => {
+    const l = Math.hypot(v[0], v[1]);
+    return l > 1e-12 ? [v[0] / l, v[1] / l] : null;
+  };
+  const endOf = (e: LineEntity | ArcEntity, name: string): Vec2 => (name === "start" ? e.start : e.end);
+  for (const refs of joints) {
+    for (let i = 0; i < refs.length; i++) {
+      for (let j = i + 1; j < refs.length; j++) {
+        const [ia, na] = refs[i].split(".");
+        const [ib, nb] = refs[j].split(".");
+        const a = byId.get(ia);
+        const b = byId.get(ib);
+        if (!a || !b || ia === ib) continue;
+        const key = [ia, ib].sort().join(" ");
+        if (seen.has(key)) continue;
+        if (a.type === "line" && b.type === "line") continue;
+        if ((a.type !== "line" && a.type !== "arc") || (b.type !== "line" && b.type !== "arc")) continue;
+        let tangent = false;
+        if (a.type === "arc" && b.type === "arc") {
+          if (Math.hypot(a.center[0] - b.center[0], a.center[1] - b.center[1]) <= 1e-6) continue;
+          const r1 = unit([endOf(a, na)[0] - a.center[0], endOf(a, na)[1] - a.center[1]]);
+          const r2 = unit([endOf(b, nb)[0] - b.center[0], endOf(b, nb)[1] - b.center[1]]);
+          tangent = !!r1 && !!r2 && Math.abs(r1[0] * r2[1] - r1[1] * r2[0]) <= TANGENT_TOL;
+        } else {
+          const [line, arc, name] = (a.type === "line" ? [a, b, nb] : [b, a, na]) as [LineEntity, ArcEntity, string];
+          const u = unit([line.end[0] - line.start[0], line.end[1] - line.start[1]]);
+          const r = unit([endOf(arc, name)[0] - arc.center[0], endOf(arc, name)[1] - arc.center[1]]);
+          tangent = !!u && !!r && Math.abs(u[0] * r[0] + u[1] * r[1]) <= TANGENT_TOL;
+        }
+        if (!tangent) continue;
+        seen.add(key);
+        out.push({ type: "tangent", entities: [ia, ib] });
+      }
+    }
+  }
+  return out;
 }
 
 function moveEnd(e: SketchEntity, name: string, at: Vec2): SketchEntity {

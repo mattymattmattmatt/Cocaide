@@ -24,13 +24,12 @@ function readOpen(): boolean {
   }
 }
 
-/** A text box that commits on Enter or leaving it; empty removes the property. */
-function PropertyInput({ value, placeholder, onCommit, testId, label }: { value: string; placeholder?: string; onCommit(v: string): void; testId: string; label: string }) {
+/** A text box that commits on Enter or leaving it; empty removes the property. A change the document refuses goes back to what it was. */
+function PropertyInput({ value, placeholder, onCommit, testId, label }: { value: string; placeholder?: string; onCommit(v: string): unknown; testId: string; label: string }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const commit = () => {
-    if (draft.trim() !== value) onCommit(draft.trim());
-    else setDraft(value);
+    if (draft.trim() === value || onCommit(draft.trim()) === false) setDraft(value);
   };
   return (
     <input
@@ -106,8 +105,11 @@ export function PartProperties({ doc, dispatch, onError }: Props) {
                     testId={`part-prop-custom-name-${i}`}
                     onCommit={(to) => {
                       if (!to) return setCustom(custom.filter((_, j) => j !== i));
-                      if (to !== name && custom.some(([k]) => k === to)) return onError(`There is already a property "${to}".`);
-                      setCustom(custom.map((e, j) => (j === i ? [to, e[1]] : e)));
+                      if (to !== name && custom.some(([k]) => k === to)) {
+                        onError(`There is already a property "${to}".`);
+                        return false;
+                      }
+                      return setCustom(custom.map((e, j) => (j === i ? [to, e[1]] : e)));
                     }}
                   />
                   <PropertyInput value={value} label={`${name} value`} testId={`part-prop-custom-value-${i}`} onCommit={(v) => setCustom(v ? custom.map((e, j) => (j === i ? [e[0], v] : e)) : custom.filter((_, j) => j !== i))} />

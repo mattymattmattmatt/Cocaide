@@ -70,10 +70,23 @@ test("STEP: the bracket exported, opened as a new part, then inserted into a par
   // Back to the bracket, and the STEP dropped on it goes in as a body of its own.
   await page.locator("select").first().selectOption("bracket");
   await expectVolume(page, "18,994.728");
+  // Zoomed in close first: the view fits the part again once the import has built.
+  // How far the camera stands from what it looks at.
+  const distance = () =>
+    page.evaluate(() => {
+      const c = (window as unknown as { __cocaideViewport: { camera(): { position: number[]; target: number[] } } }).__cocaideViewport.camera();
+      return Math.round(Math.hypot(...c.position.map((x, i) => x - c.target[i])));
+    });
+  const fitted = await distance();
+  const box = (await page.getByTestId("viewport").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 5; i++) await page.mouse.wheel(0, 300); // toward you: in
+  await expect.poll(distance).toBeLessThan(fitted * 0.8);
   await drop(page, "bracket.step", step.text);
   await expect(page.getByTestId("step-drop-dialog")).toBeVisible();
   await page.getByTestId("step-insert-body").click();
   await expectVolume(page, "37,989.457");
+  await expect.poll(distance).toBeGreaterThan(fitted * 0.95);
   await expect(page.getByTestId("body-bracket")).toBeVisible();
   // Its editor: the file, the body it made, where it sits. Moved up 50, it is clear of the first.
   await expect(page.getByTestId("prop-import-file")).toContainText("bracket.step");
@@ -109,6 +122,10 @@ test("part properties: set on the Document tab, shown in a new drawing's title b
     custom: { Customer: "Acme Pty Ltd" },
   });
   await page.locator(".side.right").screenshot({ path: `${SHOTS}/document-tab.png` });
+  // A value the document refuses (too long) says why, and the box goes back to what is kept.
+  await commit(page, "part-prop-finish", "x".repeat(600));
+  await expect(page.getByTestId("notice")).toContainText("is 600 characters long; keep it to 500");
+  await expect(page.getByTestId("part-prop-finish")).toHaveValue("Hot-dip galvanised");
   // One undo takes the custom property off again; redo puts it back.
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await savedDocument(page)).properties).not.toHaveProperty("custom");
@@ -176,7 +193,13 @@ test("DXF in: inserted into a sketch on Top (ends joined) and extruded to the ri
   await expectVolume(page, "56,879.6"); // the area above x 10
 
   // Open a DXF: a new part named after it, a sketch on Top holding it.
-  await choose(page, () => page.getByRole("button", { name: "Open" }).click(), { name: "slot-plate.dxf", text: readFileSync(fixture("slot-plate-r12.dxf"), "utf8") });
+  const slot = { name: "slot-plate.dxf", text: readFileSync(fixture("slot-plate-r12.dxf"), "utf8") };
+  // Escape leaves the dialog without doing anything.
+  await choose(page, () => page.getByRole("button", { name: "Open" }).click(), slot);
+  await expect(page.getByTestId("dxf-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("dxf-dialog")).toBeHidden();
+  await choose(page, () => page.getByRole("button", { name: "Open" }).click(), slot);
   await expect(page.getByTestId("dxf-dialog")).toBeVisible();
   // The centre line's layer was off in the file: it starts unticked.
   await expect(page.getByTestId("dxf-layer-CENTRE")).not.toBeChecked();
@@ -184,6 +207,8 @@ test("DXF in: inserted into a sketch on Top (ends joined) and extruded to the ri
   await page.getByTestId("dxf-insert").click();
   await expect(page.getByTestId("doc-name")).toHaveValue("slot-plate");
   await expect(page.getByTestId("feature-sketch_1")).toBeVisible();
-  const doc = (await savedDocument(page)) as { features: { entities: unknown[] }[] };
+  const doc = (await savedDocument(page)) as { features: { entities: unknown[]; constraints: { type: string }[] }[] };
   expect(doc.features[0].entities).toHaveLength(5);
+  // The slot's sides run on into its ends: tangent there, as well as joined.
+  expect(doc.features[0].constraints.filter((k) => k.type === "tangent")).toHaveLength(4);
 });

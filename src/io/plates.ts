@@ -50,9 +50,13 @@ export function platesOverview(plates: FlatPlate[]): DxfEntity[] {
   return out;
 }
 
-/** The cutting list: one row per plate, alike plates counted. `density` kg/m³ (steel 7850). */
+/**
+ * The cutting list: one row per plate, alike plates counted. `density` kg/m³
+ * (steel 7850). Length is the plate's longer side, width its shorter, as
+ * plate is ordered and quoted.
+ */
 export function platesCsv(plates: FlatPlate[], density = 7850): string {
-  const rows = [["Plate", "Bodies", "Thickness (mm)", "Qty", "Width (mm)", "Length (mm)", "Area each (m2)", "Cut length each (mm)", "Holes each", "kg each", "kg total"]];
+  const rows = [["Plate", "Bodies", "Thickness (mm)", "Qty", "Length (mm)", "Width (mm)", "Area each (m2)", "Cut length each (mm)", "Holes each", "kg each", "kg total"]];
   for (const p of plates) {
     const kg = (p.area * p.thickness * 1e-9) * density;
     rows.push([
@@ -60,8 +64,8 @@ export function platesCsv(plates: FlatPlate[], density = 7850): string {
       p.bodies.join(" "),
       thicknessText(p.thickness),
       String(p.bodies.length),
-      p.size[0].toFixed(1),
-      p.size[1].toFixed(1),
+      Math.max(p.size[0], p.size[1]).toFixed(1),
+      Math.min(p.size[0], p.size[1]).toFixed(1),
       (p.area / 1e6).toFixed(4),
       p.cutLength.toFixed(0),
       String(p.holes),

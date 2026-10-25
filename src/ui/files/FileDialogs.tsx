@@ -25,7 +25,7 @@ export function StepDropDialog({ fileName, size, onOpen, onInsert, onCancel, can
             <Icon name="new" />
             <span>
               <strong>Open as a new part</strong>
-              <span className="muted small">A part named after the file, holding it (the part you have stays in undo)</span>
+              <span className="muted small">A part named after the file, holding it. It replaces the part you have: Save that first if you want to keep it</span>
             </span>
           </button>
           <button type="button" className="file-choice" onClick={onInsert} disabled={!canInsert} data-testid="step-insert-body" title={canInsert ? undefined : "Fix the document first"}>
@@ -166,13 +166,14 @@ export function DxfInsertDialog({
             ))}
           </fieldset>
         )}
-        <p className="muted small">Ends that meet are joined (coincident), level and plumb lines get horizontal and vertical, so a closed outline extrudes at once.</p>
+        <p className="muted small">Ends that meet are joined (coincident), level and plumb lines get horizontal and vertical, and smooth joints (a corner radius, a slot's end) tangent, so a closed outline extrudes at once and keeps its shape when edited.</p>
         <div className="modal-buttons">
           <span className="sep" />
           <button type="button" onClick={onCancel} data-testid="dxf-cancel">
             Cancel
           </button>
-          <button type="submit" className="primary" disabled={!layers.size || shown.length === 0} data-testid="dxf-insert">
+          {/* Focused, so Enter inserts and Escape cancels straight away. */}
+          <button type="submit" className="primary" disabled={!layers.size || shown.length === 0} data-testid="dxf-insert" autoFocus>
             {target === "sketch" ? "Insert" : target === "newPart" ? "Open" : "Add sketch"}
           </button>
         </div>

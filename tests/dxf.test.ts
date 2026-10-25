@@ -13,6 +13,8 @@ import { closestOnSpline, splinePoint } from "../src/geom/spline";
 import { DxfError, dxfNumber, readDxf, skippedText, writeDxf, type DxfEntity } from "../src/io/dxf";
 import { bulgeArc, joinContours, nurbsPoint, sampleSpline, transformEntity } from "../src/io/dxfGeom";
 import { dxfToSketch, sketchToDxf } from "../src/io/dxfSketch";
+import { solveSketch } from "../src/geom/solver";
+import { sketchHealth } from "../src/ui/sketcher/status";
 import { loadOC, rebuild, type OC } from "../src/kernel";
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/dxf/${name}`, import.meta.url), "utf8");
@@ -281,6 +283,58 @@ describe("DXF into a sketch", () => {
     expect(worst).toBeLessThan(0.01);
     expect(ins.report).toContain("inches converted to mm");
     expect(ins.report).toContain("2 texts, 1 dimension, 1 hatch skipped");
+  });
+});
+
+describe("DXF into a sketch: tangent where it runs on smoothly", () => {
+  const plain = (entities: DxfEntity[]) => ({ entities, layers: [], units: { code: 4, name: "millimetres", scale: 1, assumed: false }, skipped: {}, warnings: [] });
+
+  it("ties a slot's sides to its ends: the outline keeps its shape, nothing is over-defined", () => {
+    const ins = dxfToSketch(readDxf(fixture("slot-plate-r12.dxf")), [], { layers: ["OUTLINE"] });
+    const tangents = ins.constraints.filter((k) => k.type === "tangent").map((k) => [...(k as { entities: string[] }).entities].sort().join(" "));
+    expect(tangents.sort()).toEqual(["a1 l1", "a1 l2", "a2 l1", "a2 l2"]);
+    // Two lines (8) and two arcs (10) less 4 joints (8), 2 horizontals and 4 tangents: 4 left (where, how long, how wide); the hole 3 more.
+    const h = sketchHealth(ins.entities, ins.constraints);
+    expect([h.state, h.dof, h.conflicting]).toEqual(["under", 7, []]);
+    expect(solveSketch(ins.entities, ins.constraints).ok).toBe(true);
+  });
+
+  it("ties a rounded plate's corners: 8 tangents, 8 freedoms left for the outline (where, size, four radii)", () => {
+    const ins = dxfToSketch(readDxf(fixture("rounded-plate-r2010.dxf")), []);
+    expect(ins.constraints.filter((k) => k.type === "tangent")).toHaveLength(8);
+    const h = sketchHealth(ins.entities, ins.constraints);
+    // The outline's 8, and the two holes' 3 each.
+    expect([h.state, h.dof, h.conflicting]).toEqual(["under", 14, []]);
+  });
+
+  it("adds none at a sharp corner, nor between two arcs of one circle", () => {
+    const corner = dxfToSketch(
+      plain([
+        // A square corner of two lines, then an arc that ends on the second line's end with its radius along the line.
+        { type: "line", a: [0, 0], b: [10, 0] },
+        { type: "line", a: [10, 0], b: [10, 10] },
+        { type: "arc", c: [10, 5], r: 5, start: 0, end: 90 },
+      ]),
+      [],
+    );
+    expect(corner.constraints.filter((k) => k.type === "tangent")).toEqual([]);
+    const circle = dxfToSketch(plain([{ type: "arc", c: [0, 0], r: 5, start: 0, end: 180 }, { type: "arc", c: [0, 0], r: 5, start: 180, end: 360 }]), []);
+    expect(circle.joined).toBe(2);
+    expect(circle.constraints.filter((k) => k.type === "tangent")).toEqual([]);
+    expect(sketchHealth(circle.entities, circle.constraints).conflicting).toEqual([]);
+  });
+
+  it("ties two arcs that run on into each other (an S bend), not two that meet at an angle", () => {
+    const s = dxfToSketch(plain([{ type: "arc", c: [0, 0], r: 10, start: 180, end: 360 }, { type: "arc", c: [20, 0], r: 10, start: 0, end: 180 }, { type: "arc", c: [40, 0], r: 10, start: 180, end: 270 }]), []);
+    // The first two meet at (10, 0) with their radii in line; the second and third meet at (30, 0), also in line.
+    expect(s.constraints.filter((k) => k.type === "tangent").map((k) => (k as { entities: string[] }).entities)).toEqual([
+      ["a1", "a2"],
+      ["a2", "a3"],
+    ]);
+    const v = dxfToSketch(plain([{ type: "arc", c: [0, 0], r: 10, start: 0, end: 90 }, { type: "arc", c: [10, 10], r: 10, start: 180, end: 270 }]), []);
+    // Meeting at (10, 0) and (0, 10)? No: the ends are (10, 0)/(0, 10) and (0, 10)/(10, 0): a lens, its tips sharp.
+    expect(v.joined).toBe(2);
+    expect(v.constraints.filter((k) => k.type === "tangent")).toEqual([]);
   });
 });
 

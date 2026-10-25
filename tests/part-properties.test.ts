@@ -103,15 +103,16 @@ describe("the document's properties", () => {
 });
 
 describe("undo with a big import in the part", () => {
-  it("keeps the undo states within a size budget (the newest, and at least ten)", () => {
+  it("keeps the undo states within a size budget (the newest, and at least three)", () => {
     const state = (i: number) => String(i).padStart(2, "0").repeat(500);
     let h = createHistory(state(0));
     for (let i = 1; i <= 30; i++) h = record(h, state(i), 15_000);
-    // 15 000 characters hold 15 states of 1000; at least 10 stay whatever the budget.
+    // 15 000 characters hold 15 states of 1000; at least 3 stay whatever the budget (three 50 MB parts: 150 MB).
     expect(h.past).toHaveLength(15);
     expect(h.past[0].startsWith("15")).toBe(true);
     for (let i = 31; i <= 40; i++) h = record(h, state(i), 100);
-    expect(h.past).toHaveLength(10);
+    expect(h.past).toHaveLength(3);
+    expect(h.past.map((t) => t.slice(0, 2))).toEqual(["37", "38", "39"]);
   });
 });
 

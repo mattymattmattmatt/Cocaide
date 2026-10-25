@@ -113,6 +113,32 @@ describe("plates for cutting", () => {
     expect(platesSummary(r.plates)).toBe("3 plates (3 of 8 mm)");
   });
 
+  it("keeps plates apart that only share area and cut length: a 100 x 50 and a notched 90 x 60 are two parts", async () => {
+    // Both 5000 mm² with a 300 mm cut, no holes, 6 thick: only their size tells them apart.
+    const line = (id: string, start: number[], end: number[]) => ({ id, type: "line", start, end });
+    const doc = {
+      version: 1,
+      units: "mm",
+      name: "pair",
+      features: [
+        { id: "s1", op: "sketch", plane: { type: "ref", ref: { datum: "Top" } }, entities: [{ id: "r1", type: "rect", center: [0, 0], w: 100, h: 50 }] },
+        { id: "e1", op: "extrude", sketch: "s1", distance: 6 },
+        {
+          id: "s2",
+          op: "sketch",
+          plane: { type: "ref", ref: { datum: "Top" } },
+          entities: [line("l1", [200, 0], [290, 0]), line("l2", [290, 0], [290, 40]), line("l3", [290, 40], [270, 40]), line("l4", [270, 40], [270, 60]), line("l5", [270, 60], [200, 60]), line("l6", [200, 60], [200, 0])],
+        },
+        { id: "e2", op: "extrude", sketch: "s2", distance: 6, newBody: "notched" },
+      ],
+    };
+    const r = plates(await kernel.flat(doc as RawDocument, { kind: "plates" }));
+    expect(r.plates.map((p) => [p.bodies, r6(p.area), Math.round(p.cutLength)])).toEqual([
+      [["main"], 5000, 300],
+      [["notched"], 5000, 300],
+    ]);
+  });
+
   it("leaves out members and says why", async () => {
     const r = plates(await kernel.flat(example("frame-members"), { kind: "plates" }));
     expect(r.plates).toEqual([]);
@@ -154,10 +180,16 @@ describe("the files of a plates export", () => {
     expect(overview.skipped).toEqual({ text: 2 });
     expect(overview.entities).toHaveLength(3);
     const csv = String(files[3].data).split("\r\n");
-    expect(csv[0]).toBe("Plate,Bodies,Thickness (mm),Qty,Width (mm),Length (mm),Area each (m2),Cut length each (mm),Holes each,kg each,kg total");
+    expect(csv[0]).toBe("Plate,Bodies,Thickness (mm),Qty,Length (mm),Width (mm),Area each (m2),Cut length each (mm),Holes each,kg each,kg total");
     // The gusset: (5000 − 36π) mm² × 10 mm × 7850 kg/m³.
     const kg = (5000 - Math.PI * 36) * 10 * 1e-9 * 7850;
     expect(csv[2]).toBe(`gusset_1,gusset_1 gusset_2,10,2,100.0,100.0,0.0049,${(200 + 100 * Math.SQRT2 + 12 * Math.PI).toFixed(0)},1,${kg.toFixed(3)},${(kg * 2).toFixed(3)}`);
+  });
+
+  it("lists each plate's length as its longer side and its width as its shorter, however it lies", () => {
+    const strip: FlatPlate = { ...end, bodies: ["strip"], entities: [{ type: "polyline", points: [[0, 0], [40, 0], [40, 250], [0, 250]], closed: true, layer: "CUT" }], size: [40, 250], area: 10000, holes: 0, cutLength: 580 };
+    const row = platesCsv([strip]).split("\r\n")[1].split(",");
+    expect(row.slice(4, 6)).toEqual(["250.0", "40.0"]);
   });
 
   it("lays the overview out side by side with a label under each", () => {
@@ -178,6 +210,6 @@ describe("the files of a plates export", () => {
     expect(back.map((f) => f.name)).toEqual(["a.dxf", "b.csv"]);
     expect(new TextDecoder().decode(back[0].data)).toBe("hello");
     expect(Array.from(back[1].data)).toEqual([1, 2, 3]);
-    expect(platesCsv([])).toBe("Plate,Bodies,Thickness (mm),Qty,Width (mm),Length (mm),Area each (m2),Cut length each (mm),Holes each,kg each,kg total\r\n");
+    expect(platesCsv([])).toBe("Plate,Bodies,Thickness (mm),Qty,Length (mm),Width (mm),Area each (m2),Cut length each (mm),Holes each,kg each,kg total\r\n");
   });
 });

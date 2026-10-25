@@ -782,7 +782,7 @@ export class AgentSession {
       return this.fail(`importStep: no file ${path}`);
     }
     if (size > MAX_STEP_CHARS) return this.fail(`importStep: ${basename(path)} is ${sizeText(size)}; a part holds at most ${sizeText(MAX_STEP_CHARS)} of STEP`);
-    const feature: Record<string, unknown> = { id: nextId(this.doc, "import"), op: "import", format: "step", fileName: basename(path), data: readFileSync(path, "latin1") };
+    const feature: Record<string, unknown> = { id: nextId(this.doc, "import"), op: "import", format: "step", fileName: basename(path), data: readFileSync(path, "utf8") };
     for (const k of ["newBody", "at", "rotate"]) if (a[k] !== undefined) feature[k] = a[k];
     const done = this.edit({ type: "addFeature", feature });
     if (done.result.ok) {

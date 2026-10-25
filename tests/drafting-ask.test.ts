@@ -142,6 +142,29 @@ describe("Phase L acceptance: the leg height from a right-click on the front vie
     expect(r.proposal!.changes).toEqual([]);
   });
 
+  it("sets the part's number from a right-click on the sheet: the title block shows it (a view's ask can't)", async () => {
+    expect(toolsFor("edit", "drawing").map((t) => t.name)).toContain("setProperties");
+    expect(toolsFor("edit", "annotation").map((t) => t.name)).not.toContain("setProperties");
+    const withProps = apply(drawn, { type: "setProperties", patch: { description: "Table frame" } });
+    if (!withProps.ok) throw new Error(withProps.error);
+    const model = new ScriptedModel([
+      () => [use("setProperties", { patch: { partNumber: "TF-1200", revision: "C" } })],
+      () => [say("The part number is TF-1200, revision C.")],
+    ]);
+    const r = await runAsk({ doc: withProps.doc, target: { kind: "drawing" }, text: "Part number TF-1200 rev C", model, kernel });
+    // The packet shows the properties the title block reads.
+    expect(packetOf(model).properties).toEqual({ description: "Table frame" });
+    expect(r.outcome).toBe("proposal");
+    expect(r.calls.map((c) => [c.tool, c.ok, c.error])).toEqual([["setProperties", true, undefined]]);
+    const accepted = applyProposal(withProps.doc, r.proposal!);
+    if (!accepted.ok) throw new Error(accepted.error);
+    const c = await kernel.check(accepted.doc);
+    const views = validateDocument(accepted.doc).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+    const sheet = composeSheet(accepted.doc, { measurements: c.measurements, geometry: await kernel.project(accepted.doc, views) })!;
+    const texts = sheet.prims.flatMap((p) => (p.k === "text" && p.owner === "titleBlock" ? [p.text] : []));
+    expect(texts).toEqual(expect.arrayContaining(["PART NO.", "TF-1200", "DESCRIPTION", "Table frame", "REV", "C"]));
+  });
+
   it("answers a question about an annotation without tools that write", async () => {
     const model = new ScriptedModel([() => [say("d2 is the frame's overall height, 900, from the floor to the top of the rails.")]]);
     const r = await runAsk({ doc: drawn, target: { kind: "annotation", id: "d2" }, text: "What does this dimension show?", model, kernel });

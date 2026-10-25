@@ -26,6 +26,18 @@ export function stepHeader(data: string): { schema?: string; system?: string } {
   return { ...(ap ? { schema: ap } : {}), ...(system ? { system } : {}) };
 }
 
+/**
+ * What the name box says about the other bodies of a file of several solids:
+ * their names as they are (renaming the first renames it alone, so after a
+ * rename they no longer follow it).
+ */
+export function othersHint(names: string[]): string | undefined {
+  if (names.length < 2) return undefined;
+  const others = names.slice(1);
+  const shown = others.length > 3 ? `${others.slice(0, 3).join(", ")} …` : others.join(", ");
+  return `This names the first body only; the other${others.length === 1 ? " is" : "s are"} ${shown} (rename ${others.length === 1 ? "it" : "them"} in Bodies)`;
+}
+
 const add = (v: NumberValue[], k: number, d: number): number[] => v.map((x, i) => (i === k ? (((Number(x) || 0) + d + 180) % 360 + 360) % 360 - 180 : Number(x) || 0));
 
 function ImportEditor(p: FieldProps) {
@@ -81,7 +93,7 @@ function ImportEditor(p: FieldProps) {
           ))}
         </ul>
       </Field>
-      <Field label="Body name" hint={count > 1 ? `The others are ${names[0]}_2, ${names[0]}_3 … unless renamed in Bodies` : undefined}>
+      <Field label="Body name" hint={othersHint(names)}>
         <TextInput
           value={names[0]}
           testId="prop-import-name"

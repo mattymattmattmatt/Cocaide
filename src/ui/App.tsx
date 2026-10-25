@@ -412,6 +412,9 @@ export function App() {
     openDocument: (text, origin) => replaceDocument(text, origin),
     create: (feature) => create(feature),
     sketching: !!sketch,
+    fit: () => {
+      needsFit.current = true;
+    },
   });
   const filesRef = useRef(files);
   filesRef.current = files;

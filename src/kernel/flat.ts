@@ -76,8 +76,9 @@ export function flatQuery(oc: OC, built: RebuildResult, query: FlatQuery): FlatR
       others.push({ body: b.name, why: r });
       continue;
     }
-    // Alike plates (same thickness, area, cut length and loops) are one line, with every body that is one.
-    const key = [r.thickness.toFixed(2), r.area.toFixed(1), r.cutLength.toFixed(1), r.holes].join("|");
+    // Alike plates (same thickness, size, area, cut length and loops) are one line, with every body that is one.
+    // A mirror-image plate is alike: a plate cut through is the same part turned over.
+    const key = [r.thickness.toFixed(2), ...[...r.size].sort((a, b) => a - b).map((x) => x.toFixed(1)), r.area.toFixed(1), r.cutLength.toFixed(1), r.holes].join("|");
     const same = plates.find((p) => p.key === key);
     if (same) same.bodies.push(b.name);
     else plates.push({ ...r, bodies: [b.name], key });
