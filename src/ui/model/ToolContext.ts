@@ -12,6 +12,7 @@ import type { RebuildView } from "../../worker/protocol";
 import type { FlatQuery, FlatResult } from "../../kernel/flat";
 import type { IconName } from "../icons";
 import type { Selection } from "./selection";
+import type { ToolMemory } from "./toolMemory";
 
 /** A feature as JSON: the document's own shape, before validation. */
 export type Raw = Record<string, unknown>;
@@ -40,8 +41,22 @@ export interface ToolCtx {
   library: LibraryEntry[];
   /** Runs one document command as one undo step. Shows the error and returns it, or null. */
   run(cmd: Command): string | null;
-  /** Adds a feature, selects it in the tree, opens its properties and clears the viewport selection. */
+  /**
+   * Adds a feature in a session (Phase P): it is selected in the tree, its
+   * properties open with OK and Cancel, every change previews, and OK makes it
+   * one undo step; Cancel leaves the part as it was.
+   */
   create(feature: Raw): void;
+  /**
+   * Opens a session on a new feature that is not complete yet (command-first:
+   * what it acts on is still to be picked). The panel shows it with the field
+   * `active` (its key) ready for picks; it goes into the document with the
+   * pick that completes it. Absent (tests, an older host): the tool says what
+   * to select instead.
+   */
+  draft?(feature: Raw, opts?: { active?: string }): void;
+  /** The last values used for each kind of feature in this browser (src/ui/model/toolMemory.ts). */
+  memory?: ToolMemory;
   /** Puts a whole new document in as one undo step (a tool that adds several things), then selects `select`. */
   replace(doc: RawDocument, select?: string): void;
   /** Tells the user something: what to click first ("error"), or what happened ("info"). */

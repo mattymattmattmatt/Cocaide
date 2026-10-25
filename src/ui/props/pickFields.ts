@@ -5,7 +5,8 @@
 // goes into the active field, a field takes only what it can) is tested in
 // node.
 
-import type { DatumKind, DatumRef, FaceSelector } from "../../doc/types";
+import type { DatumRef, FaceSelector } from "../../doc/types";
+import type { DatumKind } from "../../features/datum";
 import type { RebuildView } from "../../worker/protocol";
 import { only, type PickTarget } from "../model/selection";
 import type { EdgeKindFilter } from "../model/smartSelect";

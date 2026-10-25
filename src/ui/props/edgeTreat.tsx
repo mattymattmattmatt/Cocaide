@@ -78,9 +78,10 @@ export function describeSet(set: Raw): string {
 
 /** Edges, faces and features: which edges the feature treats (`prefix` "prop-fillet" or "prop-chamfer" for the new ones' test ids). */
 export function edgeChoiceFields(prefix: string): FieldSpec[] {
+  const verb = prefix === "prop-chamfer" ? "chamfer" : "fillet";
   return [
-    { kind: "edges", key: "edges", label: "Edges", optional: true },
-    { kind: "faces", key: "faces", label: "Faces", optional: true, testId: `${prefix}-faces`, hint: "Every edge of these faces" },
+    { kind: "edges", key: "edges", label: "Edges", optional: true, propagation: true, prompt: `Pick edges to ${verb}` },
+    { kind: "faces", key: "faces", label: "Faces", optional: true, testId: `${prefix}-faces`, hint: "Every edge of these faces", prompt: `Pick faces: every edge of each is ${verb === "fillet" ? "filleted" : "chamfered"}` },
     { kind: "features", key: "features", label: "Edges made by", ops: SHAPE_OPS, testId: `${prefix}-features`, hint: "Every edge of the faces these features made" },
   ];
 }

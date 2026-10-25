@@ -1,8 +1,13 @@
 // Edits one feature through document commands. Every field commits as one
 // updateFeature; a rejected command shows why and leaves the document alone.
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { Command, RawDocument } from "../doc/commands";
+import { rollbackIndex } from "../doc/rollback";
+import type { FeatureStatus } from "../kernel";
+import { Icon, ICON_NAMES, type IconName } from "./icons";
+import { activeField, holds, nextField, summaryOf, fieldTakes, treeTakes, type PickField } from "./props/picking";
+import { PickContext, type PickHost, type SessionLink } from "./props/pickHost";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
 import { DEFAULT_BODY, type SketchEntity, type Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
@@ -46,10 +51,39 @@ export { nextBodyName } from "./model/names";
 
 type Raw = Record<string, unknown>;
 
+/** A feature open in a session (Phase P): what the panel needs to show OK and Cancel and make its selection fields live. */
+export interface SessionPanelProps {
+  kind: "create" | "edit";
+  /** "Add fillet_2", "Edit extrude_1": what OK makes one undo step of. */
+  label: string;
+  /** A new feature not complete yet (not in the document until it is), and what it still needs. */
+  pending?: Raw;
+  pendingProblem?: string;
+  /** Its newest rebuild failed: the view keeps the last preview that built. */
+  failing?: string;
+  ok(): void;
+  cancel(): void;
+  /** Keep the panel open: OK runs the same tool again (several holes in a row). */
+  keepOpen: boolean;
+  setKeepOpen(on: boolean): void;
+  /** A tool made it, so it can be repeated. */
+  repeatable: boolean;
+  /** The pick fields' link to the app. */
+  link: SessionLink;
+  /** A change to a pending feature (merged in; it goes into the document once complete). */
+  onDraft(patch: Raw): string | null;
+  /** Its id changed (renamed inline): the session follows it. */
+  onRenamed(from: string, to: string): void;
+}
+
 interface Props {
   doc: RawDocument;
   featureId: string;
   view: RebuildView | null;
+  /** The feature's own status (the session shows the part before the feature, which has none for it). */
+  status?: FeatureStatus;
+  /** The open session on this feature, if any. */
+  session?: SessionPanelProps;
   selection: Selection;
   dispatch(cmd: Command): string | null;
   onEditSketch(id: string): void;
@@ -61,27 +95,141 @@ interface Props {
   frame?: FrameActions;
 }
 
-export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEditSketch, onSelectFeature, onAsk, onProfileCard, frame }: Props) {
+export function PropertyPanel(props: Props) {
+  return props.session ? (
+    <SessionFields link={props.session.link}>
+      <FeaturePanel {...props} />
+    </SessionFields>
+  ) : (
+    <FeaturePanel {...props} />
+  );
+}
+
+/**
+ * The session's selection fields: each one shown registers here; one is
+ * active (the first empty one the feature needs, unless one was clicked, or a
+ * tool chose); the app's clicks reach it through the link's router.
+ */
+function SessionFields({ link, children }: { link: SessionLink; children: ReactNode }) {
+  const registry = useRef(new Map<string, PickField>());
+  /** The field asked for (undefined: the default rule). */
+  const [wanted, setWanted] = useState<string | null | undefined>(link.initialActive);
+  const [active, setActive] = useState<string | null>(null);
+  const [error, setPickError] = useState<{ text: string; at: number } | null>(null);
+  const reported = useRef("");
+  const fields = () => [...registry.current.values()];
+  // After each render (the fields have registered): which is active, and tell the app.
+  useLayoutEffect(() => {
+    const f = activeField(fields(), wanted);
+    const key = f?.key ?? null;
+    if (key !== active) setActive(key);
+    const summary = f ? summaryOf(f) : null;
+    const sig = summary ? JSON.stringify([summary.key, summary.count, summary.prompt, summary.takes, summary.items.map((i) => (i.kind === "datum" ? i.id : i.kind === "vertex" ? `${i.edge}${i.at}` : `${i.kind}${i.index}`))]) : "";
+    if (sig !== reported.current) {
+      reported.current = sig;
+      link.report(summary);
+    }
+  });
+  useEffect(() => () => link.report(null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const current = () => (active ? registry.current.get(active) ?? null : null);
+  /** A single choice filled: on to the next field that still needs something. */
+  const advance = (f: PickField) => {
+    if (["face", "datumRef", "feature", "sketch"].includes(f.kind)) setWanted(undefined);
+  };
+  link.router.current = {
+    pick(t) {
+      const f = current();
+      if (!f) return "none";
+      if (!fieldTakes(f, t)) return `${f.label} doesn't take that: ${f.prompt.toLowerCase()}`;
+      const err = f.toggle(t);
+      setPickError(err ? { text: err, at: Date.now() } : null);
+      if (!err) advance(f);
+      return err;
+    },
+    box(ts) {
+      const f = current();
+      if (!f) return "none";
+      const err = f.addAll ? f.addAll(ts.filter((t) => fieldTakes(f, t))) : `${f.label} takes one at a time: click it`;
+      setPickError(err ? { text: err, at: Date.now() } : null);
+      return err;
+    },
+    feature(id, op) {
+      const f = current();
+      const taker = f?.takeFeature && treeTakes(f.treeOps, op) ? f : fields().find((x) => x.takeFeature && treeTakes(x.treeOps, op));
+      if (!taker?.takeFeature) return { taken: false };
+      const err = taker.takeFeature(id);
+      setPickError(err ? { text: err, at: Date.now() } : null);
+      if (!err) advance(taker);
+      return { taken: true, error: err };
+    },
+    next(back) {
+      const n = nextField(fields(), active, back);
+      if (n) setWanted(n.key);
+    },
+    hint(t) {
+      const f = current();
+      if (!f || !fieldTakes(f, t)) return null;
+      return holds(f.items, t) ? `Click to take it out of ${f.label}` : `Click to add it to ${f.label}`;
+    },
+  };
+  const host: PickHost = {
+    active,
+    setActive: (key) => setWanted(key),
+    register: (f) => void registry.current.set(f.key, f),
+    unregister: (key) => void registry.current.delete(key),
+    view: link.view,
+    edge: link.edge,
+    setEdge: link.setEdge,
+    peek: link.peek,
+    chainOf: link.chainOf,
+    passes: link.passes,
+  };
+  return (
+    <PickContext.Provider value={host}>
+      {children}
+      {error && (
+        <div className="command-error pick-error" role="alert" data-testid="pick-error" key={error.at}>
+          {error.text}
+        </div>
+      )}
+    </PickContext.Provider>
+  );
+}
+
+function FeaturePanel({ doc, featureId, view, status: statusIn, session, selection, dispatch, onEditSketch, onSelectFeature, onAsk, onProfileCard, frame }: Props) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setError(null), [featureId]);
   const index = doc.features.findIndex((f) => f.id === featureId);
-  const f = doc.features[index] as Raw | undefined;
+  // A new feature not complete yet is not in the document: it is the session's own, and goes at the end (at the rollback bar).
+  const pending = index < 0 && session?.pending?.id === featureId ? session.pending : undefined;
+  const f = (pending ?? doc.features[index]) as Raw | undefined;
+  /** For the second Enter in a field (OK): fields typed into since their last Enter. */
+  const typed = useRef(new WeakSet<EventTarget>());
+  const enter = useRef<{ wasTyped: boolean } | null>(null);
   if (!f) return <p className="muted">Select a feature in the tree.</p>;
+  const at = pending ? rollbackIndex(doc) : index;
 
   const run = (cmd: Command) => {
     const problem = dispatch(cmd);
     setError(problem);
     return problem;
   };
-  const update = (patch: Raw) => run({ type: "updateFeature", id: featureId, patch });
-  const status = view?.features.find((s) => s.id === featureId);
+  const update = (patch: Raw) => {
+    if (pending && session) {
+      const problem = session.onDraft(patch);
+      setError(problem);
+      return problem;
+    }
+    return run({ type: "updateFeature", id: featureId, patch });
+  };
+  const status = statusIn ?? view?.features.find((s) => s.id === featureId);
   // Fields show what the document holds ("=plate_t"); anything computed uses the numbers.
   const params = documentParameters(doc);
   const resolved = resolveExpressions(f, params, []) as Raw;
-  const before = resolveExpressions(doc.features.slice(0, index), params, []) as Raw[];
+  const before = resolveExpressions(doc.features.slice(0, at), params, []) as Raw[];
   const op = String(f.op);
   /** The bodies made before this feature: what it can add to, cut or combine. */
-  const bodiesBefore = validateDocument({ ...doc, features: doc.features.slice(0, index) }).bodies;
+  const bodiesBefore = validateDocument({ ...doc, features: doc.features.slice(0, at) }).bodies;
   const rename = (from: string, to: string) => run({ type: "renameBody", from, to });
   /** Frame actions whose rejection shows here, like any other edit's. */
   const batched = (a: FrameActions): FrameActions => ({ onCreate: a.onCreate, onBatch: (cmds) => {
@@ -93,18 +241,97 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
   const ui = UI_OPS[op];
   const editorProps: EditorProps = { f, resolved, before, bodies: bodiesBefore, doc, view, selection, update, rename, setError };
 
+  const renameFeature = (id: string) => {
+    if (pending && session) {
+      if (!session.onDraft({ id })) session.onRenamed(featureId, id);
+      return;
+    }
+    if (!run({ type: "updateFeature", id: featureId, patch: { id } })) {
+      session?.onRenamed(featureId, id);
+      onSelectFeature(id);
+    }
+  };
+  // In a session: Enter in a field commits that field; a second Enter (nothing typed since) or Ctrl+Enter is OK.
+  const keys = session
+    ? {
+        onInputCapture: (e: FormEvent) => typed.current.add(e.target),
+        onKeyDownCapture: (e: KeyboardEvent) => {
+          if (e.key !== "Enter") return;
+          enter.current = { wasTyped: typed.current.has(e.target) };
+          typed.current.delete(e.target);
+        },
+        onKeyDown: (e: KeyboardEvent) => {
+          if (e.key !== "Enter") return;
+          const t = e.target as HTMLElement;
+          const wasTyped = enter.current?.wasTyped ?? false;
+          enter.current = null;
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            return session.ok();
+          }
+          if (t.tagName !== "INPUT" || wasTyped || t.getAttribute("aria-invalid") === "true") return;
+          e.preventDefault();
+          session.ok();
+        },
+      }
+    : {};
+  const icon: IconName = UI_OPS[op]?.icon ?? ((ICON_NAMES as string[]).includes(op) ? (op as IconName) : "sketch");
+
   return (
-    <div className="properties" data-testid="properties">
+    <div className={`properties${session ? " in-session" : ""}`} data-testid="properties" {...keys}>
+      {session && (
+        <div className="session-bar" data-testid="session-bar">
+          <span className="session-title" data-testid="session-title">
+            {session.label}
+          </span>
+          <span className="session-actions">
+            {session.repeatable && (
+              <button
+                type="button"
+                className={`session-pin${session.keepOpen ? " on" : ""}`}
+                aria-pressed={session.keepOpen}
+                title={session.keepOpen ? "Keeping the panel open: OK starts another one (click to stop)" : "Keep the panel open: OK starts another one, for several in a row"}
+                onClick={() => session.setKeepOpen(!session.keepOpen)}
+                data-testid="session-pin"
+              >
+                <Icon name="pin" size={15} />
+              </button>
+            )}
+            <button type="button" className="session-cancel" title="Cancel: leave the part as it was (Esc)" onClick={session.cancel} data-testid="session-cancel">
+              <Icon name="x" size={15} />
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="session-ok"
+              title={`OK: keep it, one undo step "${session.label}" (Enter in the view, a second Enter in a field, or Ctrl+Enter)`}
+              onClick={session.ok}
+              data-testid="session-ok"
+            >
+              <Icon name="check" size={15} />
+              OK
+            </button>
+          </span>
+        </div>
+      )}
       <div className="prop-header">
+        <span className="prop-icon" aria-hidden="true">
+          <Icon name={icon} size={18} />
+        </span>
         <h3>{OP_LABEL[op] ?? op}</h3>
-        <TextInput
-          value={featureId}
-          testId="prop-id"
-          onCommit={(id) => {
-            if (!run({ type: "updateFeature", id: featureId, patch: { id } })) onSelectFeature(id);
-          }}
-        />
+        <TextInput value={featureId} testId="prop-id" onCommit={renameFeature} />
       </div>
+      {session?.pending && (
+        <div className="session-pending" data-testid="session-pending" role="status">
+          {session.pendingProblem ? `Still needed: ${session.pendingProblem}` : "Pick what it needs in the view."}
+        </div>
+      )}
+      {session?.failing && !status?.error && (
+        <div className="feature-error standalone" data-testid="prop-feature-error">
+          {session.failing.replaceAll(`${featureId}: `, "")}
+        </div>
+      )}
+      {session && status?.error && <div className="session-note muted small">The view keeps the last preview that built; fix the value, or OK keeps it with the error.</div>}
       {status?.error && (
         <div
           className="feature-error standalone"
@@ -152,25 +379,29 @@ export function PropertyPanel({ doc, featureId, view, selection, dispatch, onEdi
           </>
         )}
       </div>
-      <div className="prop-actions">
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={f.suppressed === true}
-            data-testid="prop-suppressed"
-            onChange={(e) => run({ type: "suppressFeature", id: featureId, suppressed: e.target.checked })}
-          />
-          Suppressed
-        </label>
-        <button
-          className="danger"
-          onClick={() => {
-            if (!run({ type: "deleteFeature", id: featureId })) onSelectFeature(null);
-          }}
-        >
-          Delete
-        </button>
-      </div>
+      {!pending && (
+        <div className="prop-actions">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={f.suppressed === true}
+              data-testid="prop-suppressed"
+              onChange={(e) => run({ type: "suppressFeature", id: featureId, suppressed: e.target.checked })}
+            />
+            Suppressed
+          </label>
+          {!session && (
+            <button
+              className="danger"
+              onClick={() => {
+                if (!run({ type: "deleteFeature", id: featureId })) onSelectFeature(null);
+              }}
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      )}
       {error && (
         <div className="command-error" role="alert" data-testid="command-error">
           {error}

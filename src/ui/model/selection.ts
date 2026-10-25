@@ -18,7 +18,8 @@ export interface VertexPick {
 
 /** A click on the part (a B-rep face, edge or vertex) or on reference geometry (a plane, axis or point, by id), and where. */
 export type PickTarget =
-  | { kind: "face" | "edge"; index: number; point: Vec3 }
+  /** `face`, on an edge: the face under the pointer beside it, when known (the loop "Select loop" means). */
+  | { kind: "face" | "edge"; index: number; point: Vec3; face?: number }
   | { kind: "vertex"; edge: number; at: "start" | "end"; point: Vec3 }
   | { kind: "datum"; id: string; point: Vec3 };
 

@@ -34,6 +34,7 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
+import { PreviewLayer, type PreviewLook } from "./viewport/preview";
 import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
 import { SectionCaps, type CapSource } from "./viewport/sectionCaps";
 import { clipMaterial, clipPlanesOf, SectionPlanes } from "./viewport/sectionLayer";
@@ -119,6 +120,12 @@ interface Props {
   onBox?(sel: Selection, additive: boolean): void;
   /** A double-click on the part (or empty space: null). */
   onDoubleClick?(target: PickTarget | null): void;
+  /** A feature session's preview over the part: what the feature adds and removes, and where it failed (src/ui/viewport/preview.ts). */
+  preview?: PreviewLook | null;
+  /** What a click on the thing under the pointer would do (a session's field: "Click to add it to Edges"), for the pointer's tip. */
+  pickHint?: ((target: PickTarget) => string | null) | null;
+  /** Things to light up as if hovered (a session field's chip under the pointer). */
+  peek?: PickTarget[] | null;
 }
 
 export interface FrameNode {
@@ -208,7 +215,9 @@ interface ViewportApi {
   /** Every face and edge under these client pixels, nearest first (Select Other). */
   under(clientX: number, clientY: number): UnderPointer[];
   /** Lights one up while the Select Other list is hovered (null: none). */
-  preview(t: PickTarget | null): void;
+  preview(t: PickTarget | PickTarget[] | null): void;
+  /** A feature session's preview: what the feature adds and removes (null: none). */
+  setPreview(look: PreviewLook | null): void;
   /** Clears the pinned rotation centre. */
   unpin(): void;
   setCubeVisible(v: boolean): void;
@@ -249,6 +258,9 @@ export function Viewport({
   onFilter,
   onBox,
   onDoubleClick,
+  preview = null,
+  pickHint = null,
+  peek: peekList = null,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
@@ -324,7 +336,10 @@ export function Viewport({
       onDimension: (d, x, y) => live.current.onDimension?.(d, x, y),
       onHandleLabel: (h, x, y) => (h.kind === "section" ? sectionLabel(h) : live.current.onHandleLabel?.(h, x, y)),
     });
-    scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group);
+    // A feature session's preview: what it adds in the accent colour, what it removes as a red ghost.
+    const previewLayer = new PreviewLayer(el, { add: cssColor(el, "--preview-add", "#1f6feb"), remove: cssColor(el, "--preview-remove", "#e5484d") });
+    let previewLook: PreviewLook | null = null;
+    scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group, previewLayer.group);
     let photoMesh: THREE.Mesh | null = null;
     let photo: Underlay | null = null;
     let photoTexture: { url: string; texture: THREE.Texture } | null = null;
@@ -347,8 +362,8 @@ export function Viewport({
     let edgeSegments: Float32Array = new Float32Array(0);
     let selection: Selection = EMPTY_SELECTION;
     let hovered: PickTarget | null = null;
-    /** The row of Select Other's list under the pointer (shown through what is in front of it). */
-    let peek: PickTarget | null = null;
+    /** What is lit up through whatever hides it: Select Other's row under the pointer, a session field's chip under the pointer. */
+    let peek: PickTarget[] = [];
     /** One end of an edge per vertex of the part (the lowest edge that ends there stands for it), for picking vertices. */
     let vertices: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
@@ -472,6 +487,7 @@ export function Viewport({
       renderer.render(scene, eye());
       placeLabels();
       placeDatumLabels();
+      previewLayer.place(eye(), el.clientWidth, el.clientHeight);
       cube.update(camera);
       triad.update(camera);
       settleSoon();
@@ -842,8 +858,10 @@ export function Viewport({
               ? vertexDots([hovered.point], HOVER_COLOR, 10)
               : null;
       // Select Other's row under the pointer: lit up through whatever hides it.
-      const look = peek?.kind === "face" ? faceMesh([peek.index], HOVER_COLOR, 0.42, true) : peek?.kind === "edge" ? edgeMarks([peek.index], hoverEdgeMat, hoverEdgeWhole) : null;
-      for (const o of [...sel, hov, look]) if (o) marks.add(o);
+      const peekFaces = peek.flatMap((t) => (t.kind === "face" ? [t.index] : []));
+      const peekEdges = peek.flatMap((t) => (t.kind === "edge" ? [t.index] : []));
+      const look = [peekFaces.length ? faceMesh(peekFaces, HOVER_COLOR, 0.42, true) : null, peekEdges.length ? edgeMarks(peekEdges, hoverEdgeMat, hoverEdgeWhole) : null];
+      for (const o of [...sel, hov, ...look]) if (o) marks.add(o);
       datums.mark(selection.datums ?? [], hovered?.kind === "datum" ? hovered.id : null);
       relabelDatums();
       render();
@@ -961,7 +979,10 @@ export function Viewport({
       const cutKey = JSON.stringify(sectionState?.bodies ?? null);
       if (cutKey !== outlineCutKey) buildOutlines();
       clipModel();
-      if (!moved) redrawMarks();
+      if (!moved) {
+        redrawMarks();
+        previewLayer.set(previewLook, clipPlanes);
+      }
       caps.set(capSources(), clipPlanes, visibleBox && !visibleBox.isEmpty() ? visibleBox.getCenter(new THREE.Vector3()) : center, radius * 2 + 1);
       sectionPlanes.set(sectionState, boxNow());
       sectionHandles = makeSectionHandles();
@@ -1237,7 +1258,9 @@ export function Viewport({
       const frontEdge = edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + slack);
       let hit: { target: PickTarget; distance: number } | null = null;
       if (frontEdge && edgeHit.index !== undefined) {
-        hit = { target: { kind: "edge", index: segmentEdge[Math.floor(edgeHit.index / 2)], point: edgeHit.point.toArray() as Vec3 }, distance: edgeHit.distance };
+        // The face under the pointer beside the edge goes with it (which loop "Select loop" means).
+        const beside = faceHit ? faceAt(faceHit) : -1;
+        hit = { target: { kind: "edge", index: segmentEdge[Math.floor(edgeHit.index / 2)], point: edgeHit.point.toArray() as Vec3, ...(beside >= 0 ? { face: beside } : {}) }, distance: edgeHit.distance };
       } else if (faceHit && may("face")) {
         const index = faceAt(faceHit);
         if (index >= 0) hit = { target: { kind: "face", index, point: faceHit.point.toArray() as Vec3 }, distance: faceHit.distance };
@@ -1650,6 +1673,10 @@ export function Viewport({
         /** Ends a glide now, at the view it was going to. */
         finishGlide,
         /** What is under these client pixels, nearest first (Select Other's list). */
+        /** What a feature session's preview draws now: what it adds, what it removes, the failure marker. */
+        sessionPreview() {
+          return previewLayer.shown();
+        },
         under(x: number, y: number) {
           return underAt(x, y).map((h) => ({ ...h.target, label: otherLabel(h.target, shownView?.faces ?? [], shownView?.edges ?? []) }));
         },
@@ -1819,11 +1846,17 @@ export function Viewport({
       },
       under: underAt,
       unpin: () => controls.pin(null),
-      preview(t: PickTarget | null) {
-        if (sameTarget(t, peek)) return;
-        peek = t;
+      preview(t: PickTarget | PickTarget[] | null) {
+        const next = t === null ? [] : Array.isArray(t) ? t : [t];
+        if (next.length === peek.length && next.every((x, i) => sameTarget(x, peek[i]))) return;
+        peek = next;
         hovered = null;
         redrawMarks();
+      },
+      setPreview(look: PreviewLook | null) {
+        previewLook = look;
+        previewLayer.set(look, clipPlanes);
+        render();
       },
       setCubeVisible(v: boolean) {
         cube.setVisible(v);
@@ -1858,6 +1891,7 @@ export function Viewport({
         caps.dispose();
         sectionPlanes.dispose();
         evalLayer.dispose();
+        previewLayer.dispose();
         cube.dispose();
         triad.dispose();
         labels.remove();
@@ -1934,6 +1968,16 @@ export function Viewport({
   useEffect(() => {
     api.current?.setFilter(filter);
   }, [filter]);
+
+  // A feature session (Phase P wave 2): its preview over the part, and a field's chip lit up.
+  useEffect(() => {
+    api.current?.setPreview(preview);
+  }, [preview]);
+  useEffect(() => {
+    api.current?.preview(peekList ?? null);
+  }, [peekList]);
+  const pickHintRef = useRef(pickHint);
+  pickHintRef.current = pickHint;
 
   // The reference geometry shown: the default planes and every plane, axis and point that built, each by its
   // eye (a selected one always), sized to the part; the origin's triad by its own eye.
@@ -2427,12 +2471,12 @@ export function Viewport({
         </Popup>
       )}
       <SelectionChip selection={selection} faces={faces} edges={edges} datums={view?.datums ?? {}} />
-      {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} />}
+      {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} hint={pickHintRef.current?.(hover.target) ?? null} />}
     </div>
   );
 }
 
-function PickTip({ hover, info }: { hover: Hover; info: { faces: FaceInfo[]; edges: EdgeInfo[]; datums: Record<string, Datum> } }) {
+function PickTip({ hover, info, hint }: { hover: Hover; info: { faces: FaceInfo[]; edges: EdgeInfo[]; datums: Record<string, Datum> }; hint: string | null }) {
   const t = hover.target;
   const face = t.kind === "face" ? info.faces[t.index] : undefined;
   const text =
@@ -2446,6 +2490,7 @@ function PickTip({ hover, info }: { hover: Hover; info: { faces: FaceInfo[]; edg
   return (
     <div className="face-tip" style={{ left: hover.x + 14, top: hover.y + 14 }} data-testid="pick-tip">
       <div>{text}</div>
+      {hint && <div className="pick-hint">{hint}</div>}
       {face && <div className="muted">area {fmt(face.area)} mm²</div>}
     </div>
   );

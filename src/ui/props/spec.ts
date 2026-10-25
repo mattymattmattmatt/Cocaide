@@ -96,7 +96,7 @@ export type FieldSpec =
   /** Several faces, picked in the view ("Use selected faces"). */
   | (Base & { kind: "faces"; optional?: boolean })
   /** One or more edges, picked in the view ("Use selected edges"). */
-  | (Base & { kind: "edges"; optional?: boolean })
+  | (Base & { kind: "edges"; optional?: boolean; propagation?: boolean })
   /** One face, picked in the view ("Use selected face"). */
   | (Base & { kind: "face" })
   /** One earlier feature, of these ops if given. */

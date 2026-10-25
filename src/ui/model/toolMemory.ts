@@ -15,8 +15,6 @@ export const REMEMBERED: Readonly<Record<string, readonly string[]>> = {
   chamfer: ["distance"],
   shell: ["thickness"],
   draft: ["angle"],
-  extrude: ["distance"],
-  cut: ["distance"],
   hole: ["size", "kind", "fit"],
   linearPattern: ["count"],
   circularPattern: ["count"],

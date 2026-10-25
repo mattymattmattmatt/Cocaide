@@ -733,6 +733,22 @@ const ICONS = {
       <circle cx="7.5" cy="8.5" r="1.5" />
     </>
   ),
+  pin: <path d="M9 3h6 M10 3v6l-3 4h10l-3-4V3 M12 13v8" />,
+  tangentChain: <path d="M3 17h6a5 5 0 0 0 5-5V8a3 3 0 0 1 3-3h4 M3 17l2-2 M3 17l2 2" />,
+  edgeLoop: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="3" />
+      <circle cx="4" cy="12" r="1.6" fill="currentColor" />
+    </>
+  ),
+  faceEdges: (
+    <>
+      <path d="M4 7l8-4 8 4-8 4z" strokeDasharray="0" />
+      <path d="M4 7v9l8 5 8-5V7" strokeOpacity="0.45" />
+    </>
+  ),
+  tangentFaces: <path d="M3 18h7a6 6 0 0 0 6-6V4 M3 14h7a2 2 0 0 0 2-2V4" />,
+  repeat: <path d="M4 12a8 8 0 0 1 14-5.3 M18 3v4h-4 M20 12a8 8 0 0 1-14 5.3 M6 21v-4h4" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;
