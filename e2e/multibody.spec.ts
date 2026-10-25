@@ -83,7 +83,7 @@ test("on the stand: mirror a hole and a body, move, split and delete bodies, a b
   const part = JSON.parse(readFileSync(path, "utf8"));
   expect(part).toMatchObject({ name: "upright", material: { name: "aluminium 6061", densityKgPerM3: 2700 } });
   expect(part.features.at(-1)).toEqual({ id: "keep_1", op: "deleteBody", keep: ["upright"] });
-  await page.locator('input[type="file"][accept=".json,application/json"]').setInputFiles(path);
+  await page.locator('input[type="file"][accept^=".json"]').setInputFiles(path);
   await expectVolume(page, "57,600");
   await expect(page.getByTestId("doc-name")).toHaveValue("upright");
 });

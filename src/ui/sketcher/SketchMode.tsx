@@ -1029,26 +1029,6 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               title={`Check sketch for feature: open ends, gaps, crossings, overlaps, duplicates, with one-click fixes${keyHint("sketch.check", prefs)}`}
               testId="tool-check"
             />
-            {onInsertDxf && (
-              <IconTool
-                small
-                icon="dxfInsert"
-                label="Insert DXF"
-                onClick={onInsertDxf}
-                title={`Insert DXF…: a drawing's lines, arcs and curves into this sketch, ends joined (or drop a .dxf on the sketch)${keyHint("sketch.insertDxf", prefs)}`}
-                testId="tool-insert-dxf"
-              />
-            )}
-            {onExportDxf && (
-              <IconTool
-                small
-                icon="dxfExport"
-                label="Export DXF"
-                onClick={() => onExportDxf(draft.entities)}
-                title={`Export DXF: this sketch as a DXF in its own plane, mm${keyHint("sketch.exportDxf", prefs)}`}
-                testId="tool-export-dxf"
-              />
-            )}
             <IconTool small icon="undo" label="Undo" onClick={undo} disabled={!past.length} title={`Undo in sketch${keyHint("undo", prefs)}`} testId="sketch-undo" />
             <IconTool small icon="redo" label="Redo" onClick={redo} disabled={!future.length} title={`Redo in sketch${keyHint("redo", prefs)}`} testId="sketch-redo" />
           </ToolStack>
@@ -1296,6 +1276,27 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
                 ? `Profile: ${profile.regions.length} region${profile.regions.length === 1 ? "" : "s"}, area ${round(profile.area)} mm²`
                 : `Profile: ${profile.error}`}
           </div>
+          {(onInsertDxf || onExportDxf) && (
+            // DXF in and out: in the side panel, so the sketch toolbar stays on one row.
+            <div className="row-buttons sketch-dxf" role="group" aria-label="DXF">
+              {onInsertDxf && (
+                <button
+                  onClick={onInsertDxf}
+                  title={`Insert DXF…: a drawing's lines, arcs and curves into this sketch, ends joined (or drop a .dxf on the sketch)${keyHint("sketch.insertDxf", prefs)}`}
+                  data-testid="tool-insert-dxf"
+                >
+                  <Icon name="dxfInsert" size={13} />
+                  Insert DXF…
+                </button>
+              )}
+              {onExportDxf && (
+                <button onClick={() => onExportDxf(draft.entities)} title={`Export DXF: this sketch as a DXF in its own plane, mm${keyHint("sketch.exportDxf", prefs)}`} data-testid="tool-export-dxf">
+                  <Icon name="dxfExport" size={13} />
+                  Export DXF
+                </button>
+              )}
+            </div>
+          )}
           {message && (
             <div className="command-error" role="alert" data-testid="sketch-message">
               {message}
