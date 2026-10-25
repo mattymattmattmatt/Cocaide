@@ -124,9 +124,10 @@ export interface FeatureDef<F extends { id: string; op: string } = any> {
    * Body names in fields the rename does not know. Already renamed for a
    * registry op: "body", "newBody", "bodies", the body its id names
    * (bodyFromId), the selectors in "face", "faces" and "edges", and those
-   * inside its datumRefs.
+   * inside its datumRefs. `before`: the feature as it was before any of that
+   * (an op that derives several names from one field reads them from it).
    */
-  renameBodies?(raw: Record<string, unknown>, rename: (name: unknown) => unknown): Record<string, unknown>;
+  renameBodies?(raw: Record<string, unknown>, rename: (name: unknown) => unknown, before?: Record<string, unknown>): Record<string, unknown>;
   /** True when the feature touches only bodies `inScope` accepts (a "body:<name>" write scope). */
   onlyBodies?(raw: Record<string, unknown>, inScope: (name: unknown) => boolean, doc: RawDocument): boolean;
   /** A pattern or mirror may repeat it (its kernel op then calls ctx.setSeed). */

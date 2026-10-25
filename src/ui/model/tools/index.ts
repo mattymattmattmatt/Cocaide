@@ -18,6 +18,7 @@ import { tools as dress } from "./dress";
 import { tools as scale } from "./scale";
 import { tools as sweep } from "./sweep";
 import { tools as evaluate } from "./evaluate";
+import { tools as files } from "./files";
 
 const LISTS: ToolDef[][] = [
   sketch,
@@ -34,6 +35,7 @@ const LISTS: ToolDef[][] = [
   scale,
   sweep,
   evaluate,
+  files,
 ];
 
 export const MODEL_TOOLS: ToolDef[] = LISTS.flat();

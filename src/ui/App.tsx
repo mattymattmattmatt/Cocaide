@@ -41,6 +41,9 @@ import { addFramePath } from "../weldment/frame";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
+import { exportBase } from "../doc/properties";
+import { PartProperties } from "./files/PartProperties";
+import { OPEN_ACCEPT, useFiles } from "./files/useFiles";
 import { FeatureTree, OP_ICON } from "./FeatureTree";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "./ContextMenu";
 import { ParametersContext, TextInput } from "./fields";
@@ -402,8 +405,28 @@ export function App() {
     setNotice({ kind: "info", text: origin });
   };
 
+  /** STEP and DXF files in, DXF out: Open and drop route them here first (src/ui/files). */
+  const files = useFiles({
+    doc,
+    viewDoc: () => builtDoc.current ?? doc,
+    view,
+    kernel: kernel.port,
+    notice: (text, kind = "error") => setNotice({ kind, text }),
+    openDocument: (text, origin) => replaceDocument(text, origin),
+    create: (feature) => create(feature),
+    sketching: !!sketch,
+    fit: () => {
+      needsFit.current = true;
+    },
+  });
+  const filesRef = useRef(files);
+  filesRef.current = files;
+
   const openFile = useCallback(
-    async (file: File) => replaceDocument(await file.text(), `Opened ${file.name}`),
+    async (file: File) => {
+      if (await filesRef.current.open(file)) return;
+      replaceDocument(await file.text(), `Opened ${file.name}`);
+    },
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
@@ -433,10 +456,11 @@ export function App() {
       setNotice({ kind: "error", text: `STEP not exported: ${n} rebuild error${n === 1 ? "" : "s"}. ${r.errors[0]}` });
       return;
     }
-    download(`${fileBase(r.name)}.step`, r.text, "model/step");
+    const stepName = `${exportBase(parsed.value, r.name)}.step`;
+    download(stepName, r.text, "model/step");
     setNotice({
       kind: "info",
-      text: `Exported ${fileBase(r.name)}.step${photoOf(parsed.value) ? ". It was estimated from a photo: check every size against the part before making it." : ""}${
+      text: `Exported ${stepName}${photoOf(parsed.value) ? ". It was estimated from a photo: check every size against the part before making it." : ""}${
         rollbackIndex(parsed.value) < ((parsed.value as RawDocument).features?.length ?? 0) ? ". It is the whole part: only the view is rolled back." : ""
       }`,
     });
@@ -878,7 +902,7 @@ export function App() {
 
   const exportDrawing = (kind: "pdf" | "svg") => {
     if (!sheet) return setNotice({ kind: "error", text: "There is no drawing to export." });
-    const name = `${fileBase(view?.name ?? "part")}-drawing.${kind}`;
+    const name = `${exportBase(doc, view?.name ?? "part")}-drawing.${kind}`;
     if (kind === "pdf") download(name, sheetPDF(sheet, { title: docDrawing?.sheet.title ?? view?.name ?? "drawing" }), "application/pdf");
     else download(name, sheetSVG(sheet), "image/svg+xml");
     const failing = drawingChecksNow.filter((c) => !c.ok).length;
@@ -1036,6 +1060,7 @@ export function App() {
       selectFeature: setSelectedFeature,
       setRightTab,
       evaluate: (panel: EvaluatePanel) => openEvaluate(panel),
+      files: files.tool,
     },
   );
   /** The newest ToolCtx, for menu entries run at the click (after the right-click's selection has landed). */
@@ -1154,6 +1179,7 @@ export function App() {
           testId: "ctx-edit-feature",
         },
         ...(sketchId ? [{ label: "Edit sketch", icon: "sketch", onClick: () => editSketch(sketchId), testId: "ctx-edit-sketch" } as MenuEntry] : []),
+        ...(op === "sketch" ? [{ label: "Export DXF", icon: "dxfExport", hint: "The sketch in its own plane, mm: profile, construction and points on their layers", onClick: () => files.exportSketchById(id), testId: "ctx-export-dxf" } as MenuEntry] : []),
         { label: suppressed ? "Unsuppress" : "Suppress", icon: suppressed ? "eye" : "suppress", onClick: () => run({ type: "suppressFeature", id, suppressed: !suppressed }), testId: "ctx-suppress" },
         { label: "Rename…", icon: "note", onClick: () => renameFeature(id), testId: "ctx-rename" },
         ...(op !== "sketch" ? [{ label: "Show dimensions", icon: "dimension", onClick: () => showDimensions(id), testId: "ctx-show-dimensions" } as MenuEntry] : []),
@@ -1414,8 +1440,12 @@ export function App() {
           e.preventDefault();
           setDragging(false);
           const file = e.dataTransfer.files[0];
-          if (DRAWING_TYPES.includes(file.type)) void openDrawing(file, e.clientX, e.clientY);
-          else openFile(file);
+          const at = { x: e.clientX, y: e.clientY };
+          if (DRAWING_TYPES.includes(file.type)) void openDrawing(file, at.x, at.y);
+          else
+            void files.drop(file).then((handled) => {
+              if (!handled) void openFile(file);
+            });
         }}
       >
         <header className="topbar">
@@ -1464,14 +1494,14 @@ export function App() {
               <Icon name="new" />
               <span className="label">New</span>
             </button>
-            <button aria-label="Open" onClick={() => fileInput.current?.click()} title={`Open a .cocaide.json part${keyHint("open", prefs)}`}>
+            <button aria-label="Open" onClick={() => fileInput.current?.click()} title={`Open a .cocaide.json part, a STEP file (a new part holding it) or a DXF drawing (a new part with it in a sketch)${keyHint("open", prefs)}`}>
               <Icon name="open" />
               <span className="label">Open</span>
             </button>
             <input
               ref={fileInput}
               type="file"
-              accept=".json,application/json"
+              accept={OPEN_ACCEPT}
               hidden
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -1663,6 +1693,9 @@ export function App() {
               onFinish={finishSketch}
               onCancel={() => setSketch(null)}
               applyRef={sketchApply}
+              onInsertDxf={() => void files.insertIntoSketch()}
+              onExportDxf={(entities) => files.exportSketch(entities, sketch.id)}
+              insertRef={files.sketchInsert}
               onAsk={(t, draft, x, y) =>
                 openAsk(
                   t.kind === "entity"
@@ -1820,7 +1853,8 @@ export function App() {
                       setRightTab("properties");
                     }}
                     onDownload={(name, text) => download(name, text, "text/csv")}
-                    fileBase={fileBase(view?.name ?? "part")}
+                    fileBase={exportBase(doc, view?.name ?? "part")}
+                    onExportPlates={() => runTool("tool.exportPlates")}
                   />
                 ) : rightTab === "properties" ? (
                   <section className="panel">
@@ -1843,7 +1877,10 @@ export function App() {
                     )}
                   </section>
                 ) : (
-                  <DocumentEditor ref={editor} text={d.text} onChange={d.setText} parseError={parsed.ok ? null : parsed.error} />
+                  <div className="document-tab">
+                    <PartProperties doc={doc} dispatch={run} onError={(text) => setNotice({ kind: "error", text })} />
+                    <DocumentEditor ref={editor} text={d.text} onChange={d.setText} parseError={parsed.ok ? null : parsed.error} />
+                  </div>
                 )}
               </aside>
             </>
@@ -1852,6 +1889,7 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
+        {files.dialogs}
         {paletteOpen && !sketch && mode === "model" && <CommandPalette entries={paletteEntries()} onClose={() => setPaletteOpen(false)} />}
         {valueBox && (
           <ValueBox
@@ -1949,7 +1987,7 @@ function Help() {
         )}
       </ol>
       <p className="muted small">
-        Select a feature in the tree to edit it. Every change can be undone (Ctrl+Z). Drop a part file, a drawing (PDF or image) or a photo of a part on the
+        Select a feature in the tree to edit it. Every change can be undone (Ctrl+Z). Drop a part file, a STEP file (as a part or a body), a DXF (as a sketch), a drawing (PDF or image) or a photo of a part on the
         window to start from it. All lengths are in millimetres.
       </p>
     </div>

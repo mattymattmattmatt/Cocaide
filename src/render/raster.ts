@@ -9,7 +9,8 @@ import { cross3, dot3, normalize3 } from "../geom/vec";
 import type { MeshData } from "../kernel/mesh";
 
 export const VIEWS = {
-  iso: { direction: [1, -1, 0.8], up: [0, 0, 1] },
+  /** True isometric (equal angles), as the 3D view's. */
+  iso: { direction: [1, -1, 1], up: [0, 0, 1] },
   front: { direction: [0, -1, 0], up: [0, 0, 1] },
   back: { direction: [0, 1, 0], up: [0, 0, 1] },
   right: { direction: [1, 0, 0], up: [0, 0, 1] },
@@ -17,7 +18,7 @@ export const VIEWS = {
   top: { direction: [0, 0, 1], up: [0, 1, 0] },
   bottom: { direction: [0, 0, -1], up: [0, -1, 0] },
   /** Iso from below and behind, for undersides. */
-  isoBack: { direction: [-1, 1, -0.8], up: [0, 0, 1] },
+  isoBack: { direction: [-1, 1, -1], up: [0, 0, 1] },
 } satisfies Record<string, Camera>;
 export type ViewName = keyof typeof VIEWS;
 

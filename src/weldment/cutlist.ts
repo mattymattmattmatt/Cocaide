@@ -44,8 +44,12 @@ export function anglesText(angles: [number, number]): string {
   return angles[0] === 0 && angles[1] === 0 ? "square" : `${one(angles[0])} / ${one(angles[1])}`;
 }
 
-export function cutListCSV(items: CutListItem[]): string {
-  const rows = [["Item", "Profile", "Size", "Length (mm)", "End 1 (deg)", "End 2 (deg)", "Qty", "kg each", "kg total", "Members"]];
+/**
+ * The cut list as CSV. `header`: rows that go first (the part's number and
+ * description, src/doc/properties.ts csvHeaderRows), then a blank row, then the table.
+ */
+export function cutListCSV(items: CutListItem[], header: string[][] = []): string {
+  const rows = [...header, ...(header.length ? [[]] : []), ["Item", "Profile", "Size", "Length (mm)", "End 1 (deg)", "End 2 (deg)", "Qty", "kg each", "kg total", "Members"]];
   for (const i of items) {
     rows.push([
       String(i.item),

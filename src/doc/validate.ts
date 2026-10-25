@@ -18,6 +18,7 @@ import {
   PHOTO_SCALE_KEYS,
   PHOTO_SCALE_SOURCES,
   PICKS,
+  PROPERTY_KEYS,
   SOURCE_KEYS,
   WELD_KEYS,
   WELD_TYPES,
@@ -38,6 +39,7 @@ import {
   type LinearPatternFeature,
   type Material,
   type MemberFeature,
+  type PartProperties,
   PROFILE_KEYS,
   type ProfileDef,
   type SketchEntity,
@@ -109,6 +111,8 @@ export interface ValidationResult {
   drawing: Drawing | null;
   /** What is wrong with the drawing. Never stops the part rebuilding. */
   drawingErrors: string[];
+  /** The part's properties (part number, description ...); empty when it has none or they are wrong. */
+  properties: PartProperties;
 }
 
 /** What a feature may refer to: the part's profiles and nodes, and the members before it. */
@@ -147,14 +151,14 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], madeBodies: [], bodyMaterials: {}, profiles: {}, nodes: {}, welds: [], drawing: null, drawingErrors: [] };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], madeBodies: [], bodyMaterials: {}, profiles: {}, nodes: {}, welds: [], drawing: null, drawingErrors: [], properties: {} };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -190,6 +194,7 @@ export function validateDocument(input: unknown): ValidationResult {
       }
     }
   }
+  if (input.properties !== undefined) result.properties = checkProperties(input.properties, header);
   // Every name an expression may read: the parameters and the sketches' dimensions, worked out together.
   const symbols = documentParameters(input);
   if (input.parameters !== undefined) {
@@ -315,6 +320,47 @@ export function validateDocument(input: unknown): ValidationResult {
     result.drawingErrors = drawing.errors;
   }
   return result;
+}
+
+/** The longest a property may be: a title block or a CSV cell, not a document. */
+const PROPERTY_MAX = 500;
+
+/** The part's properties: each a string; "custom" an object of name: string. Errors say which field and what it must be. */
+function checkProperties(raw: unknown, c: Checker): PartProperties {
+  if (!isObject(raw)) {
+    c.fail("properties", `must be an object of part properties: partNumber, description, revision, author, finish, custom (got ${describe(raw)})`);
+    return {};
+  }
+  const before = c.errors.length;
+  c.keys(raw, "properties", [...PROPERTY_KEYS]);
+  const out: PartProperties = {};
+  const text = (v: unknown, path: string): string | undefined => {
+    if (typeof v !== "string") return void c.fail(path, `must be text (got ${describe(v)})`);
+    if (v.trim() === "") return void c.fail(path, "is empty; leave it out instead");
+    if (v.length > PROPERTY_MAX) return void c.fail(path, `is ${v.length} characters long; keep it to ${PROPERTY_MAX}`);
+    return v;
+  };
+  for (const k of PROPERTY_KEYS) {
+    if (k === "custom" || raw[k] === undefined) continue;
+    const v = text(raw[k], `properties.${k}`);
+    if (v !== undefined) out[k] = v;
+  }
+  if (raw.custom !== undefined) {
+    if (!isObject(raw.custom)) c.fail("properties.custom", `must be an object of name: text, like { "Customer": "Acme" } (got ${describe(raw.custom)})`);
+    else {
+      const custom: Record<string, string> = {};
+      for (const [name, v] of Object.entries(raw.custom)) {
+        if (name.trim() === "" || name.length > 60) {
+          c.fail("properties.custom", `a property name must be 1 to 60 characters (got ${describe(name)})`);
+          continue;
+        }
+        const value = text(v, `properties.custom.${name}`);
+        if (value !== undefined) custom[name] = value;
+      }
+      if (Object.keys(custom).length) out.custom = custom;
+    }
+  }
+  return c.errors.length > before ? {} : out;
 }
 
 function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): Feature | null {

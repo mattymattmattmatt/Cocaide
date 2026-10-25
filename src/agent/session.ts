@@ -6,13 +6,13 @@
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument } from "../doc/format";
 import { createHistory, record, redo, undo, canRedo, canUndo, type History } from "../doc/history";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
-import { exportRefusal, photoNote } from "../doc/photo";
+import { exportRefusal } from "../doc/photo";
 import type { DrawingGeometry } from "../ask/kernel";
 import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { geometryKey } from "../doc/drawing";
@@ -25,11 +25,20 @@ import { sheetSVG } from "../drafting/svg";
 import { projectViews } from "../kernel/project";
 import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
-import { exportSTEP, heapBytes, loadOC, rebuild, RECYCLE_HEAP_BYTES, recycleOC, tessellate, type OC, type RebuildResult } from "../kernel";
+import { heapBytes, loadOC, rebuild, RECYCLE_HEAP_BYTES, recycleOC, tessellate, type OC, type RebuildResult } from "../kernel";
 import { edgeSummary, faceSummary, measurementSummary, newFailures, round6, selectOn, shotOf, type Picked } from "../kernel/inspect";
 import { encodePNG } from "../render/png";
 import { VIEWS, type Camera } from "../render/raster";
 import { encodeSTL } from "../render/stl";
+import { exportPartSTEP } from "../kernel/stepPart";
+import { exportBase, partProperties } from "../doc/properties";
+import { flatQuery } from "../kernel/flat";
+import { writeDxf } from "../io/dxf";
+import { sketchToDxf } from "../io/dxfSketch";
+import { plateFiles, platesSummary } from "../io/plates";
+import { zipFiles } from "../io/zip";
+import { MAX_STEP_CHARS } from "../features/import/stepText";
+import { agentView, sizeText } from "../features/import/doc";
 import { selectorHealth } from "./health";
 import { LocalKernel } from "../ask/kernel";
 import { commandMade, expandTool, planBatch } from "../ask/tools/batch";
@@ -94,6 +103,8 @@ export const EDIT_TOOLS = [
   "sketchProfile",
   "fullyDefine",
   "holes",
+  "setProperties",
+  "importStep",
 ] as const;
 export const READ_TOOLS = [
   "listFeatures",
@@ -116,6 +127,7 @@ export const READ_TOOLS = [
   "listDatums",
   "reference",
   "plan",
+  "exportDxf",
 ] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
@@ -294,6 +306,12 @@ export class AgentSession {
         return this.edit({ type: "setBodyMaterial", body: String(a.body), material: isObject(a.material) ? a.material : null });
       case "saveBody":
         return this.saveBody(String(a.body), a.file);
+      case "setProperties":
+        return isObject(a.patch) ? this.edit({ type: "setProperties", patch: a.patch }) : this.fail("setProperties: patch must be an object of part properties");
+      case "importStep":
+        return this.importStep(a);
+      case "exportDxf":
+        return this.exportDxf(a);
       case "newDrawing": {
         if (!this.built.solid || !this.built.measurements) return this.fail("newDrawing: there is no solid to draw yet");
         const drawing = planDrawing(this.doc, this.built.measurements, this.geometry(DEFAULT_VIEWS), typeof a.date === "string" ? { date: a.date } : {});
@@ -538,7 +556,7 @@ export class AgentSession {
           // a malformed sketch has no DOF; its error says why
         }
       } else {
-        const { id: _id, op: _op, suppressed: _s, ...fields } = f;
+        const { id: _id, op: _op, suppressed: _s, ...fields } = agentView(f);
         row.fields = fields;
         // A plane, axis or point: where it is now, for sketches and other features to stand on by { "datum": id }.
         const d = this.built.datums[id];
@@ -559,6 +577,8 @@ export class AgentSession {
       writeScope: this.writeScope ? [...this.writeScope, ...this.owned] : ["*"],
     };
     if (Object.keys(params).length) out.parameters = params;
+    const props = partProperties(this.doc);
+    if (Object.keys(props).length) out.properties = props;
     out.features = features;
     const m = this.built.measurements;
     if (m) out.part = { volume: round6(m.volume), size: m.boundingBox?.size.map(round6), holes: m.holeCount };
@@ -570,9 +590,9 @@ export class AgentSession {
     const f = this.doc.features.find((x) => x.id === id);
     if (!f) return this.fail(`getFeature: no feature "${id}" (features: ${this.doc.features.map((x) => String(x.id)).join(", ")})`);
     const s = this.built.features.find((x) => x.id === id);
-    const result: CallResult["result"] = { ok: true, feature: f, status: s ? { ok: s.ok, ...(s.error ? { error: s.error } : {}), ...(s.suppressed ? { suppressed: true } : {}) } : null };
+    const result: CallResult["result"] = { ok: true, feature: agentView(f), status: s ? { ok: s.ok, ...(s.error ? { error: s.error } : {}), ...(s.suppressed ? { suppressed: true } : {}) } : null };
     const resolved = resolveExpressions(f, documentParameters(this.doc), []);
-    if (JSON.stringify(resolved) !== JSON.stringify(f)) result.resolved = resolved;
+    if (JSON.stringify(resolved) !== JSON.stringify(f)) result.resolved = agentView(resolved);
     return { result };
   }
 
@@ -639,9 +659,9 @@ export class AgentSession {
       return this.fail(`${tool}: the part does not rebuild cleanly: ${why}`);
     }
     const ext = tool === "exportSTEP" ? ".step" : ".stl";
-    const name = typeof file === "string" && file.trim() ? basename(file.trim()) : `${safeName(this.built.name)}${ext}`;
+    const name = typeof file === "string" && file.trim() ? basename(file.trim()) : `${exportBase(this.doc, this.built.name)}${ext}`;
     const path = join(this.outDir, name.endsWith(ext) ? name : `${name}${ext}`);
-    const bytes = tool === "exportSTEP" ? new TextEncoder().encode(exportSTEP(this.oc, solid, this.built.name, photoNote(this.doc), this.built.bodies)) : encodeSTL(tessellate(this.oc, solid), this.built.name);
+    const bytes = tool === "exportSTEP" ? new TextEncoder().encode(exportPartSTEP(this.oc, this.built, this.doc)) : encodeSTL(tessellate(this.oc, solid), this.built.name);
     mkdirSync(this.outDir, { recursive: true });
     writeFileSync(path, bytes);
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision } };
@@ -749,6 +769,68 @@ export class AgentSession {
     writeFileSync(path, bytes);
     const failing = drawingChecks(c.sheet, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok).map((x) => `${x.label}: ${x.actual}`);
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision, ...(failing.length ? { failingChecks: failing } : {}) } };
+  }
+
+  /** A STEP file from disk into the part: an import feature, its solids bodies (relative paths from the document's folder). */
+  private importStep(a: Record<string, unknown>): CallResult {
+    if (typeof a.path !== "string" || !a.path.trim()) return this.fail("importStep: path must be the STEP file to read (.step or .stp)");
+    const path = resolve(this.opts.docPath ? dirname(this.opts.docPath) : process.cwd(), a.path.trim());
+    let size: number;
+    try {
+      size = statSync(path).size;
+    } catch {
+      return this.fail(`importStep: no file ${path}`);
+    }
+    if (size > MAX_STEP_CHARS) return this.fail(`importStep: ${basename(path)} is ${sizeText(size)}; a part holds at most ${sizeText(MAX_STEP_CHARS)} of STEP`);
+    const feature: Record<string, unknown> = { id: nextId(this.doc, "import"), op: "import", format: "step", fileName: basename(path), data: readFileSync(path, "utf8") };
+    for (const k of ["newBody", "at", "rotate"]) if (a[k] !== undefined) feature[k] = a[k];
+    const done = this.edit({ type: "addFeature", feature });
+    if (done.result.ok) {
+      this.owned.add(String(feature.id));
+      done.result.id = feature.id;
+      done.result.bodies = this.built.bodies.map((b) => b.name);
+    }
+    return done;
+  }
+
+  /** DXF to the output folder: a sketch in its plane, a flat face's outline, or every flat plate (a ZIP). */
+  private exportDxf(a: Record<string, unknown>): CallResult {
+    const version = a.version === "R12" ? "R12" : "R2000";
+    const base = exportBase(this.doc, this.built.name);
+    const out = (name: string, bytes: Uint8Array, extra: Record<string, unknown>): CallResult => {
+      const file = typeof a.file === "string" && a.file.trim() ? basename(a.file.trim()) : name;
+      const path = join(this.outDir, file);
+      mkdirSync(this.outDir, { recursive: true });
+      writeFileSync(path, bytes);
+      return { result: { ok: true, file: path, bytes: bytes.length, revision: this.revision, ...extra } };
+    };
+    const text = (s: string) => new TextEncoder().encode(s);
+    switch (a.what) {
+      case "sketch": {
+        const id = String(a.sketch ?? "");
+        const shown = this.built.sketches.find((k) => k.id === id);
+        if (!shown) return this.fail(`exportDxf: no sketch "${id}" built (sketches: ${this.built.sketches.map((k) => k.id).join(", ") || "none"})`);
+        return out(`${base}-${id}.dxf`, text(writeDxf(sketchToDxf(shown.entities), { version })), { entities: shown.entities.length });
+      }
+      case "face": {
+        const picked = this.select(a.face, "exportDxf");
+        if (typeof picked === "string") return this.fail(picked);
+        if (!picked.faces || picked.faces.length !== 1) return this.fail("exportDxf: face must be a selector that picks one flat face");
+        const r = flatQuery(this.oc, this.built, { kind: "face", face: picked.faces[0].index });
+        if (r.kind !== "face") return this.fail(`exportDxf: ${r.kind === "error" ? r.error : "not a face"}`);
+        return out(`${base}-face.dxf`, text(writeDxf({ entities: r.entities, layers: [{ name: "CUT", color: 7 }] }, { version })), { entities: r.entities.length, frame: r.frame });
+      }
+      case "plates": {
+        const r = flatQuery(this.oc, this.built, { kind: "plates" });
+        if (r.kind !== "plates") return this.fail(`exportDxf: ${r.kind === "error" ? r.error : "no plates"}`);
+        if (!r.plates.length) return this.fail(`exportDxf: no flat plates in the part${r.others.length ? ` (${r.others.map((o) => `${o.body}: ${o.why}`).join("; ")})` : ""}`);
+        const density = validateDocument(this.doc).material?.densityKgPerM3 ?? 7850;
+        const files = plateFiles(r.plates, base, { version, density });
+        return out(`${base}-plates.zip`, zipFiles(files), { plates: platesSummary(r.plates), files: files.map((f) => f.name), notPlates: r.others });
+      }
+      default:
+        return this.fail('exportDxf: what must be "sketch" (with sketch), "face" (with a face selector) or "plates"');
+    }
   }
 
   /** One body as a part of its own, written to the output folder. */

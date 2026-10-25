@@ -704,6 +704,35 @@ const ICONS = {
       <path d={CUBE} />
     </>
   ),
+  // files in and out (Phase P): a STEP file in as a body, DXF out and in, plates for cutting, the part's properties
+  import: <path d="M12 2v8 M9 7l3 3 3-3 M5 11.5l7 4 7-4 M5 11.5v6.5l7 4 7-4v-6.5" />,
+  dxfExport: (
+    <>
+      <path d="M3 21V11l3-3h7 M3 21h12v-6" />
+      <circle cx="8" cy="15.5" r="1.8" />
+      <path d="M13 11l8-8 M15 3h6v6" />
+    </>
+  ),
+  dxfInsert: (
+    <>
+      <path d="M3 21V11l3-3h4 M3 21h12v-4" />
+      <circle cx="8" cy="15.5" r="1.8" />
+      <path d="M21 3l-7 7 M14 5v5h5" />
+    </>
+  ),
+  plates: (
+    <>
+      <path d="M6 9V5l2-2h13v10h-3" />
+      <path d="M3 21V12l2.5-2.5H18V21z" />
+      <circle cx="9" cy="15.5" r="1.8" />
+    </>
+  ),
+  properties: (
+    <>
+      <path d="M3 12V4h8l10 10-8 8z" />
+      <circle cx="7.5" cy="8.5" r="1.5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

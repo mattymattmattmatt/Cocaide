@@ -27,6 +27,7 @@ import { describeConstraint } from "../../ui/sketcher/draft";
 import { sketchHealth } from "../../ui/sketcher/status";
 import type { CheckResult, KernelPort, PartTopology } from "../kernel";
 import { bodyFeatures, partOutline, referenceGeometry } from "../packet";
+import { agentView } from "../../features/import/doc";
 import { argsOf, fail, isVec2, isVec3, limitOf, r3v, r6, str, type Outcome } from "./common";
 
 const FACE_TYPES = ["plane", "cylinder", "cone", "other"] as const;
@@ -475,9 +476,9 @@ export function featureInfo(doc: RawDocument, check: CheckResult, id: string): O
   const f = doc.features.find((x) => x.id === id);
   if (!f) return fail(`getFeature: no feature "${id}" (features: ${doc.features.map((x) => String(x.id)).join(", ")})`);
   const s = check.features.find((x) => x.id === id);
-  const out: Outcome = { ok: true, feature: f, status: s ? { ok: s.ok, ...(s.error ? { error: s.error } : {}), ...(s.suppressed ? { suppressed: true } : {}) } : null };
+  const out: Outcome = { ok: true, feature: agentView(f), status: s ? { ok: s.ok, ...(s.error ? { error: s.error } : {}), ...(s.suppressed ? { suppressed: true } : {}) } : null };
   const resolved = resolveExpressions(f, documentParameters(doc), []);
-  if (JSON.stringify(resolved) !== JSON.stringify(f)) out.resolved = resolved;
+  if (JSON.stringify(resolved) !== JSON.stringify(f)) out.resolved = agentView(resolved);
   const uses = references(f);
   if (uses.length) out.uses = uses;
   const usedBy = dependants(doc.features, id);

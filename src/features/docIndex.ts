@@ -14,6 +14,7 @@ import { def as sweep } from "./sweep/doc";
 import { def as loft } from "./loft/doc";
 import { def as rib } from "./rib/doc";
 import { def as sketchPattern } from "./sketchPattern/doc";
+import { def as importOp } from "./import/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -27,4 +28,5 @@ export const DOC_DEFS = [
   loft,
   rib,
   sketchPattern,
+  importOp,
 ];

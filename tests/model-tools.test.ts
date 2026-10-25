@@ -73,6 +73,9 @@ describe("the registry", () => {
       "tool-measure",
       "tool-mass-properties",
       "tool-section",
+      "tool-import-step",
+      "tool-export-plates",
+      "tool-export-face-dxf",
     ]);
   });
 
@@ -83,7 +86,10 @@ describe("the registry", () => {
       ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft", "tool.rib"],
       ["pattern: tool.linearPattern, tool.circularPattern, tool.sketchPattern", "tool.mirror"],
     ]);
-    expect(ids(toolbarGroups("bodies"))).toEqual([["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"]]);
+    expect(ids(toolbarGroups("bodies"))).toEqual([
+      ["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"],
+      ["tool.importStep", "tool.exportPlates", "tool.exportFaceDxf"],
+    ]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point"]]);
     expect(ids(toolbarGroups("evaluate"))).toEqual([["tool.measure", "tool.massProperties"], ["tool.section"]]);

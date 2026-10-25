@@ -179,6 +179,12 @@ export const COMMANDS: CommandDef[] = [
   { id: "view.saveView", label: "Save the view under a name", group: "View", key: null },
   { id: "view.cube", label: "Show or hide the view cube", group: "View", key: null },
   { id: "view.section", label: "Section view on or off", group: "View", key: null },
+  // Phase P: files in and out.
+  { id: "tool.importStep", label: "Import a STEP file as bodies", group: "Model tools", key: null },
+  { id: "tool.exportPlates", label: "Export plates for cutting (DXF)", group: "Model tools", key: null },
+  { id: "tool.exportFaceDxf", label: "Export a flat face as DXF", group: "Model tools", key: null },
+  { id: "sketch.insertDxf", label: "Insert a DXF drawing into the sketch", group: "Sketch", key: null },
+  { id: "sketch.exportDxf", label: "Export the sketch as DXF", group: "Sketch", key: null },
 ];
 
 export interface InputPrefs {

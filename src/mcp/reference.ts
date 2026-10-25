@@ -23,6 +23,7 @@ A document:
   "version": 1, "units": "mm", "name": "bracket",
   "parameters": { "plate_t": 6, "lip": "=sketch_1.width / 4" },   // optional named numbers or "=expressions"
   "material": { "name": "steel", "densityKgPerM3": 7850 },   // optional
+  "properties": { "partNumber": "BR-1001", "description": "Base bracket" },   // optional: see "properties"
   "features": [ ...in build order... ]
 }
 Every feature has "id" (letters, digits, _; unique) and "op", and may have "suppressed": true.
@@ -367,6 +368,25 @@ view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertica
 view. What every annotation reads is measured; none takes a value. The drawing never blocks the part: an annotation
 whose member, node, hole or weld is gone is a drawing problem (see the drawing tool's checks), not an error.
 
+## properties (the part's number, description, revision ...)
+"properties": { "partNumber": "BR-1001", "description": "Base bracket, 6 mm plate", "revision": "B", "author": "J. Smith",
+  "finish": "Hot-dip galvanised", "custom": { "Customer": "Acme Pty Ltd", "Job": "2417" } }   every field optional text
+The drawing's title block shows them (PART NO., DESCRIPTION, REV, DRAWN, FINISH; the sheet's own number, revision and
+drawnBy win where set), the cut list CSV starts with the part number and description, STEP export names the product by
+the part number (description and author too), and export file names start with the part number ("BR-1001-revB.step").
+Change them with setProperties(patch): merged in, null or "" removes a field, "custom" replaces the custom ones whole.
+Write scope: "properties" (or "drawing", whose title block shows them, or "*").
+
+## files (STEP in, DXF out and in)
+A STEP file's solids come in as bodies with the import op (below; MCP: importStep(path, newBody?, at?, rotate?) reads
+the file from disk). DXF is for 2D: exportDxf("sketch", sketch) writes a sketch in its own plane (profile on PROFILE,
+construction on CONSTRUCTION, points on POINTS); exportDxf("face", face selector) a flat face's outline in its plane
+(holes included, exact arcs); exportDxf("plates") every flat plate of the part (end caps, gussets, base plates, flat
+bars: a body of one thickness with square edges) laid flat for laser, plasma or waterjet: a ZIP of one DXF per plate
+(thickness and quantity in its name), an overview and a cutting list CSV. DXF files are ASCII R2000 (AC1015) in mm
+($INSUNITS 4) with LWPOLYLINE contours (bulges for arcs), or version "R12" for old controllers. A DXF drawing goes INTO a
+sketch in the app (Insert DXF in the sketcher, or Open a .dxf); an agent writes sketch entities directly instead.
+
 ${DOC_DEFS.map((d) => d.reference.trim()).join("\n\n")}
 
 ## References (reference geometry: planes, axes, points)
@@ -435,6 +455,9 @@ addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch,
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
 exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.
 setBodyMaterial(body, material | null) - a body's own material. saveBody(body, file?) - one body as a part of its own, written to the output folder.
+setProperties(patch) - the part's properties (partNumber, description, revision, author, finish, custom); null removes one.
+importStep(path, newBody?, at?, rotate?) - a STEP file read from disk into the part as an import feature (its solids become bodies).
+exportDxf(what: "sketch" | "face" | "plates", sketch?, face?, file?, version?) - DXF written to the output folder (plates: a ZIP).
 newDrawing(date?) - code plans the sheet: front, top, right and iso views, the overall size, every hole, a balloon per cut list item, the tables.
 setSheet(patch), setView(id, view | null), setAnnotation(id, annotation | null) - edit the drawing; a view takes its annotations with it.
 drawing - the composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.

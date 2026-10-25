@@ -10,6 +10,7 @@ import { projectViews, type ProjectedView } from "../kernel/project";
 import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
 import { rebuild, type HoleRecord, type RebuildResult } from "../kernel/rebuild";
 import { inspectQuery, type InspectQuery, type InspectResult } from "../kernel/agentQueries";
+import { flatQuery, type FlatQuery, type FlatResult } from "../kernel/flat";
 import type { OC } from "../kernel/oc";
 import { encodePNG } from "../render/png";
 
@@ -63,9 +64,12 @@ export interface KernelPort {
   project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null>;
   /** The AI tools' other questions: closest points, sketch frames, mass (src/kernel/agentQueries.ts). */
   inspect(doc: unknown, query: InspectQuery): Promise<InspectResult>;
+  /** Flat outlines for DXF: a planar face's, or every flat plate's (src/kernel/flat.ts). */
+  flat(doc: unknown, query: FlatQuery): Promise<FlatResult>;
 }
 
 export type { InspectQuery, InspectResult };
+export type { FlatQuery, FlatResult };
 
 export type KernelMethod = keyof KernelPort;
 
@@ -137,6 +141,10 @@ export class LocalKernel implements KernelPort {
 
   async inspect(doc: unknown, query: InspectQuery): Promise<InspectResult> {
     return inspectQuery(this.oc(), this.built(doc), doc, query);
+  }
+
+  async flat(doc: unknown, query: FlatQuery): Promise<FlatResult> {
+    return flatQuery(this.oc(), this.built(doc), query);
   }
 
   async screenshot(doc: unknown, opts: ShotOptions): Promise<Shot> {

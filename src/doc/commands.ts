@@ -104,6 +104,11 @@ export type Command =
   /** Gives a body its own material, or puts it back on the part's (null). */
   | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null }
   /**
+   * Changes the part's properties (partNumber, description, revision, author, finish, custom). Merged in;
+   * null or "" removes a field; "custom" replaces the custom properties whole (a name with null or "" goes).
+   */
+  | { type: "setProperties"; patch: Record<string, unknown> }
+  /**
    * Moves the rollback bar to just above feature `before` (it and the features after it are not built in the
    * view, and new features go in there), or to the end (null). See src/doc/rollback.ts.
    */
@@ -382,6 +387,22 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       else materials[cmd.body] = structuredClone(cmd.material);
       if (Object.keys(materials).length) doc.bodyMaterials = materials;
       else delete doc.bodyMaterials;
+      break;
+    }
+    case "setProperties": {
+      if (!isObject(cmd.patch)) return { ok: false, error: `setProperties: patch must be an object of part properties (got ${JSON.stringify(cmd.patch)})` };
+      const next: Record<string, unknown> = { ...(isObject(doc.properties) ? doc.properties : {}), ...structuredClone(cmd.patch) };
+      const blank = (v: unknown) => v === null || (typeof v === "string" && v.trim() === "");
+      for (const [k, v] of Object.entries(next)) {
+        if (blank(v)) delete next[k];
+        else if (k === "custom" && isObject(v)) {
+          const kept = Object.fromEntries(Object.entries(v).filter(([, x]) => !blank(x)));
+          if (Object.keys(kept).length) next.custom = kept;
+          else delete next.custom;
+        }
+      }
+      if (Object.keys(next).length) doc.properties = next;
+      else delete doc.properties;
       break;
     }
     case "setDrawing": {
@@ -737,7 +758,7 @@ function renameBody(features: Record<string, unknown>[], from: string, to: strin
       if (typeof f.body === "string") f.body = rename(f.body);
       if (typeof f.newBody === "string") f.newBody = rename(f.newBody);
       else if (d.bodyFromId?.(f) && f.id === from) f.newBody = to;
-      if (d.renameBodies) Object.assign(f, d.renameBodies(f, rename));
+      if (d.renameBodies) Object.assign(f, d.renameBodies(f, rename, features[i]));
     }
     features[i] = f;
   }

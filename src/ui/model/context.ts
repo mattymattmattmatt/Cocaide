@@ -12,7 +12,7 @@ import { sketchOnFace } from "./tools/sketch";
 export type ToolState = Pick<ToolCtx, "doc" | "view" | "selection" | "selected" | "resolved" | "features" | "library">;
 
 /** What App does for a tool. */
-export type ToolActions = Pick<ToolCtx, "run" | "create" | "replace" | "notice" | "clearNotice" | "startSketch" | "setSelection" | "selectFeature" | "setRightTab" | "evaluate">;
+export type ToolActions = Pick<ToolCtx, "run" | "create" | "replace" | "notice" | "clearNotice" | "startSketch" | "setSelection" | "selectFeature" | "setRightTab" | "evaluate" | "files">;
 
 export function makeToolCtx(state: ToolState, actions: ToolActions): ToolCtx {
   const { doc, view, selection, selected, resolved } = state;
