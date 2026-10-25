@@ -85,12 +85,38 @@ export function possibleKinds(ref: DatumRef, earlier?: ReadonlyMap<string, strin
   }
   if ("face" in ref) return ["plane", "axis"];
   if ("edge" in ref) return ref.at ? ["point"] : ["axis", "point"];
+  if ("sketch" in ref) return ref.at ? ["point"] : ["axis", "point"];
   return ["point"];
 }
 
-/** Looks like a DatumRef: an object with one of datum, face, edge or point. */
+/**
+ * What an entity of another sketch can be as a reference ({ sketch, entity,
+ * at? }), by its type: a line is an axis (a point with "at"), a circle or an
+ * arc its axis or its centre (a point with "at"), a sketch point a point.
+ * Empty for an entity that can't be referenced (a rectangle, a slot, an
+ * ellipse, a spline) or an "at" it hasn't (a circle's "start").
+ */
+export function sketchRefKinds(type: string, at?: string): DatumKind[] {
+  if (at !== undefined && !(SKETCH_REF_POINTS[type] ?? []).includes(at)) return [];
+  switch (type) {
+    case "line":
+      return at === undefined ? ["axis"] : ["point"];
+    case "arc":
+    case "circle":
+      return at === undefined ? ["axis", "point"] : ["point"];
+    case "point":
+      return ["point"];
+    default:
+      return [];
+  }
+}
+
+/** The points of each kind of sketch entity a { sketch, entity, at } reference may name. */
+export const SKETCH_REF_POINTS: Readonly<Record<string, readonly string[]>> = { line: ["start", "end", "mid"], arc: ["start", "end", "mid", "center"], circle: ["center"], point: [] };
+
+/** Looks like a DatumRef: an object with one of datum, face, edge or point, or with both sketch and entity. */
 export function isDatumRef(v: unknown): v is DatumRef {
-  return typeof v === "object" && v !== null && !Array.isArray(v) && ["datum", "face", "edge", "point"].some((k) => k in v);
+  return typeof v === "object" && v !== null && !Array.isArray(v) && (["datum", "face", "edge", "point"].some((k) => k in v) || ("sketch" in v && "entity" in v));
 }
 
 /** Looks like a plane given by reference: { "type": "ref", "ref": ... }. */
@@ -124,9 +150,19 @@ export function datumRefsAt(raw: Record<string, unknown>, ...keys: string[]): Da
   return out;
 }
 
-/** The feature ids these references name ({ datum: id }, not the defaults). */
+/** The feature ids these references name ({ datum: id }, not the defaults; and the sketch of { sketch: id, entity }). */
 export function datumFeatureIds(refs: readonly DatumRefAt[]): string[] {
-  return refs.flatMap(({ ref }) => (isDatumRef(ref) && "datum" in ref && typeof ref.datum === "string" && !defaultDatum(ref.datum) ? [ref.datum] : []));
+  return refs.flatMap(({ ref }) => {
+    if (!isDatumRef(ref)) return [];
+    if ("datum" in ref && typeof ref.datum === "string" && !defaultDatum(ref.datum)) return [ref.datum];
+    if ("sketch" in ref && typeof ref.sketch === "string") return [ref.sketch];
+    return [];
+  });
+}
+
+/** The sketches these references take entities from ({ sketch, entity }): renaming such a sketch rewrites them. */
+export function sketchRefIds(refs: readonly DatumRefAt[]): string[] {
+  return refs.flatMap(({ ref }) => (isDatumRef(ref) && "sketch" in ref && typeof ref.sketch === "string" ? [ref.sketch] : []));
 }
 
 /** The face and edge selectors inside these references, with their field paths. */
@@ -376,7 +412,7 @@ export function cleanDatum(d: Datum): Datum {
 // messages that say what to pick.
 
 /** How a reference may be written: { datum }, { face }, { edge } or { point }. */
-export type RefForm = "datum" | "face" | "edge" | "point";
+export type RefForm = "datum" | "face" | "edge" | "point" | "sketch";
 
 export interface RefSlot {
   /** What goes here, for messages: "a plane", "an axis in or parallel to the plane". */
@@ -402,7 +438,7 @@ export interface ModeSpec {
 
 /** The form a reference is written in. */
 export function refForm(ref: DatumRef): RefForm {
-  return "datum" in ref ? "datum" : "face" in ref ? "face" : "edge" in ref ? "edge" : "point";
+  return "datum" in ref ? "datum" : "face" in ref ? "face" : "edge" in ref ? "edge" : "sketch" in ref ? "sketch" : "point";
 }
 
 /** "2 references (a plane, then an axis in or parallel to it)". */
@@ -455,7 +491,7 @@ export function checkModeRefs(raw: Record<string, unknown>, c: Checker, x: Valid
       c.fail(path, `mode "${mode}" takes ${slot.what} here, written ${slot.forms.map(formExample).join(" or ")} (got ${refText(ref)})`);
       return;
     }
-    if (slot.wholeEdge && "edge" in ref && ref.at !== undefined) {
+    if (slot.wholeEdge && ("edge" in ref || "sketch" in ref) && ref.at !== undefined) {
       c.fail(`${path}.at`, `mode "${mode}" takes the whole edge here: leave "at" out`);
       return;
     }
@@ -481,13 +517,28 @@ export async function askFromRefs(f: Record<string, unknown>, target: { kind: "f
 }
 
 function formExample(f: RefForm): string {
-  return f === "datum" ? '{ "datum": <id> }' : f === "face" ? '{ "face": <face selector> }' : f === "edge" ? '{ "edge": <edge selector> }' : '{ "point": [x, y, z] }';
+  return f === "datum"
+    ? '{ "datum": <id> }'
+    : f === "face"
+      ? '{ "face": <face selector> }'
+      : f === "edge"
+        ? '{ "edge": <edge selector> }'
+        : f === "sketch"
+          ? '{ "sketch": <sketch id>, "entity": <entity id> }'
+          : '{ "point": [x, y, z] }';
 }
 
-/** A reference as validation messages name it: "Top", "a face", "the start of an edge", "the point [1, 2, 3]". */
+/** A reference as validation messages name it: "Top", "a face", "the start of an edge", "the point [1, 2, 3]", "sketch_1's l2". */
 export function refText(ref: DatumRef): string {
   if ("datum" in ref) return ref.datum;
   if ("face" in ref) return "a face";
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of an edge` : "an edge";
+  if ("sketch" in ref) return sketchRefText(ref);
   return `the point [${ref.point.join(", ")}]`;
+}
+
+/** A { sketch, entity, at? } reference in words: "sketch_1's l2", "the start of sketch_1's l2", "the centre of sketch_2's c1". */
+export function sketchRefText(ref: { sketch: string; entity: string; at?: string }): string {
+  const whose = `${ref.sketch}'s ${ref.entity}`;
+  return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at === "center" ? "centre" : ref.at} of ${whose}` : whose;
 }

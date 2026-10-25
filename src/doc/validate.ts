@@ -70,7 +70,7 @@ import {
 import { validateDrawing } from "./drawing";
 import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
-import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, type DatumKind } from "../features/datum";
+import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
 import { isSketchAxis } from "./sketch";
 import { pointNames } from "../geom/curves";
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
@@ -249,6 +249,8 @@ export function validateDocument(input: unknown): ValidationResult {
   const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, members: new Map(), joints: new Map(), sketches: new Map() };
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
+  // A { sketch, entity } reference is checked against the valid sketches before it.
+  SKETCHES_BEFORE.set(seen, ctx.sketches);
   const bodies = new BodyNames();
   input.features.forEach((original, index) => {
     const rawId = isObject(original) && typeof original.id === "string" && original.id !== "" ? original.id : `features[${index}]`;
@@ -461,11 +463,15 @@ export const MAX_SPLINE_POINTS = 200;
 
 /** What each entity type may reference (DESIGN §2.4), as the messages say it. Rects and slots reference nothing. */
 const REF_KINDS: Partial<Record<SketchEntity["type"], string>> = {
-  line: 'a straight edge ({ "edge": <selector> }) or an axis ({ "datum": "Z" } or an axis feature)',
-  circle: 'a whole circular edge ({ "edge": <selector> })',
-  arc: 'part of a circular edge ({ "edge": <selector> })',
-  point: 'a point of an edge ({ "edge": <selector>, "at": "start" | "end" | "mid" | "center" }), a point feature or { "datum": "Origin" }',
+  line: 'a straight edge ({ "edge": <selector> }), an axis ({ "datum": "Z" } or an axis feature) or another sketch\'s line ({ "sketch": <id>, "entity": <id> })',
+  circle: 'a whole circular edge ({ "edge": <selector> }) or another sketch\'s circle',
+  arc: 'part of a circular edge ({ "edge": <selector> }) or another sketch\'s arc',
+  point:
+    'a point of an edge ({ "edge": <selector>, "at": "start" | "end" | "mid" | "center" }), a point of another sketch ({ "sketch": <id>, "entity": <id>, "at"? }), a point feature or { "datum": "Origin" }',
 };
+
+/** What each entity type takes from another sketch: the referenced entity's types. */
+const SKETCH_REF_TYPES: Partial<Record<SketchEntity["type"], readonly string[]>> = { line: ["line", "circle", "arc"], circle: ["circle"], arc: ["arc"] };
 
 /** An entity's `ref`: a DatumRef of a kind the entity can be (the rebuild checks the geometry it finds). */
 function referenceOf(v: unknown, type: SketchEntity["type"], path: string, c: Checker, opts: { earlier: ReadonlyMap<string, string>; profile: boolean }): DatumRef | undefined {
@@ -493,10 +499,37 @@ function referenceOf(v: unknown, type: SketchEntity["type"], path: string, c: Ch
     return ref;
   }
   if ("point" in ref) return type === "point" ? ref : refuse("a point");
+  if ("sketch" in ref) {
+    // Another sketch's entity, projected into this one as a model edge is (the rebuild checks the projection).
+    const target = sketchEntityOf(ref, opts.earlier);
+    const what = target ? `${ref.sketch}'s ${target.type} ${target.id}` : `${ref.sketch}'s ${ref.entity}`;
+    if (type === "point") {
+      if (target && !sketchRefKinds(target.type, ref.at).includes("point")) return refuse(`${what}${ref.at ? "" : ' without "at" (say which point of it)'}`);
+      return ref;
+    }
+    if (ref.at) return refuse(`a point of ${what} ("at": "${ref.at}"); use a point entity for that`);
+    if (target && !SKETCH_REF_TYPES[type]!.includes(target.type)) return refuse(what);
+    return ref;
+  }
   // A default or a reference feature: a line takes an axis, a point a point.
   const want = type === "line" ? "axis" : type === "point" ? "point" : null;
   if (!want || !kinds.includes(want)) return refuse(`${ref.datum}, ${aKinds(kinds)}`);
   return ref;
+}
+
+/**
+ * The valid sketches before the feature being validated, by id, when the
+ * `earlier` map is validateDocument's own (it registers them): what a
+ * { sketch, entity } reference is checked against. Unknown to a caller with a
+ * map of its own: such a reference is then checked when the part rebuilds.
+ */
+const SKETCHES_BEFORE = new WeakMap<ReadonlyMap<string, string>, ReadonlyMap<string, SketchFeature>>();
+
+/** The entity a { sketch, entity } reference names, when the sketches before are known. */
+function sketchEntityOf(ref: { sketch: string; entity: string }, earlier: ReadonlyMap<string, string>): SketchEntity | undefined {
+  return SKETCHES_BEFORE.get(earlier)
+    ?.get(ref.sketch)
+    ?.entities.find((e) => e.id === ref.entity);
 }
 
 /**
@@ -2028,20 +2061,23 @@ export function validatePlane(v: unknown, path: string, c: Checker, earlier: Rea
 /**
  * A DatumRef (DESIGN §2.1): { "datum": <default or earlier plane, axis or
  * point feature> }, { "face": <face selector> }, { "edge": <edge selector>,
- * "at"? }, or { "point": [x, y, z] }. `want` refuses a reference that cannot
- * be that kind as far as the document says (a default axis where a plane is
- * needed); faces and edges are checked again when the part rebuilds.
+ * "at"? }, { "point": [x, y, z] }, or { "sketch": <earlier sketch>, "entity":
+ * <its entity>, "at"? }. `want` refuses a reference that cannot be that kind
+ * as far as the document says (a default axis where a plane is needed); faces
+ * and edges are checked again when the part rebuilds, as is a sketch entity's
+ * geometry.
  */
 export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: ReadonlyMap<string, string>, want?: DatumKind | readonly DatumKind[]): DatumRef | null {
   if (!isObject(v)) {
-    c.fail(path, `must be a reference: { "datum": "Top" }, { "face": <face selector> }, { "edge": <edge selector> } or { "point": [x, y, z] } (got ${describe(v)})`);
+    c.fail(path, `must be a reference: { "datum": "Top" }, { "face": <face selector> }, { "edge": <edge selector> }, { "point": [x, y, z] } or { "sketch": <sketch id>, "entity": <entity id> } (got ${describe(v)})`);
     return null;
   }
-  const forms = ["datum", "face", "edge", "point"].filter((k) => k in v);
+  const forms = ["datum", "face", "edge", "point", "sketch"].filter((k) => k in v);
   if (forms.length !== 1) {
-    c.fail(path, forms.length ? `give one of datum, face, edge or point (got ${forms.join(" and ")})` : `needs one of datum, face, edge or point (got ${describe(v)})`);
+    c.fail(path, forms.length ? `give one of datum, face, edge, point or sketch (got ${forms.join(" and ")})` : `needs one of datum, face, edge, point or sketch (got ${describe(v)})`);
     return null;
   }
+  let kindsNow: DatumKind[] | null = null;
   const before = c.errors.length;
   let ref: DatumRef | null = null;
   switch (forms[0]) {
@@ -2080,11 +2116,43 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
       if (point) ref = { point };
       break;
     }
+    case "sketch": {
+      c.keys(v, path, ["sketch", "entity", "at"]);
+      const id = v.sketch;
+      if (typeof id !== "string" || id === "") c.fail(`${path}.sketch`, `must be the id of an earlier sketch (got ${describe(id)})`);
+      else if (!earlier.has(id)) c.fail(`${path}.sketch`, `"${id}" is not a feature before this one: a sketch can take only an earlier sketch's entities`);
+      else if (earlier.get(id) !== "sketch") c.fail(`${path}.sketch`, `"${id}" is ${article(earlier.get(id)!)}, not a sketch`);
+      if (typeof v.entity !== "string" || v.entity === "") c.fail(`${path}.entity`, `must be the id of an entity of that sketch (got ${describe(v.entity)})`);
+      if (v.at !== undefined && !EDGE_POINTS.includes(v.at as EdgePoint)) c.fail(`${path}.at`, `must be ${EDGE_POINTS.map((p) => `"${p}"`).join(", ")} (got ${describe(v.at)})`);
+      if (c.errors.length > before) break;
+      const sketch = id as string;
+      const entity = v.entity as string;
+      const at = v.at as EdgePoint | undefined;
+      const known = SKETCHES_BEFORE.get(earlier);
+      if (known) {
+        // Checked against that sketch as validated: the entity is there, and it can be what it is asked to be.
+        const s = known.get(sketch);
+        const e = s?.entities.find((x) => x.id === entity);
+        if (!s) c.fail(`${path}.sketch`, `${sketch} has errors of its own, so its entities can't be referenced yet: fix it first`);
+        else if (!e) c.fail(`${path}.entity`, `${sketch} has no entity "${entity}" (it has ${s.entities.map((x) => x.id).join(", ") || "none"}): re-pick the reference, or delete it`);
+        else {
+          kindsNow = sketchRefKinds(e.type, at);
+          if (!kindsNow.length) {
+            if (at !== undefined && SKETCH_REF_POINTS[e.type]) {
+              const has = SKETCH_REF_POINTS[e.type];
+              c.fail(`${path}.at`, `${sketch}'s ${e.id} is ${article(e.type)}: ${has.length ? `"at" may be ${has.map((p) => `"${p}"`).join(", ")}` : 'leave "at" out'} (got "${at}")`);
+            } else c.fail(`${path}.entity`, `${sketch}'s ${e.id} is ${article(e.type)}: another sketch's lines, circles, arcs and points can be referenced (explode a rectangle or slot into lines and arcs first)`);
+          }
+        }
+      }
+      if (c.errors.length === before) ref = { sketch, entity, ...(at !== undefined ? { at } : {}) };
+      break;
+    }
   }
   if (!ref || c.errors.length > before) return null;
   const wants = want === undefined ? undefined : typeof want === "string" ? [want as DatumKind] : (want as readonly DatumKind[]);
   if (wants) {
-    const kinds = possibleKinds(ref, earlier);
+    const kinds = kindsNow ?? possibleKinds(ref, earlier);
     if (!kinds.some((k) => wants.includes(k))) {
       c.fail(path, `${refName(ref)} is ${aKinds(kinds)}, but ${aKinds(wants)} is needed here`);
       return null;
@@ -2100,6 +2168,7 @@ function refName(ref: DatumRef): string {
   if ("datum" in ref) return ref.datum;
   if ("face" in ref) return "a face";
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of an edge` : "an edge";
+  if ("sketch" in ref) return sketchRefText(ref);
   return `the point ${describe(ref.point)}`;
 }
 

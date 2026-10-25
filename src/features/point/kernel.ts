@@ -3,7 +3,7 @@
 
 import type { Vec3 } from "../../doc/types";
 import { formatDirection } from "../../geom/vec";
-import { edgePlace, findEdge, findFace, nameOf, resolveDatum } from "../../kernel/datum";
+import { edgePlace, findEdge, findFace, nameOf, resolveDatum, sketchSource } from "../../kernel/datum";
 import { OpError } from "../../kernel/ops";
 import { axisPlanePoint, cleanDatum } from "../datum";
 import type { KernelOp } from "../kernelDefs";
@@ -26,6 +26,11 @@ export const kernel: KernelOp<PointFeature> = {
             throw new OpError(`refs[0]: the edge is ${e.kind === "line" ? "straight" : "curved but not round"}, so it has no centre: use mode "onEdge" (t 0.5 is its middle), or pick a circular edge`);
           }
           at = e.center;
+        } else if ("sketch" in ref) {
+          // A sketch's circle or arc: its centre (a point where a point is needed).
+          const d = resolveDatum(ctx, ref, "point", "refs[0]");
+          if (ref.at === undefined && !/^(circle|arc)$/.test(sketchSource(ctx, ref, "refs[0]").entity.type)) throw new OpError(`refs[0]: ${nameOf(ref)} has no centre: pick a circle or arc of the sketch`);
+          at = d.at;
         } else throw new OpError(`refs[0]: ${nameOf(ref)} has no centre: pick a circular edge or a face`);
         break;
       }

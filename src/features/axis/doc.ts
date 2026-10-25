@@ -23,7 +23,7 @@ const PLANE = { what: "a plane (a default plane, a plane feature or a flat face)
 export const AXIS_MODE_SPECS: Readonly<Record<AxisMode, ModeSpec>> = {
   twoPoints: { refs: [POINT, POINT], fields: [], about: "through two points, from the first toward the second" },
   edge: {
-    refs: [{ what: "an edge: straight (along it, start to end) or round (its axis)", kinds: ["axis"], forms: ["edge"], wholeEdge: true }],
+    refs: [{ what: "an edge: straight (along it, start to end) or round (its axis), or a sketch's line, circle or arc", kinds: ["axis"], forms: ["edge", "sketch"], wholeEdge: true }],
     fields: [],
     about: "along a straight edge, or the axis of a circular edge",
   },

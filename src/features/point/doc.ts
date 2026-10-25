@@ -22,7 +22,7 @@ export interface PointFeature extends FeatureBase {
 export const POINT_MODE_SPECS: Readonly<Record<PointMode, ModeSpec>> = {
   coords: { refs: [], fields: ["at"], about: "at fixed coordinates `at` [x, y, z]" },
   center: {
-    refs: [{ what: "a circular edge (its centre) or a face (its centre of area)", forms: ["edge", "face"], wholeEdge: true }],
+    refs: [{ what: "a circular edge (its centre), a face (its centre of area) or a sketch's circle or arc", forms: ["edge", "face", "sketch"], wholeEdge: true }],
     fields: [],
     about: "the centre of a circular edge, or of a face",
   },
