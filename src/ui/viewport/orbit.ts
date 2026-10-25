@@ -128,6 +128,52 @@ export function nearestToRay(positions: ArrayLike<number>, origin: THREE.Vector3
   return best < 0 ? null : new THREE.Vector3(positions[best * 3], positions[best * 3 + 1], positions[best * 3 + 2]);
 }
 
+/**
+ * The point of a set of segments (a flat list, six numbers each: x, y, z of
+ * one end, then of the other) nearest a ray's line, measured square to it:
+ * the part's edges, so a long straight member whose mesh has vertices only
+ * at its ends still gives the point of it beside the middle of the view, not
+ * an end far off. `keep(i, at)` leaves a segment's nearest point out (hidden,
+ * cut away); `ahead` keeps only points in front of the ray's origin.
+ */
+export function nearestOnSegments(segments: ArrayLike<number>, origin: THREE.Vector3, dir: THREE.Vector3, opts: { keep?: (i: number, at: THREE.Vector3) => boolean; ahead?: boolean } = {}): THREE.Vector3 | null {
+  const d = dir.clone().normalize();
+  const a = new THREE.Vector3();
+  const u = new THREE.Vector3();
+  const w = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  let best: THREE.Vector3 | null = null;
+  let bestD = Infinity;
+  const n = Math.floor(segments.length / 6);
+  for (let i = 0; i < n; i++) {
+    a.set(segments[i * 6], segments[i * 6 + 1], segments[i * 6 + 2]);
+    u.set(segments[i * 6 + 3], segments[i * 6 + 4], segments[i * 6 + 5]).sub(a);
+    w.copy(a).sub(origin);
+    // Along the segment, the place nearest the line (clamped to its ends): s = (b·e − u·w) / (u·u − b²), b = u·d, e = d·w.
+    const uu = u.dot(u);
+    const b = u.dot(d);
+    const den = uu - b * b;
+    const s = den > 1e-12 * Math.max(uu, 1e-12) ? THREE.MathUtils.clamp((b * d.dot(w) - u.dot(w)) / den, 0, 1) : 0;
+    p.copy(a).addScaledVector(u, s);
+    const t = p.clone().sub(origin).dot(d);
+    if (opts.ahead && t <= 0) continue;
+    const q = p.clone().sub(origin).lengthSq() - t * t;
+    if (q < bestD && (!opts.keep || opts.keep(i, p))) {
+      bestD = q;
+      best = p.clone();
+    }
+  }
+  return best;
+}
+
+/** How far a point is from a ray's line, square to it. */
+export function distanceToRay(p: THREE.Vector3, origin: THREE.Vector3, dir: THREE.Vector3): number {
+  const d = dir.clone().normalize();
+  const w = p.clone().sub(origin);
+  const t = w.dot(d);
+  return Math.sqrt(Math.max(0, w.lengthSq() - t * t));
+}
+
 // ------------------------------------------------------------------ the turn
 
 const Z = new THREE.Vector3(0, 0, 1);

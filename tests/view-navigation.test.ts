@@ -15,8 +15,10 @@ import { DEFAULT_DISPLAY, nextViewName, parseMemory, removeNamedView, renameName
 import {
   areaZoom,
   blendRig,
+  distanceToRay,
   ease,
   framePoints,
+  nearestOnSegments,
   nearestToRay,
   onScreenShare,
   orbit,
@@ -184,6 +186,25 @@ describe("the rotation centre", () => {
     close(nearestToRay(pts, v3(10, 0, -10), v3(0, 0, 1))!, [10, 0.2, 0]);
     close(nearestToRay(pts, v3(10, 0, -10), v3(0, 0, 1), { keep: (i) => i !== 2 })!, [5, 1, 0]);
     expect(nearestToRay(pts, v3(0, 0, 10), v3(0, 0, 1), { ahead: true })).toBeNull();
+  });
+
+  it("finds the point of an edge nearest the middle ray, beside the middle of a long member rather than at its far ends", () => {
+    // A 6 m beam's edge along X, 5 mm to the side of a ray straight down Z at X 100: its mesh has vertices only at the ends.
+    const edge = [-3000, 5, 0, 3000, 5, 0];
+    const origin = v3(100, 0, 50);
+    const down = v3(0, 0, -1);
+    close(nearestOnSegments(edge, origin, down)!, [100, 5, 0]);
+    expect(distanceToRay(nearestOnSegments(edge, origin, down)!, origin, down)).toBeCloseTo(5, 9);
+    // The ends are 2900 mm off; the edge's point is 5 mm off.
+    expect(distanceToRay(nearestToRay(edge, origin, down)!, origin, down)).toBeGreaterThan(2900);
+    // Past a segment's end the end is nearest; a segment along the ray (parallel to it) counts by its first end.
+    close(nearestOnSegments([200, 0, 0, 300, 0, 0], origin, down)!, [200, 0, 0]);
+    close(nearestOnSegments([100, 3, 9, 100, 3, -9], origin, down)!, [100, 3, 9]);
+    // Two segments: the nearer wins; `keep` leaves one out; `ahead` leaves out what is behind the ray's origin.
+    const two = [-50, 9, 0, 50, 9, 0, -50, 2, 0, 50, 2, 0];
+    close(nearestOnSegments(two, origin, down)!, [50, 2, 0]);
+    close(nearestOnSegments(two, origin, down, { keep: (i) => i !== 1 })!, [50, 9, 0]);
+    expect(nearestOnSegments([0, 0, 60, 10, 0, 60], origin, down, { ahead: true })).toBeNull();
   });
 });
 

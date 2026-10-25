@@ -120,6 +120,28 @@ test("zoomed in at a corner so the part overflows: a middle-drag turns about the
   await shot(page, "zoomed-rotate");
 });
 
+test("zoomed in with the middle of the view just off a long edge: a middle-drag turns about the edge beside it, not a far corner", async ({ page }) => {
+  await page.keyboard.press("Control+1");
+  const [cx, cy] = await centre(page);
+  // Pan the plate up until its long bottom edge is 10 px above the middle of the view, then zoom in there.
+  const edge = await project(page, [0, -20, 0]);
+  await middleDrag(page, 0, cy - 10 - edge[1], undefined, true);
+  await page.mouse.move(cx, cy);
+  for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 200);
+  // Nothing of the part is under the middle: the nearest point of it is on that edge, beside the middle
+  // (its mesh has vertices only at the corners and round the hole, 26 mm and more away).
+  const c = await call(page, "rotationCentre");
+  expect(c.why).toBe("nearest");
+  expect(Math.abs(c.point[0])).toBeLessThan(5);
+  expect(c.point[2]).toBeCloseTo(0, 3);
+  const before = await project(page, c.point);
+  expect(Math.hypot(before[0] - cx, before[1] - cy)).toBeLessThan(120);
+  await middleDrag(page, 90, 40);
+  const after = await project(page, c.point);
+  expect(Math.hypot(after[0] - before[0], after[1] - before[1])).toBeLessThan(3);
+  await shot(page, "nearest-edge");
+});
+
 test("a middle-click on a vertex pins the rotation centre there (a marker shows it); the part turns about it; Esc clears it", async ({ page }) => {
   const vertex: Vec3 = [40, -20, 6];
   const at = await project(page, vertex);

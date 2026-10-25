@@ -34,7 +34,7 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
-import { areaZoom, blendRig, ease, framePoints, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
+import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
 import { SectionCaps, type CapSource } from "./viewport/sectionCaps";
 import { clipMaterial, clipPlanesOf, SectionPlanes } from "./viewport/sectionLayer";
 import { nextBehind, otherLabel, underPointer, type UnderPointer } from "./viewport/selectOther";
@@ -595,11 +595,17 @@ export function Viewport({
           const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
           if (!pos) return null;
           aim(cx, cy);
+          const { origin, direction } = raycaster.ray;
           const arr = pos.array as ArrayLike<number>;
-          return nearestToRay(arr, raycaster.ray.origin, raycaster.ray.direction, {
+          const vertex = nearestToRay(arr, origin, direction, {
             ahead: perspective,
             keep: (i) => vertexBody[i] >= 0 && !cutAway([arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]], bodyName(vertexBody[i])),
           });
+          // The drawn edges too (visible bodies only): along a long straight edge the mesh has vertices only at its ends.
+          const segs = edgeLines?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+          const onEdge = segs ? nearestOnSegments(segs.array as ArrayLike<number>, origin, direction, { ahead: perspective, keep: (k, at) => !cutAway(at, edgeBody(segmentEdge[k])) }) : null;
+          if (!vertex || !onEdge) return vertex ?? onEdge;
+          return distanceToRay(onEdge, origin, direction) < distanceToRay(vertex, origin, direction) ? onEdge : vertex;
         },
         fallback: controls.target,
       });
