@@ -182,6 +182,17 @@ describe("writing DXF", () => {
     expect(round({ major: el.major, ratio: el.ratio, start: el.start, end: el.end })).toEqual({ major: [-8, 0], ratio: r6(5 / 8), start: r6(((30 - 90) * Math.PI) / 180 + 2 * Math.PI), end: r6(((200 - 90) * Math.PI) / 180) });
   });
 
+  it("a sketch exported and inserted again keeps its construction as construction: the profile is the same", () => {
+    const outline = sketch.filter((e) => ["l1", "a1", "l2", "l3", "c1", "l4"].includes(e.id));
+    const back = dxfToSketch(readDxf(writeDxf(sketchToDxf(outline))), []);
+    // The centre line crosses the outline: as profile geometry it would cut it in two.
+    expect(back.entities.filter((e) => e.construction).map((e) => [e.type, (e as { start?: number[] }).start])).toEqual([["line", [-10, 20]]]);
+    const before = buildProfile(outline);
+    const after = buildProfile(back.entities);
+    expect(before.ok && after.ok).toBe(true);
+    if (before.ok && after.ok) expect(after.area).toBeCloseTo(before.area, 6);
+  });
+
   it("writes a spline exactly: the B-spline passes through every sketch point at its knots", () => {
     const r = readDxf(writeDxf(sketchToDxf(sketch)));
     const [s] = of(r.entities, "spline");

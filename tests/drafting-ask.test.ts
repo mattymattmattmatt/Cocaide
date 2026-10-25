@@ -156,6 +156,10 @@ describe("Phase L acceptance: the leg height from a right-click on the front vie
     expect(packetOf(model).properties).toEqual({ description: "Table frame" });
     expect(r.outcome).toBe("proposal");
     expect(r.calls.map((c) => [c.tool, c.ok, c.error])).toEqual([["setProperties", true, undefined]]);
+    // The proposal says what it changes.
+    expect(r.proposal!.changes.map((c) => [c.id, c.what, c.kind, (c.fields ?? []).map((f) => [f.path, f.after])])).toEqual([
+      ["properties", "part", "changed", [["partNumber", "TF-1200"], ["revision", "C"]]],
+    ]);
     const accepted = applyProposal(withProps.doc, r.proposal!);
     if (!accepted.ok) throw new Error(accepted.error);
     const c = await kernel.check(accepted.doc);

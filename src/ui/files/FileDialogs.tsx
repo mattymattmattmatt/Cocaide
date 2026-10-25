@@ -117,7 +117,8 @@ export function DxfInsertDialog({
             {w}
           </p>
         ))}
-        {read.layers.length > 1 && (
+        {/* One layer needs no choice, unless the file had it off (it starts unticked: tick it to insert). */}
+        {(read.layers.length > 1 || read.layers.some((l) => l.off)) && (
           <fieldset className="dxf-layers" data-testid="dxf-layers">
             <legend>Layers</legend>
             {read.layers.map((l) => (

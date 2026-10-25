@@ -210,7 +210,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       setFitToken((t) => t + 1);
       return made.report;
     };
-  }  const undo = () => {
+  }
+  const undo = () => {
     if (!past.length) return;
     setFuture((f) => [draft, ...f]);
     setDraft(past[past.length - 1]);

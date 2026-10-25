@@ -709,6 +709,8 @@ function nextFree(doc: RawDocument, op: string): string {
 /** Features, and the drawing's sheet, views and annotations ("drawing:d4"), by what they are now. */
 function items(doc: RawDocument): Map<string, string> {
   const out = new Map(doc.features.map((f) => [String(f.id), JSON.stringify(f)]));
+  // The part's properties (setProperties), as one item.
+  if (doc.properties !== undefined) out.set("properties", JSON.stringify(doc.properties));
   const d = rawDrawing(doc);
   if (d) {
     out.set("drawing:sheet", JSON.stringify(d.sheet));
@@ -738,6 +740,10 @@ export function diffDocs(base: RawDocument, doc: RawDocument): Change[] {
   const pb = JSON.stringify(base.parameters ?? {});
   const pa = JSON.stringify(doc.parameters ?? {});
   if (pb !== pa) out.push({ id: "parameters", kind: "changed", fields: leafDiff(base.parameters ?? {}, doc.parameters ?? {}, "") });
+  // The part's properties: "part properties partNumber: — → BR-1001".
+  if (JSON.stringify(base.properties ?? {}) !== JSON.stringify(doc.properties ?? {})) {
+    out.push({ id: "properties", what: "part", kind: "changed", fields: leafDiff((base.properties ?? {}) as Record<string, unknown>, (doc.properties ?? {}) as Record<string, unknown>, "") });
+  }
   // The drawing: its sheet, and each view and annotation.
   const db = rawDrawing(base);
   const da = rawDrawing(doc);

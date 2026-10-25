@@ -152,8 +152,9 @@ export function dxfToSketch(read: DxfRead, existing: SketchEntity[], opts: Inser
   let curvesSkipped = 0;
   for (const e of source.flatMap((x) => (x.type === "polyline" ? explodePolyline(x) : [x]))) {
     const s = toSketch(e, id, tol);
-    if (s) made.push(s);
-    else curvesSkipped++;
+    if (!s) curvesSkipped++;
+    // A sketch exported here comes back as it went: what was on CONSTRUCTION is construction again, not profile.
+    else made.push(s.type !== "point" && (e.layer ?? "0").toUpperCase() === "CONSTRUCTION" ? { ...s, construction: true } : s);
   }
   const constraints: Constraint[] = [];
   const joints: string[][] = [];
