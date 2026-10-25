@@ -25,6 +25,7 @@ import {
   redoLabel,
   relabelTransaction,
   rollbackTransaction,
+  settleTransaction,
   transactionChanged,
   undo as undoHistory,
   undoLabel,
@@ -77,6 +78,12 @@ export interface DocumentState {
    * refused, no session opens and the error is returned.
    */
   begin(label: string, opening?: Command): string | null;
+  /**
+   * Applies a command as the open session's opening, after it began: the new
+   * feature, complete only now (its first pick). Undo inside the session stops
+   * after it; Cancel still takes it away. Returns the error text when refused.
+   */
+  open(cmd: Command): string | null;
   /** Closes the session as one undo step (named `label`, default its own), or none if nothing changed. */
   commit(label?: string): void;
   /** Closes the session with the document exactly as it was before it. */
@@ -230,6 +237,17 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     [commitTyping],
   );
 
+  const open = useCallback(
+    (cmd: Command): string | null => {
+      const problem = dispatch(cmd);
+      if (problem) return problem;
+      history.current = settleTransaction(history.current);
+      rerender();
+      return null;
+    },
+    [dispatch],
+  );
+
   const commit = useCallback(
     (label?: string) => {
       commitTyping();
@@ -271,6 +289,7 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     redo,
     transaction: h.tx ? { label: h.tx.label, changed: transactionChanged(h) || typedSinceCommit, canUndoWithin: canUndo(h) } : null,
     begin,
+    open,
     commit,
     rollback,
     relabel,

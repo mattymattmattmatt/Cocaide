@@ -152,6 +152,16 @@ export function beginTransaction(h: History, label: string, opening?: string): H
   return { ...h, present: floor, tx: { label, base: h.present, floor, steps: [], redo: [] } };
 }
 
+/**
+ * The open transaction's floor moved up to the present: what it holds now is
+ * where it opened (a new feature that was not complete when its session began
+ * went into the document just now). Undo inside it stops here; rollback still
+ * goes back to before it began.
+ */
+export function settleTransaction(h: History): History {
+  return h.tx ? { ...h, tx: { ...h.tx, floor: h.present, steps: [], redo: [] } } : h;
+}
+
 /** Renames the open transaction (the feature it adds was renamed: "Add boss"). */
 export function relabelTransaction(h: History, label: string): History {
   return h.tx ? { ...h, tx: { ...h.tx, label } } : h;

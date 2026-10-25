@@ -25,6 +25,7 @@ import {
   undo,
   undoLabel,
   undoOutOf,
+  settleTransaction,
   type History,
 } from "../src/doc/history";
 import { commandLabel } from "../src/ui/useDocument";
@@ -202,5 +203,19 @@ describe("a feature session's transaction", () => {
     expect(h.past).toEqual(["2".repeat(10), "3".repeat(10), "4".repeat(10)]);
     expect(h.pastLabels).toEqual(["step 3", "step 4", "step 5"]);
     expect(undoLabel(h)).toBe("step 5");
+  });
+});
+
+describe("a session whose feature goes in later (command-first: picks first)", () => {
+  it("settles its floor where the feature went in: undo inside stops there, Cancel still goes back to before", () => {
+    let h = beginTransaction(createHistory("a"), "Add f");
+    h = record(h, "a+f"); // the first pick made it complete: it went in
+    h = settleTransaction(h);
+    h = record(h, "a+f2");
+    h = undo(h);
+    expect(h.present).toBe("a+f");
+    expect(canUndo(h)).toBe(false);
+    expect(rollbackTransaction(h).present).toBe("a");
+    expect(commitTransaction(h).past).toEqual(["a"]);
   });
 });
