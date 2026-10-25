@@ -72,11 +72,29 @@ test("the standard mouse: middle-drag rotates, Ctrl pans, Shift zooms; the wheel
   expect(zoomedIn).toBeLessThan(before);
   await page.mouse.wheel(0, -200);
   expect(dist(await cam(page))).toBeGreaterThan(zoomedIn);
-  // A middle double-click fits the part, from where you are looking.
+  // A middle double-click fits the part, from where you are looking: tight on the part as seen from there
+  // (Phase P: framed on its outline, not a sphere round it), every corner of the 80 × 40 × 6 plate on screen.
+  const beforeFit = await cam(page);
   await page.mouse.click(x, y, { button: "middle", clickCount: 1 });
   await page.mouse.click(x, y, { button: "middle", clickCount: 2 });
   const fitted = await cam(page);
-  expect(dist(fitted)).toBeCloseTo(dist(start), 1);
+  expect(from(fitted)).toEqual(from(beforeFit));
+  const box = (await page.getByTestId("viewport").boundingBox())!;
+  const corners = await page.evaluate(() => {
+    const v = (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport;
+    const out: [number, number][] = [];
+    for (const px of [-40, 40]) for (const py of [-20, 20]) for (const pz of [0, 6]) out.push(v.project([px, py, pz]));
+    return out;
+  });
+  for (const [cx, cy] of corners) {
+    expect(cx).toBeGreaterThan(box.x);
+    expect(cx).toBeLessThan(box.x + box.width);
+    expect(cy).toBeGreaterThan(box.y);
+    expect(cy).toBeLessThan(box.y + box.height);
+  }
+  const spanX = Math.max(...corners.map((c) => c[0])) - Math.min(...corners.map((c) => c[0]));
+  const spanY = Math.max(...corners.map((c) => c[1])) - Math.min(...corners.map((c) => c[1]));
+  expect(Math.max(spanX / box.width, spanY / box.height)).toBeGreaterThan(0.7);
 });
 
 test("the view keys: Ctrl+1–7, F, Z and Shift+Z, the arrows, Space's menu, Ctrl+8 square to a face", async ({ page }) => {

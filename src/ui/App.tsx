@@ -66,7 +66,8 @@ import { FILTER_KINDS, mergeBox, NO_FILTER, toggleFilter, type SelectFilter } fr
 import { featureHandles, handlePatch, ownerOfFace, type HandleSpec } from "./evaluate/handles";
 import { kernelRef, measure, measureItems, measurePick } from "./evaluate/measure";
 import type { PaletteEntry } from "./evaluate/palette";
-import { sectionChoices, sectionOn, type SectionState } from "./evaluate/section";
+import { addPlane, sectionChoices } from "./evaluate/section";
+import { useSectionView } from "./evaluate/useSection";
 import { TABS } from "./model/tabs";
 import { Popup, ToolButton } from "./tools";
 import { EMPTY_SELECTION, Viewport, type EvalOverlay, type FrameNode, type HandlePhase, type PickTarget, type Selection, type Underlay } from "./Viewport";
@@ -167,7 +168,6 @@ export function App() {
   // Evaluate and view (Phase O wave 5): the panels over the view, the section, the selection filter.
   const [measuring, setMeasuring] = useState(false);
   const [weighing, setWeighing] = useState(false);
-  const [section, setSection] = useState<SectionState | null>(null);
   const [filter, setFilter] = useState<SelectFilter>(NO_FILTER);
   /** A handle being dragged: its feature and the patch it makes, rebuilt live before it is written (one undo step on release). */
   const [preview, setPreview] = useState<{ id: string; patch: Record<string, unknown> } | null>(null);
@@ -216,6 +216,9 @@ export function App() {
     setDisplay(next);
     saveView(docName, { display: next });
   };
+  /** The section view (Phase P): up to three planes, kept on while you work and remembered for the document. */
+  const sectionCtl = useSectionView(docName, view, selection, (kind, text) => setNotice({ kind, text }));
+  const section = sectionCtl.section;
   /** The frame's nodes, where the viewport draws them. */
   const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
   /** The drawing as shown (an open proposal's, while it is previewed), and as it is in the document. */
@@ -478,37 +481,8 @@ export function App() {
       setMeasuring((m) => !m);
       if (!measuring) setNotice(null);
     } else if (panel === "mass") setWeighing((w) => !w);
-    else toggleSection();
+    else sectionCtl.toggleTool();
   };
-  /** A section on the selected flat face or plane, else through the middle of the part on Front; off again if on. */
-  const toggleSection = () => {
-    if (section) return setSection(null);
-    const face = selection.faces.length === 1 && selection.edges.length === 0 ? view?.faces[selection.faces[0]] : undefined;
-    const datum = selection.datums?.length === 1 && selection.faces.length === 0 ? selection.datums[0] : undefined;
-    const planeDatum = datum && (Object.hasOwn(DEFAULT_DATUMS, datum) ? DEFAULT_DATUMS[datum] : view?.datums?.[datum])?.kind === "plane" ? datum : undefined;
-    const s = face?.type === "plane" ? sectionOn("face", view?.datums ?? {}, box, face) : sectionOn(planeDatum ?? "Front", view?.datums ?? {}, box);
-    if (typeof s === "string") return setNotice({ kind: "error", text: s });
-    setSection(s);
-  };
-  // A section on a plane feature follows it: moved with it when it changes, closed when it is gone.
-  useEffect(() => {
-    if (!section || !view || section.on === "face" || Object.hasOwn(DEFAULT_DATUMS, section.on)) return;
-    const d = view.datums?.[section.on];
-    if (d?.kind !== "plane") {
-      setSection(null);
-      setNotice({ kind: "info", text: `Section view closed: its plane ${section.on} is no longer in the part.` });
-      return;
-    }
-    const same = (a: readonly number[], b: readonly number[]) => a.every((x, i) => Math.abs(x - b[i]) < 1e-9);
-    if (!same(d.origin, section.origin) || !same(d.normal, section.normal)) setSection({ ...section, origin: d.origin, normal: d.normal });
-  }, [view, section]);
-  const sectionPlaneTo = (on: string) => {
-    const face = selection.faces.length === 1 ? view?.faces[selection.faces[0]] : undefined;
-    const s = sectionOn(on, view?.datums ?? {}, box, face);
-    if (typeof s === "string") return setNotice({ kind: "error", text: s });
-    setSection((old) => (old && old.on === on ? old : s));
-  };
-
   // Measure: what is picked, with the kernel's closest points for a pair.
   const measureList = useMemo(() => (measuring && view ? measureItems(selection, view.faces, view.edges, view.datums ?? {}) : []), [measuring, view, selection]);
   const pairKey = measureList.length === 2 ? JSON.stringify([kernelRef(measureList[0]), kernelRef(measureList[1])]) : null;
@@ -1089,7 +1063,7 @@ export function App() {
   // Read at the click, not when the menu opened: the right-click's own selection has landed by then.
   const runToolRef = useRef(runTool);
   runToolRef.current = runTool;
-  const viewCommands = useRef<((id: string) => void) | null>(null);
+  const viewCommands = useRef<((id: string, at?: { x: number; y: number }) => void) | null>(null);
   const toggleBody = (name: string) =>
     setHiddenBodies((h) => {
       const next = new Set(h);
@@ -1161,6 +1135,8 @@ export function App() {
       ];
     };
     const viewCmd = (id: string, label: string, icon: IconName): MenuEntry => ({ label, icon, shortcut: keyFor(id, prefs) ?? undefined, onClick: () => viewCommands.current?.(id), testId: `ctx-${id}` });
+    /** Every face and edge under the right-click, nearest first: pick one hidden behind another (Alt+click steps to the next too). */
+    const selectOther: MenuEntry = { label: "Select other…", icon: "select", hint: "Every face and edge under the pointer, nearest first; Alt+click picks the face behind", onClick: () => viewCommands.current?.("view.selectOther", { x, y }), testId: "ctx-select-other" };
     const featureItems = (id: string): MenuEntry[] => {
       const f = features.find((g) => g.id === id);
       if (!f) return [];
@@ -1211,7 +1187,7 @@ export function App() {
         break;
       case "vertex":
         title = "Vertex";
-        items = [...toolsFor(target), "sep", viewCmd("view.fit", "Zoom to fit", "fit")];
+        items = [...toolsFor(target), "sep", selectOther, viewCmd("view.fit", "Zoom to fit", "fit")];
         break;
       case "feature":
       case "failed": {
@@ -1231,6 +1207,7 @@ export function App() {
         items = [
           ...toolsFor({ kind: "face", index: target.index }),
           "sep",
+          selectOther,
           ...(flat ? [viewCmd("view.normal", "Normal to", "front")] : []),
           viewCmd("view.fit", "Zoom to fit", "fit"),
           ...(f?.body && (view?.bodies.length ?? 0) > 1 ? [{ label: `Hide ${f.body}`, icon: "eyeOff", onClick: () => toggleBody(f.body!), testId: "ctx-hide-body" } as MenuEntry] : []),
@@ -1238,7 +1215,7 @@ export function App() {
         break;
       }
       case "edge":
-        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", viewCmd("view.fit", "Zoom to fit", "fit")];
+        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", selectOther, viewCmd("view.fit", "Zoom to fit", "fit")];
         break;
       case "part":
         title = "Part";
@@ -1720,6 +1697,9 @@ export function App() {
                   onDisplay={changeDisplay}
                   memoryKey={docName}
                   section={section}
+                  onSection={sectionCtl.setSection}
+                  onSectionToggle={sectionCtl.toggleShown}
+                  onSectionPanel={sectionCtl.openPanel}
                   overlay={overlay}
                   dims={dims}
                   onDimension={(dim, x, y) => setValueBox({ x, y, dim })}
@@ -1732,7 +1712,7 @@ export function App() {
                   onBox={(sel, additive) => setSelection((prev) => mergeBox(prev, sel, additive))}
                   onDoubleClick={(t) => void onDoubleClick(t)}
                 />
-              {(measuring || weighing || section) && (
+              {(measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
                 <div className="eval-panels">
                   {measuring && measured && (
                     <MeasurePanel
@@ -1744,15 +1724,17 @@ export function App() {
                     />
                   )}
                   {weighing && <MassPanel mass={mass?.value ?? null} error={mass?.error ?? null} busy={mass?.view !== view} onClose={() => setWeighing(false)} />}
-                  {section && (
+                  {section?.on && sectionCtl.panelOpen && (
                     <SectionPanel
                       section={section}
                       choices={sectionChoices(view?.datums ?? {})}
                       faceOk={selection.faces.length === 1 && view?.faces[selection.faces[0]]?.type === "plane"}
                       box={box}
-                      onPlane={sectionPlaneTo}
-                      onChange={setSection}
-                      onClose={() => setSection(null)}
+                      bodies={(view?.bodies ?? []).map((b) => b.name)}
+                      onPlane={sectionCtl.planeTo}
+                      onChange={sectionCtl.setSection}
+                      onAdd={() => sectionCtl.setSection(addPlane(section, view?.datums ?? {}, box))}
+                      onClose={sectionCtl.close}
                     />
                   )}
                 </div>
@@ -1963,7 +1945,7 @@ function Help() {
         {step(
           "move",
           "Mouse and keys",
-          "the usual CAD way: middle-drag rotates, Ctrl+middle pans, the wheel zooms; Space for views, S for the shortcut bar, Ctrl+1–8 for the standard views. Settings changes them.",
+          "the usual CAD way: middle-drag rotates the part in place, Ctrl+middle pans, the wheel zooms; middle-click the part to pin the centre it turns about (Esc clears it). The cube and the triad turn the view; Space for views, S for the shortcut bar, Ctrl+1–8 for the standard views. Settings changes them.",
         )}
       </ol>
       <p className="muted small">

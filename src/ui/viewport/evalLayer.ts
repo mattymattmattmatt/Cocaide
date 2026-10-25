@@ -36,7 +36,10 @@ const LOCKED_COLOR = 0x868e96;
 /** The arrow's length and head on screen, pixels. */
 const ARROW_PX = 46;
 const HEAD_PX = 14;
+/** The shaft's width on screen, pixels: a solid stroke that reads as something to grab, not a hairline. */
+const SHAFT_PX = 2.6;
 const GRAB_PX = 10;
+const ALONG_Y = new THREE.Vector3(0, 1, 0);
 
 export class EvalLayer {
   readonly group = new THREE.Group();
@@ -52,7 +55,7 @@ export class EvalLayer {
   private handles: HandleSpec[] = [];
   private hot: string | null = null;
   private dragging: { h: HandleSpec; value: number } | null = null;
-  private readonly arrows = new Map<string, { shaft: THREE.Line; head: THREE.Mesh; mat: THREE.MeshBasicMaterial; lineMat: THREE.LineBasicMaterial }>();
+  private readonly arrows = new Map<string, { shaft: THREE.Mesh; head: THREE.Mesh; mat: THREE.MeshBasicMaterial }>();
 
   constructor(
     host: HTMLElement,
@@ -161,7 +164,6 @@ export class EvalLayer {
       a.shaft.geometry.dispose();
       a.head.geometry.dispose();
       a.mat.dispose();
-      a.lineMat.dispose();
     }
     this.arrows.clear();
     for (const t of this.handleTags) t.el.remove();
@@ -169,17 +171,17 @@ export class EvalLayer {
     for (const h of handles) {
       const color = h.locked ? LOCKED_COLOR : h.id === this.hot || dragging?.h.id === h.id ? HANDLE_HOT : HANDLE_COLOR;
       const mat = new THREE.MeshBasicMaterial({ color, depthTest: false });
-      const lineMat = new THREE.LineBasicMaterial({ color, depthTest: false });
-      const shaft = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]), lineMat);
+      // The shaft is a thin rod (sized in pixels each frame, as the head is), the same material as the head.
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 10), mat);
       const head = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1, 16), mat);
       shaft.renderOrder = 10;
       head.renderOrder = 10;
       this.handleGroup.add(shaft, head);
-      this.arrows.set(h.id, { shaft, head, mat, lineMat });
+      this.arrows.set(h.id, { shaft, head, mat });
       const { h: spec, value } = dragging?.h.id === h.id ? dragging : { h, value: h.value };
-      const el = this.tag(`${h.label} ${handleText(h, value)}`, `eval-label handle-label${h.locked ? " locked" : ""}`, `handle-label-${h.id}`);
+      const el = this.tag(h.kind === "section" ? `${h.label}: ${handleText(h, value)}` : `${h.label} ${handleText(h, value)}`, `eval-label handle-label${h.locked ? " locked" : ""}${h.kind === "section" ? " section-handle" : ""}`, `handle-label-${h.id}`);
       // A locked label still answers a click: the app says why it cannot be typed into.
-      el.title = h.locked ?? "Drag the arrow, or click here to type a value";
+      el.title = h.locked ?? (h.kind === "section" ? "Drag the arrow to move the plane (whole millimetres; Shift for tenths), or click here to type the offset" : "Drag the arrow, or click here to type a value");
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const r = el.getBoundingClientRect();
@@ -198,7 +200,6 @@ export class EvalLayer {
       const h = this.handles.find((x) => x.id === hid);
       const color = h?.locked ? LOCKED_COLOR : hid === id || this.dragging?.h.id === hid ? HANDLE_HOT : HANDLE_COLOR;
       a.mat.color.setHex(color);
-      a.lineMat.color.setHex(color);
     }
     return true;
   }
@@ -232,12 +233,12 @@ export class EvalLayer {
     return best?.h ?? null;
   }
 
-  /** Where a handle's tip is on screen (for tests and for typing a value there). */
-  tipOnScreen(id: string, project: (p: Vec3) => { x: number; y: number } | null, wpp: number): { x: number; y: number } | null {
+  /** Where a handle's arrow is on screen, `at` of the way from its tip to its end (0.6: on the shaft, to grab it; 0.85: in its head), for tests and for typing a value there. */
+  tipOnScreen(id: string, project: (p: Vec3) => { x: number; y: number } | null, wpp: number, at = 0.6): { x: number; y: number } | null {
     const h = this.handles.find((x) => x.id === id);
     if (!h) return null;
     const { a, b } = this.arrowOnScreen(h, project, wpp);
-    return a && b ? { x: a.x + (b.x - a.x) * 0.6, y: a.y + (b.y - a.y) * 0.6 } : null;
+    return a && b ? { x: a.x + (b.x - a.x) * at, y: a.y + (b.y - a.y) * at } : null;
   }
 
   /** After each render: arrows sized to the screen, the ruler, labels where their points are. */
@@ -250,14 +251,12 @@ export class EvalLayer {
       const dir = new THREE.Vector3(...spec.dir).normalize();
       const len = ARROW_PX * wpp;
       const head = HEAD_PX * wpp;
-      const pos = a.shaft.geometry.getAttribute("position") as THREE.BufferAttribute;
-      pos.setXYZ(0, tip.x, tip.y, tip.z);
-      const end = tip.clone().addScaledVector(dir, len - head);
-      pos.setXYZ(1, end.x, end.y, end.z);
-      pos.needsUpdate = true;
-      a.shaft.geometry.computeBoundingSphere();
+      // The rod from the tip to the head's base (a unit cylinder along Y, centred: scaled and stood on the tip).
+      a.shaft.position.copy(tip).addScaledVector(dir, (len - head) / 2);
+      a.shaft.quaternion.setFromUnitVectors(ALONG_Y, dir);
+      a.shaft.scale.set(SHAFT_PX * wpp, len - head, SHAFT_PX * wpp);
       a.head.position.copy(tip).addScaledVector(dir, len - head / 2);
-      a.head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      a.head.quaternion.setFromUnitVectors(ALONG_Y, dir);
       a.head.scale.setScalar(head);
     }
     this.drawRuler(wpp);
