@@ -8,7 +8,8 @@ import type { Datum } from "../features/datum";
 import type { Closest, MassProperties, MeasureRef } from "../kernel/evaluate";
 
 export type KernelRequest =
-  | { id: number; type: "rebuild"; doc: unknown }
+  /** With `session`: also the session preview for that feature (the client already holds the part before it when `have` is its key). */
+  | { id: number; type: "rebuild"; doc: unknown; session?: { feature: string; have?: string } }
   | { id: number; type: "exportStep"; doc: unknown }
   /** The part as it stands before a feature (the sketch being edited): what that sketch sees and may reference. */
   | { id: number; type: "before"; doc: unknown; feature: string }
@@ -39,10 +40,33 @@ export interface RebuildView {
   datums: Record<string, Datum>;
 }
 
+/**
+ * A feature session's preview (Phase P): the part as it stands before the
+ * feature (what the view shows and picks on while the feature is open), and
+ * the material the feature adds and removes there, meshed.
+ */
+export interface SessionPreview {
+  feature: string;
+  /** Names the part before the feature: the same key, the same part (the client keeps it, and says so with `have`). */
+  beforeKey: string;
+  /** The part before the feature; left out when the client said it holds this key already. */
+  before?: RebuildView;
+  /** The material it adds and removes (null: none, or it failed). */
+  added: MeshData | null;
+  removed: MeshData | null;
+  addedVolume: number;
+  removedVolume: number;
+  /** Did the feature build (in the part as far as it)? Its error when not. */
+  ok: boolean;
+  error?: string;
+}
+
 export type KernelResponse =
   | { id: 0; type: "ready"; loadMs: number }
   | { id: 0; type: "fatal"; message: string }
-  | { id: number; type: "rebuilt"; view: RebuildView; ms: number }
+  | { id: number; type: "rebuilt"; view: RebuildView; ms: number; session?: SessionPreview }
+  /** A rebuild skipped because a newer one was already waiting: only the newest is worth building. */
+  | { id: number; type: "superseded" }
   | { id: number; type: "before"; view: RebuildView }
   | { id: number; type: "step"; ok: true; name: string; text: string }
   | { id: number; type: "step"; ok: false; errors: string[] }

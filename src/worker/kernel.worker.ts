@@ -20,8 +20,11 @@ import { exportPartSTEP } from "../kernel/stepPart";
 import { labelBodies } from "../kernel/bodies";
 import { evaluate } from "./evaluate";
 import { rebuild } from "../kernel/rebuild";
-import { beforeKey, documentBefore, Recent } from "./before";
-import type { KernelRequest, KernelResponse, RebuildView } from "./protocol";
+import { beforeKey, documentBefore, documentThrough, Recent } from "./before";
+import { featureEffect } from "../kernel/featureEffect";
+import { geometryKey } from "../doc/drawing";
+import type { MeshData } from "../kernel/mesh";
+import type { KernelRequest, KernelResponse, RebuildView, SessionPreview } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -50,6 +53,61 @@ function rebuildCached(doc: unknown): RebuildResult {
 
 /** The part before a feature, by document and feature: plain data, so it outlives the rebuild it came from. */
 const beforeViews = new Recent<RebuildView>(4);
+
+/** The part before a feature session's feature: its rebuild (whose solid the effect is measured against) and its view. Freed when dropped. */
+const sessionBefore = new Recent<{ result: RebuildResult; view: RebuildView }>(2, (b) => b.result.dispose());
+
+/**
+ * A feature session's preview: the part before the feature (rebuilt once and
+ * kept while the session lasts), and the material the feature adds and
+ * removes there: the part just after it compared with the part before it. The
+ * part just after it is the document's own rebuild (`main`) when the feature
+ * is the last one, as it is for a new feature.
+ */
+function sessionPreview(kernel: OC, doc: unknown, feature: string, have: string | undefined, main: RebuildResult): SessionPreview {
+  const key = beforeKey(doc, feature);
+  let before = sessionBefore.get(key);
+  if (!before) {
+    const result = rebuild(documentBefore(doc, feature), kernel);
+    before = { result, view: viewOf(kernel, result) };
+    sessionBefore.set(key, before);
+  }
+  const through = documentThrough(doc, feature);
+  const own = through !== doc && geometryKey(through) !== geometryKey(doc);
+  const after = own ? rebuild(through, kernel) : main;
+  try {
+    const status = after.features.find((f) => f.id === feature);
+    let added: MeshData | null = null;
+    let removed: MeshData | null = null;
+    let addedVolume = 0;
+    let removedVolume = 0;
+    if (status?.ok && !status.suppressed) {
+      const b = before.result.solid;
+      scoped((s) => {
+        const e = featureEffect(kernel, s, b, after.solid);
+        added = e.added ? tessellate(kernel, e.added) : null;
+        removed = e.removed ? tessellate(kernel, e.removed) : null;
+        addedVolume = e.addedVolume;
+        removedVolume = e.removedVolume;
+      });
+    }
+    return {
+      feature,
+      beforeKey: key,
+      ...(have === key ? {} : { before: before.view }),
+      added,
+      removed,
+      addedVolume,
+      removedVolume,
+      ok: !!status?.ok,
+      ...(status?.error ? { error: status.error } : !status ? { error: `${feature} is not in the document yet` } : {}),
+    };
+  } finally {
+    if (own) after.dispose();
+  }
+}
+
+const meshBuffers = (m: MeshData | null): ArrayBuffer[] => (m ? [m.positions.buffer, m.normals.buffer, m.indices.buffer, m.edges.buffer] : []) as ArrayBuffer[];
 
 /** What the UI gets of a rebuild: plain data, the mesh and the B-rep faces and edges indexed like it. */
 function viewOf(kernel: OC, result: RebuildResult): RebuildView {
@@ -86,10 +144,13 @@ async function handle(kernel: OC, req: KernelRequest) {
       post({ id: req.id, type: "port", result }, png ? [png.buffer as ArrayBuffer] : []);
     } else if (req.type === "rebuild") {
       const t0 = performance.now();
-      const view = viewOf(kernel, rebuildCached(req.doc));
-      const mesh = view.mesh;
-      const transfer = mesh ? [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer, mesh.edges.buffer] : [];
-      post({ id: req.id, type: "rebuilt", view, ms: performance.now() - t0 }, transfer as Transferable[]);
+      const result = rebuildCached(req.doc);
+      const view = viewOf(kernel, result);
+      const ms = performance.now() - t0;
+      // A feature session's preview comes with it (the part before it is kept, so it is not sent again while the client has it).
+      const session = req.session ? sessionPreview(kernel, req.doc, req.session.feature, req.session.have, result) : undefined;
+      const transfer = [...meshBuffers(view.mesh), ...meshBuffers(session?.added ?? null), ...meshBuffers(session?.removed ?? null)];
+      post({ id: req.id, type: "rebuilt", view, ms, ...(session ? { session } : {}) }, transfer);
     } else if (req.type === "evaluate") {
       post({ id: req.id, type: "evaluated", result: evaluate(kernel, rebuildCached(req.doc), req.doc, req.query) });
     } else if (req.type === "before") {
@@ -139,11 +200,18 @@ async function drain() {
 
 async function drainQueue() {
   while (oc && queue.length) {
-    await handle(oc, queue.shift()!);
+    const req = queue.shift()!;
+    // A rebuild with a newer one waiting behind it is not worth building: the newest change wins (a handle's drag sends many).
+    if (req.type === "rebuild" && queue.some((q) => q.type === "rebuild")) {
+      post({ id: req.id, type: "superseded" });
+      continue;
+    }
+    await handle(oc, req);
     if (heapBytes(oc) > recycleAt) {
       const before = heapBytes(oc);
       local.reset();
       beforeViews.clear();
+      sessionBefore.clear();
       oc = null;
       const t0 = performance.now();
       oc = await recycleOC();
