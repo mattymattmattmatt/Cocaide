@@ -1551,3 +1551,9 @@ svg.icon { flex: none; display: block; }
 .view-triad .triad-axis { pointer-events: auto; }
 .view-cube { pointer-events: none; }
 .view-cube .cube-cell, .view-cube .cube-turn { pointer-events: auto; }
+/* narrower windows: the view bar keeps to its icons, and the Section tag sits above it */
+@media (max-width: 1360px) {
+  .view-buttons .label { display: none; }
+  .view-buttons button { padding: 0 6px; }
+  .section-tag { bottom: 52px; }
+}

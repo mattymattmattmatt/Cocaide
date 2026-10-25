@@ -2155,7 +2155,7 @@ export function Viewport({
           data-testid="view-menu-open"
         >
           <Icon name="model" />
-          Views
+          <span className="label">Views</span>
           <Icon name="up" size={10} className="caret" />
         </button>
         <span className="sep" />
