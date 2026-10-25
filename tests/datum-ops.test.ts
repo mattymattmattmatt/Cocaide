@@ -219,7 +219,7 @@ describe("what the document refuses, and what it says to pick", () => {
     expect(errorsOf(add(bracket, { id: "p", op: "point", mode: "coords" }))).toEqual(["p: at: needed: the point's [x, y, z] in mm"]);
     expect(errorsOf(add(bracket, { id: "p", op: "point", mode: "coords", at: [1, 2, 3], refs: [{ datum: "Origin" }] }))).toEqual(['p: refs: mode "coords" takes no references; remove them']);
     expect(errorsOf(add(bracket, { id: "p", op: "point", mode: "center", refs: [{ datum: "Top" }] }))).toEqual([
-      'p: refs[0]: mode "center" takes a circular edge (its centre) or a face (its centre of area) here, written { "edge": <edge selector> } or { "face": <face selector> } (got Top)',
+      'p: refs[0]: mode "center" takes a circular edge (its centre), a face (its centre of area) or a sketch\'s circle or arc here, written { "edge": <edge selector> } or { "face": <face selector> } or { "sketch": <sketch id>, "entity": <entity id> } (got Top)',
     ]);
   });
 
