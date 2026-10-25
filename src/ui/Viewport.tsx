@@ -151,7 +151,7 @@ interface Hover {
 }
 
 // The standard views (where each looks from, which way is up) are in src/ui/viewport/views.ts.
-const VIEW_ICON: Record<ViewName, IconName> = { front: "front", back: "front", left: "right", right: "right", top: "top", bottom: "top", iso: "iso", dimetric: "iso", trimetric: "iso" };
+const VIEW_ICON: Record<ViewName, IconName> = { front: "viewFront", back: "front", left: "right", right: "viewRight", top: "viewTop", bottom: "top", iso: "viewIso", dimetric: "iso", trimetric: "iso" };
 /** The quick buttons under the view. */
 const QUICK_VIEWS: ViewName[] = ["iso", "top", "front", "right"];
 const FILTER_ICON: Record<string, IconName> = { faces: "filterFaces", edges: "filterEdges", vertices: "filterVertices", planes: "filterPlanes" };
@@ -466,8 +466,10 @@ export function Viewport({
     const render = () => {
       if (!perspective) syncOrtho();
       updateOutline();
-      renderer.render(scene, eye());
+      // The arrows are sized and placed for this camera before the frame is drawn (after it, a frame drawn
+      // right after their handles were set showed them unplaced: a speck at the origin, until the next frame).
       evalLayer.update(eye(), controls.worldPerPixel(), el.clientWidth, el.clientHeight);
+      renderer.render(scene, eye());
       placeLabels();
       placeDatumLabels();
       cube.update(camera);
@@ -610,6 +612,8 @@ export function Viewport({
       pick: (t) => look(t.dir, t.up),
       turn: (kind) => cubeTurn(kind),
       home: () => orient("iso"),
+      // Dragging the cube turns the view about the same centre a middle-drag would.
+      drag: (phase, dx, dy) => (phase === "start" ? controls.beginDragTurn() : phase === "move" ? controls.dragTurn(dx, dy) : controls.endDragTurn()),
     });
     cube.setVisible(viewPrefs().viewCube);
     const triad = new Triad(el, (axis) => {
@@ -1359,6 +1363,8 @@ export function Viewport({
     const onLeave = () => {
       hovered = null;
       setHover(null);
+      // A handle lit up under the pointer goes back to its own colour when the pointer leaves.
+      evalLayer.setHot(null);
       redrawMarks();
     };
     // A click is a press and release without dragging; drags orbit the view.
@@ -1425,8 +1431,8 @@ export function Viewport({
       }
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
       if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
-      else if (e.altKey) {
-        // Alt+click: the next face behind the one picked.
+      else if (e.altKey && allows(pickFilter, "face")) {
+        // Alt+click: the next face behind the one picked (not while the filter leaves faces out).
         const next = nextBehind(underAt(e.clientX, e.clientY), selection);
         pickRef.current(next ? next.target : pickAt(e.clientX, e.clientY), additive);
       } else pickRef.current(pickAt(e.clientX, e.clientY), additive);
@@ -1600,9 +1606,9 @@ export function Viewport({
             planesDrawn: sectionPlanes.group.children.length / 2,
           };
         },
-        /** Where a drag handle's arrow is (client pixels), to grab it. */
-        handlePoint(id: string): [number, number] | null {
-          const p = evalLayer.tipOnScreen(id, project, controls.worldPerPixel());
+        /** Where a drag handle's arrow is (client pixels), to grab it; `at` of the way along it (default on its shaft; 0.85 is in its head). */
+        handlePoint(id: string, at?: number): [number, number] | null {
+          const p = evalLayer.tipOnScreen(id, project, controls.worldPerPixel(), at);
           return p ? [p.x, p.y] : null;
         },
         /** What a click at these client pixels would pick. */

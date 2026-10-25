@@ -239,6 +239,8 @@ export function SectionPanel({
     update(t[0] || t[1] ? { ...rest, tilt: t } : rest);
   };
   const cut = section.bodies;
+  // The body list opens by itself when some bodies are left whole; after that it is the user's (ticking the last box back must not fold it away).
+  const [bodiesOpen, setBodiesOpen] = useState(!!cut);
   const summary = section.planes.map((p, k) => `${section.planes.length > 1 ? `${k + 1}: ` : ""}${p.label}${p.enabled === false ? " (off)" : ""}`).join(" · ");
   return (
     <Panel
@@ -364,7 +366,7 @@ export function SectionPanel({
               </select>
             </label>
             {bodies.length > 1 && (
-              <details className="section-bodies" open={!!cut} data-testid="section-bodies">
+              <details className="section-bodies" open={bodiesOpen} onToggle={(e) => setBodiesOpen(e.currentTarget.open)} data-testid="section-bodies">
                 <summary>Section bodies: {cut ? `${cut.length} of ${bodies.length}` : "all"}</summary>
                 <div className="section-body-list">
                   {bodies.map((b) => (

@@ -215,6 +215,7 @@ const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
     ["Alt + middle-drag", "Roll in the screen"],
     ["Middle-click the part", "Pin the rotation centre there (a marker shows it); middle-click empty space or Esc to clear it"],
     ["Middle double-click", "Zoom to fit"],
+    ["Drag the view cube", "Turn the view, as a middle-drag does; click a face, an edge or a corner to look from there"],
     ["Wheel", "Zoom at the pointer: toward you zooms in"],
     ["Left-click", "Select; Ctrl- or Shift-click adds"],
     ["Alt + left-click", "Select the face behind the one under the pointer (again: the next one behind)"],

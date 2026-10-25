@@ -17,7 +17,7 @@ type Hook = {
   project(p: number[]): [number, number];
   section(): (Plane & { capped: boolean }) | null;
   sections(): { planes: Plane[]; bodies: string[] | null; capped: boolean; planesDrawn: number };
-  handlePoint(id: string): [number, number] | null;
+  handlePoint(id: string, at?: number): [number, number] | null;
   pick(x: number, y: number): { kind: string; index?: number } | null;
 };
 const shot = async (page: Page, name: string) => {
@@ -26,7 +26,7 @@ const shot = async (page: Page, name: string) => {
 const sections = (page: Page) => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.sections());
 const section = (page: Page) => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.section());
 const project = (page: Page, p: Vec3) => page.evaluate((p) => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.project(p), p);
-const handlePoint = (page: Page, id: string) => page.evaluate((id) => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.handlePoint(id), id);
+const handlePoint = (page: Page, id: string, at?: number) => page.evaluate(([id, at]) => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.handlePoint(id, at), [id, at] as const);
 
 /** The colour on the screen at client pixels (a 1 × 1 screenshot). */
 async function pixel(page: Page, x: number, y: number): Promise<[number, number, number]> {
@@ -68,6 +68,11 @@ test("drag the plane's arrow: the plane moves along its normal and the offset fo
   await expect(page.getByTestId("section-tag")).toHaveText("Section");
   await expect(page.getByTestId("view-section")).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => sections(page).then((s) => s.planesDrawn)).toBe(1);
+  // The arrow is drawn at once, where the hook says it is: blue in its head (a frame drawn right after the
+  // handles were set used to show them unplaced, a speck at the origin, until the view next moved).
+  const head = (await handlePoint(page, "section:0", 0.85))!;
+  const [red, , blue] = await pixel(page, ...head);
+  expect(blue - red).toBeGreaterThan(60);
   await shot(page, "front");
   // The arrow on the Front plane points the way the offset grows (−Y, away from the viewer in the isometric view).
   const tip = (await handlePoint(page, "section:0"))!;
@@ -205,6 +210,8 @@ test("section bodies: one body left whole, the other cut; each body's cap in its
   // Each body's colour on its cap.
   await page.getByTestId("section-body-upright").check();
   await expect.poll(() => sections(page).then((s) => s.bodies)).toBeNull();
+  // Ticking the last box back leaves the list open (it used to fold away under the pointer).
+  await expect(page.getByTestId("section-bodies")).toHaveAttribute("open", "");
   await page.getByTestId("section-cap-colour").selectOption("bodies");
   await expect.poll(() => sections(page).then((s) => s.capped)).toBe(true);
   await shot(page, "body-colours");

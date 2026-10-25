@@ -1557,3 +1557,9 @@ svg.icon { flex: none; display: block; }
   .view-buttons button { padding: 0 6px; }
   .section-tag { bottom: 52px; }
 }
+/* Phase P review: the view's hints (pinned centre, zoom to area) on one line as wide as their words (centred at 50 %, they were squeezed into half the view and wrapped), and below the selection chip */
+.view-hint { top: 46px; width: max-content; max-width: calc(100% - 24px); }
+/* narrower windows: the pinned-centre hint keeps to its first words, clear of the view cube */
+@media (max-width: 1360px) { .view-hint.pinned-hint .muted { display: none; } }
+/* the view cube dragged: it turns the view */
+.view-cube.dragging .cube-cell { cursor: grabbing; }

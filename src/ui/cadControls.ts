@@ -47,6 +47,8 @@ export class CadControls {
   private pinnedAt: THREE.Vector3 | null = null;
   private drag: { gesture: Gesture | null; button: number; x: number; y: number; lastX: number; lastY: number; id: number; moving: boolean; centre: THREE.Vector3 | null } | null = null;
   private lastMiddleClick = 0;
+  /** A turn driven from outside the view (the view cube dragged): the centre it turns about. */
+  private dragCentre: THREE.Vector3 | null = null;
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -119,6 +121,26 @@ export class CadControls {
   /** Turns the view about `about` (default: the rotation centre the view chooses), radians. */
   turn(yaw: number, pitch: number, about?: THREE.Vector3) {
     this.setPose(this.turned(yaw, pitch, about ?? this.hooks.centre()));
+  }
+
+  /**
+   * A drag elsewhere (the view cube) turns the view as a middle-drag on the
+   * part does: begin (the centre is chosen then), the pixels moved, end.
+   */
+  beginDragTurn() {
+    this.hooks.interrupt?.();
+    this.dragCentre = this.hooks.centre();
+    this.setPose(reseat(this.pose(), this.dragCentre, this.orthographic));
+  }
+
+  dragTurn(dx: number, dy: number) {
+    if (!this.dragCentre) return;
+    const rate = turnPerPixel(this.dom.clientHeight, viewPrefs().rotateSpeed);
+    this.setPose(orbit(this.pose(), this.dragCentre, -dx * rate, -dy * rate, viewPrefs().turntable));
+  }
+
+  endDragTurn() {
+    this.dragCentre = null;
   }
 
   /** Turns the view in the plane of the screen, radians, clockwise positive. */

@@ -3,7 +3,8 @@
 // at any size, no second renderer): each face is a 3 × 3 grid whose middle
 // is that face's view, whose sides are its edges and whose corners are its
 // corners, so all 26 orientations are a click away (an edge or corner lights
-// up on every face it is on). Round it, on hover: arrows that turn the view
+// up on every face it is on). Dragging the cube turns the view freely, as a
+// middle-drag on the part does. Round it, on hover: arrows that turn the view
 // 90° (left, right, up, down), two that roll it 90°, and Home (isometric,
 // fitted). The triad is SVG: red X, green Y, blue Z; click an axis to look
 // along it, again for the other side.
@@ -24,7 +25,12 @@ export interface ViewCubeHandlers {
   pick(t: CubeTarget): void;
   turn(kind: CubeTurn): void;
   home(): void;
+  /** The cube dragged: "start" once it moves, then the pixels moved since the last call, then "end". */
+  drag?(phase: "start" | "move" | "end", dx: number, dy: number): void;
 }
+
+/** Pixels a press on the cube travels before it is a drag (turning the view) rather than a click (a view). */
+const DRAG_SLOP = 4;
 
 const svg = (paths: string, size = 14) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -48,13 +54,16 @@ export class ViewCube {
   private readonly up = new THREE.Vector3();
   private readonly back = new THREE.Vector3();
   private last = "";
+  /** A press on a cell that may become a drag; `dragged` once it has moved (its click then picks nothing). */
+  private press: { id: number; x: number; y: number; lastX: number; lastY: number; dragged: boolean } | null = null;
+  private justDragged = false;
 
   constructor(host: HTMLElement, private readonly handlers: ViewCubeHandlers) {
     this.el = document.createElement("div");
     this.el.className = "view-cube";
     this.el.dataset.testid = "view-cube";
     this.el.setAttribute("role", "group");
-    this.el.setAttribute("aria-label", "View cube: click a face, an edge or a corner to look from there");
+    this.el.setAttribute("aria-label", "View cube: click a face, an edge or a corner to look from there; drag it to turn the view");
     // The view's own pointer handling (orbit, pick, box) stays off the cube.
     for (const type of ["pointerdown", "pointerup", "dblclick", "wheel", "contextmenu"]) this.el.addEventListener(type, (e) => e.stopPropagation());
     this.el.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -88,12 +97,18 @@ export class ViewCube {
           cell.className = `cube-cell ${target.kind}`;
           cell.dataset.key = target.key;
           cell.dataset.testid = target.kind === "face" ? `cube-face-${face}` : `cube-${face}-${col}${row}`;
-          cell.title = `${target.label}${target.kind === "face" ? " view" : ""}`;
+          cell.title = `${target.label}${target.kind === "face" ? " view" : ""}\nDrag the cube to turn the view`;
           Object.assign(cell.style, { left: `${offsets[col]}px`, top: `${offsets[row]}px`, width: `${sizes[col]}px`, height: `${sizes[row]}px` });
           cell.addEventListener("pointerenter", () => this.light(target.key, true));
           cell.addEventListener("pointerleave", () => this.light(target.key, false));
+          cell.addEventListener("pointerdown", this.onPress);
           cell.addEventListener("click", (e) => {
             e.stopPropagation();
+            // The release of a drag is not a click on a view.
+            if (this.justDragged) {
+              this.justDragged = false;
+              return;
+            }
             this.handlers.pick(target);
           });
           f.appendChild(cell);
@@ -133,6 +148,46 @@ export class ViewCube {
     host.appendChild(this.el);
   }
 
+  // A press on the cube: a click picks a view; moved past the slop it turns the view instead, until released.
+  private onPress = (e: PointerEvent) => {
+    if (e.button !== 0 || !this.handlers.drag) return;
+    this.justDragged = false;
+    this.press = { id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, dragged: false };
+    // On the window, in the capture phase: the cube keeps its own pointerup from the view (it stops it bubbling).
+    window.addEventListener("pointermove", this.onDrag, true);
+    window.addEventListener("pointerup", this.onRelease, true);
+    window.addEventListener("pointercancel", this.onRelease, true);
+  };
+
+  private onDrag = (e: PointerEvent) => {
+    const p = this.press;
+    if (!p || e.pointerId !== p.id) return;
+    if (!p.dragged) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_SLOP) return;
+      p.dragged = true;
+      this.el.classList.add("dragging");
+      this.handlers.drag?.("start", 0, 0);
+    }
+    const dx = e.clientX - p.lastX;
+    const dy = e.clientY - p.lastY;
+    p.lastX = e.clientX;
+    p.lastY = e.clientY;
+    this.handlers.drag?.("move", dx, dy);
+  };
+
+  private onRelease = (e: PointerEvent) => {
+    const p = this.press;
+    if (!p || e.pointerId !== p.id) return;
+    this.press = null;
+    window.removeEventListener("pointermove", this.onDrag, true);
+    window.removeEventListener("pointerup", this.onRelease, true);
+    window.removeEventListener("pointercancel", this.onRelease, true);
+    if (!p.dragged) return;
+    this.el.classList.remove("dragging");
+    this.justDragged = true;
+    this.handlers.drag?.("end", 0, 0);
+  };
+
   /** Lights up a target on every face it is on (an edge on two, a corner on three). */
   private light(key: string, on: boolean) {
     for (const c of this.el.querySelectorAll<HTMLElement>(`.cube-cell[data-key="${key}"]`)) c.classList.toggle("hot", on);
@@ -165,6 +220,9 @@ export class ViewCube {
   }
 
   dispose() {
+    window.removeEventListener("pointermove", this.onDrag, true);
+    window.removeEventListener("pointerup", this.onRelease, true);
+    window.removeEventListener("pointercancel", this.onRelease, true);
     this.el.remove();
   }
 }

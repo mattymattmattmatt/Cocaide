@@ -166,8 +166,10 @@ export function extentAlong(normal: Vec3, origin: Vec3, box: Box | null): { min:
 /**
  * The plane drawn over the part: a rectangle on the (tilted) plane, round the
  * part's box as seen square to the plane, with a margin; its corners in
- * order, its middle, and the middle of its far edge along the plane's second
- * axis (where the drag arrow stands: clear of the part and of the origin).
+ * order, its middle, and where the drag arrow stands: on its far edge along
+ * the plane's second axis, a quarter of the way along from the end the first
+ * axis starts at (clear of the part, and of the origin's triad, which stands
+ * right under the edge's middle on a part drawn round the origin).
  */
 export function sectionRect(s: SectionState, box: Box | null, margin = 0.08): { corners: [Vec3, Vec3, Vec3, Vec3]; centre: Vec3; anchor: Vec3 } {
   const f = sectionFrame(s);
@@ -188,12 +190,12 @@ export function sectionRect(s: SectionState, box: Box | null, margin = 0.08): { 
   const m = Math.max(a1 - a0, b1 - b0, 1) * margin;
   [a0, a1, b0, b1] = [a0 - m, a1 + m, b0 - m, b1 + m];
   const at = (a: number, b: number) => add3(f.point, add3(scale3(f.u, a), scale3(f.v, b)));
-  return { corners: [at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)], centre: at((a0 + a1) / 2, (b0 + b1) / 2), anchor: at((a0 + a1) / 2, b1) };
+  return { corners: [at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)], centre: at((a0 + a1) / 2, (b0 + b1) / 2), anchor: at(a0 + (a1 - a0) / 4, b1) };
 }
 
 /**
- * The drag arrow on a plane: it stands on the middle of the rectangle's far
- * edge and points the way the offset grows (along the tilted normal). `origin` is where the
+ * The drag arrow on a plane: it stands on the rectangle's far edge (see
+ * sectionRect) and points the way the offset grows (along the tilted normal). `origin` is where the
  * arrow's foot would be at offset 0; the foot is at origin + dir · offset /
  * scale (scale: offset per mm the plane moves, 1 / cos of the tilt). Null when
  * the plane is tilted too far to drag along its normal.

@@ -677,6 +677,33 @@ const ICONS = {
       <circle cx="12" cy="12" r="1.6" fill="currentColor" />
     </>
   ),
+  // Phase P review: the view bar's quick views, the face looked at filled firmly (the isometric shaded all round) so the four read apart at a glance.
+  viewIso: (
+    <>
+      <path d="M12 3l8 4.5-8 4.5-8-4.5z" {...face} fillOpacity={0.15} />
+      <path d="M4 7.5 12 12v9l-8-4.5z" {...face} fillOpacity={0.35} />
+      <path d="M20 7.5 12 12v9l8-4.5z" {...face} fillOpacity={0.6} />
+      <path d={CUBE} />
+    </>
+  ),
+  viewTop: (
+    <>
+      <path d="M12 3l8 4.5-8 4.5-8-4.5z" {...face} fillOpacity={0.7} />
+      <path d={CUBE} />
+    </>
+  ),
+  viewFront: (
+    <>
+      <path d="M4 7.5 12 12v9l-8-4.5z" {...face} fillOpacity={0.7} />
+      <path d={CUBE} />
+    </>
+  ),
+  viewRight: (
+    <>
+      <path d="M20 7.5 12 12v9l8-4.5z" {...face} fillOpacity={0.7} />
+      <path d={CUBE} />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

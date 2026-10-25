@@ -127,6 +127,8 @@ test("a middle-click on a vertex pins the rotation centre there (a marker shows 
   expect(await call(page, "pinned")).toEqual(vertex);
   expect(await call(page, "pivotMarker")).toBe(true);
   await expect(page.getByTestId("pinned-hint")).toContainText("Turning about the pinned point");
+  // On one line, as wide as its words (it used to be squeezed into half the view and wrap).
+  expect((await page.getByTestId("pinned-hint").boundingBox())!.height).toBeLessThan(34);
   expect((await call(page, "rotationCentre")).why).toBe("pinned");
   await shot(page, "pinned");
   // It stays pinned for more than one rotation, and the vertex keeps its place on the screen.
@@ -196,6 +198,29 @@ test("the triad looks along an axis (again: from the other side); the view cube'
   await page.getByTestId("cube-home").click();
   expect(from(await cam(page))).toEqual([s, -s, s]);
   await shot(page, "cube");
+  // Dragging the cube turns the view freely, about the part's middle (which stays put on the screen).
+  const middle = await project(page, [0, 0, 3]);
+  const cell = (await page.getByTestId("cube-face-front").boundingBox())!;
+  const [fx, fy] = [cell.x + cell.width / 2, cell.y + cell.height / 2];
+  await page.mouse.move(fx, fy);
+  await page.mouse.down();
+  await page.mouse.move(fx + 20, fy, { steps: 4 });
+  await page.mouse.move(fx + 40, fy + 12, { steps: 4 });
+  await page.mouse.up();
+  const dragged = from(await cam(page));
+  expect(dragged).not.toEqual([s, -s, s]);
+  const still = await project(page, [0, 0, 3]);
+  expect(Math.hypot(still[0] - middle[0], still[1] - middle[1])).toBeLessThan(3);
+  // A drag that comes back to where it started and is released on the same cell is no click: no jump to Front.
+  const cell2 = (await page.getByTestId("cube-face-front").boundingBox())!;
+  const [gx, gy] = [cell2.x + cell2.width / 2, cell2.y + cell2.height / 2];
+  await page.mouse.move(gx, gy);
+  await page.mouse.down();
+  await page.mouse.move(gx + 30, gy, { steps: 4 });
+  await page.mouse.move(gx, gy, { steps: 4 });
+  await page.mouse.up();
+  expect(from(await cam(page))).not.toEqual([0, -1, 0]);
+  await page.getByTestId("cube-home").click();
   // Hidden from the Views menu, shown again.
   await page.getByTestId("view-menu-open").click();
   await page.getByTestId("view-cube-toggle").click();
@@ -326,6 +351,13 @@ test("Select other lists every face under the pointer, nearest first, and picks 
   // A plain click is the nearest, as ever.
   await viewportClick(page, [-20, -10, 6]);
   await expect(page.getByTestId("selection")).toContainText("normal +Z");
+  // With the filter on edges only, Alt+click picks no face behind either: in the middle of a face it picks nothing.
+  await page.getByTestId("filter-edges").click();
+  await page.keyboard.down("Alt");
+  await page.mouse.click(p[0], p[1]);
+  await page.keyboard.up("Alt");
+  await expect(page.getByTestId("selection")).toHaveCount(0);
+  await page.getByTestId("filter-edges").click();
 });
 
 test("Settings > Mouse: the rotation speed scales a drag's turn; Keep Z up keeps the view level", async ({ page }) => {
