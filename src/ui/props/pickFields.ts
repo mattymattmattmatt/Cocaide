@@ -109,6 +109,12 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
     }
     case "edges": {
       const r = view ? resolveEdges(value, view.edges, view.faces) : { indices: [], unresolved: [] };
+      // What a click on an edge takes: in, its chain (with propagation on) filtered by the corner filter; out, its chain as it is in the field.
+      const chainFor = (edge: number): number[] => {
+        const inAlready = r.indices.includes(edge);
+        const chain = env.edge.propagate ? env.chainOf(edge).filter((i, k) => k === 0 || inAlready || env.passes(i)) : [edge];
+        return inAlready ? chain.filter((i) => r.indices.includes(i)) : chain;
+      };
       return {
         ...base,
         kind: "edges",
@@ -120,10 +126,12 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
           if (t.kind !== "edge" || !view) return `${spec.label} takes edges: click an edge`;
           const inAlready = r.indices.includes(t.index);
           if (!inAlready && !env.passes(t.index)) return `That is ${env.edge.kinds === "convex" ? "an inside" : "an outside"} edge: the filter takes only ${env.edge.kinds === "convex" ? "outside (convex)" : "inside (concave)"} edges`;
-          // Out goes the edge with its chain as it is in the field; in comes its chain, filtered.
-          const chain = env.edge.propagate ? env.chainOf(t.index).filter((i, k) => k === 0 || inAlready || env.passes(i)) : [t.index];
-          const next = toggleEdges(value, view.edges, view.faces, inAlready ? chain.filter((i) => r.indices.includes(i)) : chain);
+          const next = toggleEdges(value, view.edges, view.faces, chainFor(t.index));
           return typeof next === "string" ? next : result(commit(next));
+        },
+        reach(t) {
+          if (t.kind !== "edge" || !view) return [t];
+          return chainFor(t.index).map((index) => ({ kind: "edge" as const, index, point: view.edges[index]?.mid ?? t.point }));
         },
         addAll(ts) {
           if (!view) return null;

@@ -50,6 +50,8 @@ export interface PickField {
   toggle(target: PickTarget): string | null;
   /** A box dragged over the view: each of these in (none taken out). */
   addAll?(targets: PickTarget[]): string | null;
+  /** What a click on this would take in or out with it (an edge's tangency chain), for the preselection highlight; undefined: just itself. */
+  reach?(target: PickTarget): PickTarget[];
   /** A feature clicked in the tree. */
   takeFeature?(id: string): string | null;
   /** What to pick, for the status line and the empty field: "Pick edges to fillet". */

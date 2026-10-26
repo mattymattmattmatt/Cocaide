@@ -66,6 +66,8 @@ export interface PickRouter {
   next(back: boolean): void;
   /** What a click on this would do, for the pointer's tip: "Click to add to Edges". Null: nothing. */
   hint(target: PickTarget): string | null;
+  /** What a click on this would take in or out with it (an edge's tangency chain), to light up as the preselection. Null: just itself. */
+  reach(target: PickTarget): PickTarget[] | null;
 }
 
 /** What the app hands the panel for an open session. */

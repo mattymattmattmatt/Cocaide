@@ -127,6 +127,8 @@ interface Props {
   pickHint?: ((target: PickTarget) => string | null) | null;
   /** Things to light up as if hovered (a session field's chip under the pointer). */
   peek?: PickTarget[] | null;
+  /** What a click on the edge under the pointer would take with it (a session's tangency chain): lit up with it as the preselection. */
+  pickReach?: ((target: PickTarget) => PickTarget[] | null) | null;
 }
 
 export interface FrameNode {
@@ -262,6 +264,7 @@ export function Viewport({
   preview = null,
   pickHint = null,
   peek: peekList = null,
+  pickReach = null,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
@@ -845,6 +848,11 @@ export function Viewport({
       return dots;
     };
 
+    /** The edges a click on this one would take (its chain, in a session with propagation on), it first. */
+    const reachOf = (t: PickTarget & { index: number }): number[] => {
+      const r = pickReachRef.current?.(t);
+      return r?.length ? r.flatMap((x) => (x.kind === "edge" ? [x.index] : [])) : [t.index];
+    };
     const redrawMarks = () => {
       disposeGroup(marks);
       const edges = shownView?.edges ?? [];
@@ -854,7 +862,7 @@ export function Viewport({
         hovered?.kind === "face" && !selection.faces.includes(hovered.index)
           ? faceMesh([hovered.index], HOVER_COLOR, 0.3)
           : hovered?.kind === "edge" && !selection.edges.includes(hovered.index)
-            ? edgeMarks([hovered.index], hoverEdgeMat, hoverEdgeWhole)
+            ? edgeMarks(reachOf(hovered), hoverEdgeMat, hoverEdgeWhole)
             : hovered?.kind === "vertex"
               ? vertexDots([hovered.point], HOVER_COLOR, 10)
               : null;
@@ -1983,6 +1991,8 @@ export function Viewport({
   }, [peekList]);
   const pickHintRef = useRef(pickHint);
   pickHintRef.current = pickHint;
+  const pickReachRef = useRef(pickReach);
+  pickReachRef.current = pickReach;
 
   // The reference geometry shown: the default planes and every plane, axis and point that built, each by its
   // eye (a selected one always), sized to the part; the origin's triad by its own eye.

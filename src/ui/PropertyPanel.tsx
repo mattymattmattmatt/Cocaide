@@ -171,6 +171,10 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
       if (!f || !fieldTakes(f, t)) return null;
       return holds(f.items, t) ? `Click to take it out of ${f.label}` : `Click to add it to ${f.label}`;
     },
+    reach(t) {
+      const f = current();
+      return f?.reach && fieldTakes(f, t) ? f.reach(t) : null;
+    },
   };
   const host: PickHost = {
     active,

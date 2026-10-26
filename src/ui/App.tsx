@@ -2052,6 +2052,7 @@ export function App() {
                   selection={sessionSelection ?? selection}
                   preview={previewLook}
                   pickHint={session ? (t) => pickRouter.current?.hint(t) ?? null : null}
+                  pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
                   peek={peek}
                   onPick={onPick}
                   onContext={onContext}

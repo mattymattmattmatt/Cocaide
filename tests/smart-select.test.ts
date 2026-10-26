@@ -28,6 +28,7 @@ import {
   treeTakes,
   type PickField,
 } from "../src/ui/props/picking";
+import { pickFieldFor } from "../src/ui/props/pickFields";
 import type { RebuildView } from "../src/worker/protocol";
 
 type Raw = Record<string, unknown>;
@@ -172,6 +173,27 @@ describe("picking into a session's fields", () => {
     const single = toggleEdges(undefined, rounded.edges, rounded.faces, [line.index]) as EdgeSelector;
     expect(selectEdges(rounded.edges, rounded.faces, single).matches.map((e) => e.index)).toEqual([line.index]);
     expect(resolveEdges(addEdges(single, rounded.edges, rounded.faces, chain), rounded.edges, rounded.faces).indices.length).toBe(8);
+  });
+
+  it("an edge field's click and its preselection reach the same edges: the chain with propagation on, the one edge with it off; the corner filter refuses", () => {
+    const top = faceWhere(rounded, TOP);
+    const line = rounded.edges.find((e) => e.kind === "line" && e.faces.includes(top))!;
+    const target = { kind: "edge" as const, index: line.index, point: line.mid };
+    const spec = { kind: "edges" as const, key: "edges", label: "Edges", propagation: true };
+    const doc = base(cornerFillet);
+    const c = { f: {}, resolved: {}, before: [], bodies: ["main"], doc, view: rounded, selection: { faces: [], edges: [] } };
+    const env = (propagate: boolean, kinds: "all" | "convex" | "concave" = "all") => ({ view: rounded, before: [], bodies: ["main"], edge: { propagate, kinds }, chainOf: (e: number) => tangencyChain(rounded, e), passes: (e: number) => passes(rounded, e, kinds) });
+    let committed: unknown;
+    const field = pickFieldFor(spec, {}, c, 0, env(true), (v) => void (committed = v))!;
+    const indices = (ts: { kind: string; index?: number }[]) => ts.map((t) => t.index ?? -1).sort((a, b) => a - b);
+    expect(indices(field.reach!(target))).toEqual([...tangencyChain(rounded, line.index)].sort((a, b) => a - b));
+    expect(field.toggle(target)).toBeNull();
+    expect(resolveEdges(committed, rounded.edges, rounded.faces).indices.length).toBe(8);
+    const one = pickFieldFor(spec, {}, c, 0, env(false), (v) => void (committed = v))!;
+    expect(indices(one.reach!(target))).toEqual([line.index]);
+    // The top's edges are outside corners: an inside-only filter turns them away.
+    const inside = pickFieldFor(spec, {}, c, 0, env(true, "concave"), () => undefined)!;
+    expect(inside.toggle(target)).toMatch(/outside edge/);
   });
 
   it("a selector that finds nothing on the part shown is kept, not lost, when others change", () => {
