@@ -569,7 +569,7 @@ export function Viewport({
     const facePose = (frame: PlaneFrame, behind = false): Pose => {
       const dir = new THREE.Vector3(...frame.z).multiplyScalar(behind ? -1 : 1);
       // Framed as the sketch page always was: the sketch, the part seen square on and the origin, with room round them.
-      const f = facingFit(frame, stagePoints(), el.clientWidth || 1, el.clientHeight || 1);
+      const f = facingFit(frame, stagePoints());
       const dist = (f.wpp * (el.clientHeight || 1)) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
       const target = new THREE.Vector3(...f.center);
       return { position: target.clone().addScaledVector(dir, dist), target, up: new THREE.Vector3(...frame.y) };
@@ -833,6 +833,13 @@ export function Viewport({
       evalLayer.resize(w, h);
       sectionPlanes.resize(w, h);
       sketchPlane.resize(w, h);
+      // A sketch opening makes room for its toolbar above the view: it still faces its plane at the page's zoom, unless moved since.
+      if (stageFrame && stageAuto && (samePose(controls.pose(), stageAuto) || glideAnim)) {
+        const gliding = !!glideAnim;
+        stageAuto = facePose(stageFrame);
+        if (gliding) glideTo(stageAuto);
+        else controls.setPose(stageAuto);
+      }
       render();
     };
     const ro = new ResizeObserver(resize);
@@ -2076,6 +2083,9 @@ export function Viewport({
   const sketchId = sketch?.id ?? null;
   const sketchLatest = useRef(sketch);
   if (sketch) sketchLatest.current = sketch;
+  /** A sketch is open now (read by effects that must not move the view meanwhile). */
+  const sketchLatestOpen = useRef(false);
+  sketchLatestOpen.current = !!sketch;
   useEffect(() => {
     const s = sketchLatest.current;
     if (!sketchId || !s) return;
@@ -2109,7 +2119,8 @@ export function Viewport({
   // Re-frame when the app asks (a part opened); not when the view comes back with the camera it remembered.
   const fitSeen = useRef(fitToken);
   useEffect(() => {
-    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current)) api.current?.orient("iso", true);
+    // Not while a sketch is open (Phase P wave 2A): the sketch faces its plane, and the view goes back when it closes.
+    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current) && !sketchLatestOpen.current) api.current?.orient("iso", true);
     fitSeen.current = fitToken;
   }, [fitToken]);
 

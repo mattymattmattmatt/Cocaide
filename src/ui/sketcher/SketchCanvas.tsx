@@ -262,8 +262,14 @@ export function SketchCanvas(props: Props) {
     const r = svg.current?.getBoundingClientRect();
     return r ? [clientX - r.left, clientY - r.top] : [clientX, clientY];
   };
-  /** The sketch point (mm) under a client point. */
+  /** The sketch point (mm) under a client point: the world group's own screen transform undone, exactly what draws it. */
   const toWorld = (clientX: number, clientY: number): Vec2 => {
+    const g = world.current;
+    const m = g?.getScreenCTM();
+    if (g && m && Math.abs(m.a * m.d - m.b * m.c) > 1e-12) {
+      const pt = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
+      return [pt.x, pt.y];
+    }
     const [x, y] = localOf(clientX, clientY);
     return unmapPoint(map, x, y) ?? [0, 0];
   };
@@ -733,7 +739,6 @@ export function SketchCanvas(props: Props) {
         data-defined={props.defined ? (props.defined.conflicts.size ? "over" : props.defined.free.size ? "under" : "full") : undefined}
         data-facing={map.facing ? "true" : "false"}
         data-testid="sketch-canvas"
-        viewBox={`0 0 ${size.w} ${size.h}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

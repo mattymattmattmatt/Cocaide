@@ -35,12 +35,13 @@ export function planeRect(frame: Frame, points: ArrayLike<number>, least = 10): 
 
 /**
  * Where a view square onto the sketch plane looks, and its scale (mm per
- * pixel), framed as the sketch page always was: the points (flat xyz: the
- * part, the sketch) seen square on, with the plane's origin, take 1/1.4 of the
- * view each way (at least 20 mm); with none, 120 mm across the view's
- * narrower side, round the origin.
+ * pixel), framed as the flat sketch page always was (on its 800 × 600 page,
+ * whatever the view's size, so a sketch opens at the zoom, and the grid step,
+ * it always had): the points (flat xyz: the part, the sketch) seen square on,
+ * with the plane's origin, take 1/1.4 of the page each way (at least 20 mm);
+ * with none, 120 mm across the page's height, round the origin.
  */
-export function facingFit(frame: Frame, points: ArrayLike<number>, width: number, height: number): { center: Vec3; wpp: number } {
+export function facingFit(frame: Frame, points: ArrayLike<number>, width = 800, height = 600): { center: Vec3; wpp: number } {
   let min: Vec2 = [0, 0];
   let max: Vec2 = [0, 0];
   let any = false;
