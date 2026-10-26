@@ -2,6 +2,7 @@
 // point worked out, kept in ctx.datums. No body changes.
 
 import type { Vec3 } from "../../doc/types";
+import { sketchEntityPlace } from "../../geom/sketchEdge";
 import { formatDirection } from "../../geom/vec";
 import { edgePlace, findEdge, findFace, nameOf, resolveDatum, sketchSource } from "../../kernel/datum";
 import { OpError } from "../../kernel/ops";
@@ -27,10 +28,12 @@ export const kernel: KernelOp<PointFeature> = {
           }
           at = e.center;
         } else if ("sketch" in ref) {
-          // A sketch's circle or arc: its centre (a point where a point is needed).
-          const d = resolveDatum(ctx, ref, "point", "refs[0]");
-          if (ref.at === undefined && !/^(circle|arc)$/.test(sketchSource(ctx, ref, "refs[0]").entity.type)) throw new OpError(`refs[0]: ${nameOf(ref)} has no centre: pick a circle or arc of the sketch`);
-          at = d.at;
+          // A sketch's circle or arc: its centre. Anything else has none (said before resolving it, which would ask for an "at").
+          const { entity } = sketchSource(ctx, ref, "refs[0]");
+          if (entity.type !== "circle" && entity.type !== "arc") {
+            throw new OpError(`refs[0]: ${nameOf(ref)} is ${entity.type === "ellipse" ? "an" : "a"} ${entity.type}, so it has no centre: pick a circle or arc of the sketch${entity.type === "line" ? ', or use mode "onEdge" (t 0.5 is its middle)' : ""}`);
+          }
+          at = resolveDatum(ctx, ref, "point", "refs[0]").at;
         } else throw new OpError(`refs[0]: ${nameOf(ref)} has no centre: pick a circular edge or a face`);
         break;
       }
@@ -47,8 +50,14 @@ export const kernel: KernelOp<PointFeature> = {
         break;
       }
       case "onEdge": {
-        const ref = f.refs[0] as { edge: Parameters<typeof edgePlace>[1] };
-        at = edgePlace(ctx, ref.edge, "refs[0].edge", { t: f.t ?? 0.5 }).at;
+        const ref = f.refs[0];
+        if ("sketch" in ref) {
+          // Along another sketch's line, arc or circle, as it was solved.
+          const { entity, frame } = sketchSource(ctx, ref, "refs[0]");
+          const place = sketchEntityPlace(entity, frame, { t: f.t ?? 0.5 });
+          if (typeof place === "string") throw new OpError(`refs[0]: ${place}`);
+          at = place.at;
+        } else at = edgePlace(ctx, (ref as { edge: Parameters<typeof edgePlace>[1] }).edge, "refs[0].edge", { t: f.t ?? 0.5 }).at;
         break;
       }
     }

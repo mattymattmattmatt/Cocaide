@@ -23,7 +23,7 @@ import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem, type Smar
 import { faceAt, isModelId, isSketchStandIn, modelEdge, modelEntities, type ModelEdge, type ModelFace, type ModelView } from "./model";
 import { shapeWords } from "./names";
 import { boxOf, flatMap, mapPoint, mapVector, planeBounds, planeMap, sketchWorldPoints, svgMatrix, toScreen, unmapPoint, useCameraFeed, visibleBounds, type CameraFeed, type PlaneMap } from "./planeView";
-import { boxPick, nearer, otherSketchAt, PICK_PX, standInFor, type SceneHit, type SceneMiss } from "./scenePick";
+import { boxPick, nearer, otherSketchAt, otherSketchMiss, PICK_PX, standInFor, type SceneHit, type SceneMiss } from "./scenePick";
 import { tangentStart } from "./tools/arcs";
 import { place, placeTyped, previewOf, snapClick, toolByName, typedClick, type Placement } from "./tools/run";
 import { readValue } from "./modify";
@@ -92,6 +92,8 @@ export interface CanvasView3D {
   fit(): void;
   /** The trackpad scheme's left drag on empty space: turns the view (with Shift: pans it). */
   drag?(phase: "start" | "move" | "end", dx: number, dy: number, pan: boolean): void;
+  /** The sketch's entities changed: the view draws its plane round them again (the grid here follows them too). */
+  extentChanged?(): void;
 }
 
 interface Props {
@@ -218,6 +220,10 @@ export function SketchCanvas(props: Props) {
   useEffect(() => {
     if (props.fitToken) view3d?.fit();
   }, [props.fitToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Drawn, moved or deleted: the plane the 3D view draws grows (or shrinks) with the sketch, as the grid does.
+  useEffect(() => {
+    view3d?.extentChanged?.();
+  }, [entities]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Leaving a tool or switching tools drops a half-placed entity, or half-picked dimension.
   useEffect(() => {
@@ -289,6 +295,8 @@ export function SketchCanvas(props: Props) {
     const hit = standInFor(view3d.pick(clientX, clientY), model, cam, local, { faces: tool === "convert", axes: tool !== "convert" && !toolByName(tool) });
     const other = othersShown ? otherSketchAt(model, cam, local, (o) => o.inPlane) : null;
     scene.current = hit && "problem" in hit ? (other ?? hit) : nearer(hit, other);
+    // Nothing to use there, but another sketch's entity it can't take: say why.
+    if (!scene.current && othersShown) scene.current = otherSketchMiss(model, cam, local);
   };
   const sceneHit = (): SceneHit | null => (scene.current && "item" in scene.current ? scene.current : null);
 
@@ -735,7 +743,7 @@ export function SketchCanvas(props: Props) {
     if (scenePointer?.poly3.length) litOutlines.push({ key: "hover", poly: scenePointer.poly3.map((p) => toScreen(cam, p)), className: `scene-outline ${"problem" in scenePointer ? "unusable" : "hover"}` });
     (scenePointer?.outline3 ?? []).forEach((l, k) => litOutlines.push({ key: `hover-side${k}`, poly: l.map((p) => toScreen(cam, p)), className: "scene-outline side" }));
   }
-  const sceneTitle = scenePointer && "problem" in scenePointer ? `${scenePointer.outline3 ? "Round face" : "Model edge"}: ${scenePointer.problem}` : null;
+  const sceneTitle = scenePointer && "problem" in scenePointer ? (scenePointer.title ?? `${scenePointer.outline3 ? "Round face" : "Model edge"}: ${scenePointer.problem}`) : null;
   /** Where the grid and the axes are drawn: the plane round the sketch and the model, within the view. */
   const gridArea = useMemo(() => planeArea(entities, model, map, size), [entities, model, mapKey, size.w, size.h]); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -59,6 +59,8 @@ export class SketchPlaneLayer {
   readonly group = new THREE.Group();
   private readonly fill: THREE.Mesh;
   private readonly border: LineSegments2;
+  /** The rectangle's corners as last drawn (null: hidden). */
+  private shown: [Vec3, Vec3, Vec3, Vec3] | null = null;
 
   constructor(colors: { fill: THREE.ColorRepresentation; border: THREE.ColorRepresentation }) {
     this.group.name = "sketch-plane";
@@ -83,13 +85,19 @@ export class SketchPlaneLayer {
   /** Shows the rectangle on `frame` round the points (flat xyz), or hides it (null). */
   set(frame: Frame | null, points: ArrayLike<number> = []): void {
     this.group.visible = !!frame;
+    this.shown = null;
     if (!frame) return;
-    const [a, b, c, d] = planeRect(frame, points);
+    const [a, b, c, d] = (this.shown = planeRect(frame, points));
     const pos = this.fill.geometry.getAttribute("position") as THREE.BufferAttribute;
     [a, b, c, a, c, d].forEach((p, k) => pos.setXYZ(k, p[0], p[1], p[2]));
     pos.needsUpdate = true;
     this.fill.geometry.computeBoundingSphere();
     (this.border.geometry as LineSegmentsGeometry).setPositions([a, b, b, c, c, d, d, a].flat());
+  }
+
+  /** The rectangle's corners (world), or null when it is hidden. */
+  corners(): [Vec3, Vec3, Vec3, Vec3] | null {
+    return this.shown;
   }
 
   dispose(): void {

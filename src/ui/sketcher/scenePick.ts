@@ -45,6 +45,8 @@ export interface SceneMiss {
   problem: string;
   poly3: Vec3[];
   outline3?: Vec3[][];
+  /** The tip's whole text, when it is not "Model edge: <problem>" (another sketch's entity). */
+  title?: string;
 }
 
 /**
@@ -73,12 +75,17 @@ export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamer
   const index = pick.kind === "vertex" ? pick.edge : pick.index;
   const edge = modelEdge(m, modelId(index));
   if (!edge) return null;
+  if (pick.kind === "vertex") {
+    // A vertex is a point of its edge's stand-in; when that edge has none with ends (it runs square to the plane, or
+    // is a tilted circle), of another edge ending there: a box's corner below a sketch on its top is still a point to use.
+    const owner = edge.entity && (edge.entity.type === "line" || edge.entity.type === "arc") ? { edge, at: pick.at } : edgeEndingAt(m, pick.point);
+    if (owner) {
+      const e = owner.edge.entity as Extract<SketchEntity, { type: "line" | "arc" }>;
+      return { item: { kind: "point", ref: `${owner.edge.id}.${owner.at}` }, standIn: e, at: e[owner.at], px: dist(local, toScreen(cam, pick.point)), poly3: owner.edge.poly3, point3: pick.point, model: true };
+    }
+  }
   if (!edge.entity) return { problem: edge.problem ?? REFERENCEABLE, poly3: edge.poly3 };
   const e = edge.entity;
-  if (pick.kind === "vertex" && (e.type === "line" || e.type === "arc")) {
-    const at = e[pick.at];
-    return { item: { kind: "point", ref: `${edge.id}.${pick.at}` }, standIn: e, at, px: dist(local, toScreen(cam, pick.point)), poly3: edge.poly3, point3: pick.point, model: true };
-  }
   return { item: { kind: "entity", id: edge.id }, standIn: e, at: to2D(m.frame, pick.point), px: polyDistance(local, edge.poly3, cam).d, poly3: edge.poly3, point3: pick.point, model: true };
 }
 
@@ -106,6 +113,41 @@ export function otherSketchAt(m: ModelView, cam: ViewCamera, local: Vec2, skip: 
     best = { item: { kind: "entity", id: o.id }, standIn: o.entity, at: to2D(m.frame, point3), px: hit.d, poly3: o.poly3, point3, model: false };
   }
   return best;
+}
+
+/** A model edge whose stand-in is a line or an arc with an end at `p` (world), and which end; in-plane edges first. */
+function edgeEndingAt(m: ModelView, p: Vec3): { edge: ModelEdge; at: "start" | "end" } | null {
+  const near = (q: Vec3) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 1e-6 * Math.max(1, Math.hypot(p[0], p[1], p[2]));
+  const info = new Map(m.source.edges.map((e) => [e.index, e]));
+  let best: { edge: ModelEdge; at: "start" | "end" } | null = null;
+  for (const e of m.edges) {
+    const t = e.entity?.type;
+    const g = info.get(e.index);
+    if ((t !== "line" && t !== "arc") || !g) continue;
+    const at = near(g.start) ? "start" : near(g.end) ? "end" : null;
+    if (!at) continue;
+    if (e.inPlane) return { edge: e, at };
+    best ??= { edge: e, at };
+  }
+  return best;
+}
+
+/**
+ * Another sketch's entity under the pointer (within PICK_PX on screen) that
+ * this sketch can't reference (a rectangle, a slot, a circle seen tilted):
+ * why, for the tip, so hovering it is not a silent dead end.
+ */
+export function otherSketchMiss(m: ModelView, cam: ViewCamera, local: Vec2): SceneMiss | null {
+  let best: { miss: SceneMiss; d: number } | null = null;
+  for (const o of m.others) {
+    if (o.entity || !o.source || !o.poly3.length) continue;
+    const d = polyDistance(local, o.poly3, cam).d;
+    if (d > PICK_PX || (best && d >= best.d)) continue;
+    const problem = o.problem ?? `${o.source.entity.id} can't be referenced`;
+    const title = problem.startsWith(`${o.source.sketch}'s`) ? problem : `Sketch ${o.source.sketch}: ${problem}`;
+    best = { miss: { problem, poly3: o.poly3, title }, d };
+  }
+  return best?.miss ?? null;
 }
 
 /** The nearer of two hits; a model edge within 1.5 px of another sketch's entity wins (they often lie on each other: a profile and the edges extruded from it). */

@@ -1419,6 +1419,7 @@ export function App() {
         pick: (x, y) => sketchViewApi.current?.pick(x, y) ?? null,
         fit: () => sketchViewApi.current?.fit(),
         drag: (phase, dx, dy, pan) => sketchViewApi.current?.drag(phase, dx, dy, pan),
+        extentChanged: () => sketchViewApi.current?.replane(),
       },
       top: sketchTop,
       stage: sketchStageEl,
@@ -1437,8 +1438,9 @@ export function App() {
         onContext: undefined,
         onPhotoPoint: null,
         display: { ...display, perspective: false },
+        // The view is shown orthographic (perspective false), so a next with perspective on is the toggle: whatever was set before the sketch.
         onDisplay: (next: DisplayState) =>
-          next.perspective && !display.perspective
+          next.perspective
             ? setNotice({ kind: "info", text: "A sketch is drawn in an orthographic view: perspective comes back when you finish or cancel the sketch." })
             : changeDisplay({ ...next, perspective: display.perspective }),
         ...(sketchSection ? { section: sketchSection } : {}),

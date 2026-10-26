@@ -89,6 +89,8 @@ export interface SketchViewApi {
   face(): void;
   /** A left drag on the sketch's empty space with the trackpad scheme: turns the view (pan: pans it), as a left drag on the view does. */
   drag(phase: "start" | "move" | "end", dx: number, dy: number, pan: boolean): void;
+  /** The sketch's extent changed (something was drawn, moved or deleted): the plane is drawn round it again, as the canvas's grid is. */
+  replane(): void;
 }
 
 // What a click picks and what is selected: plain data, in a pure module (src/ui/model/selection.ts).
@@ -645,6 +647,11 @@ export function Viewport({
         if (phase === "start") controls.beginDragTurn();
         else if (phase === "move") controls.dragTurn(dx, dy);
         else controls.endDragTurn();
+      },
+      replane: () => {
+        if (!stageFrame) return;
+        drawStagePlane();
+        render();
       },
     };
 
@@ -1835,6 +1842,10 @@ export function Viewport({
         /** What is under these client pixels, nearest first (Select Other's list). */
         under(x: number, y: number) {
           return underAt(x, y).map((h) => ({ ...h.target, label: otherLabel(h.target, shownView?.faces ?? [], shownView?.edges ?? []) }));
+        },
+        /** Phase P wave 2A: the open sketch's plane as drawn, its corners (world), or null. */
+        sketchPlane() {
+          return sketchPlane.corners()?.map(r4) ?? null;
         },
       };
     }

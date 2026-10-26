@@ -35,9 +35,9 @@ export const POINT_MODE_SPECS: Readonly<Record<PointMode, ModeSpec>> = {
     about: "where an axis crosses a plane",
   },
   onEdge: {
-    refs: [{ what: "an edge", forms: ["edge"], wholeEdge: true }],
+    refs: [{ what: "an edge, or a sketch's line, arc or circle", forms: ["edge", "sketch"], wholeEdge: true }],
     fields: ["t"],
-    about: "on an edge, at `t` along it (0 its start, 1 its end; default 0.5, its middle)",
+    about: "on an edge (or a sketch's line, arc or circle), at `t` along it (0 its start, 1 its end; default 0.5, its middle)",
   },
 };
 

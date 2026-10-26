@@ -33,7 +33,7 @@ import {
   visibleBounds,
   type ViewCamera,
 } from "../src/ui/sketcher/planeView";
-import { alongAxis, boxPick, cylinderOutline, nearer, otherSketchAt, PICK_PX, standInFor, type SceneHit } from "../src/ui/sketcher/scenePick";
+import { alongAxis, boxPick, cylinderOutline, nearer, otherSketchAt, otherSketchMiss, PICK_PX, standInFor, type SceneHit } from "../src/ui/sketcher/scenePick";
 import { facingFit, planeRect } from "../src/ui/viewport/sketchStage";
 import { REFERENCE } from "../src/mcp/reference";
 
@@ -248,6 +248,33 @@ describe("what the pointer is on in a turned view, as the sketch's stand-in", ()
     expect(m && "problem" in m && m.problem).toMatch(/square to the sketch plane/);
   });
 
+  it("a vertex picked by an edge square to the plane is still a point: the end of another edge there (a corner below a sketch on the top face)", () => {
+    const cam = camera([1, 1, -1], [0, 0, 1]);
+    // The upright edge at the plate's corner (-40, -20): it projects onto the top face as a point.
+    const upright = top.edges.find((e) => !e.entity && e.poly3.every((p) => Math.abs(p[0] + 40) < 1e-6 && Math.abs(p[1] + 20) < 1e-6))!;
+    expect(upright).toBeTruthy();
+    const corner: Vec3 = [-40, -20, 0];
+    const at = Math.abs(upright.poly3[0][2]) < 1e-6 ? "start" : "end";
+    const v = hit(standInFor({ kind: "vertex", edge: upright.index, at, point: corner }, top, cam, toScreen(cam, corner)));
+    // A point of one of the bottom edges that meet there, landing on the corner seen square on.
+    expect(v.item.kind).toBe("point");
+    const ref = (v.item as { ref: string }).ref;
+    expect(ref).toMatch(/^@e\d+\.(start|end)$/);
+    const owner = modelEdge(top, ref)!;
+    expect(owner.entity?.type).toBe("line");
+    close(v.at, [-40, -20]);
+    expect(v.standIn).toBe(owner.entity);
+    expect(v.px).toBeCloseTo(0, 6);
+    // Materialized, it is a reference line on that bottom edge, its end at the corner.
+    const made = materialize([ref], top, []);
+    expect(typeof made).not.toBe("string");
+    if (typeof made === "string") return;
+    const line = made.entities[0] as Extract<SketchEntity, { type: "line" }>;
+    const end = made.ids.get(ref.split(".")[0])!;
+    expect(line.id).toBe(end);
+    close(ref.endsWith(".start") ? line.start : line.end, [-40, -20]);
+  });
+
   it("a round face stands for its axis when picking ('@f<face>'), with the cylinder's outline as the view shows it; drawing, it is nothing", () => {
     const cam = turnedFront();
     expect(front.axes).toHaveLength(1);
@@ -305,6 +332,22 @@ describe("what the pointer is on in a turned view, as the sketch's stand-in", ()
     expect(nearer({ ...model, px: 5 }, sketch)).toBe(sketch);
     expect(nearer(null, sketch)).toBe(sketch);
     expect(nearer(model, null)).toBe(model);
+  });
+
+  it("another sketch's entity it can't take (a rectangle) is no dead end: hovered, the tip says why and what to do", () => {
+    const cam = turnedFront();
+    const withRect = modelView({ ...part, sketches: [{ ...other, entities: [...other.entities, { id: "r1", type: "rect", center: [0, 30], w: 20, h: 10 } as SketchEntity] }] }, FRONT);
+    const rect = withRect.others.find((o) => o.id === "@s:sketch_9:r1")!;
+    expect(rect.entity).toBeNull();
+    // On its near side (y = 25 in sketch_9, 20 above Top), away from l1 and p1.
+    const on = toScreen(cam, [5, 25, 20]);
+    expect(otherSketchAt(withRect, cam, on)).toBeNull();
+    const miss = otherSketchMiss(withRect, cam, on)!;
+    expect(miss.title).toMatch(/^Sketch sketch_9: r1 is a rect: .*explode a rectangle or slot into lines and arcs first/);
+    expect(miss.poly3).toBe(rect.poly3);
+    // Away from it, or on an entity it can take: no miss.
+    expect(otherSketchMiss(withRect, cam, [on[0], on[1] + 60])).toBeNull();
+    expect(otherSketchMiss(withRect, cam, toScreen(cam, [10, 0, 20]))).toBeNull();
   });
 
   it("a round face's axis: the point of it nearest a hit, and the cylinder's outline square to the view (none looking along it)", () => {
