@@ -269,8 +269,10 @@ export function SketchCanvas(props: Props) {
     const g = world.current;
     const m = g?.getScreenCTM();
     if (g && m && Math.abs(m.a * m.d - m.b * m.c) > 1e-12) {
-      const pt = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
-      return [pt.x, pt.y];
+      // Undone as a 2D affine map (not the 4 × 4 inverse, whose rounding puts a point clicked on the x axis 1e-14 off it).
+      const det = m.a * m.d - m.b * m.c;
+      const [dx, dy] = [clientX - m.e, clientY - m.f];
+      return [(m.d * dx - m.c * dy) / det, (-m.b * dx + m.a * dy) / det];
     }
     const [x, y] = localOf(clientX, clientY);
     return unmapPoint(map, x, y) ?? [0, 0];

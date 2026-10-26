@@ -71,10 +71,13 @@ export function toScreen(cam: ViewCamera, p: Vec3): Vec2 {
 /** The plane of `frame` seen through the camera: the affine map from its (u, v) to the screen. */
 export function planeMap(cam: ViewCamera, frame: Frame): PlaneMap {
   const [e, f] = toScreen(cam, frame.origin);
-  const a = dot(frame.x, cam.right) / cam.wpp;
-  const b = -dot(frame.x, cam.up) / cam.wpp;
-  const c = dot(frame.y, cam.right) / cam.wpp;
-  const d = -dot(frame.y, cam.up) / cam.wpp;
+  // The camera's axes carry rounding noise (1e-16 of a component that should be 0 facing the plane): dropped,
+  // so a point clicked on the sketch's x axis comes back on it exactly, as on the flat page.
+  const clean = (x: number) => (Math.abs(x) < 1e-12 ? 0 : x);
+  const a = clean(dot(frame.x, cam.right)) / cam.wpp;
+  const b = -clean(dot(frame.x, cam.up)) / cam.wpp;
+  const c = clean(dot(frame.y, cam.right)) / cam.wpp;
+  const d = -clean(dot(frame.y, cam.up)) / cam.wpp;
   const facingCos = Math.min(1, Math.abs(dot(frame.z, cam.forward)));
   return finish({ a, b, c, d, e, f, facingCos });
 }
