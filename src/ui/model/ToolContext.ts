@@ -52,9 +52,12 @@ export interface ToolCtx {
    * what it acts on is still to be picked). The panel shows it with the field
    * `active` (its key) ready for picks; it goes into the document with the
    * pick that completes it. Absent (tests, an older host): the tool says what
-   * to select instead.
+   * to select instead. `complete`, when given, settles the numbers that read
+   * the part once the picks are there (a fillet's radius from the edges picked,
+   * as selection-first would have it): it is given the feature as it is about
+   * to go in, and leaves alone what the user has changed already.
    */
-  draft?(feature: Raw, opts?: { active?: string }): void;
+  draft?(feature: Raw, opts?: { active?: string; complete?: (f: Raw) => Raw }): void;
   /** The last values used for each kind of feature in this browser (src/ui/model/toolMemory.ts). */
   memory?: ToolMemory;
   /** Puts a whole new document in as one undo step (a tool that adds several things), then selects `select`. */

@@ -93,7 +93,7 @@ import type { MeshData } from "../kernel/mesh";
 import { useFeatureSession } from "./model/useSession";
 import { convexity, faceEdgesOf, faceLoopNear, faceLoops, loopOf, passes, tangencyChain, tangentFaces } from "./model/smartSelect";
 import { promptLine, type ActiveFieldSummary } from "./props/picking";
-import { mergePatch, sessionLabel } from "./model/session";
+import { mergePatch, neededText, sessionLabel } from "./model/session";
 import { DEFAULT_EDGE_OPTIONS, type EdgeOptions } from "./props/pickFields";
 import type { PickRouter, SessionLink } from "./props/pickHost";
 import type { PreviewLook } from "./viewport/preview";
@@ -200,6 +200,10 @@ export function App() {
   // as it stands before the feature (what it adds tinted, what it removes as a red ghost), selection fields the view's
   // clicks go into, and handles. The rules are in src/ui/model/session.ts and useSession.ts.
   const sessionRunTool = useRef<(id: string) => void>(() => undefined);
+  /** What a new feature still waiting for its picks waits on, in the panel's words ("Pick edges to fillet"). */
+  const [sessionNeeds, setSessionNeeds] = useState<string | null>(null);
+  /** The whole part as the view showed it when the session opened: Cancel shows it again at once (not the cancelled feature until the rebuild comes). */
+  const sessionStartView = useRef<RebuildView | null>(null);
   const sessionApi = useFeatureSession({
     d,
     view,
@@ -211,6 +215,13 @@ export function App() {
     notice: (kind, text) => setNotice({ kind, text }),
     clearSelection: () => setSelection(EMPTY_SELECTION),
     runTool: (id) => sessionRunTool.current(id),
+    needs: sessionNeeds,
+    restored: () => {
+      const start = sessionStartView.current;
+      if (!start) return;
+      shownView.current = start;
+      setView(start);
+    },
   });
   const session = sessionApi.session;
   const sessionRef = useRef(session);
@@ -249,6 +260,7 @@ export function App() {
     setActiveField(null);
     setPeek(null);
     setSessionClick(EMPTY_SELECTION);
+    setSessionNeeds(null);
   }, [session]);
   /** A session's preview from the worker: the part before the feature (kept by its key), and what the feature does. */
   const takePreview = (sp: SessionPreview) => {
@@ -293,6 +305,7 @@ export function App() {
     edge: edgeOptions,
     setEdge: setEdgeOptions,
     initialActive: session?.active,
+    needs: setSessionNeeds,
     chainOf: (edge) => (pickView ? tangencyChain(pickView, edge) : [edge]),
     passes: (edge) => (pickView ? passes(pickView, edge, edgeOptions.kinds) : true),
   };
@@ -435,10 +448,15 @@ export function App() {
 
   // Rebuild whenever the document text parses; the newest request wins. A handle's drag rebuilds at once.
   // In a feature session the preview comes with it: the part before the feature, and what the feature adds and removes.
-  const sessionFeature = session?.id ?? null;
+  // (An assistant's proposal shown instead of the document has no session in it: the view shows the proposal alone meanwhile.)
+  const sessionFeature = ask.previewDoc ? null : (session?.id ?? null);
+  /** The session the last rebuild was asked for: one opening or closing rebuilds at once (its preview, or the part as it was), not after the typing pause. */
+  const rebuiltFor = useRef<string | null>(null);
   useEffect(() => {
     if (viewDoc === null) return;
     const ticket = ++latest.current;
+    const sessionMoved = rebuiltFor.current !== sessionFeature;
+    rebuiltFor.current = sessionFeature;
     const timer = setTimeout(async () => {
       setBusy(true);
       try {
@@ -464,7 +482,7 @@ export function App() {
       } finally {
         if (ticket === latest.current) setBusy(false);
       }
-    }, preview ? 20 : REBUILD_DELAY_MS);
+    }, preview || sessionMoved ? 20 : REBUILD_DELAY_MS);
     return () => clearTimeout(timer);
   }, [viewDoc, kernel, sessionFeature]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -531,20 +549,25 @@ export function App() {
       `add ${String(feature.id)}`,
       () => {
         // The part as it is now is the part before the new feature: shown and picked on until the worker sends its own.
-        if (view) setSessionBefore({ feature: String(feature.id), key: "", view });
+        // (The newest rebuild's: a session cancelled just now to make way for this one has put the part back already.)
+        const now = shownView.current ?? view;
+        if (now) setSessionBefore({ feature: String(feature.id), key: "", view: now });
+        sessionStartView.current = now;
         if (sessionApi.openCreate(feature, tool)) setNotice(null);
       },
       true,
     );
   };
   /** A new feature still waiting for its picks (command-first): its session opens with the field to pick into active. */
-  const draftFeature = (feature: Record<string, unknown>, opts: { active?: string } = {}) => {
+  const draftFeature = (feature: Record<string, unknown>, opts: { active?: string; complete?: (f: Record<string, unknown>) => Record<string, unknown> } = {}) => {
     const tool = lastTool.current ?? undefined;
     sessionApi.finishFirst(
       `add ${String(feature.id)}`,
       () => {
-        if (view) setSessionBefore({ feature: String(feature.id), key: "", view });
-        if (sessionApi.openDraft(feature, { tool, active: opts.active })) setNotice(null);
+        const now = shownView.current ?? view;
+        if (now) setSessionBefore({ feature: String(feature.id), key: "", view: now });
+        sessionStartView.current = now;
+        if (sessionApi.openDraft(feature, { tool, active: opts.active, complete: opts.complete })) setNotice(null);
       },
       true,
     );
@@ -553,6 +576,7 @@ export function App() {
   const editFeature = (id: string) => {
     if (sessionRef.current?.id === id) return;
     sessionApi.finishFirst(`edit ${id}`, () => {
+      sessionStartView.current = shownView.current ?? view;
       if (sessionApi.openEdit(id)) setNotice(null);
     });
   };
@@ -816,6 +840,8 @@ export function App() {
   };
   /** A double-click on the model shows the dimensions of the feature that made what was clicked. */
   const onDoubleClick = async (target: PickTarget | null) => {
+    // In a feature session the view shows the part before the feature, and its clicks are the session's picks: no dimensions of another feature.
+    if (sessionRef.current) return;
     if (!target) return setDimsOf(null);
     if (target.kind === "datum") return features.some((f) => f.id === target.id) ? showDimensions(target.id) : undefined;
     const v = view;
@@ -1326,6 +1352,12 @@ export function App() {
       if (sessionRef.current && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         sessionApi.ok();
+        return;
+      }
+      // The question asked before finishing the session: Esc is "Back to it" (nothing is lost).
+      if (sessionRef.current && e.key === "Escape" && sessionApi.guard) {
+        e.preventDefault();
+        sessionApi.answer("back");
         return;
       }
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
@@ -2158,10 +2190,10 @@ export function App() {
                 {sketch && <div className="sketch-top" ref={setSketchTop} />}
                 <Viewport
                   // In a feature session: the part as it stands before the feature, its active field's items lit up, and the preview over it.
-                  view={pickView ?? view}
+                  view={(!ask.previewDoc && pickView) || view}
                   fitToken={fitToken}
-                  selection={sessionSelection ?? selection}
-                  preview={previewLook}
+                  selection={(!ask.previewDoc && sessionSelection) || selection}
+                  preview={ask.previewDoc ? null : previewLook}
                   pickHint={session ? (t) => pickRouter.current?.hint(t) ?? null : null}
                   pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
                   // A reference field active: another sketch's entity clicked in the view goes into it ({ sketch, entity, at? }).
@@ -2377,7 +2409,7 @@ export function App() {
                                 kind: session.kind,
                                 label: sessionLabel(session),
                                 pending: session.pending,
-                                pendingProblem: session.pendingProblem,
+                                pendingProblem: neededText(session, sessionNeeds) ?? undefined,
                                 failing: effect?.error,
                                 ok: () => void sessionApi.ok(),
                                 cancel: sessionApi.cancel,

@@ -9,6 +9,7 @@ import type { FaceSelector, Vec3 } from "../../../doc/types";
 import { wizardSpec } from "../../../features/hole/wizard";
 import { facePlaneFrame, to3D } from "../../../geom/frame";
 import { selectFaces } from "../../../kernel/selectors";
+import { seedsOf } from "../../../features/linearPattern/instances";
 import { selectionSize } from "../selection";
 import { patternSpacingFor, widthAlong } from "../smartDefaults";
 import { recalled } from "../toolMemory";
@@ -79,6 +80,12 @@ export function roomiestDirection(ctx: ToolCtx, seed: Raw): Vec3 {
   return room.reduce((best, r) => (r[1] > best[1] + 1e-6 ? r : best))[0];
 }
 
+/** A new pattern's count: the one used last in this browser (2 to 50), else `fallback`. */
+function patternCount(ctx: ToolCtx, op: "linearPattern" | "circularPattern", fallback: number): number {
+  const last = recalled(ctx.memory, op, "count");
+  return typeof last === "number" && Number.isInteger(last) && last >= 2 && last <= 50 ? last : fallback;
+}
+
 /** The new pattern of the selected feature, or what to select first. */
 export function patternFeature(ctx: ToolCtx, op: "linearPattern" | "circularPattern"): Raw | string {
   const { selected } = ctx;
@@ -89,10 +96,7 @@ export function patternFeature(ctx: ToolCtx, op: "linearPattern" | "circularPatt
   // An edge, an axis or a round face selected in the view: the direction or the axis, by reference (so it follows the model).
   const picked = selectionSize(ctx.selection) > 0 && (ctx.selection.edges.length > 0 || ctx.selection.datums?.length || op === "circularPattern") ? refFromSelection(ctx.selection, ctx.view, ["axis"], ctx.resolved) : null;
   const along = picked?.ok ? picked.ref : null;
-  const count = (fallback: number) => {
-    const last = recalled(ctx.memory, op, "count");
-    return typeof last === "number" && Number.isInteger(last) && last >= 2 && last <= 50 ? last : fallback;
-  };
+  const count = (fallback: number) => patternCount(ctx, op, fallback);
   if (op === "linearPattern") {
     // Spaced half as much again as the seed is wide along the row (an edge picked: along it; else +X).
     const edge = ctx.view && ctx.selection.edges.length === 1 ? ctx.view.edges[ctx.selection.edges[0]] : undefined;
@@ -107,7 +111,23 @@ export function patternFeature(ctx: ToolCtx, op: "linearPattern" | "circularPatt
 /** A new pattern with no seed picked yet: its session opens with the features field waiting for a click in the tree. */
 export function patternDraft(ctx: ToolCtx, op: "linearPattern" | "circularPattern"): Raw {
   const id = ctx.nextId(op === "linearPattern" ? "pattern" : "circular");
-  return op === "linearPattern" ? { id, op, direction: [1, 0, 0], spacing: 10, count: 3 } : { id, op, axis: { ref: { datum: "Z" } }, count: 4 };
+  return op === "linearPattern" ? { id, op, direction: [1, 0, 0], spacing: 10, count: patternCount(ctx, op, 3) } : { id, op, axis: { ref: { datum: "Z" } }, count: patternCount(ctx, op, 4) };
+}
+
+/**
+ * Command-first, a linear pattern's row settles with the seed picked for it:
+ * spaced half as much again as the seed is wide, toward the side of the part
+ * with room for the copies (as selection-first has it), unless the user set
+ * the spacing or the direction meanwhile (they are no longer the draft's).
+ */
+export function patternComplete(ctx: ToolCtx, start: Raw): (f: Raw) => Raw {
+  return (f) => {
+    if (f.op !== "linearPattern" || f.spacing !== start.spacing || f.along !== undefined || JSON.stringify(f.direction) !== JSON.stringify(start.direction)) return f;
+    const seed = ctx.resolved.find((g) => g.id === seedsOf(f)[0]);
+    if (!seed) return f;
+    const dir = roomiestDirection(ctx, seed);
+    return { ...f, direction: dir, spacing: patternSpacingFor(seedWidth(ctx, seed, dir)) };
+  };
 }
 
 /** The sketches with points (where copies go), latest first. */
@@ -132,7 +152,10 @@ const run = (op: "linearPattern" | "circularPattern" | "sketchPattern") => (ctx:
   if (typeof f !== "string") return ctx.create(f);
   // Command-first: open it, the features to repeat picked in the tree.
   const seeds = ctx.resolved.some((g) => PATTERNABLE.includes(String(g.op)));
-  if (op !== "sketchPattern" && ctx.draft && seeds && (!ctx.selected || !PATTERNABLE.includes(String(ctx.selected.op)))) return ctx.draft(patternDraft(ctx, op), { active: "features" });
+  if (op !== "sketchPattern" && ctx.draft && seeds && (!ctx.selected || !PATTERNABLE.includes(String(ctx.selected.op)))) {
+    const draft = patternDraft(ctx, op);
+    return ctx.draft(draft, { active: "features", complete: patternComplete(ctx, draft) });
+  }
   ctx.notice(f);
 };
 

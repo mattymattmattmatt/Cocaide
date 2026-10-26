@@ -26,6 +26,9 @@ interface Tag {
   /** Offset in pixels from the projected point. */
   dx: number;
   dy: number;
+  /** A handle's label: which handle (a flip button's label follows the button), and how readily it gives way to another label it would cover (0 never). */
+  handle?: HandleSpec;
+  yields?: number;
 }
 
 const MEASURE_COLOR = 0xc2255c;
@@ -218,7 +221,8 @@ export class EvalLayer {
           this.callbacks.onHandleLabel?.(h, r.left, r.bottom + 4);
         });
         el.addEventListener("pointerdown", (e) => e.stopPropagation());
-        this.handleTags.push({ el, at: h.origin, dx: 12, dy: -26 });
+        // Beside the button (placed each frame: it stands off the arrow's base by a few pixels); it gives way to the values.
+        this.handleTags.push({ el, at: h.origin, dx: 9, dy: -9, handle: h, yields: 2 });
         continue;
       }
       const text = h.kind === "section" ? `${h.label}: ${handleText(h, live.value)}` : `${h.label} ${handleText(h, live.value)}`;
@@ -236,7 +240,7 @@ export class EvalLayer {
       });
       el.addEventListener("pointerdown", (e) => e.stopPropagation());
       // A count's label sits above its knob, clear of the spacing's label (the two tips are near each other).
-      this.handleTags.push({ el, at: handleTip(live.h, live.value), dx: 10, dy: h.snap === "count" ? -26 : 8 });
+      this.handleTags.push({ el, at: handleTip(live.h, live.value), dx: 10, dy: h.snap === "count" ? -26 : 8, yields: h.snap === "count" ? 1 : 0 });
     }
   }
 
@@ -385,7 +389,38 @@ export class EvalLayer {
       t.el.style.display = v.z < 1 ? "" : "none";
       t.el.style.transform = `translate(${((v.x + 1) / 2) * w + t.dx}px, ${((1 - v.y) / 2) * h + t.dy}px)`;
     };
-    for (const t of [...this.tags, ...this.dimTags, ...this.handleTags]) place(t);
+    for (const t of [...this.tags, ...this.dimTags]) place(t);
+    // A flip button's label stands by the button, which is drawn a few pixels off the arrow's base.
+    for (const t of this.handleTags) if (t.handle?.kind === "flip") t.at = this.flipAt(t.handle, wpp);
+    this.placeHandleTags(camera, w, h);
+  }
+
+  /**
+   * The handles' labels, each where its handle is; one that would cover
+   * another (a flip's under a short arrow's value, a count's by the spacing's)
+   * steps down below it, the values first, so every label reads and takes
+   * its click.
+   */
+  private placeHandleTags(camera: THREE.Camera, w: number, h: number) {
+    const placed: { x: number; y: number; w: number; h: number }[] = [];
+    const order = [...this.handleTags].sort((a, b) => (a.yields ?? 0) - (b.yields ?? 0));
+    for (const t of order) {
+      const v = new THREE.Vector3(...t.at).project(camera);
+      t.el.style.display = v.z < 1 ? "" : "none";
+      const x = ((v.x + 1) / 2) * w + t.dx;
+      let y = ((1 - v.y) / 2) * h + t.dy;
+      const tw = t.el.offsetWidth;
+      const th = t.el.offsetHeight;
+      if (tw && th) {
+        for (let k = 0; k < 6; k++) {
+          const hit = placed.find((r) => x < r.x + r.w && r.x < x + tw && y < r.y + r.h && r.y < y + th);
+          if (!hit) break;
+          y = hit.y + hit.h + 2;
+        }
+        placed.push({ x, y, w: tw, h: th });
+      }
+      t.el.style.transform = `translate(${x}px, ${y}px)`;
+    }
   }
 
   /** While an arrow is dragged: ticks along its axis from where the value is 0 to where it is now. */

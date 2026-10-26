@@ -5,6 +5,8 @@
 
 import { rememberedHole } from "../../../features/hole/wizard";
 import { facePlaneFrame, to2D } from "../../../geom/frame";
+import type { FaceSelector } from "../../../doc/types";
+import { selectFaces } from "../../../kernel/selectors";
 import { faceSelectorFor } from "../../../kernel/synthesize";
 import { round3 } from "../names";
 import { faceWidth, holeSizeFor } from "../smartDefaults";
@@ -22,11 +24,6 @@ function sketchFace(sketch: Raw): unknown {
   return plane?.type === "ref" && plane.ref?.face && !plane.offset ? plane.ref.face : undefined;
 }
 
-/**
- * The new hole: at every point of the sketch selected in the tree (on the
- * face clicked, or the face the sketch is on, else from the sketch's plane),
- * or at the clicked point of the one selected flat face; or what to click first.
- */
 /**
  * What a new hole is: like the part's last hole (the wizard remembers); else
  * the size, type and fit used last in this browser; else the largest of
@@ -53,6 +50,27 @@ export function holeDraft(ctx: ToolCtx): Raw {
   return { id: ctx.nextId("hole"), op: "hole", ...newHoleKind(ctx) };
 }
 
+/**
+ * Command-first, a new hole's size settles with the face clicked for it: with
+ * no hole in the part and none used in this browser to copy, the largest of
+ * M3–M12 that sits on that face (as selection-first has it), unless the user
+ * chose a size meanwhile (it is no longer `start`).
+ */
+export function holeComplete(ctx: ToolCtx, start: unknown): (f: Raw) => Raw {
+  const copied = ctx.features.some((g) => g.op === "hole") || typeof recalled(ctx.memory, "hole", "size") === "string";
+  return (f) => {
+    const view = ctx.view;
+    if (copied || !view || f.size !== start || !f.face || typeof f.face !== "object") return f;
+    const face = selectFaces(view.faces, f.face as FaceSelector).matches[0];
+    return face ? { ...f, size: holeSizeFor(faceWidth(view, face.index)) } : f;
+  };
+}
+
+/**
+ * The new hole: at every point of the sketch selected in the tree (on the
+ * face clicked, or the face the sketch is on, else from the sketch's plane),
+ * or at the clicked point of the one selected flat face; or what to click first.
+ */
 export function holeFeature(ctx: ToolCtx): Raw | string {
   const { view, selection } = ctx;
   if (!ctx.doc) return "Click a flat face where the hole goes, then Hole.";
@@ -90,7 +108,10 @@ export const tools: ToolDef[] = [
       const f = holeFeature(ctx);
       if (typeof f !== "string") return ctx.create(f);
       // Command-first: open it, and the next click on a flat face places it.
-      if (ctx.draft && ctx.view && ctx.view.bodies.length && ctx.selection.faces.length === 0) return ctx.draft(holeDraft(ctx), { active: "position" });
+      if (ctx.draft && ctx.view && ctx.view.bodies.length && ctx.selection.faces.length === 0) {
+        const draft = holeDraft(ctx);
+        return ctx.draft(draft, { active: "position", complete: holeComplete(ctx, draft.size) });
+      }
       ctx.notice(f);
     },
     contextOn: "face",

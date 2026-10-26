@@ -239,7 +239,8 @@ function positionField(p: FieldProps, view: RebuildView | null): PickField | nul
         if (!s.ok) return s.error;
         const at = clickedCentre(clicked, t.point, undefined);
         if (typeof at === "string") return at;
-        const r = p.update({ face: s.selector, ...centresPatch([at]) });
+        // In a part of several bodies, the hole drills the body clicked (as Hole on a face picked first does).
+        const r = p.update({ face: s.selector, ...centresPatch([at]), ...(view.bodies.length > 1 && clicked.body ? { bodies: [clicked.body] } : {}) });
         return typeof r === "string" ? r : null;
       }
       const at = clickedCentre(clicked, t.point, face?.type === "planar" ? face.normal : undefined);

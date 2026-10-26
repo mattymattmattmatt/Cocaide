@@ -86,7 +86,9 @@ export class PreviewLayer {
     if (look?.removed) {
       const g = this.geometry(look.removed);
       // What it removes: a red ghost, stronger where its faces show, fainter through the part in front of it.
-      const front = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: this.colours.remove, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, side: THREE.DoubleSide, ...clipping }));
+      // Pulled well in front of what it lies on (the part's face it hollows, and that face lit up as picked or hovered):
+      // two coplanar layers of different triangles would fight in streaks.
+      const front = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: this.colours.remove, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16, side: THREE.DoubleSide, ...clipping }));
       front.renderOrder = 6;
       const through = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: this.colours.remove, transparent: true, opacity: 0.16, depthWrite: false, depthTest: false, side: THREE.DoubleSide, ...clipping }));
       through.renderOrder = 7;

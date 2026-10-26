@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -2778,8 +2778,19 @@ function PickTip({ hover, info, hint }: { hover: Hover; info: { faces: FaceInfo[
         : t.kind === "face"
           ? describeFace(face)
           : describeEdge(info.edges[t.index]);
+  // Kept inside the view: near its right or bottom edge the tip goes to the pointer's other side (never over the panels beside it).
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const host = el?.parentElement;
+    if (!el || !host) return;
+    const fitsRight = hover.x + 14 + el.offsetWidth <= host.clientWidth - 6;
+    const fitsBelow = hover.y + 14 + el.offsetHeight <= host.clientHeight - 6;
+    el.style.left = `${fitsRight ? hover.x + 14 : Math.max(4, hover.x - 14 - el.offsetWidth)}px`;
+    el.style.top = `${fitsBelow ? hover.y + 14 : Math.max(4, hover.y - 14 - el.offsetHeight)}px`;
+  });
   return (
-    <div className="face-tip" style={{ left: hover.x + 14, top: hover.y + 14 }} data-testid="pick-tip">
+    <div ref={ref} className="face-tip" style={{ left: hover.x + 14, top: hover.y + 14 }} data-testid="pick-tip">
       <div>{text}</div>
       {hint && <div className="pick-hint">{hint}</div>}
       {face && <div className="muted">area {fmt(face.area)} mm²</div>}

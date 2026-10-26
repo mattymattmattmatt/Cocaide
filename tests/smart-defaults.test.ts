@@ -25,10 +25,13 @@ import {
   widthAcross,
   widthAlong,
 } from "../src/ui/model/smartDefaults";
-import { edgeDraft, edgeFeature } from "../src/ui/model/tools/edges";
-import { shellFeature } from "../src/ui/model/tools/dress";
-import { newHoleKind } from "../src/ui/model/tools/hole";
-import { patternFeature } from "../src/ui/model/tools/pattern";
+import type { FaceSelector } from "../src/doc/types";
+import { selectFaces } from "../src/kernel/selectors";
+import { edgesSelectorFor, faceSelectorFor } from "../src/kernel/synthesize";
+import { edgeComplete, edgeDraft, edgeFeature, edgesOfFeature } from "../src/ui/model/tools/edges";
+import { draftComplete, draftDraft, draftFeature, shellFeature } from "../src/ui/model/tools/dress";
+import { holeComplete, holeDraft, newHoleKind } from "../src/ui/model/tools/hole";
+import { patternComplete, patternDraft, patternFeature } from "../src/ui/model/tools/pattern";
 import { recalled, rememberFrom, REMEMBERED, type ToolMemory } from "../src/ui/model/toolMemory";
 import type { RebuildView } from "../src/worker/protocol";
 import { example, harness } from "./ui-fixtures";
@@ -191,6 +194,90 @@ describe("pattern: spaced half as much again as the seed is wide", () => {
     expect(patternFeature(harness(doc, bracket, { selected: hole, memory: { circularPattern: { count: 6 } } }).ctx, "circularPattern")).toMatchObject({ count: 6 });
   });
 });
+
+describe("command-first: a new feature's numbers settle with the picks that complete it, as selection-first has them", () => {
+  it("a fillet or chamfer started with nothing picked: its radius reads the first edges, unless it was typed meanwhile", () => {
+    const e = edgeAt(bracket, [0, -20, 6]);
+    const edges = edgesSelectorFor(bracket.edges, bracket.faces, [e]);
+    if (!edges.ok) throw new Error(edges.error);
+    const fresh = harness(bracketDoc(), bracket).ctx;
+    const start = edgeDraft(fresh, "fillet");
+    expect(start.radius).toBe(1);
+    const complete = edgeComplete(fresh, "fillet", start.radius);
+    expect(complete({ ...start, edges: edges.selector })).toMatchObject({ radius: 0.5 });
+    // Typed before the edges came: the user's.
+    expect(complete({ ...start, radius: 2, edges: edges.selector })).toMatchObject({ radius: 2 });
+    // Nothing found yet: as it was.
+    expect(complete(start)).toBe(start);
+    // The last used, while it suits the edges; a remembered 3 is too much for the 6 mm side, so the part's own 0.5.
+    const used = harness(bracketDoc(), bracket, { memory: { fillet: { radius: 2 } } }).ctx;
+    expect(edgeComplete(used, "fillet", 2)({ ...edgeDraft(used, "fillet"), edges: edges.selector })).toMatchObject({ radius: 2 });
+    const big = harness(bracketDoc(), bracket, { memory: { fillet: { radius: 3 } } }).ctx;
+    expect(edgeComplete(big, "fillet", 3)({ ...edgeDraft(big, "fillet"), edges: edges.selector })).toMatchObject({ radius: 0.5 });
+    // A chamfer likewise, and faces picked count every edge of theirs.
+    const chamfer = edgeDraft(fresh, "chamfer");
+    expect(edgeComplete(fresh, "chamfer", chamfer.distance)({ ...chamfer, edges: edges.selector })).toMatchObject({ distance: 0.5 });
+    const top = faceSelectorFor(bracket.faces, faceFacing(bracket, [0, 0, 1]));
+    if (!top.ok) throw new Error(top.error);
+    expect(edgesOfFeature(fresh, { faces: [top.selector] }).length).toBeGreaterThanOrEqual(5);
+    expect(edgeComplete(fresh, "chamfer", chamfer.distance)({ ...chamfer, faces: [top.selector] })).toMatchObject({ distance: 0.5 });
+  });
+
+  it("a hole started with no face: sized for the face clicked, when there is no hole to copy", () => {
+    const ctx = harness(boxDoc(100, 60, 20), block).ctx;
+    const start = holeDraft(ctx);
+    expect(start).toMatchObject({ op: "hole", size: "M5", depth: "through" });
+    const on = (n: [number, number, number]) => {
+      const s = faceSelectorFor(block.faces, faceFacing(block, n));
+      if (!s.ok) throw new Error(s.error);
+      return s.selector;
+    };
+    const complete = holeComplete(ctx, start.size);
+    expect(complete({ ...start, face: on([0, 0, 1]), center: [10, 0] })).toMatchObject({ size: "M12" });
+    expect(complete({ ...start, face: on([1, 0, 0]), center: [0, 10] })).toMatchObject({ size: "M5" });
+    // A size chosen meanwhile is the user's.
+    expect(complete({ ...start, size: "M8", face: on([0, 0, 1]) })).toMatchObject({ size: "M8" });
+    // The bracket has a hole already: the new one copies it, whatever face it goes on.
+    const copied = harness(bracketDoc(), bracket).ctx;
+    const like = holeDraft(copied);
+    expect(like).toMatchObject({ diameter: 6.6, depth: "through" });
+    const f = { ...like, face: { type: "planar", normal: [0, 0, 1], pick: "largest" }, center: [-20, 0] };
+    expect(holeComplete(copied, like.size)(f)).toBe(f);
+  });
+
+  it("a linear pattern started with no seed: spaced and turned for the seed picked in the tree, unless set meanwhile", () => {
+    const ctx = harness(bracketDoc(), bracket).ctx;
+    const start = patternDraft(ctx, "linearPattern");
+    expect(start).toMatchObject({ direction: [1, 0, 0], spacing: 10, count: 3 });
+    const complete = patternComplete(ctx, start);
+    // The Ø6.6 hole at X 30: toward −X where the plate has room, 10 apart (6.6 × 1.5 rounded up).
+    expect(complete({ ...start, feature: "hole_1" })).toMatchObject({ direction: [-1, 0, 0], spacing: 10 });
+    expect(complete({ ...start, feature: "hole_1", spacing: 12 })).toMatchObject({ direction: [1, 0, 0], spacing: 12 });
+    expect(complete({ ...start, feature: "hole_1", direction: [0, 1, 0] })).toMatchObject({ direction: [0, 1, 0] });
+    // The count used last starts it.
+    expect(patternDraft(harness(bracketDoc(), bracket, { memory: { linearPattern: { count: 5 } } }).ctx, "linearPattern")).toMatchObject({ count: 5 });
+  });
+
+  it("a draft started with no faces: its neutral plane is the one the faces picked stand on, unless chosen meanwhile", () => {
+    const ctx = harness(bracketDoc(), bracket).ctx;
+    const start = draftDraft(ctx);
+    expect(start).toMatchObject({ neutral: { datum: "Top" }, angle: 1 });
+    const side = faceSelectorFor(bracket.faces, faceFacing(bracket, [0, -1, 0]));
+    if (!side.ok) throw new Error(side.error);
+    const complete = draftComplete(ctx, start);
+    // The plate's bottom (the lowest face against the pull up Z), as Draft on the side picked first gives.
+    expect(complete({ ...start, faces: [side.selector] }).neutral).toEqual(draftFeatureOf(side.selector));
+    expect(complete({ ...start, neutral: { datum: "Front" }, faces: [side.selector] }).neutral).toEqual({ datum: "Front" });
+  });
+});
+
+/** The neutral plane Draft picks for one face selected first (selection-first), for comparing. */
+function draftFeatureOf(face: FaceSelector): unknown {
+  const index = selectFaces(bracket.faces, face).matches[0].index;
+  const f = draftFeature(harness(bracketDoc(), bracket, { selection: { ...EMPTY_SELECTION, faces: [index] } }).ctx);
+  if (typeof f === "string") throw new Error(f);
+  return f.neutral;
+}
 
 describe("drafts", () => {
   it("a draft feature starts at 1°, an extrude's draft at 2°", () => {

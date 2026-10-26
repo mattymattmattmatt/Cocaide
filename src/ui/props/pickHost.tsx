@@ -79,6 +79,12 @@ export interface SessionLink {
   router: MutableRefObject<PickRouter | null>;
   /** The panel says which field is active now, after each change. */
   report(summary: ActiveFieldSummary | null): void;
+  /**
+   * The panel says what the feature waits on, after each change: the prompt
+   * of its first empty field that must be filled (else of the active field
+   * while it is empty: "Pick edges to fillet"), or null.
+   */
+  needs?(prompt: string | null): void;
   /** The part picks are made on. */
   view: RebuildView | null;
   peek(items: PickTarget[] | null): void;

@@ -104,6 +104,16 @@ export function activeField(fields: readonly PickField[], wanted: string | null 
   return sorted.find((f) => f.required && f.count === 0) ?? sorted.find((f) => f.count > 0 && picks(f)) ?? sorted.find((f) => f.count === 0) ?? null;
 }
 
+/**
+ * The field a feature still waits on: its first empty field that must be
+ * filled; else the active field while it is empty (a fillet's edges, which
+ * faces could stand in for); else none.
+ */
+export function neededField(fields: readonly PickField[], active: string | null): PickField | null {
+  const sorted = [...fields].filter((f) => !f.onRequest).sort((a, b) => a.order - b.order);
+  return sorted.find((f) => f.required && f.count === 0) ?? sorted.find((f) => f.key === active && f.count === 0) ?? null;
+}
+
 /** The next field after `key` (Tab), or before it (Shift+Tab), round the list. */
 export function nextField(fields: readonly PickField[], key: string | null, back = false): PickField | null {
   const sorted = [...fields].filter((f) => !f.onRequest || f.key === key).sort((a, b) => a.order - b.order);

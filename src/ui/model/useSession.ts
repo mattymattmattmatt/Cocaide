@@ -34,14 +34,18 @@ export interface SessionDeps {
   clearSelection(): void;
   /** Runs a tool again (the panel kept open). */
   runTool(id: string): void;
+  /** What a pending feature waits on, in the panel's words (its empty selection field's prompt: "Pick edges to fillet"), or null. */
+  needs?: string | null;
+  /** Cancel put the document back: the view may show the part as it was at once, before its rebuild comes. */
+  restored?(): void;
 }
 
 export interface SessionApi {
   session: FeatureSession | null;
   /** A tool's new feature: into the document in a session. False when it couldn't open. */
   openCreate(feature: Raw, tool?: string): boolean;
-  /** A tool's new feature still waiting for picks (command-first). */
-  openDraft(feature: Raw, opts?: { tool?: string; active?: string }): boolean;
+  /** A tool's new feature still waiting for picks (command-first); `complete` settles its numbers once they are there. */
+  openDraft(feature: Raw, opts?: { tool?: string; active?: string; complete?: (f: Raw) => Raw }): boolean;
   /** Edit feature: a session on a feature in the document. */
   openEdit(id: string): boolean;
   /** OK: keeps it as one undo step. `force`: even with its error. False when it can't yet (and says why). */
@@ -72,8 +76,8 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
   const [keepOpen, setKeepOpenState] = useState(loadPin);
   const [memory, setMemory] = useState<ToolMemory>(loadToolMemory);
   // Handlers read the newest state (they run from listeners made earlier).
-  const live = useRef({ session, deps, memory, keepOpen });
-  live.current = { session, deps, memory, keepOpen };
+  const live = useRef({ session, deps, memory, keepOpen, guard });
+  live.current = { session, deps, memory, keepOpen, guard };
   const setSession = (s: FeatureSession | null) => {
     live.current.session = s;
     setSessionState(s);
@@ -106,10 +110,10 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
     return start({ id, originalId: id, kind: "create", op: String(feature.op), tool, previous: live.current.deps.selectedFeature }, addCommand(feature));
   };
 
-  const openDraft = (feature: Raw, opts: { tool?: string; active?: string } = {}) => {
+  const openDraft = (feature: Raw, opts: { tool?: string; active?: string; complete?: (f: Raw) => Raw } = {}) => {
     const id = String(feature.id);
     // It may be complete after all (the tool's defaults are enough): then it goes in at once.
-    return start({ id, originalId: id, kind: "create", op: String(feature.op), tool: opts.tool, previous: live.current.deps.selectedFeature, pending: feature, active: opts.active });
+    return start({ id, originalId: id, kind: "create", op: String(feature.op), tool: opts.tool, previous: live.current.deps.selectedFeature, pending: feature, active: opts.active, complete: opts.complete });
   };
 
   const openEdit = (id: string) => {
@@ -128,14 +132,14 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
   const ok = (force = false): boolean => {
     const { session: s, deps } = live.current;
     if (!s) return false;
-    const why = okProblem(s);
+    const why = okProblem(s, deps.needs);
     if (why) {
       deps.notice("error", why);
       return false;
     }
     const failing = deps.view?.features.find((f) => f.id === s.id)?.error;
     if (failing && !force) {
-      setGuard({ what: "carry on", then: () => undefined, failing: failing.replace(`${s.id}: `, "") });
+      setGuard({ what: "carry on", then: () => undefined, failing: failing.replace(`${s.id}: `, ""), onOk: true });
       return false;
     }
     const kept = deps.d.doc?.features.find((f) => f.id === s.id);
@@ -161,6 +165,7 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
     if (!s) return;
     deps.d.rollback();
     close();
+    deps.restored?.();
     deps.select(s.kind === "create" ? s.previous : s.originalId);
   };
 
@@ -170,8 +175,15 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
       then();
       return true;
     }
+    // A feature opened to look at and left as it was (nothing changed): it simply closes, nothing to ask.
+    if (s.kind === "edit" && deps.d.transaction && !deps.d.transaction.changed) {
+      deps.d.commit();
+      close();
+      then();
+      return true;
+    }
     const failing = deps.view?.features.find((f) => f.id === s.id)?.error;
-    const noKeep = okProblem(s) ?? undefined;
+    const noKeep = okProblem(s, deps.needs) ?? undefined;
     if (keep && !noKeep && !failing) {
       ok();
       then();
@@ -182,7 +194,7 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
   };
 
   const answer = (choice: "ok" | "keepError" | "cancel" | "back") => {
-    const g = guard;
+    const g = live.current.guard;
     setGuard(null);
     if (!g || choice === "back") return;
     if (choice === "cancel") cancel();
@@ -195,7 +207,8 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
     if (!s?.pending) return null;
     const next = mergePatch(s.pending, patch);
     const id = String(next.id);
-    const problem = deps.d.open(addCommand(next));
+    // The numbers that read the part settle with the picks that complete it (as selection-first has them); kept pending, it stays as typed.
+    const problem = deps.d.open(addCommand(s.complete ? s.complete(next) : next));
     if (!problem) {
       setSession({ ...s, id, pending: undefined, pendingProblem: undefined });
       if (id !== s.id) {

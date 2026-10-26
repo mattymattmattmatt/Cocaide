@@ -16,6 +16,7 @@ import {
   addEdges,
   fieldTakes,
   holds,
+  neededField,
   nextField,
   promptLine,
   refTargets,
@@ -257,6 +258,12 @@ describe("picking into a session's fields", () => {
     expect(nextField(list, "faces", true)!.key).toBe("bodies");
     expect(promptLine({ prompt: "Pick edges to fillet", count: 2 })).toBe("Pick edges to fillet — 2 picked");
     expect(promptLine({ prompt: "Pick edges to fillet", count: 0 })).toBe("Pick edges to fillet");
+    // What a new feature waits on (its words for the panel and for OK): the first empty field it must have; else the active
+    // field while it is empty (a fillet's edges, which faces could stand in for); never a field only made active on request.
+    expect(neededField(list, "faces")!.key).toBe("neutral");
+    expect(neededField([field("edges", 10, 0), field("faces", 20, 0)], "edges")!.prompt).toBe("Pick edges");
+    expect(neededField([field("edges", 10, 1), field("faces", 20, 0)], "edges")).toBeNull();
+    expect(neededField([later, field("edges", 10, 1)], "sets.new")).toBeNull();
   });
 
   it("features from the tree: in, out, in the tree's order; only the ops the field takes", () => {

@@ -6,7 +6,7 @@ import type { Command, RawDocument } from "../doc/commands";
 import { rollbackIndex } from "../doc/rollback";
 import type { FeatureStatus } from "../kernel";
 import { Icon, ICON_NAMES, type IconName } from "./icons";
-import { activeField, holds, nextField, summaryOf, fieldTakes, treeTakes, type PickField } from "./props/picking";
+import { activeField, holds, neededField, nextField, summaryOf, fieldTakes, treeTakes, type PickField } from "./props/picking";
 import type { PickTarget } from "./model/selection";
 import { PickContext, type PickHost, type SessionLink } from "./props/pickHost";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
@@ -118,6 +118,7 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
   const [active, setActive] = useState<string | null>(null);
   const [error, setPickError] = useState<{ text: string; at: number } | null>(null);
   const reported = useRef("");
+  const reportedNeeds = useRef<string | null>(null);
   const fields = () => [...registry.current.values()];
   // After each render (the fields have registered): which is active, and tell the app.
   useLayoutEffect(() => {
@@ -130,8 +131,19 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
       reported.current = sig;
       link.report(summary);
     }
+    const needs = neededField(fields(), key)?.prompt ?? null;
+    if (needs !== reportedNeeds.current) {
+      reportedNeeds.current = needs;
+      link.needs?.(needs);
+    }
   });
-  useEffect(() => () => link.report(null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(
+    () => () => {
+      link.report(null);
+      link.needs?.(null);
+    },
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const current = () => (active ? registry.current.get(active) ?? null : null);
   /**
    * The field a click on this goes to: the active one; or, when none is active or the active one takes nothing from
@@ -285,19 +297,29 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
     }
   };
   // In a session: Enter in a field commits that field; a second Enter (nothing typed since) or Ctrl+Enter is OK.
+  // Esc likewise: in a field typed into, it puts the field back; a second Esc (nothing typed since) is Cancel.
   const keys = session
     ? {
         onInputCapture: (e: FormEvent) => typed.current.add(e.target),
         onKeyDownCapture: (e: KeyboardEvent) => {
-          if (e.key !== "Enter") return;
+          if (e.key !== "Enter" && e.key !== "Escape") return;
           enter.current = { wasTyped: typed.current.has(e.target) };
           typed.current.delete(e.target);
         },
         onKeyDown: (e: KeyboardEvent) => {
-          if (e.key !== "Enter") return;
+          if (e.key !== "Enter" && e.key !== "Escape") return;
           const t = e.target as HTMLElement;
           const wasTyped = enter.current?.wasTyped ?? false;
           enter.current = null;
+          if (e.key === "Escape") {
+            // A field's own Esc (an open list, a value typed and not kept) is that field's.
+            if ((t.tagName !== "INPUT" && t.tagName !== "SELECT") || wasTyped || e.defaultPrevented) return;
+            // A question, a box or a menu open over it: Esc is theirs.
+            if (document.querySelector(".session-guard, .value-box, .context-menu, .modal-backdrop")) return;
+            e.preventDefault();
+            (t as HTMLInputElement).blur();
+            return session.cancel();
+          }
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
             return session.ok();
@@ -357,7 +379,7 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
       </div>
       {session?.pending && (
         <div className="session-pending" data-testid="session-pending" role="status">
-          {session.pendingProblem ? `Still needed: ${session.pendingProblem}` : "Pick what it needs in the view."}
+          {session.pendingProblem ? `Not in the part yet: ${session.pendingProblem.replace(/\.$/, "")}.` : "Not in the part yet: pick what it needs in the view."}
         </div>
       )}
       {session?.failing && !status?.error && (

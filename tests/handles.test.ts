@@ -10,7 +10,7 @@ import type { Vec3 } from "../src/doc/types";
 import { add3, dot3, len3, scale3, sub3 } from "../src/geom/vec";
 import { loadOC, rebuild, scoped, tessellate, type OC } from "../src/kernel";
 import { describeEdges, describeFaces } from "../src/kernel/topology";
-import { arcPoints, beginDrag, dragValue, featureHandles, handlePatch, handleText, handleTip, moveDrag, sketchAnchor, type HandleSpec } from "../src/ui/evaluate/handles";
+import { arcPoints, beginDrag, dragValue, featureHandles, handlePatch, handleText, handleTip, moveDrag, planeSpot, sketchAnchor, type HandleSpec } from "../src/ui/evaluate/handles";
 import type { RebuildView } from "../src/worker/protocol";
 import { example } from "./ui-fixtures";
 
@@ -135,6 +135,9 @@ describe("revolve", () => {
     expect(handlePatch(h, doc.features[1], 360)).toEqual({ angle: null });
     expect(handlePatch(h, doc.features[1], 180)).toEqual({ angle: 180 });
     expect(arcPoints(h, 90, 4)).toHaveLength(5);
+    // Drawn, a long arc keeps round: a point every 3° or less (a count's arc round most of a turn).
+    expect(arcPoints(h, 90)).toHaveLength(33);
+    expect(arcPoints(h, 330).length).toBeGreaterThanOrEqual(111);
   });
 });
 
@@ -279,6 +282,19 @@ describe("plane", () => {
     const h = byKey(featureHandles(doc.features[2], doc.features[2], view), "distance");
     expect(handleTip(h)[2]).toBeCloseTo(15, 9);
     expect(roundTrip(h, 22)).toBe(22);
+    // The box is drawn round the origin, so the plane's middle is on the Z axis: the arrow stands a third of the way to a corner, clear of it.
+    expect(Math.hypot(h.origin[0], h.origin[1])).toBeGreaterThan(3);
+    expect(h.origin[0]).toBeCloseTo(20 / 3, 6);
+    expect(h.origin[1]).toBeCloseTo(10 / 3, 6);
+    expect(h.origin[2]).toBeCloseTo(0, 9);
+  });
+
+  it("an offset plane over a part away from the origin stands its arrow in the part's middle", () => {
+    expect(planeSpot({ origin: [0, 0, 30], normal: [0, 0, 1], xDir: [1, 0, 0] }, { min: [10, 20, 0], max: [50, 40, 8] })).toEqual([30, 30, 30]);
+    // No part: round the plane's origin, off the axes.
+    const p = planeSpot({ origin: [0, 0, 5], normal: [0, 0, 1], xDir: [1, 0, 0] }, null);
+    expect(Math.hypot(p[0], p[1])).toBeGreaterThan(5);
+    expect(p[2]).toBe(5);
   });
 });
 

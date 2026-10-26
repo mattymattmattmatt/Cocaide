@@ -108,10 +108,11 @@ export function handleTip(h: HandleSpec, value: HandleValue = h.kind === "point"
   return add3(h.origin, scale3(h.dir, (v - (h.offset ?? 0)) / h.scale));
 }
 
-/** The arc's points from its zero to a value (for drawing it), `n` steps. */
-export function arcPoints(h: HandleSpec, value = h.value, n = 32): Vec3[] {
+/** The arc's points from its zero to a value (for drawing it), `n` steps (default: one every 3° it turns, at least 32, so a long arc stays round). */
+export function arcPoints(h: HandleSpec, value = h.value, n?: number): Vec3[] {
   if (h.kind !== "angle" || !h.axis || !h.zero || h.radius === undefined) return [];
   const end = (value - (h.offset ?? 0)) / h.scale;
+  n ??= Math.max(32, Math.min(240, Math.ceil(Math.abs(end) / 3)));
   return Array.from({ length: n + 1 }, (_, i) => onArc(h, (h.offset ?? 0) + ((end * i) / n) * h.scale));
 }
 
@@ -297,6 +298,34 @@ function rimOf(face: FaceInfo, n: Vec3, view: RebuildView): Vec3 {
     top = Math.max(top, positions[v * 3] * n[0] + positions[v * 3 + 1] * n[1] + positions[v * 3 + 2] * n[2]);
   }
   return add3(face.centroid, scale3(n, top - dot3(face.centroid, n)));
+}
+
+/**
+ * Where on a plane its offset arrow stands: the middle of the part as seen on
+ * the plane (where the view draws it); when that is on one of the origin's
+ * axes (a plane over a part drawn round the origin), a third of the way
+ * toward a corner of it, so the arrow is not lost in the origin's own.
+ */
+export function planeSpot(plane: { origin: Vec3; normal: Vec3; xDir: Vec3 }, box: { min: Vec3; max: Vec3 } | null): Vec3 {
+  const n = normalize3(plane.normal);
+  const x = normalize3(plane.xDir);
+  const y = cross3(n, x);
+  let [u0, u1, v0, v1] = [-30, 30, -30, 30];
+  if (box) {
+    const us: number[] = [];
+    const vs: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const c: Vec3 = [i & 1 ? box.max[0] : box.min[0], i & 2 ? box.max[1] : box.min[1], i & 4 ? box.max[2] : box.min[2]];
+      us.push(dot3(sub3(c, plane.origin), x));
+      vs.push(dot3(sub3(c, plane.origin), y));
+    }
+    [u0, u1, v0, v1] = [Math.min(...us), Math.max(...us), Math.min(...vs), Math.max(...vs)];
+  }
+  const at = (u: number, v: number) => add3(plane.origin, add3(scale3(x, u), scale3(y, v)));
+  const [um, vm] = [(u0 + u1) / 2, (v0 + v1) / 2];
+  const mid = at(um, vm);
+  const size = Math.max(u1 - u0, v1 - v0, 1e-6);
+  return onDefaultAxis(mid, size * 0.02) ? at(um + (u1 - um) / 3, vm + (v1 - vm) / 3) : mid;
 }
 
 /** Is a 2D point inside a closed polyline (even-odd)? */
@@ -519,7 +548,7 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     if (plane?.kind !== "plane") return [];
     // The plane's normal is its reference's, turned round when flipped; the distance runs along the reference's.
     const along = resolved.flip === true ? scale3(plane.normal, -1) : plane.normal;
-    const origin = sub3(plane.origin, scale3(along, resolved.distance));
+    const origin = sub3(planeSpot(plane, view?.measurements?.boundingBox ?? null), scale3(along, resolved.distance));
     return [{ id: `${id}:distance`, feature: id, key: "distance", origin, dir: along, value: resolved.distance, scale: 1, min: null, locked: locked("distance"), label: "Offset", snap: "length" }];
   }
 
@@ -622,7 +651,7 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     const at = side && open ? rimOf(side, open, view) : clearOfAxes(face.centroid, face, view);
     const outward = resolved.outward === true;
     out.push({ id: `${id}:thickness`, feature: id, key: "thickness", origin: at, dir: outward ? face.normal : scale3(face.normal, -1), value: t, scale: 1, min: 0, locked: locked("thickness"), label: "Wall", snap: "length" });
-    out.push({ id: `${id}:flip`, feature: id, key: "outward", kind: "flip", origin: at, dir: face.normal, value: 0, scale: 1, min: null, label: outward ? "Walls inside" : "Walls outside", write: (f) => ({ outward: f.outward === true ? null : true }) });
+    out.push({ id: `${id}:flip`, feature: id, key: "outward", kind: "flip", origin: at, dir: face.normal, value: 0, scale: 1, min: null, label: outward ? "Walls to inside" : "Walls to outside", write: (f) => ({ outward: f.outward === true ? null : true }) });
     return out;
   }
 

@@ -36,6 +36,12 @@ export interface FeatureSession {
   previous: string | null;
   /** The selection field to make active first (its key). */
   active?: string;
+  /**
+   * Settles the numbers that read the part once the pending feature's picks
+   * are there (a command-first fillet's radius from its edges), just before it
+   * goes into the document; what the user changed already is left alone.
+   */
+  complete?: (f: Raw) => Raw;
 }
 
 /** The session's name, and the name of the undo step it becomes. */
@@ -73,10 +79,23 @@ export function pendingWords(error: string, id: string): string {
     .join("; ");
 }
 
-/** Why OK can't keep the session yet (a new feature still missing what it needs), or null. */
-export function okProblem(s: FeatureSession): string | null {
+/** "Pick edges to fillet" as the middle of a sentence: "pick edges to fillet". */
+const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+
+/**
+ * What a pending feature still needs, in words for the user: the prompt of
+ * the selection field it waits on ("Pick edges to fillet") when the panel
+ * knows it, else what the validator said.
+ */
+export function neededText(s: Pick<FeatureSession, "pendingProblem">, needs?: string | null): string | null {
+  return needs ? lowerFirst(needs) : (s.pendingProblem ?? null);
+}
+
+/** Why OK can't keep the session yet (a new feature still missing what it needs), or null. `needs`: the prompt of the field it waits on. */
+export function okProblem(s: FeatureSession, needs?: string | null): string | null {
   if (!s.pending) return null;
-  return `${s.id} isn't complete yet${s.pendingProblem ? ` (${s.pendingProblem})` : ""}: pick what it needs in the view, or Cancel it.`;
+  const what = neededText(s, needs);
+  return needs ? `${s.id} isn't in the part yet: ${what} in the view (or Cancel it).` : `${s.id} isn't complete yet${what ? ` (${what})` : ""}: pick what it needs in the view, or Cancel it.`;
 }
 
 /** What a click on a feature in the tree does while a session is open. */
@@ -102,12 +121,16 @@ export interface SessionGuard {
   noKeep?: string;
   /** The feature fails: keeping it keeps the error. */
   failing?: string;
+  /** Asked by OK itself (the feature fails): nothing else is waiting. */
+  onOk?: boolean;
 }
 
-/** The words of the question: "fillet_2 is open. OK keeps it, Cancel drops it; then open Fillet." */
+/** The words of the question: "Add fillet_2 is still open. OK keeps fillet_2, Cancel drops it; then open Fillet." */
 export function guardText(s: FeatureSession, g: SessionGuard): string {
-  const keep = g.noKeep ? "" : s.kind === "create" ? `OK keeps ${s.id}` : `OK keeps the changes to ${s.id}`;
+  // OK on a feature that fails: keep it with its error, or go back and change it.
+  if (g.onOk) return `${s.id} fails: ${g.failing ?? "it doesn't build"}. Keep it with the error (it stays in the tree, marked, for you to fix), or go back and change it.`;
+  const keep = g.noKeep ? "" : g.failing ? "Keep it with the error" : s.kind === "create" ? `OK keeps ${s.id}` : `OK keeps the changes to ${s.id}`;
   const drop = s.kind === "create" ? `Cancel drops it` : "Cancel puts it back as it was";
-  const failing = g.failing ? ` It fails now: ${g.failing}.` : "";
+  const failing = g.failing ? ` It fails now: ${g.failing}.` : g.noKeep ? " It isn't complete yet." : "";
   return `${sessionLabel(s)} is still open.${failing} ${[keep, drop].filter(Boolean).join(", ")}; then ${g.what}.`;
 }

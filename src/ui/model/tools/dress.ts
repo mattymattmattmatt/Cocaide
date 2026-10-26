@@ -1,12 +1,15 @@
 // Shell and Draft: on the faces picked in the view.
-// Shell removes the selected faces and leaves 2 mm walls (nothing selected: a
-// closed hollow body). Draft tapers the selected faces 3° about a neutral
+// Shell removes the selected faces and leaves walls a tenth of the part's
+// thinnest extent, or the last used (nothing selected: a closed hollow body).
+// Draft tapers the selected faces 1° (or the last used) about a neutral
 // plane: a selected flat face square to all the others (the base the rest
 // stand on), or a selected plane; else the part's bottom face along the pull,
-// else the default plane square to every face drafted.
+// else the default plane square to every face drafted. With nothing selected,
+// Draft opens with its faces waiting for picks.
 
 import type { FaceSelector, Vec3 } from "../../../doc/types";
 import { dot3 } from "../../../geom/vec";
+import { selectFaces } from "../../../kernel/selectors";
 import { faceSelectorFor, facesSelectorFor } from "../../../kernel/synthesize";
 import type { FaceInfo } from "../../../kernel/topology";
 import { wholeBodySelected } from "../carrySelection";
@@ -111,13 +114,34 @@ export function draftDraft(ctx: ToolCtx): Raw {
   return { id: ctx.nextId("draft"), op: "draft", neutral: { datum: "Top" }, angle: draftAngle(ctx) };
 }
 
+/**
+ * Command-first, a draft's neutral plane settles with the faces picked for
+ * it: the one selection-first would choose for them (the part's bottom along
+ * the pull a default plane gives them), unless the user chose one meanwhile
+ * (it is no longer the draft's Top).
+ */
+export function draftComplete(ctx: ToolCtx, start: Raw): (f: Raw) => Raw {
+  return (f) => {
+    const view = ctx.view;
+    if (!view || JSON.stringify(f.neutral) !== JSON.stringify(start.neutral) || !Array.isArray(f.faces)) return f;
+    const picked = [...new Set((f.faces as FaceSelector[]).flatMap((sel) => selectFaces(view.faces, sel).matches.map((m) => m.index)))].map((i) => view.faces[i]).filter((x): x is FaceInfo => !!x);
+    if (!picked.length) return f;
+    // Of the faces picked, none is taken as the base here: they are the faces to draft, as the field holds them.
+    const n = draftNeutral(picked.length > 1 ? [picked[0]] : picked, view.faces);
+    return typeof n === "string" ? f : { ...f, neutral: n.neutral };
+  };
+}
+
 const make =
-  (build: (ctx: ToolCtx) => Raw | string, opts: { draft?: (ctx: ToolCtx) => Raw; active?: string } = {}) =>
+  (build: (ctx: ToolCtx) => Raw | string, opts: { draft?: (ctx: ToolCtx) => Raw; active?: string; complete?: (ctx: ToolCtx, start: Raw) => (f: Raw) => Raw } = {}) =>
   (ctx: ToolCtx) => {
     const f = build(ctx);
     if (typeof f !== "string") return ctx.create(f);
     // Command-first: open it with what is missing waiting for picks.
-    if (opts.draft && ctx.draft && ctx.doc && ctx.view && ctx.view.bodies.length && ctx.selection.faces.length === 0) return ctx.draft(opts.draft(ctx), { active: opts.active });
+    if (opts.draft && ctx.draft && ctx.doc && ctx.view && ctx.view.bodies.length && ctx.selection.faces.length === 0) {
+      const start = opts.draft(ctx);
+      return ctx.draft(start, { active: opts.active, complete: opts.complete?.(ctx, start) });
+    }
     ctx.notice(f);
   };
 
@@ -152,7 +176,7 @@ export const tools: ToolDef[] = [
     title: "Taper faces for a mould: click the faces (and the base face to draft about), then Draft",
     testId: "tool-draft",
     disabled: (ctx) => (ctx.view && ctx.view.bodies.length === 0 ? "Draft needs a solid" : undefined),
-    run: make(draftFeature, { draft: draftDraft, active: "faces" }),
+    run: make(draftFeature, { draft: draftDraft, active: "faces", complete: draftComplete }),
     contextOn: "face",
     contextLabel: "Draft this face",
     contextTestId: "ctx-draft",

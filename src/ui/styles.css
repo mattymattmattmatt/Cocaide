@@ -1751,3 +1751,13 @@ svg.icon { flex: none; display: block; }
 /* Over the view, the sketch's status line and plane name sit above the view bar, clear of the triad. */
 .center.sketch-center .sketch-statusbar { bottom: 50px; left: 84px; }
 .center.sketch-center .sketch-plane-label { bottom: 50px; }
+/* ======================================================= Phase P W2B review: feature sessions polish */
+/* The question asked before finishing a session: its first answer is the session's own green OK (or Keep it with the error). */
+.session-guard-actions button.primary { background: var(--session-ok); border: 1px solid var(--session-ok); color: #fff; font-weight: 600; }
+.session-guard-actions button.primary:hover { background: var(--session-ok-hover); border-color: var(--session-ok-hover); }
+.session-guard-actions button:not(.primary) { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+.session-guard-actions button:not(.primary):hover { border-color: var(--text); }
+/* A tree row keeps its words inside it: a long id ends in an ellipsis instead of running under the row's buttons (the open feature's row shows them all the time). */
+.feature-list .feature-row { overflow: hidden; }
+.feature-list .feature-row .feature-id { min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 0.2 auto; }
+.feature-list .feature-row .feature-body { flex: 0 4 auto; }
