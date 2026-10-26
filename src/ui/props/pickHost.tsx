@@ -71,6 +71,8 @@ export interface PickRouter {
   reach(target: PickTarget): PickTarget[] | null;
   /** Another sketch's entity clicked in the view, into the active reference field (or the first that takes one). "none": no field takes it. */
   sketch(hit: SketchEntityHit): string | null | "none";
+  /** What a click on such an entity would do, for the pointer's tip: "Click to use it for Axis". Null: nothing takes it. */
+  sketchHint?(hit: SketchEntityHit): string | null;
 }
 
 /** What the app hands the panel for an open session. */

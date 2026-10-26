@@ -217,6 +217,34 @@ describe("picking into a session's fields", () => {
     expect(refTargets({ datum: "Top" }, bossed)).toEqual([{ kind: "datum", id: "Top", point: [0, 0, 0] }]);
   });
 
+  it("a mirror's plane (a plane field that takes references) is live: a flat face or a plane clicked becomes the plane it mirrors about", () => {
+    const top = faceWhere(bossed, TOP);
+    const spec = { kind: "plane" as const, key: "plane", label: "Plane", refs: true };
+    const c = { f: {}, resolved: {}, before: [], bodies: ["main"], doc: base(...boss), view: bossed, selection: { faces: [], edges: [] } };
+    const env = { view: bossed, before: [], bodies: ["main"], edge: { propagate: true, kinds: "all" as const }, chainOf: (e: number) => [e], passes: () => true };
+    let committed: unknown;
+    // Written out (through a point): nothing picked yet, so it is the field a click goes to.
+    const custom = { plane: { type: "datum", normal: [1, 0, 0], origin: [0, 0, 0] } };
+    const field = pickFieldFor(spec, custom, c, 0, env, (v) => void (committed = v))!;
+    expect(field.takes.sort()).toEqual(["faces", "planes"]);
+    expect(field.count).toBe(0);
+    expect(field.prompt).toBe("Pick the plane");
+    expect(field.toggle({ kind: "face", index: top, point: bossed.faces[top].centroid })).toBeNull();
+    expect(committed).toMatchObject({ type: "ref", ref: { face: { type: "planar" } } });
+    expect(field.toggle({ kind: "datum", id: "Right", point: [0, 0, 0] })).toBeNull();
+    expect(committed).toEqual({ type: "ref", ref: { datum: "Right" } });
+    // A round face is no plane: it says so.
+    const cyl = faceWhere(bossed, (f) => f.type === "cylinder");
+    expect(field.toggle({ kind: "face", index: cyl, point: [0, 0, 0] })).toMatch(/plane is needed/);
+    // By reference already: it holds that plane, lit up; a click on it again leaves it.
+    const held = pickFieldFor(spec, { plane: { type: "ref", ref: { datum: "Right" } } }, c, 0, env, () => undefined)!;
+    expect(held.count).toBe(1);
+    expect(held.items).toEqual([{ kind: "datum", id: "Right", point: [0, 0, 0] }]);
+    expect(held.toggle({ kind: "datum", id: "Right", point: [0, 0, 0] })).toBeNull();
+    // A plane field that takes no references (written out only) is not a pick field.
+    expect(pickFieldFor({ kind: "plane", key: "plane", label: "Plane" }, custom, c, 0, env, () => undefined)).toBeNull();
+  });
+
   it("the filter follows the field: faces for faces, edges and faces for an axis, vertices for a point", () => {
     expect(takesForKinds(["plane"]).sort()).toEqual(["faces", "planes"]);
     expect(takesForKinds(["axis"]).sort()).toEqual(["edges", "faces", "planes"]);

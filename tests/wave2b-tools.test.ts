@@ -10,7 +10,7 @@ import { REVOLVE_FIELDS, defaultAxisIn, preferredLine } from "../src/features/re
 import { UI_OPS } from "../src/features/uiDefs";
 import { loadOC, type OC } from "../src/kernel";
 import { draftFeature, draftNeutral, shellFeature } from "../src/ui/model/tools/dress";
-import { openProfile, revolveFeature, sketchAxisLine } from "../src/ui/model/tools/revolve";
+import { openProfile, revolveComplete, revolveDraft, revolveFeature, sketchAxisLine } from "../src/ui/model/tools/revolve";
 import { mirrorFeature } from "../src/ui/model/tools/mirror";
 import { PATTERNABLE } from "../src/ui/model/tools/pattern";
 import { toolById } from "../src/ui/model/registry";
@@ -58,6 +58,28 @@ describe("Revolve: the axis it finds", () => {
   it("else the one line drawn apart from the profile; else it asks for one", () => {
     expect(sketchAxisLine([RECT, { ...CENTERLINE, construction: undefined }] as never)).toEqual({ line: "c1" });
     expect(sketchAxisLine([RECT] as never)).toBe("Draw a centreline in the sketch to turn about (Shift+L), or select an axis or a straight edge, then Revolve.");
+  });
+
+  it("with no line to turn about, a session opens with the axis to be picked; an open profile then turns as a thin wall", () => {
+    const doc = sketchDoc([RECT]);
+    const { ctx } = harness(doc, viewOf(oc, doc));
+    expect(typeof revolveFeature(ctx, false)).toBe("string");
+    const draft = revolveDraft(ctx, false);
+    expect(draft).toEqual({ id: "revolve_1", op: "revolve", sketch: "sketch_1" });
+    // Not complete without its axis: it waits for the pick.
+    expect(allErrors(validateDocument({ ...doc, features: [...doc.features, draft as Raw] })).length).toBeGreaterThan(0);
+    const complete = revolveComplete(ctx);
+    expect(complete({ ...draft, axis: { datum: "Y" } })).toEqual({ ...draft, axis: { datum: "Y" } });
+    // An open chain (an L of two lines) turns as a 2 mm wall, as Revolve with its axis found has it.
+    const open = sketchDoc([
+      { id: "l1", type: "line", start: [10, 0], end: [10, 20] },
+      { id: "l2", type: "line", start: [10, 20], end: [20, 20] },
+    ]);
+    const o = harness(open, viewOf(oc, open)).ctx;
+    expect(revolveComplete(o)({ ...revolveDraft(o, false), axis: { datum: "Y" } })).toMatchObject({ thin: { thickness: 2 } });
+    // Nothing to cut yet, or no sketch: no session, the tool says why.
+    expect(revolveDraft(ctx, true)).toBeNull();
+    expect(revolveDraft(harness({ version: 1, units: "mm", name: "e", features: [] } as RawDocument, null).ctx, false)).toBeNull();
   });
 
   it("makes the revolve of the latest sketch about it, or a revolved cut; asks for a sketch first", () => {

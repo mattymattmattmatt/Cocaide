@@ -526,8 +526,8 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
         snap: "angle",
       });
     }
-    // Reverse: the arrow's base, a click turns it round.
-    out.push({
+    // Reverse: the arrow's base, a click turns it round (not for one that goes both ways alike: it would change nothing).
+    if (extent !== "midplane" && extent !== "throughAllBoth") out.push({
       id: `${id}:flip`,
       feature: id,
       key: "direction",

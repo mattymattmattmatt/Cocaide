@@ -158,6 +158,13 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
         .sort((a, b) => a.order - b.order)[0] ?? f
     );
   };
+  /** The field another sketch's entity clicked in the view goes to: the active one when it takes one, else the first that does. */
+  const sketchTaker = (): PickField | undefined => {
+    const f = current();
+    return f?.takeSketch ? f : fields()
+      .filter((x) => x.takeSketch && !x.onRequest)
+      .sort((a, b) => a.order - b.order)[0];
+  };
   /** A single choice filled: on to the next field that still needs something. */
   const advance = (f: PickField) => {
     if (["face", "datumRef", "feature", "sketch"].includes(f.kind)) setWanted(undefined);
@@ -204,11 +211,12 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
       const f = taking(t);
       return f?.reach && fieldTakes(f, t) ? f.reach(t) : null;
     },
+    sketchHint() {
+      const taker = sketchTaker();
+      return taker ? `Click to use it for ${taker.label}` : null;
+    },
     sketch(hit) {
-      const f = current();
-      const taker = f?.takeSketch ? f : fields()
-        .filter((x) => x.takeSketch && !x.onRequest)
-        .sort((a, b) => a.order - b.order)[0];
+      const taker = sketchTaker();
       if (!taker?.takeSketch) return "none";
       if (taker.key !== active) setWanted(taker.key);
       const err = taker.takeSketch(hit);

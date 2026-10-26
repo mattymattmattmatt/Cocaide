@@ -79,6 +79,41 @@ describe("the reference a field takes", () => {
   });
 });
 
+describe("the feature's own sketch, clicked in the view", () => {
+  const hit = (h: Partial<SketchEntityHit>): SketchEntityHit => ({ sketch: "sketch_1", entity: "l1", type: "line", point: [0, 0, 0], px: 0, ...h });
+  const before = [
+    { id: "sketch_1", op: "sketch", entities },
+    { id: "sketch_2", op: "sketch", entities: [{ id: "l7", type: "line", start: [0, 0], end: [0, 9] }] },
+  ];
+  const c = { f: {}, resolved: {}, before, bodies: [], doc: { version: 1, units: "mm", name: "p", features: [] }, view: null, selection: EMPTY_SELECTION };
+  const env = { view: null, before, bodies: [], edge: DEFAULT_EDGE_OPTIONS, chainOf: (e: number) => [e], passes: () => true };
+
+  it("a revolve's axis line: a line of its sketch takes it; another sketch's line or a circle says why not", () => {
+    let value: unknown;
+    const spec = { kind: "sketchLine" as const, key: "axis.line", label: "Axis line" };
+    const f = { sketch: "sketch_1", axis: { line: "l9" } };
+    const field = pickFieldFor(spec, f, c, 0, env, (v) => void (value = v))!;
+    expect(field.takes).toEqual([]);
+    expect(summaryOf(field).sketches).toBe(true);
+    expect(field.takeSketch!(hit({}))).toBeNull();
+    expect(value).toBe("l1");
+    expect(field.takeSketch!(hit({ sketch: "sketch_2", entity: "l7" }))).toMatch(/is a line of sketch_1/);
+    expect(field.takeSketch!(hit({ entity: "c1", type: "circle" }))).toMatch(/c1 is not a line/);
+  });
+
+  it("a sketch field (an extrude's): a click on one of a sketch's lines picks that sketch", () => {
+    let value: unknown;
+    const spec = { kind: "sketch" as const, key: "sketch", label: "Sketch" };
+    const field = pickFieldFor(spec, { sketch: "sketch_1" }, c, 0, env, (v) => void (value = v))!;
+    expect(field.takeSketch!(hit({ sketch: "sketch_2", entity: "l7" }))).toBeNull();
+    expect(value).toBe("sketch_2");
+    value = undefined;
+    expect(field.takeSketch!(hit({}))).toBeNull();
+    expect(value).toBeUndefined();
+    expect(field.takeSketch!(hit({ sketch: "later" }))).toMatch(/later can't go in sketch here/);
+  });
+});
+
 describe("how it reads", () => {
   it("names the sketch's entity, and what it is or which point of it", () => {
     const before = [{ id: "sketch_1", op: "sketch", entities }];

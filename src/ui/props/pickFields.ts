@@ -10,9 +10,10 @@ import type { DatumKind } from "../../features/datum";
 import type { RebuildView } from "../../worker/protocol";
 import { only, type PickTarget } from "../model/selection";
 import { sketchRefFor } from "../model/sketchPick";
+import { refFromSelection } from "./datumRef";
 import type { EdgeKindFilter } from "../model/smartSelect";
 import { addEdges, edgeList, fieldTakes, holds, refTargets, resolveEdges, resolveFaces, takesForKinds, toggleEdges, toggleFace, toggleId, toggleRef, treeTakes, type PickField } from "./picking";
-import { acceptsOf, asList, fieldValue, featureChoices, type FieldSpec, type FormContext } from "./spec";
+import { acceptsOf, asList, fieldValue, featureChoices, sketchLineChoices, valueAt, type FieldSpec, type FormContext } from "./spec";
 
 type Raw = Record<string, unknown>;
 
@@ -36,10 +37,11 @@ export interface PickEnv extends Pick<FormContext, "before" | "bodies"> {
   passes(edge: number): boolean;
 }
 
-/** The field kinds that pick: everything that holds geometry, references, bodies or features. */
+/** The field kinds that pick: everything that holds geometry, references, bodies or features (a plane field that takes references: a mirror's plane). */
 export function isPickSpec(spec: FieldSpec): boolean {
   if (spec.pickable === false) return false;
-  return ["faces", "face", "edges", "datumRef", "features", "feature", "sketch", "bodies"].includes(spec.kind);
+  if (spec.kind === "plane") return spec.refs === true;
+  return ["faces", "face", "edges", "datumRef", "features", "feature", "sketch", "bodies", "sketchLine"].includes(spec.kind);
 }
 
 /** "Pick edges", or the field's own words. */
@@ -47,7 +49,8 @@ function promptOf(spec: FieldSpec): string {
   if (spec.prompt) return spec.prompt;
   const what = spec.label.toLowerCase();
   if (spec.kind === "features" || spec.kind === "feature" || spec.kind === "sketch") return `Pick ${spec.kind === "sketch" ? "a sketch" : what} in the tree`;
-  return `Pick ${spec.kind === "face" || spec.kind === "datumRef" ? `the ${what}` : what}`;
+  if (spec.kind === "sketchLine") return `Pick the ${what}: a line of the sketch, in the view`;
+  return `Pick ${spec.kind === "face" || spec.kind === "datumRef" || spec.kind === "plane" ? `the ${what}` : what}`;
 }
 
 /**
@@ -181,6 +184,46 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
             }),
       };
     }
+    case "plane": {
+      // A plane by reference (a mirror's, a split's): a flat face or a plane clicked becomes it, and follows it when the part changes.
+      const v = value as { type?: unknown; ref?: unknown } | undefined;
+      const ref = v?.type === "ref" ? v.ref : undefined;
+      const items = refTargets(ref, view);
+      return {
+        ...base,
+        kind: "datumRef",
+        takes: ["faces", "planes"],
+        count: ref ? 1 : 0,
+        required: false,
+        items,
+        toggle(t) {
+          if (ref && holds(items, t)) return null;
+          const r = refFromSelection(only(t), view, ["plane"], env.before);
+          if (!r.ok) return r.error.replace(/,? then Use selected\.?$/, ".").replace(/ then Use selected/, "");
+          return result(commit({ type: "ref", ref: r.ref }));
+        },
+      };
+    }
+    case "sketchLine": {
+      // A line of the feature's own sketch (a revolve's axis line), clicked where the view draws the sketch.
+      const sketchId = valueAt(f, spec.sketchKey ?? "sketch");
+      const lines = sketchLineChoices(env.before, sketchId).map(([id]) => id);
+      return {
+        ...base,
+        kind: "feature",
+        takes: [],
+        count: typeof value === "string" && value ? 1 : 0,
+        required: true,
+        items: [],
+        toggle: () => `${spec.label}: click a line of ${String(sketchId)} where the view draws it, or choose it in the list`,
+        takeSketch(hit) {
+          if (hit.sketch !== sketchId) return `That is ${hit.sketch}'s ${hit.entity}: ${spec.label.toLowerCase()} is a line of ${String(sketchId)} (to turn about another sketch's line, choose "An axis or straight edge" first)`;
+          if (!lines.includes(hit.entity)) return `${hit.entity} is not a line: ${spec.label.toLowerCase()} is one of ${String(sketchId)}'s lines`;
+          if (hit.entity === value) return null;
+          return result(commit(hit.entity));
+        },
+      };
+    }
     case "bodies": {
       const list = Array.isArray(value) ? (value as string[]) : [];
       return {
@@ -214,6 +257,15 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
         required: spec.kind !== "features",
         items: [],
         toggle: () => `${spec.label}: pick ${spec.kind === "sketch" ? "the sketch" : "features"} in the feature tree`,
+        // A sketch field: a click on one of a sketch's lines where the view draws it picks that sketch too.
+        ...(spec.kind === "sketch"
+          ? {
+              takeSketch(hit: Parameters<NonNullable<PickField["takeSketch"]>>[0]) {
+                if (!choices.includes(hit.sketch)) return `${hit.sketch} can't go in ${spec.label.toLowerCase()} here`;
+                return hit.sketch === value ? null : result(commit(hit.sketch));
+              },
+            }
+          : {}),
         takeFeature(id) {
           const g = env.before.find((x) => x.id === id);
           if (!g || !choices.includes(id)) return `${id} can't go in ${spec.label.toLowerCase()} here${g ? "" : " (it comes after this feature)"}`;

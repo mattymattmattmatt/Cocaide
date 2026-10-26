@@ -576,6 +576,13 @@ export function App() {
   const editFeature = (id: string) => {
     if (sessionRef.current?.id === id) return;
     sessionApi.finishFirst(`edit ${id}`, () => {
+      // Below the rollback bar a feature isn't built, so there is nothing to preview: its Properties change it, a step at a time, as before.
+      if (features.findIndex((f) => f.id === id) >= bar) {
+        setSelectedFeature(id);
+        setRightTab("properties");
+        setNotice({ kind: "info", text: `${id} is below the rollback bar, so it isn't built: change it in Properties, or drag the bar below it (right-click it: Roll to end) to see it as you edit it.` });
+        return;
+      }
       sessionStartView.current = shownView.current ?? view;
       if (sessionApi.openEdit(id)) setNotice(null);
     });
@@ -1723,6 +1730,16 @@ export function App() {
             delete: () => {
               if (!selectedFeature) return setNotice({ kind: "info", text: "Select a feature in the tree to delete it." });
               const id = selectedFeature;
+              const open = sessionRef.current;
+              if (open && open.id === id) {
+                // The feature open now: a new one is simply dropped (as Cancel); one being edited goes back as it was, then is deleted (Ctrl+Z brings it back).
+                sessionApi.cancel();
+                if (open.kind === "create") return;
+                const problem = d.dispatch({ type: "deleteFeature", id: open.originalId });
+                if (problem) return setNotice({ kind: "error", text: problem });
+                setSelectedFeature(null);
+                return setNotice({ kind: "info", text: `Deleted ${open.originalId}. Ctrl+Z brings it back.` });
+              }
               sessionApi.finishFirst(`delete ${id}`, () => {
                 const problem = d.dispatch({ type: "deleteFeature", id });
                 // A new feature cancelled just now is gone already: nothing more to do.
@@ -2198,6 +2215,7 @@ export function App() {
                   pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
                   // A reference field active: another sketch's entity clicked in the view goes into it ({ sketch, entity, at? }).
                   sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : null}
+                  sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : null}
                   peek={peek}
                   onPick={onPick}
                   onContext={onContext}
