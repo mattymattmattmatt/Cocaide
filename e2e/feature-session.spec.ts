@@ -71,10 +71,13 @@ test("Fillet: command-first, edges picked into the session, the radius handle dr
   await expect(page.getByTestId("handle-label-fillet_1:radius")).toHaveText(/^Radius \d+ mm$/);
   await waitForRebuild(page);
   await shot(page, "fillet-preview");
+  // In the session, undo would take back the last change (the drag).
+  await expect(page.getByTestId("undo")).toHaveAttribute("title", /^Undo: the last change to fillet_1/);
   await page.getByTestId("session-ok").click();
   await expect(page.getByTestId("session-bar")).toHaveCount(0);
   expect(await feature(page, "fillet_1")).toBeTruthy();
-  // One undo takes the whole fillet away.
+  // One undo takes the whole fillet away: its tooltip names the step.
+  await expect(page.getByTestId("undo")).toHaveAttribute("title", /^Undo: Add fillet_1/);
   await page.getByTestId("undo").click();
   await expect.poll(async () => await feature(page, "fillet_1")).toBeUndefined();
   await waitForRebuild(page);
@@ -222,6 +225,16 @@ test("smart selection: a top edge's tangency chain on a box with rounded corners
   await page.getByTestId("ctx-select-tangency").click();
   await expect(page.getByTestId("selection")).toContainText("8 edges");
   await shot(page, "tangency-chain");
+  // As a command too: one edge selected, the palette's "Select the tangency chain" grows it.
+  await page.keyboard.press("Escape");
+  await viewportClick(page, [0, -10, 10]);
+  await expect(page.getByTestId("selection")).toContainText("straight edge");
+  await page.getByTestId("viewport").hover();
+  await page.keyboard.press("Control+k");
+  await page.getByTestId("palette-input").fill("tangency chain");
+  await expect(page.getByTestId("palette-item-select.tangency")).toBeVisible();
+  await page.getByTestId("palette-input").press("Enter");
+  await expect(page.getByTestId("selection")).toContainText("8 edges");
   // In a fillet session, one click with tangent propagation on takes the chain too.
   await page.keyboard.press("Escape");
   await page.getByTestId("tool-fillet").click();

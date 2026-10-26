@@ -89,7 +89,7 @@ import { SupersededError } from "../worker/client";
 import type { SessionPreview } from "../worker/protocol";
 import type { MeshData } from "../kernel/mesh";
 import { useFeatureSession } from "./model/useSession";
-import { convexity, faceEdgesOf, faceLoopNear, loopOf, passes, tangencyChain, tangentFaces } from "./model/smartSelect";
+import { convexity, faceEdgesOf, faceLoopNear, faceLoops, loopOf, passes, tangencyChain, tangentFaces } from "./model/smartSelect";
 import { promptLine, type ActiveFieldSummary } from "./props/picking";
 import { mergePatch, sessionLabel } from "./model/session";
 import { DEFAULT_EDGE_OPTIONS, type EdgeOptions } from "./props/pickFields";
@@ -267,6 +267,8 @@ export function App() {
       ...(datums.length ? { datums } : {}),
     };
   }, [session, activeField]);
+  // Undo's tooltip: in a session, the last change within it (or, with none, the session itself: undo then cancels it).
+  const undoTip = session ? (d.transaction?.canUndoWithin ? `the last change to ${session.id}` : `${sessionLabel(session)} (cancels it)`) : d.undoLabel;
   const sessionFilter = useMemo<SelectFilter | null>(() => (session && activeField?.takes.length ? new Set(activeField.takes) : null), [session, activeField]);
   /** The session link the property panel's selection fields work through. */
   const sessionLink: SessionLink = {
@@ -1227,6 +1229,10 @@ export function App() {
               : f && kind === "faceLoop"
                 ? edges(faceLoopNear(v, f.index, f.point))
                 : [];
+    takeSmart(picked);
+  };
+  /** What a smart selection found: into the session's active field, or as the selection. */
+  const takeSmart = (picked: PickTarget[]) => {
     if (!picked.length) return;
     if (sessionRef.current) {
       const r = pickRouter.current ? pickRouter.current.box(picked) : "none";
@@ -1236,6 +1242,27 @@ export function App() {
     setSelection({ faces: picked.flatMap((p) => (p.kind === "face" ? [p.index] : [])), edges: picked.flatMap((p) => (p.kind === "edge" ? [p.index] : [])) });
     setNotice({ kind: "info", text: `Selected ${picked.length} ${picked[0].kind === "face" ? "face" : "edge"}${picked.length === 1 ? "" : "s"}.` });
   };
+  /**
+   * The smart selections as commands (the palette, or a key bound in
+   * Settings): grown from what is selected, or, in a session, from what the
+   * active field holds.
+   */
+  const smartCommand = (kind: "tangency" | "loop" | "faceEdges" | "tangentFaces") => {
+    const v = sessionRef.current ? pickView : view;
+    if (!v) return;
+    const held = sessionRef.current ? (activeField?.items ?? []) : null;
+    const edges = held ? held.flatMap((t) => (t.kind === "edge" ? [t.index] : [])) : selection.edges;
+    const faces = held ? held.flatMap((t) => (t.kind === "face" ? [t.index] : [])) : selection.faces;
+    const asEdges = (list: number[]): PickTarget[] => [...new Set(list)].map((index) => ({ kind: "edge", index, point: v.edges[index]?.mid ?? [0, 0, 0] }));
+    if (kind === "tangency" || kind === "loop") {
+      if (!edges.length) return setNotice({ kind: "info", text: kind === "tangency" ? "Select an edge first: its tangency chain is selected." : "Select an edge first: the loop it is in is selected." });
+      return takeSmart(asEdges(kind === "tangency" ? edges.flatMap((e) => tangencyChain(v, e)) : loopOf(v, edges[0])));
+    }
+    if (!faces.length) return setNotice({ kind: "info", text: kind === "faceEdges" ? "Select a face first: its edges are selected." : "Select a face first: the faces tangent to it are selected." });
+    if (kind === "faceEdges") return takeSmart(asEdges(faces.flatMap((f) => faceLoops(v, f).flat())));
+    takeSmart([...new Set(faces.flatMap((f) => tangentFaces(v, f)))].map((index): PickTarget => ({ kind: "face", index, point: v.faces[index]?.centroid ?? [0, 0, 0] })));
+  };
+  const SMART_COMMANDS = { "select.tangency": "tangency", "select.loop": "loop", "select.faceEdges": "faceEdges", "select.tangentFaces": "tangentFaces" } as const;
   /** The smart selection entries of a right-click on an edge or a face. */
   const smartEntries = (target: PickTarget): MenuEntry[] => {
     if (target.kind === "edge") {
@@ -1642,6 +1669,7 @@ export function App() {
             palette: () => setPaletteOpen(true),
             ...Object.fromEntries(FILTER_KINDS.map((f) => [f.command, () => setFilter((x) => toggleFilter(x, f.kind))])),
             "select.clear": () => setFilter(NO_FILTER),
+            ...Object.fromEntries(Object.entries(SMART_COMMANDS).map(([id, kind]) => [id, () => smartCommand(kind)])),
             "rollback.previous": rollPrevious,
             "rollback.next": rollNext,
             "rollback.end": rollEnd,
@@ -1688,6 +1716,7 @@ export function App() {
       ...COMMANDS.filter((c) => c.group === "View" && !c.planned).map((c) => entry(c.id, "View", () => viewCommands.current?.(c.id))),
       ...FILTER_KINDS.map((f) => entry(f.command, "Selection", () => setFilter((x) => toggleFilter(x, f.kind)))),
       entry("select.clear", "Selection", () => setFilter(NO_FILTER)),
+      ...Object.entries(SMART_COMMANDS).map(([id, kind]) => entry(id, "Selection", () => smartCommand(kind))),
       entry("rollback.previous", "History", rollPrevious, { disabled: bar === 0 ? "The bar is at the top" : undefined }),
       entry("rollback.next", "History", rollNext, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
       entry("rollback.end", "History", rollEnd, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
@@ -1848,7 +1877,7 @@ export function App() {
           </div>
         )}
         {!sketch && mode === "model" && (
-          <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} />
+          <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
 
         {notice && (
