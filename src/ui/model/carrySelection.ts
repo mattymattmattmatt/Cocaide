@@ -41,3 +41,24 @@ export function carrySelection(
   if (body) return { faces: bodyFaces(body), edges: [], ...(datums.length ? { datums } : {}) };
   return datums.length ? { faces: [], edges: [], datums } : EMPTY_SELECTION;
 }
+
+type Vec3 = readonly [number, number, number] | readonly number[];
+interface SolidShape {
+  faces: readonly { type: string; area: number; centroid: Vec3 }[];
+  edges: readonly { length: number; mid: Vec3 }[];
+}
+
+/**
+ * Is the new solid the old one again (a rebuild of the same part: an OK that
+ * changed nothing, a session closed)? Every face and edge where it was, in
+ * the same order: the selection's indices still mean what they did, so it
+ * stays as it is.
+ */
+export function sameSolid(before: SolidShape | null, after: SolidShape): boolean {
+  if (!before || before.faces.length !== after.faces.length || before.edges.length !== after.edges.length) return false;
+  const near = (a: Vec3, b: Vec3) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 1e-9;
+  return (
+    before.faces.every((f, i) => f.type === after.faces[i].type && Math.abs(f.area - after.faces[i].area) < 1e-9 && near(f.centroid, after.faces[i].centroid)) &&
+    before.edges.every((e, i) => Math.abs(e.length - after.edges[i].length) < 1e-9 && near(e.mid, after.edges[i].mid))
+  );
+}

@@ -80,7 +80,7 @@ import { makeToolCtx } from "./model/context";
 import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
 import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
-import { carrySelection } from "./model/carrySelection";
+import { carrySelection, sameSolid } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, EvaluatePanel, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
 import { deleteBody } from "./model/tools/bodies";
@@ -450,7 +450,8 @@ export function App() {
         setRebuildMs(ms);
         // Face, edge and vertex indices belong to the previous solid; a whole body picked (Bodies panel) stays picked by name;
         // planes, axes and points are ids, and stay picked while they exist.
-        setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
+        // The same solid again (a session closed, an OK that changed nothing): the selection stays as it is.
+        if (!sameSolid(before, v)) setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
         if (needsFit.current && v.mesh) {
           needsFit.current = false;
           setFitToken((t) => t + 1);

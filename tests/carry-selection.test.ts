@@ -3,7 +3,7 @@
 // when the edit's rebuild arrives (the multibody table-frame mirror bug).
 
 import { describe, expect, it } from "vitest";
-import { carrySelection, wholeBodySelected } from "../src/ui/model/carrySelection";
+import { carrySelection, sameSolid, wholeBodySelected } from "../src/ui/model/carrySelection";
 import { EMPTY_SELECTION } from "../src/ui/model/selection";
 
 const body = (name: string, from: number, to: number) => ({ name, faces: [from, to] as [number, number], edges: [0, 0] as [number, number] });
@@ -36,5 +36,21 @@ describe("the selection across a rebuild", () => {
   it("keeps the planes, axes and points that still exist", () => {
     const sel = { faces: [], edges: [], datums: ["Top", "plane_9"] };
     expect(carrySelection(sel, before, after, (id) => id === "Top")).toEqual({ faces: [], edges: [], datums: ["Top"] });
+  });
+
+  it("knows the same solid built again (a feature session closed): every face and edge where it was", () => {
+    const solid = {
+      faces: [
+        { type: "plane", area: 400, centroid: [0, 0, 20] },
+        { type: "cylinder", area: 125.6, centroid: [5, 0, 10] },
+      ],
+      edges: [{ length: 20, mid: [0, -10, 20] }],
+    };
+    const again = JSON.parse(JSON.stringify(solid)) as typeof solid;
+    expect(sameSolid(solid, again)).toBe(true);
+    expect(sameSolid(null, again)).toBe(false);
+    expect(sameSolid(solid, { ...again, faces: [again.faces[1], again.faces[0]] })).toBe(false);
+    expect(sameSolid(solid, { ...again, edges: [{ length: 20, mid: [0, -10, 21] }] })).toBe(false);
+    expect(sameSolid(solid, { ...again, faces: [again.faces[0]] })).toBe(false);
   });
 });

@@ -156,7 +156,8 @@ test("shells a box from its top face (right-click), then drafts two sides about 
   await viewportClick(page, [10, 0, 10]);
   await viewportClick(page, [0, -10, 10], { shift: true });
   await page.getByTestId("tool-draft").click();
-  const draft = ((await savedDocument(page)) as { features: Record<string, unknown>[] }).features.at(-1)!;
+  await expect(page.getByTestId("session-title")).toHaveText("Add draft_1");
+  const draft =((await savedDocument(page)) as { features: Record<string, unknown>[] }).features.at(-1)!;
   expect(draft).toMatchObject({ op: "draft", angle: 1, neutral: { face: { type: "planar", normal: [0, 0, -1] } } });
   expect(draft.faces).toHaveLength(2);
   // The cross-section at height z is (20 - z tan 1°)², less the cavity.

@@ -7,6 +7,7 @@ import { rollbackIndex } from "../doc/rollback";
 import type { FeatureStatus } from "../kernel";
 import { Icon, ICON_NAMES, type IconName } from "./icons";
 import { activeField, holds, nextField, summaryOf, fieldTakes, treeTakes, type PickField } from "./props/picking";
+import type { PickTarget } from "./model/selection";
 import { PickContext, type PickHost, type SessionLink } from "./props/pickHost";
 import { documentParameters, resolveExpressions } from "../doc/parameters";
 import { DEFAULT_BODY, type SketchEntity, type Vec3 } from "../doc/types";
@@ -132,14 +133,29 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
   });
   useEffect(() => () => link.report(null), []); // eslint-disable-line react-hooks/exhaustive-deps
   const current = () => (active ? registry.current.get(active) ?? null : null);
+  /**
+   * The field a click on this goes to: the active one; or, when none is active or the active one takes nothing from
+   * the view (features ticked in the tree), the first field that takes it.
+   */
+  const taking = (t: PickTarget): PickField | null => {
+    const f = current();
+    if (f?.takes.length) return f;
+    return (
+      fields()
+        .filter((x) => !x.onRequest && fieldTakes(x, t))
+        .sort((a, b) => a.order - b.order)[0] ?? f
+    );
+  };
   /** A single choice filled: on to the next field that still needs something. */
   const advance = (f: PickField) => {
     if (["face", "datumRef", "feature", "sketch"].includes(f.kind)) setWanted(undefined);
   };
   link.router.current = {
     pick(t) {
-      const f = current();
+      const f = taking(t);
       if (!f) return "none";
+      // Taken by another field than the active one: that one is active now.
+      if (f.key !== active) setWanted(f.key);
       if (!fieldTakes(f, t)) return `${f.label} doesn't take that: ${f.prompt.toLowerCase()}`;
       const err = f.toggle(t);
       setPickError(err ? { text: err, at: Date.now() } : null);
@@ -168,12 +184,12 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
       if (n) setWanted(n.key);
     },
     hint(t) {
-      const f = current();
+      const f = taking(t);
       if (!f || !fieldTakes(f, t)) return null;
       return holds(f.items, t) ? `Click to take it out of ${f.label}` : `Click to add it to ${f.label}`;
     },
     reach(t) {
-      const f = current();
+      const f = taking(t);
       return f?.reach && fieldTakes(f, t) ? f.reach(t) : null;
     },
   };

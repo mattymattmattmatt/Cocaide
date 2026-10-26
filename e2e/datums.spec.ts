@@ -44,6 +44,8 @@ test("an offset plane from Top, a sketch on it, extruded: the body sits at the o
   await commit(page, "prop-distance", "10");
   // The plate is 0..6; the cylinder 20..30 above it.
   await expect(boundingBox(page)).toHaveText("80 × 40 × 30 mm");
+  // OK keeps the extrude (Phase P wave 2: it opened with OK and Cancel) before the plane is picked in the tree.
+  await okFeature(page);
   // Move the plane and the cylinder goes with it.
   await page.getByTestId("feature-plane_1").locator(".feature-row").click();
   await commit(page, "prop-distance", "40");

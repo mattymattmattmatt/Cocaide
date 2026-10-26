@@ -132,9 +132,10 @@ test("undo returns the previous solid, redo brings it back", async ({ page }) =>
   await expect(page.getByTestId("holes")).toHaveText("1 × Ø13.5");
   await page.getByTestId("undo").click(); // centre y
   await page.getByTestId("undo").click(); // centre x
-  await page.keyboard.press("Control+Shift+z");
-  await page.keyboard.press("Control+Shift+z");
-  await page.keyboard.press("Control+Shift+z");
+  // The toolbar's Redo: the keys would go to the diameter field, which keeps the focus while its panel stays open.
+  await page.getByTestId("redo").click();
+  await page.getByTestId("redo").click();
+  await page.getByTestId("redo").click();
   await expectVolume(page, BRACKET);
   await okFeature(page);
 
