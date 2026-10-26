@@ -170,7 +170,7 @@ describe("the plane drawn in 3D, the grid's extent and the page's framing", () =
       { id: "l1", type: "line", start: [0, 0], end: [10, 0] },
       { id: "p1", type: "point", at: [5, 5] },
       { id: "ax", type: "line", start: [-500, 0], end: [500, 0], ref: { datum: "X" }, construction: true },
-      { id: "fx", type: "line", start: [30, -500], end: [30, 500], ref: { face: { type: "cylinder", pick: "largest" } }, construction: true } as SketchEntity,
+      { id: "fx", type: "line", start: [30, -500], end: [30, 500], ref: { face: { type: "cylinder", pick: "largest" } }, construction: true } as unknown as SketchEntity,
     ];
     const pts = sketchWorldPoints(ents, TOP6);
     expect(pts).toEqual([0, 0, 6, 10, 0, 6, 5, 5, 6]);
