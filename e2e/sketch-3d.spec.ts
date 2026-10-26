@@ -244,3 +244,40 @@ test("an empty sketch finished adds nothing, and says so; one in the document re
   await page.getByTestId("feature-sketch_1").locator(".feature-row").click();
   await expect(page.getByText("Empty sketch")).toBeVisible();
 });
+
+test("turned: a corner below the plane is a point to draw from; the plane drawn grows with the sketch; perspective says why it stays off", async ({ page }) => {
+  await bracket(page);
+  // Perspective was on before the sketch: forced orthographic while it is open, and the button says why.
+  await page.getByTestId("view-perspective").click();
+  const perspective = () => page.evaluate(() => (window as unknown as Hook).__cocaideViewport.display().perspective);
+  expect(await perspective()).toBe(true);
+  await viewportClick(page, [-10, 0, 6]);
+  await page.getByTestId("tool-sketch").click();
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  expect(await perspective()).toBe(false);
+  await page.getByTestId("view-perspective").click();
+  await expect(page.getByTestId("notice")).toContainText("A sketch is drawn in an orthographic view");
+  expect(await perspective()).toBe(false);
+
+  // Turned to see the plate's underside corner (-40, -20, 0): its upright edge is square to the top face, but the corner is a point.
+  await turn(page, 120, 70);
+  await page.getByTestId("tool-grid").click();
+  await page.getByTestId("tool-line").click();
+  const [cx, cy] = await project(page, [-40, -20, 0]);
+  await page.mouse.move(cx, cy);
+  await expect(page.getByTestId("scene-hover")).toHaveClass(/hover/);
+  await expect(page.getByTestId("scene-tip")).toHaveCount(0);
+  await page.mouse.click(cx, cy);
+  await sketchClick(page, -10, 45);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("constraint-list")).toContainText(/l1 start ≡ model edge \(straight, \d+ mm, [+-][XY]\) (start|end)/);
+  // The plane drawn in the view reaches past the line's far end (45 mm up the sketch's y), as the grid does.
+  const plane = await page.evaluate(() => (window as unknown as { __cocaideViewport: { sketchPlane(): number[][] | null } }).__cocaideViewport.sketchPlane());
+  expect(Math.max(...plane!.map((p) => p[1]))).toBeGreaterThan(45);
+
+  await page.getByTestId("finish-sketch").click();
+  await waitForRebuild(page);
+  await expect.poll(perspective).toBe(true);
+  const line = (await lastFeature(page)).entities.find((e) => e.type === "line" && !e.ref) as { start: number[] };
+  line.start.forEach((x, i) => expect(x).toBeCloseTo([-40, -20][i], 6));
+});

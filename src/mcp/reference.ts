@@ -417,7 +417,10 @@ Wherever a plane, an axis or a point is needed by reference (a sketch's or a mir
 Examples of the sketch form: a revolve about a sketch's centreline { "axis": { "sketch": "sk_profile", "entity": "l5" } };
 an axis feature along a sketch line { "op": "axis", "mode": "edge", "refs": [{ "sketch": "sk_layout", "entity": "l1" }] };
 a point at a circle's centre { "op": "point", "mode": "center", "refs": [{ "sketch": "sk_layout", "entity": "c1" }] };
-a circular pattern about a sketch circle's axis { "axis": { "ref": { "sketch": "sk_layout", "entity": "c2" } } }.
+a circular pattern about a sketch circle's axis { "axis": { "ref": { "sketch": "sk_layout", "entity": "c2" } } };
+a plane square to a path sketch's line at its end (for a sweep's profile) { "op": "plane", "mode": "normalToEdge",
+"refs": [{ "sketch": "sk_path", "entity": "l1" }], "t": 1 }, or a point along an arc { "op": "point", "mode": "onEdge",
+"refs": [{ "sketch": "sk_path", "entity": "a1" }], "t": 0.5 }.
 Renaming the sketch rewrites these references; deleting it, or an entity they name, is refused until they change.
 Faces and edges are found again on every rebuild, so what stands on them follows the model. A part's packet lists
 its reference geometry (part.referenceGeometry: the defaults, and each plane, axis and point feature with its frame

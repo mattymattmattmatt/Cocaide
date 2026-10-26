@@ -13,7 +13,7 @@ import { allErrors, validateDocument } from "../src/doc/validate";
 import { possibleKinds, sketchRefKinds, sketchRefText } from "../src/features/datum";
 import { planeFrame } from "../src/geom/frame";
 import { projectEdge } from "../src/geom/projection";
-import { sketchEntityDatum, sketchEntityEdge, sketchEntityPoint2 } from "../src/geom/sketchEdge";
+import { sketchEntityDatum, sketchEntityEdge, sketchEntityPlace, sketchEntityPoint2 } from "../src/geom/sketchEdge";
 import { loadOC, rebuild, type OC } from "../src/kernel";
 import { danglingRefs, isModelId, isSketchStandIn, materialize, modelEdge, modelEntities, modelView, sketchStandIn, standInSource } from "../src/ui/sketcher/model";
 import { namer, referenceName } from "../src/ui/sketcher/names";
@@ -201,6 +201,45 @@ describe("another sketch's entity as reference geometry", () => {
     expect(projectEdge(upright, top).ok).toBe(false);
     expect(sketchEntityEdge({ id: "r1", type: "rect", center: [0, 0], w: 1, h: 1 }, top)).toMatch(/r1 is a rect: another sketch's lines, circles, arcs and points can be referenced/);
   });
+
+  it("a place along it (what a plane square to it and a point on it stand on): at t, or nearest a point, with the way it runs there", () => {
+    const top = planeFrame([0, 0, 1], [0, 0, 0]);
+    // A line: t of the way from its start, along it; nearest a point off it (above the plane too), held to its ends.
+    const along = sketchEntityPlace(line, tilted, { t: 0.25 });
+    if (typeof along === "string") throw new Error(along);
+    close(along.at, [10, 10 * c, 5 + 10 * s]);
+    close(along.tangent, [0, c, s]);
+    const near = sketchEntityPlace(line, top, { near: [3, 30, 50] });
+    if (typeof near === "string") throw new Error(near);
+    close(near.at, [10, 30, 0]);
+    expect(near.t).toBeCloseTo(0.75, 12);
+    const past = sketchEntityPlace(line, top, { near: [10, -5, 0] });
+    if (typeof past !== "string") expect(past.t).toBe(0);
+    // A counter-clockwise quarter arc about [-20, 0] from [-10, 0]: halfway is at 45°, running at 135°.
+    const half = sketchEntityPlace(arc, top, { t: 0.5 });
+    if (typeof half === "string") throw new Error(half);
+    close(half.at, [-20 + 10 * Math.SQRT1_2, 10 * Math.SQRT1_2, 0]);
+    close(half.tangent, [-Math.SQRT1_2, Math.SQRT1_2, 0]);
+    // A clockwise one from [0, 10] to [10, 0] about the origin: its start runs toward +X.
+    const start = sketchEntityPlace(cw, top, { t: 0 });
+    if (typeof start === "string") throw new Error(start);
+    close(start.tangent, [1, 0, 0]);
+    // Nearest a point at 30° (on the clockwise arc, two thirds of the way round from 90° to 0°).
+    const third = sketchEntityPlace(cw, top, { near: [Math.cos(Math.PI / 6) * 50, Math.sin(Math.PI / 6) * 50, 7] });
+    if (typeof third === "string") throw new Error(third);
+    expect(third.t).toBeCloseTo(2 / 3, 12);
+    close(third.at, [10 * Math.cos(Math.PI / 6), 10 * Math.sin(Math.PI / 6), 0]);
+    // Off the arc's sweep: its nearer end (a point at 200° is nearer the quarter arc's end at 90° than its start at 0°? 110° v 160°).
+    const off = sketchEntityPlace(arc, top, { near: [-20 + Math.cos((200 * Math.PI) / 180), Math.sin((200 * Math.PI) / 180), 0] });
+    if (typeof off !== "string") expect(off.t).toBe(1);
+    // A circle runs from angle 0 counter-clockwise: a quarter of the way is at 90°, running toward -X.
+    const quarter = sketchEntityPlace({ id: "c1", type: "circle", center: [0, 0], radius: 5 }, top, { t: 0.25 });
+    if (typeof quarter === "string") throw new Error(quarter);
+    close(quarter.at, [0, 5, 0]);
+    close(quarter.tangent, [-1, 0, 0]);
+    expect(sketchEntityPlace({ id: "p1", type: "point", at: [0, 0] }, top, { t: 0 })).toMatch(/p1 is a point: it has no length to go along/);
+    expect(sketchEntityPlace({ id: "r1", type: "rect", center: [0, 0], w: 1, h: 1 }, top, { t: 0 })).toMatch(/r1 is a rect/);
+  });
 });
 
 // ------------------------------------------------------------------ rebuild
@@ -268,6 +307,36 @@ describe("the rebuild resolves sketch entities and re-projects references to the
     }
   });
 
+  it("a plane square to a sketch line or arc (at t, or through a point), a point along one; a line has no centre", () => {
+    const d = doc(
+      sketchA,
+      // Square to l1 (x = 10, y 0..40 on Top) a quarter of the way along: the plane y = 10, its normal along the line.
+      { id: "pl", op: "plane", mode: "normalToEdge", refs: [{ sketch: "sketch_a", entity: "l1" }], t: 0.25 },
+      // Square to the quarter arc a1 where it passes nearest a point at 45° above it: through that point, normal along the arc there.
+      { id: "pa", op: "plane", mode: "normalToEdge", refs: [{ sketch: "sketch_a", entity: "a1" }, { point: [-10, 10, 7] }] },
+      { id: "po", op: "point", mode: "onEdge", refs: [{ sketch: "sketch_a", entity: "l1" }] },
+      { id: "pq", op: "point", mode: "onEdge", refs: [{ sketch: "sketch_a", entity: "c1" }], t: 0.5 },
+    );
+    expect(errorsOf(d)).toEqual([]);
+    const b = built(d);
+    expect(b.errors).toEqual([]);
+    const pl = b.datums.pl as { kind: string; origin: Vec3; normal: Vec3 };
+    expect(pl.kind).toBe("plane");
+    close(pl.origin, [10, 10, 0]);
+    close(pl.normal, [0, 1, 0]);
+    const pa = b.datums.pa as { origin: Vec3; normal: Vec3 };
+    close(pa.origin, [-10, 10, 7]);
+    close(pa.normal, [-Math.SQRT1_2, Math.SQRT1_2, 0]);
+    expect(b.datums.po).toEqual({ kind: "point", at: [10, 20, 0] });
+    close((b.datums.pq as { at: Vec3 }).at, [-45, 20, 0]);
+    // A whole sketch entity only, as for an edge; a point has no length; a line has no centre (said plainly, not asking for an "at").
+    expect(errorsOf(doc(sketchA, { id: "pl", op: "plane", mode: "normalToEdge", refs: [{ sketch: "sketch_a", entity: "l1", at: "end" }] })).join("\n")).toMatch(/the end of sketch_a's l1 is a point, but an axis is needed here/);
+    const pointRef = built(doc(sketchA, { id: "po", op: "point", mode: "onEdge", refs: [{ sketch: "sketch_a", entity: "p1" }] }));
+    expect(pointRef.features.find((f) => f.id === "po")?.error).toMatch(/refs\[0\]: p1 is a point: it has no length to go along/);
+    const centre = built(doc(sketchA, { id: "pc", op: "point", mode: "center", refs: [{ sketch: "sketch_a", entity: "l1" }] }));
+    expect(centre.features.find((f) => f.id === "pc")?.error).toMatch(/refs\[0\]: sketch_a's l1 is a line, so it has no centre: pick a circle or arc of the sketch, or use mode "onEdge"/);
+  });
+
   it("a suppressed referenced sketch fails what references it, saying so", () => {
     const d = doc({ ...sketchA, suppressed: true }, sketchB);
     const b = built(d);
@@ -330,6 +399,10 @@ describe("the AI reference documents the sketch form", () => {
   it("with examples", () => {
     expect(REFERENCE).toContain('{ "sketch": "<id>", "entity": "<entity id>", "at": "start" | "end" | "mid" | "center" (optional) }');
     expect(REFERENCE).toContain('"ref": { "sketch": "sk_base", "entity": "l2" }');
+    // A plane square to a path sketch's line at its end, as the reference writes it, is a valid feature.
+    expect(REFERENCE).toContain('"refs": [{ "sketch": "sk_path", "entity": "l1" }], "t": 1 }');
+    const path = { id: "sk_path", op: "sketch", plane: { type: "datum", normal: [0, -1, 0], origin: [0, 0, 0] }, entities: [{ id: "l1", type: "line", start: [0, 0], end: [0, 50] }], constraints: [] };
+    expect(errorsOf(doc(path, { id: "end", op: "plane", mode: "normalToEdge", refs: [{ sketch: "sk_path", entity: "l1" }], t: 1 }))).toEqual([]);
     const v: Vec3 = [0, 0, 0];
     expect(v).toHaveLength(3);
   });
