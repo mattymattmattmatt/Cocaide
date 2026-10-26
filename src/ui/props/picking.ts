@@ -16,6 +16,7 @@ import type { EdgeInfo, FaceInfo } from "../../kernel/topology";
 import type { RebuildView } from "../../worker/protocol";
 import type { FilterKind } from "../evaluate/filter";
 import { only, type PickTarget } from "../model/selection";
+import type { SketchEntityHit } from "../model/sketchPick";
 import { isDatum, refFromSelection } from "./datumRef";
 
 type Raw = Record<string, unknown>;
@@ -54,6 +55,8 @@ export interface PickField {
   reach?(target: PickTarget): PickTarget[];
   /** A feature clicked in the tree. */
   takeFeature?(id: string): string | null;
+  /** Another sketch's entity clicked in the view (a reference field: { sketch, entity, at? }); the error says why not. */
+  takeSketch?(hit: SketchEntityHit): string | null;
   /** What to pick, for the status line and the empty field: "Pick edges to fillet". */
   prompt: string;
   /** Active only when made so (a click on it, its button), never by default: a fillet's "new radius set". */
@@ -69,10 +72,12 @@ export interface ActiveFieldSummary {
   takes: FilterKind[];
   items: PickTarget[];
   treeOps?: string[] | "any";
+  /** It takes another sketch's entity clicked in the view (a reference field). */
+  sketches?: boolean;
 }
 
 export function summaryOf(f: PickField): ActiveFieldSummary {
-  return { key: f.key, label: f.label, prompt: f.prompt, count: f.count, takes: f.takes, items: f.items, ...(f.treeOps ? { treeOps: f.treeOps } : {}) };
+  return { key: f.key, label: f.label, prompt: f.prompt, count: f.count, takes: f.takes, items: f.items, ...(f.treeOps ? { treeOps: f.treeOps } : {}), ...(f.takeSketch ? { sketches: true } : {}) };
 }
 
 /** "Pick edges to fillet — 2 picked". */

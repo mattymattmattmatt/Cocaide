@@ -192,6 +192,18 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
       const f = taking(t);
       return f?.reach && fieldTakes(f, t) ? f.reach(t) : null;
     },
+    sketch(hit) {
+      const f = current();
+      const taker = f?.takeSketch ? f : fields()
+        .filter((x) => x.takeSketch && !x.onRequest)
+        .sort((a, b) => a.order - b.order)[0];
+      if (!taker?.takeSketch) return "none";
+      if (taker.key !== active) setWanted(taker.key);
+      const err = taker.takeSketch(hit);
+      setPickError(err ? { text: err, at: Date.now() } : null);
+      if (!err) advance(taker);
+      return err;
+    },
   };
   const host: PickHost = {
     active,

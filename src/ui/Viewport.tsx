@@ -36,6 +36,7 @@ import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
 import { PreviewLayer, type PreviewLook } from "./viewport/preview";
+import { sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
 import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
 import { SectionCaps, type CapSource } from "./viewport/sectionCaps";
 import { clipMaterial, clipPlanesOf, SectionPlanes } from "./viewport/sectionLayer";
@@ -177,6 +178,8 @@ interface Props {
   peek?: PickTarget[] | null;
   /** What a click on the edge under the pointer would take with it (a session's tangency chain): lit up with it as the preselection. */
   pickReach?: ((target: PickTarget) => PickTarget[] | null) | null;
+  /** A session's reference field takes other sketches' entities: a click on one drawn in the view goes to it first (true: taken). */
+  sketchPick?: ((hit: SketchEntityHit) => boolean) | null;
   /** Phase P wave 2A: a sketch open in the view (see SketchStage). */
   sketch?: SketchStage | null;
 }
@@ -320,6 +323,7 @@ export function Viewport({
   pickHint = null,
   peek: peekList = null,
   pickReach = null,
+  sketchPick = null,
   sketch = null,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -1664,6 +1668,14 @@ export function Viewport({
         return;
       }
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+      // A session's reference field: another sketch's line, arc, circle or point drawn in the view, before the model under it.
+      if (e.button === 0 && sketchPickRef.current && overlays.visible && shownView?.sketches?.length) {
+        const hit = sketchEntityAt(shownView.sketches, (p) => {
+          const q = project(p);
+          return q ? [q.x, q.y] : null;
+        }, e.clientX, e.clientY);
+        if (hit && sketchPickRef.current(hit)) return;
+      }
       if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
       else if (e.altKey && allows(pickFilter, "face")) {
         // Alt+click: the next face behind the one picked (not while the filter leaves faces out).
@@ -2238,6 +2250,8 @@ export function Viewport({
   pickHintRef.current = pickHint;
   const pickReachRef = useRef(pickReach);
   pickReachRef.current = pickReach;
+  const sketchPickRef = useRef(sketchPick);
+  sketchPickRef.current = sketchPick;
 
   // The reference geometry shown: the default planes and every plane, axis and point that built, each by its
   // eye (a selected one always), sized to the part; the origin's triad by its own eye.

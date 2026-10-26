@@ -8,6 +8,7 @@
 import { createContext, useContext, useEffect, useRef, type MutableRefObject } from "react";
 import type { RebuildView } from "../../worker/protocol";
 import type { PickTarget } from "../model/selection";
+import type { SketchEntityHit } from "../model/sketchPick";
 import type { ActiveFieldSummary, PickField } from "./picking";
 import type { EdgeOptions } from "./pickFields";
 
@@ -68,6 +69,8 @@ export interface PickRouter {
   hint(target: PickTarget): string | null;
   /** What a click on this would take in or out with it (an edge's tangency chain), to light up as the preselection. Null: just itself. */
   reach(target: PickTarget): PickTarget[] | null;
+  /** Another sketch's entity clicked in the view, into the active reference field (or the first that takes one). "none": no field takes it. */
+  sketch(hit: SketchEntityHit): string | null | "none";
 }
 
 /** What the app hands the panel for an open session. */

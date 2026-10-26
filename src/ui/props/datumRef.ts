@@ -6,7 +6,7 @@
 // through rebuilds (a selector or an id, never an index). Pure.
 
 import type { DatumRef, EdgeSelector, FaceSelector, Vec3 } from "../../doc/types";
-import { DATUM_OPS, DEFAULT_DATUMS, type DatumKind } from "../../features/datum";
+import { DATUM_OPS, DEFAULT_DATUMS, sketchRefText, type DatumKind } from "../../features/datum";
 import { formatDirection } from "../../geom/vec";
 import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
 import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
@@ -80,6 +80,14 @@ export function describeRef(ref: unknown, before: Raw[] = []): string {
   if (r.face) return describeWanted(r.face, 1).replace(/^1 /, "the ");
   if (r.edge) return `the ${describeEdgeSelector(r.edge).replace(/ edges\b/, " edge").replace(/^edges\b/, "edge")}${r.at ? `, ${AT_TEXT[r.at]}` : ""}`;
   if (Array.isArray(r.point)) return `the point ${r.point.map((x) => Math.round(Number(x) * 1e4) / 1e4).join(", ")}`;
+  // Another sketch's entity: "sketch_1's l2 (a line)", "the start of sketch_1's l2".
+  const s = ref as Partial<{ sketch: string; entity: string; at: string }>;
+  if (typeof s.sketch === "string" && typeof s.entity === "string") {
+    const sk = before.find((x) => x.id === s.sketch);
+    const type = Array.isArray(sk?.entities) ? (sk.entities as Raw[]).find((e) => e.id === s.entity)?.type : undefined;
+    const text = sketchRefText({ sketch: s.sketch, entity: s.entity, ...(typeof s.at === "string" ? { at: s.at } : {}) });
+    return typeof type === "string" && !s.at ? `${text} (${type === "arc" ? "an arc" : `a ${type}`})` : text;
+  }
   return "a reference this editor can't read";
 }
 

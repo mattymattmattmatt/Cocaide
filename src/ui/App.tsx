@@ -2164,6 +2164,8 @@ export function App() {
                   preview={previewLook}
                   pickHint={session ? (t) => pickRouter.current?.hint(t) ?? null : null}
                   pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
+                  // A reference field active: another sketch's entity clicked in the view goes into it ({ sketch, entity, at? }).
+                  sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : null}
                   peek={peek}
                   onPick={onPick}
                   onContext={onContext}
@@ -2390,7 +2392,8 @@ export function App() {
                         }
                         selection={session?.id === selectedFeature ? sessionClick : selection}
                         dispatch={d.dispatch}
-                        onEditSketch={editSketch}
+                        // A sketch opened from a feature's panel (its Edit sketch): the feature open with OK and Cancel is finished first, as from the tree.
+                        onEditSketch={(id) => void sessionApi.finishFirst(`edit ${id}`, () => editSketch(id))}
                         onSelectFeature={setSelectedFeature}
                         onAsk={contextMenu}
                         onProfileCard={setProfileCard}

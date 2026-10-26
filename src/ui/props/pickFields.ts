@@ -9,6 +9,7 @@ import type { DatumRef, FaceSelector } from "../../doc/types";
 import type { DatumKind } from "../../features/datum";
 import type { RebuildView } from "../../worker/protocol";
 import { only, type PickTarget } from "../model/selection";
+import { sketchRefFor } from "../model/sketchPick";
 import type { EdgeKindFilter } from "../model/smartSelect";
 import { addEdges, edgeList, fieldTakes, holds, refTargets, resolveEdges, resolveFaces, takesForKinds, toggleEdges, toggleFace, toggleId, toggleRef, treeTakes, type PickField } from "./picking";
 import { acceptsOf, asList, fieldValue, featureChoices, type FieldSpec, type FormContext } from "./spec";
@@ -167,6 +168,17 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
           if (next === value) return null;
           return result(commit(next as DatumRef | null));
         },
+        // Another sketch's line, arc, circle or point (one of its ends, its centre): a reference that follows that sketch.
+        ...(spec.pick || (spec.forms && !spec.forms.includes("sketch"))
+          ? {}
+          : {
+              takeSketch(hit: Parameters<NonNullable<PickField["takeSketch"]>>[0]) {
+                const ref = sketchRefFor(hit, accepts);
+                if (typeof ref === "string") return ref;
+                if (JSON.stringify(ref) === JSON.stringify(value)) return spec.optional ? result(commit(null)) : null;
+                return result(commit(ref));
+              },
+            }),
       };
     }
     case "bodies": {
