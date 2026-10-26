@@ -255,6 +255,19 @@ describe("the rebuild resolves sketch entities and re-projects references to the
     expect(b.datums.pe).toEqual({ kind: "point", at: [-20, 0, 0] });
   });
 
+  it("a revolve turns about another sketch's line: a 10 × 10 square 20 from it makes a ring of 2π · 20 · 100", () => {
+    const prof = { id: "prof", op: "sketch", plane: TOP, entities: [{ id: "r1", type: "rect", center: [30, 20], w: 10, h: 10 }], constraints: [] };
+    const d = doc(sketchA, prof, { id: "rev", op: "revolve", sketch: "prof", axis: { sketch: "sketch_a", entity: "l1" } });
+    expect(errorsOf(d)).toEqual([]);
+    const r = rebuild(d, oc);
+    try {
+      expect(r.errors).toEqual([]);
+      expect(r.measurements?.volume).toBeCloseTo(2 * Math.PI * 20 * 100, 6);
+    } finally {
+      r.dispose();
+    }
+  });
+
   it("a suppressed referenced sketch fails what references it, saying so", () => {
     const d = doc({ ...sketchA, suppressed: true }, sketchB);
     const b = built(d);

@@ -135,6 +135,10 @@ test("in a turned view a model edge off the plane is hovered where the view show
   await page.getByTestId("modify-value").fill("2");
   await page.getByTestId("modify-value").press("Enter");
   await expect(page.getByTestId("constraint-list")).toContainText("c1 centre ↔ model edge (straight, 80 mm, +X)");
+  // The picture of a turned sketch: the part shaded, the circle on its plane, the dimension to the back edge upright.
+  await page.getByTestId("tool-select").click();
+  await page.mouse.move(5, 5);
+  await page.screenshot({ path: "out/e2e/sketch-3d-dimension.png" });
   await page.getByTestId("finish-sketch").click();
   await waitForRebuild(page);
   const f = await lastFeature(page);
