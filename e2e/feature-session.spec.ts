@@ -301,6 +301,23 @@ test("another sketch's line, clicked in the view, goes into a revolve's axis fie
   await expect(page.getByTestId("session-bar")).toHaveCount(0);
 });
 
+test("a sketch and a feature session never run together: a fillet still waiting for edges is asked about first, and keys go to the sketch", async ({ page }) => {
+  await page.getByTestId("tool-fillet").click();
+  await expect(page.getByTestId("session-bar")).toBeVisible();
+  await page.getByTestId("tool-sketch").click();
+  await page.getByTestId("plane-top").click();
+  // It can't be kept as it is (no edges yet): asked, then cancelled; the sketch opens alone.
+  await expect(page.getByTestId("session-guard")).toBeVisible();
+  await page.getByTestId("guard-cancel").click();
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  expect(await feature(page, "fillet_1")).toBeUndefined();
+  // Enter in the sketch is the sketch's: no feature opens again (the last tool is not repeated), the sketch stays open.
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
+  await expect(page.getByTestId("finish-sketch")).toBeVisible();
+});
+
 async function openDocument(page: Page, doc: Raw) {
   const text = JSON.stringify(doc, null, 2);
   await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
