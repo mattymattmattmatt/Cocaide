@@ -82,7 +82,7 @@ export function featureDimensions(id: string, resolved: Raw[], features: Raw[], 
   }
 
   // The feature's own numbers: along its arrows.
-  for (const h of featureHandles(f, rawF, view)) {
+  for (const h of featureHandles(f, rawF, view).filter((x): x is typeof x & { key: "distance" | "direction2.distance" } => !x.kind && (x.key === "distance" || x.key === "direction2.distance"))) {
     const tip = handleTip(h);
     const base = h.key === "distance" && h.scale === 2 ? add3(h.origin, scale3(h.dir, -h.value / 2)) : h.origin;
     const rawValue = h.key === "distance" ? rawF.distance : (rawF.direction2 as Raw | undefined)?.distance;

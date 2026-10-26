@@ -25,7 +25,8 @@ import {
 } from "./evaluate/display";
 import type { Dimension3D } from "./evaluate/dimensions3d";
 import { allows, boxOf, boxSelect, FILTER_KINDS, NO_FILTER, type Projected, type SelectFilter } from "./evaluate/filter";
-import { alongAxis, dragValue, type HandleSpec } from "./evaluate/handles";
+import { beginDrag, moveDrag, type HandleDrag, type HandleSpec, type HandleValue } from "./evaluate/handles";
+import { loadSpin } from "./sketcher/modify";
 import { activePlanes, cutsBody, offsetArrow, sectionPlane, setPlane, type SectionView } from "./evaluate/section";
 import { Icon, type IconName } from "./icons";
 import { inputPrefs, keyHint, pointer, useCommands, useInputPrefs } from "./input";
@@ -110,7 +111,7 @@ interface Props {
   onDimension?(d: Dimension3D, clientX: number, clientY: number): void;
   /** Drag handles (direct manipulation), and what dragging one does: start, the value as it moves, end or cancel. */
   handles?: HandleSpec[];
-  onHandle?(h: HandleSpec, phase: HandlePhase, value: number): void;
+  onHandle?(h: HandleSpec, phase: HandlePhase, value: HandleValue): void;
   /** A click on a handle's value: type one there. */
   onHandleLabel?(h: HandleSpec, clientX: number, clientY: number): void;
   /** The selection filter: only these kinds are picked (empty: anything). */
@@ -1364,7 +1365,7 @@ export function Viewport({
     const targetKey = (t: PickTarget | null) => (!t ? "" : t.kind === "datum" ? `d:${t.id}` : t.kind === "vertex" ? `v:${t.edge}:${t.at}` : `${t.kind}:${t.index}`);
     const sameTarget = (a: PickTarget | null, b: PickTarget | null) => targetKey(a) === targetKey(b);
     // A handle being dragged: which one, how far along its arrow the drag started, and the value now.
-    let drag: { h: HandleSpec; t0: number; value: number; id: number } | null = null;
+    let drag: { g: HandleDrag; h: HandleSpec; value: HandleValue; id: number } | null = null;
     // Zoom to area: the next left-drag draws the area to zoom to (Esc or the button again cancels).
     let areaOn = false;
     const setArea = (on: boolean) => {
@@ -1501,13 +1502,13 @@ export function Viewport({
       }, 50);
     };
     /** A section arrow dragged: its plane's offset, live; cancelled, back to where it was. */
-    const dragSection = (h: HandleSpec, phase: HandlePhase, value: number) => {
+    const dragSection = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => {
       const v = live.current.section;
       const i = h.plane ?? 0;
-      if (!v?.planes[i]) return;
+      if (!v?.planes[i] || typeof value !== "number") return;
       live.current.onSection?.(setPlane(v, i, { ...v.planes[i], offset: phase === "cancel" ? h.value : value }));
     };
-    const handleEvent = (h: HandleSpec, phase: HandlePhase, value: number) => (h.kind === "section" ? dragSection(h, phase, value) : live.current.onHandle?.(h, phase, value));
+    const handleEvent = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => (h.kind === "section" ? dragSection(h, phase, value) : live.current.onHandle?.(h, phase, value));
 
     // Handles are grabbed before anything else sees the press (the controls would turn the view, a click would pick).
     const handleDown = (e: PointerEvent) => {
@@ -1520,30 +1521,34 @@ export function Viewport({
         live.current.onMessage?.(`${h.label}: ${h.locked}.`);
         return;
       }
+      // A flip button: a click turns the direction round (no drag).
+      if (h.kind === "flip") {
+        handleEvent(h, "end", h.value);
+        return;
+      }
       aim(e.clientX, e.clientY);
-      const t0 = alongAxis(h.origin, h.dir, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3);
-      if (t0 === null) {
-        live.current.onMessage?.("That arrow points straight at you: turn the view a little to drag it.");
+      const g = beginDrag(h, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3);
+      if (!g) {
+        live.current.onMessage?.(h.kind === "angle" || h.kind === "point" ? "You are looking along that handle's plane: turn the view a little to drag it." : "That arrow points straight at you: turn the view a little to drag it.");
         return;
       }
       finishGlide();
-      drag = { h, t0, value: h.value, id: e.pointerId };
+      drag = { g, h, value: g.start, id: e.pointerId };
       el.setPointerCapture?.(e.pointerId);
       renderer.domElement.style.cursor = "grabbing";
       hovered = null;
       setHover(null);
-      evalLayer.setHandles(allHandles(), { h, value: h.value });
-      handleEvent(h, "start", h.value);
+      evalLayer.setHandles(allHandles(), { h, value: g.start });
+      handleEvent(h, "start", g.start);
       render();
     };
     const handleMove = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.id) return;
       e.stopPropagation();
       aim(e.clientX, e.clientY);
-      const t = alongAxis(drag.h.origin, drag.h.dir, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3);
-      if (t === null) return;
-      const value = dragValue(drag.h, drag.h.value, t - drag.t0, e.shiftKey);
-      if (value === drag.value) return;
+      // Snapped to the steps in Settings (Units: the spin steps), Shift for a tenth of them.
+      const value = moveDrag(drag.g, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3, e.shiftKey, loadSpin());
+      if (value === null || JSON.stringify(value) === JSON.stringify(drag.value)) return;
       drag.value = value;
       evalLayer.setHandles(allHandles(), { h: drag.h, value });
       handleEvent(drag.h, "move", value);
@@ -1556,7 +1561,7 @@ export function Viewport({
       if ("pointerId" in e && el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
       renderer.domElement.style.cursor = "";
       evalLayer.setHandles(allHandles(), null);
-      handleEvent(d.h, phase, phase === "end" ? d.value : d.h.value);
+      handleEvent(d.h, phase, phase === "end" ? d.value : d.g.start);
       render();
     };
     const handleUp = (e: PointerEvent) => {

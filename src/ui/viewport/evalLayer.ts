@@ -11,7 +11,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { Vec3 } from "../../doc/types";
 import type { Dimension3D } from "../evaluate/dimensions3d";
-import { handleText, handleTip, rulerStep, type HandleSpec } from "../evaluate/handles";
+import { arcPoints, handleText, handleTip, rulerStep, type HandleSpec, type HandleValue } from "../evaluate/handles";
 
 /** The measured line(s) and points, and a centre of mass. */
 export interface EvalOverlay {
@@ -33,6 +33,12 @@ const DIM_COLOR = 0x1c7ed6;
 const HANDLE_COLOR = 0x1971c2;
 const HANDLE_HOT = 0xf08c00;
 const LOCKED_COLOR = 0x868e96;
+/** A pattern's count knob, and a flip button. */
+const COUNT_COLOR = 0x0c8599;
+const FLIP_COLOR = 0x5c7cfa;
+/** An arc's ball and a point's disc on screen, pixels. */
+const BALL_PX = 13;
+const POINT_PX = 18;
 /** The arrow's length and head on screen, pixels. */
 const ARROW_PX = 46;
 const HEAD_PX = 14;
@@ -54,8 +60,9 @@ export class EvalLayer {
   private readonly fat: LineMaterial[];
   private handles: HandleSpec[] = [];
   private hot: string | null = null;
-  private dragging: { h: HandleSpec; value: number } | null = null;
-  private readonly arrows = new Map<string, { shaft: THREE.Mesh; head: THREE.Mesh; mat: THREE.MeshBasicMaterial }>();
+  private dragging: { h: HandleSpec; value: HandleValue } | null = null;
+  /** Each handle's pieces (an arrow's shaft and head; an arc, its spoke and ball; a disc and ring; a flip's two heads) and their materials. */
+  private readonly arrows = new Map<string, { parts: THREE.Object3D[]; mat: THREE.MeshBasicMaterial; lineMat?: THREE.LineBasicMaterial }>();
 
   constructor(
     host: HTMLElement,
@@ -156,40 +163,84 @@ export class EvalLayer {
   }
 
   /** The drag handles to draw; `dragging` with its live value while one is dragged. */
-  setHandles(handles: HandleSpec[], dragging: { h: HandleSpec; value: number } | null) {
+  setHandles(handles: HandleSpec[], dragging: { h: HandleSpec; value: HandleValue } | null) {
     this.handles = handles;
     this.dragging = dragging;
     for (const a of this.arrows.values()) {
-      this.handleGroup.remove(a.shaft, a.head);
-      a.shaft.geometry.dispose();
-      a.head.geometry.dispose();
+      for (const o of a.parts) {
+        this.handleGroup.remove(o);
+        (o as THREE.Mesh).geometry.dispose();
+      }
       a.mat.dispose();
+      a.lineMat?.dispose();
     }
     this.arrows.clear();
     for (const t of this.handleTags) t.el.remove();
     this.handleTags = [];
     for (const h of handles) {
-      const color = h.locked ? LOCKED_COLOR : h.id === this.hot || dragging?.h.id === h.id ? HANDLE_HOT : HANDLE_COLOR;
-      const mat = new THREE.MeshBasicMaterial({ color, depthTest: false });
-      // The shaft is a thin rod (sized in pixels each frame, as the head is), the same material as the head.
-      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 10), mat);
-      const head = new THREE.Mesh(new THREE.ConeGeometry(0.32, 1, 16), mat);
-      shaft.renderOrder = 10;
-      head.renderOrder = 10;
-      this.handleGroup.add(shaft, head);
-      this.arrows.set(h.id, { shaft, head, mat });
-      const { h: spec, value } = dragging?.h.id === h.id ? dragging : { h, value: h.value };
-      const el = this.tag(h.kind === "section" ? `${h.label}: ${handleText(h, value)}` : `${h.label} ${handleText(h, value)}`, `eval-label handle-label${h.locked ? " locked" : ""}${h.kind === "section" ? " section-handle" : ""}`, `handle-label-${h.id}`);
+      const live = dragging?.h.id === h.id ? dragging : { h, value: h.kind === "point" ? (h.at ?? [0, 0]) : h.value };
+      const mat = new THREE.MeshBasicMaterial({ color: this.colorOf(h), depthTest: false });
+      const parts: THREE.Object3D[] = [];
+      let lineMat: THREE.LineBasicMaterial | undefined;
+      if (h.kind === "angle") {
+        // An arc from where the value is 0 to the value, and a ball to drag round it.
+        lineMat = new THREE.LineBasicMaterial({ color: this.colorOf(h), depthTest: false, transparent: true, opacity: 0.9 });
+        const arc = new THREE.Line(new THREE.BufferGeometry().setFromPoints(arcPoints(live.h, live.value as number).map((p) => new THREE.Vector3(...p))), lineMat);
+        const spoke = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...live.h.origin), new THREE.Vector3(...handleTip(live.h, live.value))]), lineMat);
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), mat);
+        parts.push(arc, spoke, ball);
+      } else if (h.kind === "point") {
+        // A disc on the face, a ring round it.
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(0.5, 24), mat);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.8, 32), mat);
+        parts.push(disc, ring);
+      } else if (h.kind === "flip") {
+        // Two small heads point both ways: a click turns the direction round.
+        parts.push(new THREE.Mesh(new THREE.ConeGeometry(0.35, 1, 12), mat), new THREE.Mesh(new THREE.ConeGeometry(0.35, 1, 12), mat));
+      } else {
+        // The shaft is a thin rod (sized in pixels each frame, as the head is), the same material as the head; a count's knob is a ball.
+        parts.push(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 10), mat), h.snap === "count" ? new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12), mat) : new THREE.Mesh(new THREE.ConeGeometry(0.32, 1, 16), mat));
+      }
+      for (const o of parts) {
+        o.renderOrder = 10;
+        this.handleGroup.add(o);
+      }
+      this.arrows.set(h.id, { parts, mat, lineMat });
+      if (h.kind === "flip") {
+        const el = this.tag(`⇅ ${h.label}`, "eval-label handle-label flip-label", `handle-label-${h.id}`);
+        el.title = `${h.label}: turn the direction round`;
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const r = el.getBoundingClientRect();
+          this.callbacks.onHandleLabel?.(h, r.left, r.bottom + 4);
+        });
+        el.addEventListener("pointerdown", (e) => e.stopPropagation());
+        this.handleTags.push({ el, at: h.origin, dx: 12, dy: -26 });
+        continue;
+      }
+      const text = h.kind === "section" ? `${h.label}: ${handleText(h, live.value)}` : `${h.label} ${handleText(h, live.value)}`;
+      const el = this.tag(text, `eval-label handle-label${h.locked ? " locked" : ""}${h.kind === "section" ? " section-handle" : ""}`, `handle-label-${h.id}`);
       // A locked label still answers a click: the app says why it cannot be typed into.
-      el.title = h.locked ?? (h.kind === "section" ? "Drag the arrow to move the plane (whole millimetres; Shift for tenths), or click here to type the offset" : "Drag the arrow, or click here to type a value");
+      el.title =
+        h.locked ??
+        (h.kind === "section"
+          ? "Drag the arrow to move the plane (whole millimetres; Shift for tenths), or click here to type the offset"
+          : `Drag the ${h.kind === "angle" ? "ball round the arc" : h.kind === "point" ? "point on the face" : "arrow"} (Shift: finer steps), or click here to type a value or an =expression`);
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const r = el.getBoundingClientRect();
         this.callbacks.onHandleLabel?.(h, r.left, r.bottom + 4);
       });
       el.addEventListener("pointerdown", (e) => e.stopPropagation());
-      this.handleTags.push({ el, at: handleTip(spec, value), dx: 10, dy: 8 });
+      this.handleTags.push({ el, at: handleTip(live.h, live.value), dx: 10, dy: 8 });
     }
+  }
+
+  /** A handle's colour: grey when locked, orange while under the pointer or dragged, else its kind's. */
+  private colorOf(h: HandleSpec): number {
+    if (h.locked) return LOCKED_COLOR;
+    if (h.id === this.hot || this.dragging?.h.id === h.id) return HANDLE_HOT;
+    return h.kind === "flip" ? FLIP_COLOR : h.snap === "count" ? COUNT_COLOR : HANDLE_COLOR;
   }
 
   /** Highlights the handle under the pointer (null: none). Returns whether it changed. */
@@ -198,15 +249,16 @@ export class EvalLayer {
     this.hot = id;
     for (const [hid, a] of this.arrows) {
       const h = this.handles.find((x) => x.id === hid);
-      const color = h?.locked ? LOCKED_COLOR : hid === id || this.dragging?.h.id === hid ? HANDLE_HOT : HANDLE_COLOR;
-      a.mat.color.setHex(color);
+      if (!h) continue;
+      a.mat.color.setHex(this.colorOf(h));
+      a.lineMat?.color.setHex(this.colorOf(h));
     }
     return true;
   }
 
   /** The handle as drawn: one being dragged keeps the axis it was grabbed on, at its live value. */
-  private live(h: HandleSpec): { h: HandleSpec; value: number } {
-    return this.dragging?.h.id === h.id ? this.dragging : { h, value: h.value };
+  private live(h: HandleSpec): { h: HandleSpec; value: HandleValue } {
+    return this.dragging?.h.id === h.id ? this.dragging : { h, value: h.kind === "point" ? (h.at ?? [0, 0]) : h.value };
   }
 
   /** Where a handle's arrow runs on screen now: from the tip to the arrow's end (client pixels). */
@@ -217,31 +269,69 @@ export class EvalLayer {
     return { a: project(tip), b: project(end) };
   }
 
-  /** The handle whose arrow is under the pointer, if any. */
+  /** Where the flip button is: beside the arrow's base, off to the side so it doesn't sit on the arrow. */
+  private flipAt(h: HandleSpec, wpp: number): Vec3 {
+    const side = new THREE.Vector3(...h.dir).cross(Math.abs(h.dir[2]) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)).normalize();
+    return [h.origin[0] + side.x * 22 * wpp, h.origin[1] + side.y * 22 * wpp, h.origin[2] + side.z * 22 * wpp];
+  }
+
+  /** How far (pixels) the pointer is from a handle, or null when it is not on screen. */
+  private distanceTo(handle: HandleSpec, x: number, y: number, project: (p: Vec3) => { x: number; y: number } | null, wpp: number): number | null {
+    const { h, value } = this.live(handle);
+    if (h.kind === "flip") {
+      const p = project(this.flipAt(h, wpp));
+      return p ? Math.hypot(p.x - x, p.y - y) : null;
+    }
+    if (h.kind === "point" || h.kind === "angle") {
+      const p = project(handleTip(h, value));
+      if (!p) return null;
+      let d = Math.hypot(p.x - x, p.y - y);
+      if (h.kind === "angle") {
+        // Anywhere on the arc grabs it too (a little less readily than the ball).
+        const pts = arcPoints(h, value as number, 24).map(project);
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const a = pts[i];
+          const b = pts[i + 1];
+          if (!a || !b) continue;
+          d = Math.min(d, segmentDistance(x, y, a, b) + 3);
+        }
+      }
+      return d;
+    }
+    const { a, b } = this.arrowOnScreen(h, project, wpp);
+    if (!a || !b) return null;
+    return segmentDistance(x, y, a, b);
+  }
+
+  /** The handle under the pointer, if any. */
   hit(x: number, y: number, project: (p: Vec3) => { x: number; y: number } | null, wpp: number): HandleSpec | null {
     let best: { h: HandleSpec; d: number } | null = null;
     for (const h of this.handles) {
-      const { a, b } = this.arrowOnScreen(h, project, wpp);
-      if (!a || !b) continue;
-      const vx = b.x - a.x;
-      const vy = b.y - a.y;
-      const l2 = vx * vx + vy * vy || 1;
-      const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / l2));
-      const d = Math.hypot(a.x + vx * t - x, a.y + vy * t - y);
-      if (d <= GRAB_PX && (!best || d < best.d)) best = { h, d };
+      const d = this.distanceTo(h, x, y, project, wpp);
+      const grab = h.kind === "point" || h.kind === "angle" || h.kind === "flip" ? GRAB_PX + 2 : GRAB_PX;
+      if (d !== null && d <= grab && (!best || d < best.d)) best = { h, d };
     }
     return best?.h ?? null;
   }
 
-  /** Where a handle's arrow is on screen, `at` of the way from its tip to its end (0.6: on the shaft, to grab it; 0.85: in its head), for tests and for typing a value there. */
+  /**
+   * Where a handle is on screen (client pixels), for tests and for typing a
+   * value there: an arrow `at` of the way from its tip to its end (0.6: on the
+   * shaft; 0.85: in its head); an arc's ball, a point, a flip button.
+   */
   tipOnScreen(id: string, project: (p: Vec3) => { x: number; y: number } | null, wpp: number, at = 0.6): { x: number; y: number } | null {
     const h = this.handles.find((x) => x.id === id);
     if (!h) return null;
+    if (h.kind === "flip") return project(this.flipAt(h, wpp));
+    if (h.kind === "point" || h.kind === "angle") {
+      const { h: spec, value } = this.live(h);
+      return project(handleTip(spec, value));
+    }
     const { a, b } = this.arrowOnScreen(h, project, wpp);
     return a && b ? { x: a.x + (b.x - a.x) * at, y: a.y + (b.y - a.y) * at } : null;
   }
 
-  /** After each render: arrows sized to the screen, the ruler, labels where their points are. */
+  /** After each render: handles sized to the screen, the ruler, labels where their points are. */
   update(camera: THREE.Camera, wpp: number, w: number, h: number) {
     for (const hs of this.handles) {
       const a = this.arrows.get(hs.id);
@@ -249,15 +339,41 @@ export class EvalLayer {
       const { h: spec, value } = this.live(hs);
       const tip = new THREE.Vector3(...handleTip(spec, value));
       const dir = new THREE.Vector3(...spec.dir).normalize();
+      if (spec.kind === "angle") {
+        const ball = a.parts[2];
+        ball.position.copy(tip);
+        ball.scale.setScalar(BALL_PX * wpp);
+        continue;
+      }
+      if (spec.kind === "point") {
+        const n = new THREE.Vector3(...(spec.frame?.z ?? spec.dir)).normalize();
+        for (const o of a.parts) {
+          o.position.copy(tip).addScaledVector(n, 0.02 * wpp);
+          o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+          o.scale.setScalar(POINT_PX * wpp);
+        }
+        continue;
+      }
+      if (spec.kind === "flip") {
+        const at = new THREE.Vector3(...this.flipAt(spec, wpp));
+        const size = 9 * wpp;
+        a.parts[0].position.copy(at).addScaledVector(dir, size * 0.6);
+        a.parts[0].quaternion.setFromUnitVectors(ALONG_Y, dir);
+        a.parts[1].position.copy(at).addScaledVector(dir, -size * 0.6);
+        a.parts[1].quaternion.setFromUnitVectors(ALONG_Y, dir.clone().negate());
+        for (const o of a.parts) o.scale.setScalar(size);
+        continue;
+      }
       const len = ARROW_PX * wpp;
       const head = HEAD_PX * wpp;
+      const [shaft, knob] = a.parts;
       // The rod from the tip to the head's base (a unit cylinder along Y, centred: scaled and stood on the tip).
-      a.shaft.position.copy(tip).addScaledVector(dir, (len - head) / 2);
-      a.shaft.quaternion.setFromUnitVectors(ALONG_Y, dir);
-      a.shaft.scale.set(SHAFT_PX * wpp, len - head, SHAFT_PX * wpp);
-      a.head.position.copy(tip).addScaledVector(dir, len - head / 2);
-      a.head.quaternion.setFromUnitVectors(ALONG_Y, dir);
-      a.head.scale.setScalar(head);
+      shaft.position.copy(tip).addScaledVector(dir, (len - head) / 2);
+      shaft.quaternion.setFromUnitVectors(ALONG_Y, dir);
+      shaft.scale.set(SHAFT_PX * wpp, len - head, SHAFT_PX * wpp);
+      knob.position.copy(tip).addScaledVector(dir, len - head / 2);
+      knob.quaternion.setFromUnitVectors(ALONG_Y, dir);
+      knob.scale.setScalar(spec.snap === "count" ? head * 0.9 : head);
     }
     this.drawRuler(wpp);
     const place = (t: Tag) => {
@@ -268,26 +384,30 @@ export class EvalLayer {
     for (const t of [...this.tags, ...this.dimTags, ...this.handleTags]) place(t);
   }
 
-  /** While a handle is dragged: ticks along its axis from where the value is 0 to where it is now. */
+  /** While an arrow is dragged: ticks along its axis from where the value is 0 to where it is now. */
   private drawRuler(wpp: number) {
     this.clear(this.rulerGroup);
     const d = this.dragging;
-    if (!d) return;
+    if (!d || d.h.kind || typeof d.value !== "number") return;
     const h = d.h;
+    const value = d.value;
     const step = rulerStep(1 / (wpp * h.scale));
     const dir = new THREE.Vector3(...h.dir).normalize();
     const side = new THREE.Vector3().crossVectors(dir, Math.abs(dir.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)).normalize();
     const pts: number[] = [];
     const at = (v: number) => new THREE.Vector3(...handleTip(h, v));
-    const lo = Math.min(0, d.value);
-    const hi = Math.max(0, d.value);
+    const zero = h.offset ?? 0;
+    const lo = Math.min(zero, value);
+    const hi = Math.max(zero, value);
     const p0 = at(lo);
     const p1 = at(hi);
     pts.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
-    const first = Math.ceil(lo / step);
-    for (let k = first; k * step <= hi + 1e-9 && k - first < 400; k++) {
-      const p = at(k * step);
-      const big = k % 5 === 0 ? 9 : 5;
+    // A count's ticks are its copies; a length's every step.
+    const tick = h.snap === "count" ? 1 : step;
+    const first = Math.ceil(lo / tick);
+    for (let k = first; k * tick <= hi + 1e-9 && k - first < 400; k++) {
+      const p = at(k * tick);
+      const big = h.snap === "count" || k % 5 === 0 ? 9 : 5;
       const q = p.clone().addScaledVector(side, big * wpp);
       pts.push(p.x, p.y, p.z, q.x, q.y, q.z);
     }
@@ -306,4 +426,13 @@ export class EvalLayer {
     for (const m of this.fat) m.dispose();
     this.labels.remove();
   }
+}
+
+/** How far a point is from a segment on screen (pixels). */
+function segmentDistance(x: number, y: number, a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const l2 = vx * vx + vy * vy || 1;
+  const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / l2));
+  return Math.hypot(a.x + vx * t - x, a.y + vy * t - y);
 }

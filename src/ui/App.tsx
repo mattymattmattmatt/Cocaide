@@ -66,7 +66,7 @@ import { DEFAULT_DISPLAY, loadView, saveView, type DisplayState } from "./evalua
 import { dimensionPatch, featureDimensions, type Dimension3D } from "./evaluate/dimensions3d";
 import { MassPanel, MeasurePanel, SectionPanel, ValueBox } from "./evaluate/EvaluatePanels";
 import { FILTER_KINDS, mergeBox, NO_FILTER, toggleFilter, type SelectFilter } from "./evaluate/filter";
-import { featureHandles, handlePatch, handleText, handleTip, ownerOfFace, type HandleSpec } from "./evaluate/handles";
+import { featureHandles, handlePatch, handleText, handleTip, ownerOfFace, type HandleSpec, type HandleValue } from "./evaluate/handles";
 import { kernelRef, measure, measureItems, measurePick } from "./evaluate/measure";
 import type { PaletteEntry } from "./evaluate/palette";
 import { addPlane, sectionChoices } from "./evaluate/section";
@@ -701,14 +701,14 @@ export function App() {
       const f = resolvedLive.find((g) => g.id === session.id);
       const raw = features.find((g) => g.id === session.id);
       if (!f || !raw || f.suppressed === true || !pickView) return [];
-      return featureHandles(f, raw, { ...pickView, datums: { ...pickView.datums, ...view.datums } });
+      return featureHandles(f, raw, { ...pickView, datums: { ...pickView.datums, ...view.datums } }, resolvedLive);
     }
     const at = (id: string) => features.findIndex((f) => f.id === id);
     const of = (id: string) => {
       const f = resolvedLive.find((g) => g.id === id);
       const raw = features.find((g) => g.id === id);
       if (!f || !raw || f.suppressed === true || at(id) >= bar) return [];
-      return featureHandles(f, raw, view);
+      return featureHandles(f, raw, view, resolvedLive);
     };
     if (selectedFeature) {
       const h = of(selectedFeature);
@@ -731,9 +731,11 @@ export function App() {
     }
     return { added: effect.added, removed: effect.removed, failed };
   }, [session, effect, handles, activeField, pickView, view]);
-  const onHandle = (h: HandleSpec, phase: HandlePhase, value: number) => {
+  const onHandle = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => {
     const raw = features.find((f) => f.id === h.feature);
     if (!raw) return;
+    // A flip button: the direction turned round, at once.
+    if (h.kind === "flip") return void (phase === "end" && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }));
     if (phase === "start") {
       // The feature stays picked through the live rebuilds (the face picked first won't survive them).
       setSelectedFeature(h.feature);
@@ -741,7 +743,8 @@ export function App() {
     } else if (phase === "move") setPreview({ id: h.feature, patch: handlePatch(h, raw, value) });
     else {
       setPreview(null);
-      if (phase === "end" && value !== h.value && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }) === null && !sessionRef.current) {
+      const moved = JSON.stringify(value) !== JSON.stringify(h.kind === "point" ? h.at : h.value);
+      if (phase === "end" && moved && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }) === null && !sessionRef.current) {
         setNotice({ kind: "info", text: `${h.feature}: ${h.label.toLowerCase()} ${handleText(h, value)}. Ctrl+Z puts it back.` });
       }
     }
@@ -2034,7 +2037,15 @@ export function App() {
                   handles={handles}
                   onHandle={onHandle}
                   // A locked handle's value is set by an expression: typing a number here would replace it.
-                  onHandleLabel={(handle, x, y) => (handle.locked ? setNotice({ kind: "info", text: handle.locked }) : setValueBox({ x, y, handle }))}
+                  onHandleLabel={(handle, x, y) =>
+                    handle.locked
+                      ? setNotice({ kind: "info", text: handle.locked })
+                      : handle.kind === "flip"
+                        ? onHandle(handle, "end", handle.value)
+                        : handle.kind === "point"
+                          ? (document.querySelector<HTMLInputElement>('[data-testid="prop-center-x"]')?.focus(), setNotice({ kind: "info", text: "Type the centre in Properties, or drag the point on its face." }))
+                          : setValueBox({ x, y, handle })
+                  }
                   // The selection filter follows the active field (edges for a fillet's edges, faces for a shell's faces).
                   filter={sessionFilter ?? filter}
                   onFilter={setFilter}
