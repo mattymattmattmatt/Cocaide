@@ -201,8 +201,14 @@ test("a linear pattern's count dragged past the last copy", async ({ page }) => 
   await expect.poll(async () => (await feature(page, "pattern_1"))?.spacing).toBe(10);
   await waitForRebuild(page);
   await expect(page.getByTestId("handle-label-pattern_1:count")).toHaveText("Count 3");
-  await dragHandle(page, "pattern_1:count", -60);
-  await expect.poll(async () => (await feature(page, "pattern_1"))!.count as number).not.toBe(3);
+  // The row runs toward -X (where the plate has room): dragged on past the last copy, the count grows.
+  expect((await feature(page, "pattern_1"))!.direction).toEqual([-1, 0, 0]);
+  await dragHandle(page, "pattern_1:count", 60);
+  await expect.poll(async () => (await feature(page, "pattern_1"))!.count as number).toBeGreaterThan(3);
+  const count = (await feature(page, "pattern_1"))!.count as number;
+  await expect(page.getByTestId("handle-label-pattern_1:count")).toHaveText(`Count ${count}`);
+  await waitForRebuild(page);
+  await expect.poll(async () => (await hook(page)).removed).toBe(true);
   await shot(page, "pattern-count");
   await page.getByTestId("session-ok").click();
   await expect(page.getByTestId("session-bar")).toHaveCount(0);
