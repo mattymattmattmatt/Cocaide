@@ -10,7 +10,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick, waitForRebuild } from "./helpers";
 
 type Cam = { position: number[]; target: number[]; up: number[] };
-type Hook = { __cocaideViewport: { project(p: number[]): [number, number]; camera(): Cam; display(): { perspective: boolean; surfacesShown: boolean } } };
+type Hook = {
+  __cocaideViewport: { project(p: number[]): [number, number]; camera(): Cam; display(): { perspective: boolean; surfacesShown: boolean }; glides(on: boolean, ms?: number): void; gliding(): boolean };
+};
 
 let problems: string[] = [];
 
@@ -291,4 +293,36 @@ test("turned: a corner below the plane is a point to draw from; the plane drawn 
   await expect.poll(perspective).toBe(true);
   const line = (await lastFeature(page)).entities.find((e) => e.type === "line" && !e.ref) as { start: number[] };
   line.start.forEach((x, i) => expect(x).toBeCloseTo([-40, -20][i], 6));
+});
+
+test("an edited sketch whose part before arrives while the view is still gliding to it ends framed round that part", async ({ page }) => {
+  // A guide sketch 10 behind the bracket's plate (only lines above it): editing it shows the plate before it.
+  const doc = {
+    version: 1,
+    units: "mm",
+    name: "late",
+    features: [
+      { id: "sketch_1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r1", type: "rect", center: [0, 0], w: 80, h: 40 }], constraints: [] },
+      { id: "ext_1", op: "extrude", sketch: "sketch_1", distance: 6, direction: [0, 0, 1] },
+      { id: "guide", op: "sketch", plane: { type: "datum", normal: [0, -1, 0], origin: [0, 10, 0] }, entities: [{ id: "l1", type: "line", start: [-15, 20], end: [15, 20] }], constraints: [] },
+    ],
+  };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+  // A slow glide, so the part before the sketch comes from the kernel partway through it.
+  await page.evaluate(() => (window as unknown as Hook).__cocaideViewport.glides(true, 1500));
+  await page.getByTestId("feature-guide").locator(".feature-row").dblclick();
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as Hook).__cocaideViewport.gliding()), { timeout: 10_000 }).toBe(false);
+  await expect(page.getByTestId("sketch-canvas")).toHaveAttribute("data-facing", "true");
+  // The plate's ends (x = ±40) are on screen, inside the view, not run off its sides.
+  const box = (await page.getByTestId("sketch-canvas").boundingBox())!;
+  for (const x of [-40, 40]) {
+    const [px] = await project(page, [x, -20, 3]);
+    expect(px).toBeGreaterThan(box.x + 20);
+    expect(px).toBeLessThan(box.x + box.width - 20);
+  }
+  await page.getByTestId("cancel-sketch").click();
 });

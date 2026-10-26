@@ -583,6 +583,8 @@ export function Viewport({
       sketchPlane.set(stageFrame, [...box, ...(live.current.sketch?.extent() ?? [])]);
     };
     const samePose = (a: Pose, b: Pose) => a.position.distanceTo(b.position) < 1e-6 && a.target.distanceTo(b.target) < 1e-6 && a.up.distanceTo(b.up) < 1e-9;
+    /** The view is where opening the sketch put it, or still gliding there: the user hasn't moved it since. */
+    const atOpening = () => !!stageAuto && (samePose(controls.pose(), stageAuto) || (!!glideAnim && samePose(glideAnim.at(1), stageAuto)));
     /** A sketch opens (turning to face it) or closes (back to the view before). */
     const setSketch = (s: { frame: PlaneFrame; face: boolean } | null, back = true) => {
       if (s) {
@@ -616,9 +618,11 @@ export function Viewport({
     const stageModelArrived = () => {
       if (!stageFrame) return;
       drawStagePlane();
-      if (stageAuto && samePose(controls.pose(), stageAuto)) {
+      // (While the opening glide still runs, it carries on to the new framing; at rest, it jumps there.)
+      if (atOpening()) {
+        const gliding = !!glideAnim;
         stageAuto = facePose(stageFrame);
-        glideTo(stageAuto, true);
+        glideTo(stageAuto, !gliding);
       }
     };
     const sketchApi: SketchViewApi = {
@@ -841,7 +845,7 @@ export function Viewport({
       sectionPlanes.resize(w, h);
       sketchPlane.resize(w, h);
       // A sketch opening makes room for its toolbar above the view: it still faces its plane at the page's zoom, unless moved since.
-      if (stageFrame && stageAuto && (samePose(controls.pose(), stageAuto) || glideAnim)) {
+      if (stageFrame && atOpening()) {
         const gliding = !!glideAnim;
         stageAuto = facePose(stageFrame);
         if (gliding) glideTo(stageAuto);
