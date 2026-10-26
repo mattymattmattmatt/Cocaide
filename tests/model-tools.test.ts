@@ -183,7 +183,8 @@ describe("Extrude and Cut", () => {
     const doc = example("bracket");
     const { ctx, out } = harness(doc, viewOf(oc, doc));
     run("tool.extrude", ctx);
-    expect(out.created).toEqual([{ id: "extrude_1", op: "extrude", sketch: "sketch_1", distance: 10 }]);
+    // The part lies wholly above the sketch's plane: the new boss grows away from it, down (Phase P smart default).
+    expect(out.created).toEqual([{ id: "extrude_1", op: "extrude", sketch: "sketch_1", distance: 10, direction: [0, 0, -1] }]);
   });
 
   it("in a part of several bodies, extrude makes a new body", () => {

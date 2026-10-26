@@ -93,14 +93,14 @@ describe("Shell and Draft: from the selection", () => {
     expect(shellFeature(harness({ ...doc, features: [] }, null).ctx)).toBe("Shell needs a solid: make one first.");
   });
 
-  it("Draft about the bottom face when only the sides are picked; about a picked base face; 3°", () => {
+  it("Draft about the bottom face when only the sides are picked; about a picked base face; 1° (Phase P default)", () => {
     const doc = boxDoc();
     const view = viewOf(oc, doc);
     const side = (n: number[]) => faceWhere(view, (f) => f.type === "plane" && f.normal!.every((c, i) => Math.abs(c - n[i]) < 1e-9));
     const sides = [side([1, 0, 0]), side([-1, 0, 0]), side([0, 1, 0]), side([0, -1, 0])];
     const f = draftFeature(harness(doc, view, { selection: { faces: sides, edges: [] } }).ctx) as Raw;
     expect(f.neutral).toEqual({ face: { type: "planar", normal: [0, 0, -1], pick: "largest" } });
-    expect(f.angle).toBe(3);
+    expect(f.angle).toBe(1);
     expect(f.faces).toHaveLength(4);
     // The top face picked with one side: square to it, so it is the base the side drafts about.
     const withBase = draftFeature(harness(doc, view, { selection: { faces: [side([1, 0, 0]), side([0, 0, 1])], edges: [] } }).ctx) as Raw;
@@ -228,7 +228,8 @@ describe("review fixes", () => {
     const view = viewOf(oc, stand);
     const upright = view.bodies.find((b) => b.name === "upright")!;
     const faces = Array.from({ length: upright.faces[1] - upright.faces[0] }, (_, i) => upright.faces[0] + i);
-    expect(shellFeature(harness(stand, view, { selection: { faces, edges: [] } }).ctx)).toEqual({ id: "shell_1", op: "shell", faces: [], thickness: 2, body: "upright" });
+    // The wall: a tenth of the upright's thinnest extent (8 mm), rounded down to a round value (Phase P smart defaults).
+    expect(shellFeature(harness(stand, view, { selection: { faces, edges: [] } }).ctx)).toEqual({ id: "shell_1", op: "shell", faces: [], thickness: 0.5, body: "upright" });
     expect(shellFeature(harness(stand, view).ctx)).toBe(
       `The part has ${view.bodies.length} bodies: click the faces to remove, or a body in the Bodies panel for a closed hollow one, then Shell.`,
     );

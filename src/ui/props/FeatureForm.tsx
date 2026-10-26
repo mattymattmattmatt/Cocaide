@@ -56,7 +56,7 @@ export function FeatureForm({ fields, order = 0, ...p }: FieldProps & { fields: 
  * clicks go into) or not; a click on it or focus makes it active. Its pick
  * field goes to the session's host.
  */
-function PickWrap({ field, children, tid }: { field: PickField | null; children: ReactNode; tid: string }) {
+export function PickWrap({ field, children, tid }: { field: PickField | null; children: ReactNode; tid: string }) {
   const host = usePickHost();
   usePickField(field);
   if (!host || !field) return <>{children}</>;

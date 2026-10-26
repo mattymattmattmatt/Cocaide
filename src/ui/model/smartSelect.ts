@@ -279,6 +279,25 @@ function pointInside(t: PartTopology, face: number, p: Vec3): Vec3 | null {
 }
 
 /**
+ * From the middle of an edge, the way into one of the faces it bounds (in the
+ * face, square to the edge): where a fillet's or chamfer's edge on that face
+ * runs. Null when it can't be told.
+ */
+export function intoFace(t: PartTopology, edge: number, face: number, at?: Vec3): Vec3 | null {
+  const e = t.edges[edge];
+  if (!real(e)) return null;
+  const m = at ?? e.mid;
+  const along = tangentAt(t, edge, m);
+  const n = normalAt(t, face, m);
+  if (!along || !n) return null;
+  const u = cross3(n, along);
+  if (len3(u) < 1e-12) return null;
+  const inside = pointInside(t, face, m);
+  if (!inside) return null;
+  return dot3(sub3(inside, m), u) >= 0 ? normalize3(u) : scale3(normalize3(u), -1);
+}
+
+/**
  * An outside corner (convex: a fillet rounds it off, taking material away),
  * an inside one (concave: a fillet fills it), or neither (the faces meet
  * smoothly there). From the edge's middle, step into one face (square to the

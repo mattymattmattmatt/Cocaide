@@ -5,7 +5,7 @@
 // the view's clicks, boxes and tree clicks to it through a PickRouter. When
 // no session is open there is no host and fields behave as before.
 
-import { createContext, useContext, useEffect, type MutableRefObject } from "react";
+import { createContext, useContext, useEffect, useRef, type MutableRefObject } from "react";
 import type { RebuildView } from "../../worker/protocol";
 import type { PickTarget } from "../model/selection";
 import type { ActiveFieldSummary, PickField } from "./picking";
@@ -43,11 +43,14 @@ export function usePickField(field: PickField | null): void {
   const host = usePickHost();
   if (host && field) host.register(field);
   const key = field?.key;
+  // The host is a new object on every render: unregister through the newest one, and only when the field goes (or changes key).
+  const hostRef = useRef(host);
+  hostRef.current = host;
   useEffect(
     () => () => {
-      if (host && key) host.unregister(key);
+      if (key) hostRef.current?.unregister(key);
     },
-    [host, key],
+    [key],
   );
 }
 

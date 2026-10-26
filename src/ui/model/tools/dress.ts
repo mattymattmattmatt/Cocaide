@@ -21,9 +21,7 @@ const SQUARE = 1e-6;
 export function shellFeature(ctx: ToolCtx): Raw | string {
   const { view, selection } = ctx;
   if (!ctx.doc || !view || view.bodies.length === 0) return "Shell needs a solid: make one first.";
-  const box = view.measurements?.boundingBox ?? null;
-  const last = recalled(ctx.memory, "shell", "thickness");
-  const feature: Raw = { id: ctx.nextId("shell"), op: "shell", faces: [], thickness: suits(last, shellLimit(box)) ? last : shellThicknessFor(box) };
+  const feature: Raw = { id: ctx.nextId("shell"), op: "shell", faces: [] };
   // A body picked whole (in the Bodies panel) is the body to hollow, closed: not every one of its faces removed.
   const whole = wholeBodySelected(selection, view.bodies);
   if (whole !== null) {
@@ -35,7 +33,11 @@ export function shellFeature(ctx: ToolCtx): Raw | string {
   } else if (view.bodies.length > 1) {
     return `The part has ${view.bodies.length} bodies: click the faces to remove, or a body in the Bodies panel for a closed hollow one, then Shell.`;
   }
-  return feature;
+  // The wall: the one used last when it suits the body, else a tenth of the body's thinnest extent.
+  const body = whole ?? (selection.faces.length ? view.faces[selection.faces[0]]?.body : undefined);
+  const box = (body ? view.measurements?.bodies.find((b) => b.name === body)?.boundingBox : null) ?? view.measurements?.boundingBox ?? null;
+  const last = recalled(ctx.memory, "shell", "thickness");
+  return { ...feature, thickness: suits(last, shellLimit(box)) ? last : shellThicknessFor(box) };
 }
 
 /** The default planes, with their normals: the pull directions a draft about them has. */
