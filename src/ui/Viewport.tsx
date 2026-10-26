@@ -1374,6 +1374,8 @@ export function Viewport({
     const sameTarget = (a: PickTarget | null, b: PickTarget | null) => targetKey(a) === targetKey(b);
     // A handle being dragged: which one, how far along its arrow the drag started, and the value now.
     let drag: { g: HandleDrag; h: HandleSpec; value: HandleValue; id: number } | null = null;
+    /** A flip button pressed: it turns the direction round when it is let go there (a click), not on a press that moves on. */
+    let flipPress: { h: HandleSpec; x: number; y: number; id: number } | null = null;
     // Zoom to area: the next left-drag draws the area to zoom to (Esc or the button again cancels).
     let areaOn = false;
     const setArea = (on: boolean) => {
@@ -1531,7 +1533,7 @@ export function Viewport({
       }
       // A flip button: a click turns the direction round (no drag).
       if (h.kind === "flip") {
-        handleEvent(h, "end", h.value);
+        flipPress = { h, x: e.clientX, y: e.clientY, id: e.pointerId };
         return;
       }
       aim(e.clientX, e.clientY);
@@ -1573,6 +1575,13 @@ export function Viewport({
       render();
     };
     const handleUp = (e: PointerEvent) => {
+      if (flipPress && e.pointerId === flipPress.id) {
+        const f = flipPress;
+        flipPress = null;
+        e.stopPropagation();
+        if (Math.hypot(e.clientX - f.x, e.clientY - f.y) < 5) handleEvent(f.h, "end", f.h.value);
+        return;
+      }
       if (!drag || e.pointerId !== drag.id) return;
       e.stopPropagation();
       endDrag(e, "end");

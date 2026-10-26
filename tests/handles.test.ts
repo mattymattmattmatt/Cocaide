@@ -178,15 +178,23 @@ describe("fillet and chamfer", () => {
 });
 
 describe("shell and draft", () => {
-  it("a shell's wall arrow goes in from the face it removes; outward walls, out", () => {
-    const view = fullView(box());
+  it("a shell's wall arrow stands on the rim of the widest side wall at the opening, pointing in (outward walls: out), before and after the shell", () => {
     const f = { id: "sh", op: "shell", faces: [{ type: "planar", normal: [0, 0, 1], pick: "largest" }], thickness: 2 };
-    const h = byKey(featureHandles(f, f, view), "thickness");
-    near(h.dir, [0, 0, -1]);
-    expect(handleTip(h)[2]).toBeCloseTo(8, 6);
-    expect(roundTrip(h, 3)).toBe(3);
-    const out = byKey(featureHandles({ ...f, outward: true }, f, view), "thickness");
-    near(out.dir, [0, 0, 1]);
+    // The 40 × 20 × 10 box before the shell (a session's part), and shelled (the top gone): the same place, on a long side's top edge.
+    for (const view of [fullView(box()), fullView(box(f))]) {
+      const h = byKey(featureHandles(f, f, view), "thickness");
+      expect(Math.abs(h.dir[1])).toBeCloseTo(1, 6);
+      near(h.origin, [0, -10 * Math.sign(h.dir[1]), 10]);
+      // Its tip is the wall's inner face.
+      expect(Math.abs(handleTip(h)[1])).toBeCloseTo(8, 6);
+      expect(roundTrip(h, 3)).toBe(3);
+      const out = byKey(featureHandles({ ...f, outward: true }, f, view), "thickness");
+      near(out.dir, scale3(h.dir, -1));
+    }
+    // Closed (no face removed): on the largest flat face, clear of the origin's axes.
+    const closed = { id: "sh", op: "shell", faces: [], thickness: 2 };
+    const c = byKey(featureHandles(closed, closed, fullView(box())), "thickness");
+    expect(Math.hypot(c.origin[0], c.origin[1])).toBeGreaterThan(1);
   });
 
   it("a draft's angle is an arc on the first face drafted, about the line where it meets the neutral plane", () => {

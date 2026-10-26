@@ -286,6 +286,19 @@ function clearOfAxes(p: Vec3, face: FaceInfo, view: RebuildView): Vec3 {
   return far ? add3(p, scale3(sub3(far, p), 0.5)) : p;
 }
 
+/** The middle of a face's far edge along `n` (a side wall's rim at the opening), from its mesh; its middle without one. */
+function rimOf(face: FaceInfo, n: Vec3, view: RebuildView): Vec3 {
+  const range = view.mesh?.faceRanges[face.index];
+  if (!view.mesh || !range) return face.centroid;
+  const { positions, indices } = view.mesh;
+  let top = -Infinity;
+  for (let k = range.start; k < range.start + range.count; k++) {
+    const v = indices[k];
+    top = Math.max(top, positions[v * 3] * n[0] + positions[v * 3 + 1] * n[1] + positions[v * 3 + 2] * n[2]);
+  }
+  return add3(face.centroid, scale3(n, top - dot3(face.centroid, n)));
+}
+
 /** Is a 2D point inside a closed polyline (even-odd)? */
 function inside2(p: Vec2, poly: Vec2[]): boolean {
   let c = false;
@@ -595,14 +608,19 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
 
   if (op === "shell" && view) {
     const faces = Array.isArray(resolved.faces) ? resolved.faces : [];
-    const removed = firstFace(faces, view);
-    const face =
-      removed ??
-      [...view.faces].filter((f) => f.type === "plane" && f.normal && (typeof resolved.body !== "string" || f.body === resolved.body)).sort((a, b) => b.area - a.area)[0];
     const t = num("thickness");
-    if (!face?.normal || t === undefined) return [];
+    if (t === undefined) return [];
+    const planes = view.faces.filter((f) => f.type === "plane" && f.normal && (typeof resolved.body !== "string" || f.body === resolved.body));
+    // The way the opening faces: the removed face's normal (it is gone from the shelled part, so from its selector too).
+    const removed = firstFace(faces, view);
+    const open = removed?.normal ?? (faces[0] as { normal?: Vec3 } | undefined)?.normal;
+    // On the rim of the widest side wall, where the wall's thickness shows (in the part before the shell and in the shelled part alike);
+    // a closed shell: on its largest flat face, clear of the origin's axes.
+    const side = open ? planes.filter((f) => Math.abs(dot3(f.normal!, open)) < 1e-6).sort((a, b) => b.area - a.area)[0] : undefined;
+    const face = side ?? removed ?? [...planes].sort((a, b) => b.area - a.area)[0];
+    if (!face?.normal) return [];
+    const at = side && open ? rimOf(side, open, view) : clearOfAxes(face.centroid, face, view);
     const outward = resolved.outward === true;
-    const at = clearOfAxes(face.centroid, face, view);
     out.push({ id: `${id}:thickness`, feature: id, key: "thickness", origin: at, dir: outward ? face.normal : scale3(face.normal, -1), value: t, scale: 1, min: 0, locked: locked("thickness"), label: "Wall", snap: "length" });
     out.push({ id: `${id}:flip`, feature: id, key: "outward", kind: "flip", origin: at, dir: face.normal, value: 0, scale: 1, min: null, label: outward ? "Walls inside" : "Walls outside", write: (f) => ({ outward: f.outward === true ? null : true }) });
     return out;
