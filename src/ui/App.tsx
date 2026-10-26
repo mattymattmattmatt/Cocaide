@@ -323,6 +323,15 @@ export function App() {
   };
   /** The section view (Phase P): up to three planes, kept on while you work and remembered for the document. */
   const sectionCtl = useSectionView(docName, view, selection, (kind, text) => setNotice({ kind, text }));
+  // The view bar's Section menu and the Section tag open the docked Section panel: unfolded (a fresh one) and scrolled into sight.
+  const [sectionReveal, setSectionReveal] = useState(0);
+  const revealSection = useCallback(() => {
+    sectionCtl.openPanel();
+    setSectionReveal((n) => n + 1);
+  }, [sectionCtl]);
+  useEffect(() => {
+    if (sectionReveal) requestAnimationFrame(() => document.querySelector('[data-testid="section-panel"]')?.scrollIntoView({ block: "nearest" }));
+  }, [sectionReveal]);
   const section = sectionCtl.section;
   /** The frame's nodes, where the viewport draws them. */
   const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
@@ -618,8 +627,9 @@ export function App() {
 
   // ------------------------------------------------------------ rollback
 
-  /** The bar to just above the feature at `index` (the feature count: the end), as one undo step. */
-  const rollTo = (index: number) => {
+  /** The bar to just above the feature at `index` (the feature count: the end), as one undo step; with a feature open, once it is finished. */
+  const rollTo = (index: number) => void sessionApi.finishFirst("move the rollback bar", () => rollToNow(index));
+  const rollToNow = (index: number) => {
     if (!doc) return;
     const before = rollbackAt(doc, index);
     if (before === (typeof doc.rollback === "string" ? doc.rollback : null)) return;
@@ -1947,7 +1957,7 @@ export function App() {
               onToggleEye={(id) => setDatumView(toggleEye(datumView, id))}
               onDatumMenu={sketch ? undefined : datumMenu}
               rollback={bar}
-              onRollback={sketch ? undefined : (i) => void sessionApi.finishFirst("move the rollback bar", () => rollTo(i))}
+              onRollback={sketch ? undefined : rollTo}
               onRollbackMenu={sketch ? undefined : rollbackMenu}
               // A double-click opens the feature with OK and Cancel (Edit feature); its dimensions are on its right-click menu.
               onShowDimensions={sketch ? undefined : editFeature}
@@ -2030,7 +2040,7 @@ export function App() {
                   section={section}
                   onSection={sectionCtl.setSection}
                   onSectionToggle={sectionCtl.toggleShown}
-                  onSectionPanel={sectionCtl.openPanel}
+                  onSectionPanel={revealSection}
                   overlay={overlay}
                   dims={dims}
                   onDimension={(dim, x, y) => setValueBox({ x, y, dim })}
@@ -2052,34 +2062,7 @@ export function App() {
                   onBox={onBox}
                   onDoubleClick={(t) => void onDoubleClick(t)}
                 />
-              {(measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
-                <div className="eval-panels">
-                  {measuring && measured && (
-                    <MeasurePanel
-                      result={measured}
-                      busy={!!pairKey && !closestNow}
-                      error={closestNow?.error ?? null}
-                      onClose={() => setMeasuring(false)}
-                      onClear={() => setSelection(EMPTY_SELECTION)}
-                    />
-                  )}
-                  {weighing && <MassPanel mass={mass?.value ?? null} error={mass?.error ?? null} busy={mass?.view !== view} onClose={() => setWeighing(false)} />}
-                  {section?.on && sectionCtl.panelOpen && (
-                    <SectionPanel
-                      section={section}
-                      choices={sectionChoices(view?.datums ?? {})}
-                      faceOk={selection.faces.length === 1 && view?.faces[selection.faces[0]]?.type === "plane"}
-                      box={box}
-                      bodies={(view?.bodies ?? []).map((b) => b.name)}
-                      onPlane={sectionCtl.planeTo}
-                      onChange={sectionCtl.setSection}
-                      onAdd={() => sectionCtl.setSection(addPlane(section, view?.datums ?? {}, box))}
-                      onClose={sectionCtl.close}
-                    />
-                  )}
-                </div>
-              )}
-              {/* Above the view buttons, clear of the selection chip and the Evaluate panels at the top. */}
+              {/* Above the view buttons, clear of the selection chip at the top. */}
               <div className="view-chips">
                 {session && (
                   <div className={`session-prompt${effect?.error ? " failing" : ""}`} data-testid="session-prompt" role="status">
@@ -2136,6 +2119,35 @@ export function App() {
               )}
               </section>
               <aside className="side right">
+                {/* The Evaluate panels (Measure, Mass properties, Section), docked above the tabs: they never cover the part. */}
+                {(measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
+                  <div className="eval-panels eval-dock" data-testid="eval-dock">
+                    {measuring && measured && (
+                      <MeasurePanel
+                        result={measured}
+                        busy={!!pairKey && !closestNow}
+                        error={closestNow?.error ?? null}
+                        onClose={() => setMeasuring(false)}
+                        onClear={() => setSelection(EMPTY_SELECTION)}
+                      />
+                    )}
+                    {weighing && <MassPanel mass={mass?.value ?? null} error={mass?.error ?? null} busy={mass?.view !== view} onClose={() => setWeighing(false)} />}
+                    {section?.on && sectionCtl.panelOpen && (
+                      <SectionPanel
+                        key={sectionReveal}
+                        section={section}
+                        choices={sectionChoices(view?.datums ?? {})}
+                        faceOk={selection.faces.length === 1 && view?.faces[selection.faces[0]]?.type === "plane"}
+                        box={box}
+                        bodies={(view?.bodies ?? []).map((b) => b.name)}
+                        onPlane={sectionCtl.planeTo}
+                        onChange={sectionCtl.setSection}
+                        onAdd={() => sectionCtl.setSection(addPlane(section, view?.datums ?? {}, box))}
+                        onClose={sectionCtl.close}
+                      />
+                    )}
+                  </div>
+                )}
                 <div className="tabs" role="tablist">
                   <button role="tab" aria-selected={rightTab === "properties"} onClick={() => setRightTab("properties")} data-testid="tab-properties">
                     Properties

@@ -36,6 +36,8 @@ const LOCKED_COLOR = 0x868e96;
 /** A pattern's count knob, and a flip button. */
 const COUNT_COLOR = 0x0ca678;
 const FLIP_COLOR = 0x495057;
+/** A section plane's arrow: the blue of the plane it moves. */
+const SECTION_COLOR = 0x1971c2;
 /** An arc's ball and a point's disc on screen, pixels. */
 const BALL_PX = 13;
 const POINT_PX = 18;
@@ -179,7 +181,8 @@ export class EvalLayer {
     this.handleTags = [];
     for (const h of handles) {
       const live = dragging?.h.id === h.id ? dragging : { h, value: h.kind === "point" ? (h.at ?? [0, 0]) : h.value };
-      const mat = new THREE.MeshBasicMaterial({ color: this.colorOf(h), depthTest: false });
+      // Transparent (fully opaque) so it is drawn after a feature session's see-through preview, not under it.
+      const mat = new THREE.MeshBasicMaterial({ color: this.colorOf(h), depthTest: false, depthWrite: false, transparent: true, opacity: 1 });
       const parts: THREE.Object3D[] = [];
       let lineMat: THREE.LineBasicMaterial | undefined;
       if (h.kind === "angle") {
@@ -232,7 +235,8 @@ export class EvalLayer {
         this.callbacks.onHandleLabel?.(h, r.left, r.bottom + 4);
       });
       el.addEventListener("pointerdown", (e) => e.stopPropagation());
-      this.handleTags.push({ el, at: handleTip(live.h, live.value), dx: 10, dy: 8 });
+      // A count's label sits above its knob, clear of the spacing's label (the two tips are near each other).
+      this.handleTags.push({ el, at: handleTip(live.h, live.value), dx: 10, dy: h.snap === "count" ? -26 : 8 });
     }
   }
 
@@ -240,7 +244,7 @@ export class EvalLayer {
   private colorOf(h: HandleSpec): number {
     if (h.locked) return LOCKED_COLOR;
     if (h.id === this.hot || this.dragging?.h.id === h.id) return HANDLE_HOT;
-    return h.kind === "flip" ? FLIP_COLOR : h.snap === "count" ? COUNT_COLOR : HANDLE_COLOR;
+    return h.kind === "flip" ? FLIP_COLOR : h.kind === "section" ? SECTION_COLOR : h.snap === "count" ? COUNT_COLOR : HANDLE_COLOR;
   }
 
   /** Highlights the handle under the pointer (null: none). Returns whether it changed. */

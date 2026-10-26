@@ -121,6 +121,8 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
   const close = () => {
     setSession(null);
     setGuard(null);
+    // At once, not at the next render: what runs straight after OK or Cancel (the action that asked to finish first) sees no session.
+    live.current = { ...live.current, session: null };
   };
 
   const ok = (force = false): boolean => {

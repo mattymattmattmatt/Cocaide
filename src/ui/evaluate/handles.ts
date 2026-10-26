@@ -262,7 +262,7 @@ function onDefaultAxis(p: Vec3, tol: number): boolean {
 
 /**
  * A point on a face where a handle can stand: the face's middle, or, when
- * that is on one of the origin's axes (a face centred on the origin), a third
+ * that is on one of the origin's axes (a face centred on the origin), half
  * of the way from it toward the face's farthest corner, so the handle is not
  * hidden behind the origin's own arrows.
  */
@@ -283,7 +283,7 @@ function clearOfAxes(p: Vec3, face: FaceInfo, view: RebuildView): Vec3 {
       far = q;
     }
   }
-  return far ? add3(p, scale3(sub3(far, p), 1 / 3)) : p;
+  return far ? add3(p, scale3(sub3(far, p), 0.5)) : p;
 }
 
 /** Is a 2D point inside a closed polyline (even-odd)? */

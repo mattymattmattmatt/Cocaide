@@ -67,6 +67,9 @@ test("rollback: roll above the hole, add a fillet at the bar, roll to the end; u
   await expect(page.getByTestId("feature-hole_1")).toHaveClass(/rolled-back/);
   await expect(page.getByTestId("feature-fillet_1")).not.toHaveClass(/rolled-back/);
   await shot(page, "rollback-added");
+  // The fillet opened with OK and Cancel (Phase P wave 2): OK keeps it before the bar moves.
+  await page.getByTestId("session-ok").click();
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
 
   // Right-click the bar: Roll to end. The hole is built again, after the fillet.
   await page.getByTestId("rollback-bar").click({ button: "right" });
@@ -239,8 +242,10 @@ test("drag the extrude's depth handle: the depth follows in whole millimetres, o
   await page.getByTestId("undo").click();
   await expect.poll(async () => (await feature(page, "ext_1")).distance).toBe(6);
 
-  // Double-click the extrude in the tree: its dimensions on the model (the sketch's width, the depth).
-  await page.getByTestId("feature-ext_1").locator(".feature-row").dblclick();
+  // Right-click the extrude in the tree, Show dimensions: its dimensions on the model (the sketch's width, the depth).
+  // (A double-click in the tree opens the feature for editing, with OK and Cancel, since Phase P wave 2.)
+  await page.getByTestId("feature-ext_1").locator(".feature-row").click({ button: "right" });
+  await page.getByTestId("ctx-show-dimensions").click();
   await expect(page.getByTestId("dims-chip")).toContainText("ext_1");
   await expect(page.getByTestId("dim3d-ext_1:distance")).toHaveText("6");
   await expect(page.getByTestId("dim3d-sketch_1:0")).toHaveText("80");
