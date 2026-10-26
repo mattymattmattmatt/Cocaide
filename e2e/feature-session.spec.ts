@@ -269,6 +269,38 @@ test("selection-first fillet: the edge picked before the tool goes into it", asy
   expect(await feature(page, "fillet_1")).toBeTruthy();
 });
 
+test("another sketch's line, clicked in the view, goes into a revolve's axis field as a reference to it", async ({ page }) => {
+  // A 10 × 20 rectangle on Front, x 10..20, revolved about Z; a second sketch on Front with a line up the Z axis.
+  const FRONT = { type: "ref", ref: { datum: "Front" } };
+  await openDocument(page, {
+    version: 1,
+    units: "mm",
+    name: "turned",
+    features: [
+      { id: "prof", op: "sketch", plane: FRONT, entities: [{ id: "r1", type: "rect", center: [15, 10], w: 10, h: 20 }], constraints: [] },
+      { id: "ax", op: "sketch", plane: FRONT, entities: [{ id: "l1", type: "line", start: [0, 0], end: [0, 30] }], constraints: [] },
+      { id: "rev", op: "revolve", sketch: "prof", axis: { datum: "Z" } },
+    ],
+  });
+  await expectVolume(page, "18,849.55"); // π (20² - 10²) 20
+  // Edit the revolve (double-click in the tree), make its Axis the active field, click the other sketch's line.
+  await page.getByTestId("feature-rev").locator(".feature-row").dblclick();
+  await expect(page.getByTestId("session-title")).toHaveText("Edit rev");
+  await page.getByTestId("prop-axis-pick").click();
+  await expect(page.getByTestId("prop-axis-pick")).toHaveAttribute("data-active", "true");
+  const [x, y] = await page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.project([0, 0, 26]));
+  await page.mouse.click(x, y);
+  await expect.poll(async () => (await feature(page, "rev"))!.axis).toEqual({ sketch: "ax", entity: "l1" });
+  await expect(page.getByTestId("prop-axis-ref")).toHaveText("ax's l1 (a line)");
+  // The same axis, so the same ring; OK keeps it.
+  await waitForRebuild(page);
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+  await expectVolume(page, "18,849.55"); // π (20² - 10²) 20
+  await shot(page, "sketch-axis-ref");
+  await page.getByTestId("session-ok").click();
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
+});
+
 async function openDocument(page: Page, doc: Raw) {
   const text = JSON.stringify(doc, null, 2);
   await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
