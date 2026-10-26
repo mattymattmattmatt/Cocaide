@@ -172,6 +172,7 @@ change the plate's width, and the circle (and the hole cut from it) moves with t
 (never profile) unless it says "construction": false (Convert Entities: the model's outline copied in as profile).
   line:   "ref": { "edge": <edge selector> }  - a straight edge (or a circular one seen edge-on, as the line it looks like)
           "ref": { "datum": "Z" }  (or "X", "Y", an axis feature's id) - an axis, drawn long enough to cross the part
+          "ref": { "face": <cylindrical face selector> }  - a round face's axis (a hole's or a tube's centre line), drawn the same
   circle: "ref": { "edge": <selector of a whole circular edge> }  - its plane must face the sketch
   arc:    "ref": { "edge": <selector of a part-circle edge> }
   point:  "ref": { "edge": <selector>, "at": "start" | "end" | "mid" | "center" }, { "datum": "Origin" }, a point feature

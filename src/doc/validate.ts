@@ -487,7 +487,8 @@ function referenceOf(v: unknown, type: SketchEntity["type"], path: string, c: Ch
     c.fail(path, `a ${type} references ${takes}, not ${what}`);
     return undefined;
   };
-  if ("face" in ref) return refuse("a face (pick one of its edges)");
+  // A round face is its axis: a line may reference it (the rebuild refuses a flat face, a plane, there).
+  if ("face" in ref) return type === "line" ? ref : refuse("a face (pick one of its edges)");
   const kinds = possibleKinds(ref, opts.earlier);
   if ("edge" in ref) {
     if (type === "point") {

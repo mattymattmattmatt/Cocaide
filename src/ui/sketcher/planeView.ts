@@ -153,7 +153,7 @@ export function screenDistance(p: Vec2, poly: Vec2[]): { d: number; segment: num
 export function sketchWorldPoints(entities: SketchEntity[], frame: Frame): number[] {
   const out: number[] = [];
   for (const e of entities) {
-    if (e.ref && "datum" in e.ref && e.type === "line") continue;
+    if (e.ref && ("datum" in e.ref || "face" in e.ref) && e.type === "line") continue;
     const lines = e.type === "point" ? [[e.at]] : entityPolylines(e, Math.PI / 16);
     for (const pl of lines) for (const p of pl) out.push(...to3D(frame, p));
   }

@@ -252,9 +252,11 @@ export function SketchCanvas(props: Props) {
    */
   const planeEnts = useMemo(() => {
     const picked = new Set(chosenKey.split("|"));
-    if (!turned) return modelEnts.filter((e) => othersShown || !isSketchStandIn(e.id));
+    // A round face's axis is hit in 3D (on its face), and on the plane once picked.
+    const axes = model.axes.filter((m) => m.entity && picked.has(m.id)).map((m) => m.entity!);
+    if (!turned) return [...modelEnts.filter((e) => othersShown || !isSketchStandIn(e.id)), ...axes];
     const keep = (m: ModelEdge) => !!m.entity && (m.inPlane || picked.has(m.id));
-    return [...model.edges.filter(keep), ...(othersShown ? model.others.filter(keep) : [])].map((m) => m.entity!);
+    return [...model.edges.filter(keep), ...(othersShown ? model.others.filter(keep) : [])].map((m) => m.entity!).concat(axes);
   }, [modelEnts, model, turned, othersShown, chosenKey]);
 
   /** The canvas's own pixels of a client point. */
@@ -281,7 +283,8 @@ export function SketchCanvas(props: Props) {
       return;
     }
     const local = localOf(clientX, clientY);
-    const hit = standInFor(view3d.pick(clientX, clientY), model, cam, local, { faces: tool === "convert" });
+    // Picking (not drawing), a round face stands for its axis.
+    const hit = standInFor(view3d.pick(clientX, clientY), model, cam, local, { faces: tool === "convert", axes: tool !== "convert" && !toolByName(tool) });
     const other = othersShown ? otherSketchAt(model, cam, local, (o) => o.inPlane) : null;
     scene.current = hit && "problem" in hit ? (other ?? hit) : nearer(hit, other);
   };
@@ -342,7 +345,7 @@ export function SketchCanvas(props: Props) {
   const placesOn = (hit: SketchItem, first: SketchItem): boolean => {
     if (hit.kind !== "entity" || (hit.id !== "X" && hit.id !== "Y") || first.kind !== "entity") return false;
     if (first.id === "X" || first.id === "Y") return true;
-    const line = [...entities, ...modelEnts].find((e) => e.id === first.id);
+    const line = [...entities, ...modelEnts, ...planeEnts].find((e) => e.id === first.id);
     if (line?.type !== "line") return false;
     const d = [line.end[0] - line.start[0], line.end[1] - line.start[1]];
     const along = hit.id === "X" ? Math.abs(d[1]) : Math.abs(d[0]);
@@ -521,7 +524,7 @@ export function SketchCanvas(props: Props) {
       const item = hit && picks.length === 1 && placesOn(hit, picks[0]) ? null : hit;
       // Shift-clicking a circle or arc measures to its near or far side, by the side clicked (min and max).
       if (item?.kind === "entity" && e.shiftKey) {
-        const round = [...entities, ...modelEnts].find((x) => x.id === item.id);
+        const round = [...entities, ...modelEnts, ...planeEnts].find((x) => x.id === item.id);
         if (round?.type === "circle" || round?.type === "arc") shiftArcs.current = { ...shiftArcs.current, [item.id]: p };
       }
       const arcs = () => {
@@ -717,6 +720,8 @@ export function SketchCanvas(props: Props) {
   const drawnEdges = turned ? model.edges.filter((m) => m.inPlane || isHover(m.id) || hoverOwner === m.id || selectedIds.has(m.id) || chosenKey.split("|").includes(m.id)) : model.edges;
   /** Other sketches' entities drawn on the plane (the 3D view draws them where they are): those hovered or picked, projected. */
   const drawnOthers = othersShown ? model.others.filter((o) => o.entity && (hoverOwner === o.id || chosenKey.split("|").includes(o.id))) : [];
+  /** Round faces' axes drawn on the plane: those hovered or picked, projected. */
+  const drawnAxes = model.axes.filter((a) => a.entity && (hoverOwner === a.id || chosenKey.split("|").includes(a.id)));
   /** The hit in the 3D view under the pointer (turned), and the picked stand-ins off the plane: lit up where the view shows them. */
   const scenePointer = cam && turned && cursor && !gesture.current ? scene.current : null;
   const litOutlines: { key: string; poly: Vec2[]; className: string }[] = [];
@@ -726,8 +731,9 @@ export function SketchCanvas(props: Props) {
       if (m && !m.inPlane) litOutlines.push({ key: `sel:${id}`, poly: m.poly3.map((p) => toScreen(cam, p)), className: "scene-outline selected" });
     }
     if (scenePointer?.poly3.length) litOutlines.push({ key: "hover", poly: scenePointer.poly3.map((p) => toScreen(cam, p)), className: `scene-outline ${"problem" in scenePointer ? "unusable" : "hover"}` });
+    (scenePointer?.outline3 ?? []).forEach((l, k) => litOutlines.push({ key: `hover-side${k}`, poly: l.map((p) => toScreen(cam, p)), className: "scene-outline side" }));
   }
-  const sceneTitle = scenePointer && "problem" in scenePointer ? `Model edge: ${scenePointer.problem}` : null;
+  const sceneTitle = scenePointer && "problem" in scenePointer ? `${scenePointer.outline3 ? "Round face" : "Model edge"}: ${scenePointer.problem}` : null;
   /** Where the grid and the axes are drawn: the plane round the sketch and the model, within the view. */
   const gridArea = useMemo(() => planeArea(entities, model, map, size), [entities, model, mapKey, size.w, size.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -803,6 +809,9 @@ export function SketchCanvas(props: Props) {
           <g className="sketch-refs" data-testid="sketch-refs">
             {drawnOthers.map((o) => (
               <EntityShape key={o.id} e={o.entity!} className={`entity other-sketch${isHover(o.id) ? " hover" : ""}${selectedIds.has(o.id) ? " selected" : ""}`} standIn />
+            ))}
+            {drawnAxes.map((a) => (
+              <EntityShape key={a.id} e={a.entity!} className={`entity face-axis${isHover(a.id) ? " hover" : ""}${selectedIds.has(a.id) ? " selected" : ""}${related.has(a.id) ? " related" : ""}`} standIn />
             ))}
           </g>
           {props.regions && props.regions.length > 0 && (
@@ -1066,7 +1075,7 @@ function planeArea(entities: SketchEntity[], model: ModelView, map: PlaneMap, si
   if (map.facing) return seen;
   const xs: number[] = [0];
   const ys: number[] = [0];
-  for (const e of entities) if (!(e.ref && "datum" in e.ref && e.type === "line")) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
+  for (const e of entities) if (!(e.ref && ("datum" in e.ref || "face" in e.ref) && e.type === "line")) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
   for (const m of model.edges) for (const p of m.poly) xs.push(p[0]), ys.push(p[1]);
   const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
   const margin = Math.max(20, span / 8);
@@ -1313,7 +1322,7 @@ function fitFlat(entities: SketchEntity[], model: ModelView, size: { w: number; 
   const xs: number[] = [0];
   const ys: number[] = [0];
   // A reference to an axis is drawn long enough to cross the whole part: it would zoom the view right out.
-  for (const e of entities) if (!(e.ref && "datum" in e.ref && e.type === "line")) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
+  for (const e of entities) if (!(e.ref && ("datum" in e.ref || "face" in e.ref) && e.type === "line")) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
   for (const m of model.edges) for (const p of m.poly) xs.push(p[0]), ys.push(p[1]);
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);

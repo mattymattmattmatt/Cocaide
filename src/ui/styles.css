@@ -1639,11 +1639,15 @@ svg.icon { flex: none; display: block; }
 .sketch-canvas .entity.other-sketch.hover { stroke: var(--sketch-reference); stroke-width: 2.6; }
 .sketch-canvas .entity.other-sketch.selected { stroke: var(--sketch-selected); }
 .sketch-canvas .entity.other-sketch.point { fill: var(--sketch-reference); stroke: none; }
+.sketch-canvas .entity.face-axis { stroke: var(--sketch-reference); stroke-dasharray: 12 3 2 3; stroke-width: 1.4; }
+.sketch-canvas .entity.face-axis.hover { stroke-width: 2.4; }
+.sketch-canvas .entity.face-axis.selected { stroke: var(--sketch-selected); }
 /* What the pointer is on in the 3D view, lit where the view shows it; the drop from it onto the plane. */
 .sketch-canvas .scene-outline { fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .sketch-canvas .scene-outline.hover { stroke: var(--scene-hover); }
 .sketch-canvas .scene-outline.selected { stroke: var(--sketch-selected); stroke-opacity: 0.75; }
 .sketch-canvas .scene-outline.unusable { stroke: var(--scene-unusable); stroke-dasharray: 3 3; }
+.sketch-canvas .scene-outline.side { stroke: var(--scene-hover); stroke-width: 1.6; stroke-opacity: 0.8; }
 .sketch-canvas .scene-drop { stroke: var(--scene-hover); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
 .sketch-canvas .scene-tip text { font-size: 11px; fill: var(--text); paint-order: stroke; stroke: var(--viewport-top); stroke-width: 3px; }
 .sketch-canvas .dimensions text { paint-order: stroke; stroke: var(--viewport-top); stroke-width: 3px; }

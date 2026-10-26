@@ -251,7 +251,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
 
   /** The model edges, model vertices and sketch axes the sketch can relate to: the stand-ins and the axes beside its own entities. */
   const modelEnts = useMemo(() => modelEntities(model), [model]);
-  const pool = useMemo(() => withAxes([...draft.entities, ...modelEnts]), [draft.entities, modelEnts]);
+  // Round faces' axes ("@f3") too: picked in a turned view, related and dimensioned like a model edge.
+  const pool = useMemo(() => withAxes([...draft.entities, ...modelEnts, ...model.axes.flatMap((a) => (a.entity ? [a.entity] : []))]), [draft.entities, modelEnts, model]);
   const names = useMemo(() => namer(draft.entities, model), [draft.entities, model]);
 
   /**

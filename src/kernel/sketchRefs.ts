@@ -127,6 +127,6 @@ function refWhat(ref: DatumRef): string {
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of a model edge` : "a model edge";
   if ("sketch" in ref) return sketchRefText(ref);
   if ("datum" in ref) return ref.datum;
-  if ("face" in ref) return "a face";
+  if ("face" in ref) return "a round face's axis";
   return "a point";
 }

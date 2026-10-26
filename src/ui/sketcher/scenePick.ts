@@ -36,25 +36,39 @@ export interface SceneHit {
   point3?: Vec3;
   /** A model edge (true) or another sketch's entity: a model edge wins a tie. */
   model: boolean;
+  /** A round face's axis: the cylinder's outline as the view shows it, lit up with the axis. */
+  outline3?: Vec3[][];
 }
 
 /** A model edge under the pointer that a sketch can't reference (seen end-on, a tilted circle): why, for the tip, and its outline. */
 export interface SceneMiss {
   problem: string;
   poly3: Vec3[];
+  outline3?: Vec3[][];
 }
 
 /**
  * The view's pick (a vertex, an edge, a face) as the sketch's stand-in. A
  * vertex is its edge's stand-in's end ("@e12.start"); an edge its stand-in;
- * a face (only with `faces`: Convert Entities) one of the faces along the
- * sketch, else nothing. `local` is the pointer in the view's pixels.
+ * a face, with `faces` (Convert Entities), one of the faces along the sketch;
+ * with `axes` (picking, not drawing), a round face's axis ("@f3"), a weak hit
+ * (PICK_PX away: an edge or another sketch's entity near the pointer wins);
+ * else nothing. `local` is the pointer in the view's pixels.
  */
-export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamera, local: Vec2, opts: { faces?: boolean } = {}): SceneHit | SceneMiss | null {
+export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamera, local: Vec2, opts: { faces?: boolean; axes?: boolean } = {}): SceneHit | SceneMiss | null {
   if (!pick || pick.kind === "datum") return null;
   if (pick.kind === "face") {
-    if (!opts.faces || !m.faces.some((f) => f.index === pick.index)) return null;
-    return { item: { kind: "face", index: pick.index }, standIn: null, at: to2D(m.frame, pick.point), px: 0, poly3: [], point3: pick.point, model: true };
+    if (opts.faces) {
+      if (!m.faces.some((f) => f.index === pick.index)) return null;
+      return { item: { kind: "face", index: pick.index }, standIn: null, at: to2D(m.frame, pick.point), px: 0, poly3: [], point3: pick.point, model: true };
+    }
+    // A round face (or its outline in the view) stands for its axis, when picking rather than drawing.
+    const axis = opts.axes ? m.axes.find((a) => a.axisOf?.face === pick.index) : undefined;
+    if (!axis?.axisOf) return null;
+    const outline3 = cylinderOutline(axis.axisOf, cam.forward);
+    if (!axis.entity) return { problem: axis.problem ?? REFERENCEABLE, poly3: axis.poly3, outline3 };
+    const near = alongAxis(axis.axisOf, pick.point);
+    return { item: { kind: "entity", id: axis.id }, standIn: axis.entity, at: to2D(m.frame, near), px: PICK_PX, poly3: axis.poly3, point3: near, model: true, outline3 };
   }
   const index = pick.kind === "vertex" ? pick.edge : pick.index;
   const edge = modelEdge(m, modelId(index));
@@ -99,6 +113,26 @@ export function nearer(a: SceneHit | null, b: SceneHit | null): SceneHit | null 
   if (!a || !b) return a ?? b;
   if (Math.abs(a.px - b.px) <= 1.5) return a.model ? a : b.model ? b : a;
   return a.px < b.px ? a : b;
+}
+
+/** The point of a round face's axis nearest p (within the face's length). */
+export function alongAxis(c: NonNullable<ModelEdge["axisOf"]>, p: Vec3): Vec3 {
+  const t = Math.min(Math.max((p[0] - c.origin[0]) * c.axis[0] + (p[1] - c.origin[1]) * c.axis[1] + (p[2] - c.origin[2]) * c.axis[2], Math.min(...c.axial)), Math.max(...c.axial));
+  return [c.origin[0] + c.axis[0] * t, c.origin[1] + c.axis[1] * t, c.origin[2] + c.axis[2] * t];
+}
+
+/**
+ * A cylinder's outline as a view looking along `forward` shows it: the two
+ * lines along its length on either side, a radius off the axis square to the
+ * view; none when the view looks along the axis (its circular edges are its outline then).
+ */
+export function cylinderOutline(c: NonNullable<ModelEdge["axisOf"]>, forward: Vec3): Vec3[][] {
+  const a = c.axis;
+  const s: Vec3 = [a[1] * forward[2] - a[2] * forward[1], a[2] * forward[0] - a[0] * forward[2], a[0] * forward[1] - a[1] * forward[0]];
+  const n = Math.hypot(s[0], s[1], s[2]);
+  if (n < 1e-6) return [];
+  const at = (t: number, k: number): Vec3 => [0, 1, 2].map((i) => c.origin[i] + a[i] * t + (s[i] / n) * c.radius * k) as Vec3;
+  return [1, -1].map((k) => [at(c.axial[0], k), at(c.axial[1], k)]);
 }
 
 /** A 3D polyline's distance from a screen point (pixels), with where along it. */

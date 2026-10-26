@@ -34,6 +34,10 @@ export function namer(entities: SketchEntity[], model?: ModelView): Namer {
       const m = model && modelEdge(model, id);
       return `${src?.sketch ?? "sketch"} ${src?.entity ?? ""}${m?.source ? ` (${shapeWords(m.source.entity)})` : ""}`.trim();
     }
+    if (id.startsWith("@f")) {
+      const axis = model && modelEdge(model, id)?.axisOf;
+      return axis ? `axis of a round face (Ø${num(2 * axis.radius)})` : "axis of a round face";
+    }
     if (isModelId(id)) {
       const e = model && modelEdge(model, id)?.entity;
       return e ? `model edge (${shapeWords(e)})` : "model edge";
@@ -57,7 +61,7 @@ export function referenceName(e: SketchEntity): string {
   const ref = e.ref as DatumRef;
   if ("datum" in ref) return /^[XYZ]$/.test(ref.datum) ? `axis ${ref.datum}` : ref.datum === "Origin" ? "Origin" : ref.datum;
   if ("point" in ref) return `point [${ref.point.map((x) => Math.round(x * 1000) / 1000).join(", ")}]`;
-  if ("face" in ref) return "model face";
+  if ("face" in ref) return e.type === "line" ? "axis of a round face" : "model face";
   if ("sketch" in ref) {
     const whose = `${ref.sketch} ${ref.entity}`;
     if (e.type === "point") return ref.at ? `${ref.at === "mid" ? "middle" : ref.at === "center" ? "centre" : ref.at} of ${whose}` : whose;

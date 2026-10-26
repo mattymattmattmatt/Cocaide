@@ -22,10 +22,10 @@ import { ENTITY_PREFIX, isConstruction, nextEntityId } from "../../doc/sketch";
 import type { Constraint, EdgeSelector, SketchEntity, Vec2, Vec3 } from "../../doc/types";
 import { planeFrame, to2D, to3D, type Frame } from "../../geom/frame";
 import { entityPolylines } from "../../geom/profile";
-import { projectEdge, projectPoint, REFERENCEABLE } from "../../geom/projection";
+import { projectAxis, projectEdge, projectPoint, REFERENCEABLE } from "../../geom/projection";
 import { SKETCH_REFERENCEABLE, sketchEntityEdge } from "../../geom/sketchEdge";
 import { dist2 } from "../../geom/vec";
-import { edgeSelectorFor } from "../../kernel/synthesize";
+import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
 import { selectEdges } from "../../kernel/selectors";
 import type { EdgeInfo, FaceInfo } from "../../kernel/topology";
 import type { MeshData } from "../../kernel/mesh";
@@ -34,8 +34,10 @@ import type { MeshData } from "../../kernel/mesh";
 export const modelId = (index: number) => `@e${index}`;
 /** What stands for entity `entity` of the earlier sketch `sketch` inside the sketcher. */
 export const sketchStandIn = (sketch: string, entity: string) => `@s:${sketch}:${entity}`;
-/** A stand-in (or a point of one): a model edge's ("@e12") or another sketch's entity's ("@s:sketch_1:l2"), not the sketch's own. */
-export const isModelId = (id: string | null | undefined): boolean => !!id && (id.startsWith("@e") || id.startsWith("@s:"));
+/** What stands for the axis of round face `index` (a hole's, a tube's) inside the sketcher: hovered on the face in a turned view. */
+export const faceAxisId = (index: number) => `@f${index}`;
+/** A stand-in (or a point of one): a model edge's ("@e12"), a round face's axis ("@f3") or another sketch's entity's ("@s:sketch_1:l2"), not the sketch's own. */
+export const isModelId = (id: string | null | undefined): boolean => !!id && (id.startsWith("@e") || id.startsWith("@s:") || id.startsWith("@f"));
 /** Another sketch's entity's stand-in (or a point of one). */
 export const isSketchStandIn = (id: string | null | undefined): boolean => !!id && id.startsWith("@s:");
 /** The edge index a model edge's stand-in id ("@e12", or a point of it, "@e12.start") stands for (NaN for another sketch's). */
@@ -71,6 +73,8 @@ export interface ModelEdge {
   length: number;
   /** Another sketch's entity: which, as that sketch is solved, and its points in 3D (its ends, centre, a point's place) by name. */
   source?: { sketch: string; entity: SketchEntity; points: { name: string; at: Vec3 }[] };
+  /** A round face's axis: the face, and its cylinder (the turned view draws its outline while it is hovered). */
+  axisOf?: { face: number; radius: number; origin: Vec3; axis: Vec3; axial: [number, number] };
 }
 
 /** A face lying along the sketch plane: its boundary is what Convert Entities takes from it. */
@@ -89,12 +93,14 @@ export interface ModelView {
   faces: ModelFace[];
   /** The other sketches' entities in view (each with `source`): drawn in the 3D view, referenced by { sketch, entity }. */
   others: ModelEdge[];
+  /** The round faces' axes (each with `axisOf`): hovered on their faces in a turned view, referenced by { face } (its axis). */
+  axes: ModelEdge[];
   /** The part's own descriptions, for selectors that find these edges again on rebuild. */
   source: { edges: EdgeInfo[]; faces: FaceInfo[] };
   frame: Frame;
 }
 
-export const EMPTY_MODEL: ModelView = { edges: [], faces: [], others: [], source: { edges: [], faces: [] }, frame: planeFrame([0, 0, 1], [0, 0, 0]) };
+export const EMPTY_MODEL: ModelView = { edges: [], faces: [], others: [], axes: [], source: { edges: [], faces: [] }, frame: planeFrame([0, 0, 1], [0, 0, 0]) };
 
 /** Within this, mm, a point counts as on the sketch plane. */
 const ON_PLANE = 1e-6;
@@ -167,7 +173,50 @@ export function modelView(view: { mesh: MeshData | null; edges: EdgeInfo[]; face
       inPlane: !!f.point && Math.abs(height(f.point)) < ON_PLANE,
     });
   });
-  return { edges, faces, others, source: { edges: view.edges, faces: view.faces }, frame };
+  return { edges, faces, others, axes: faceAxes(view.faces, mesh, frame), source: { edges: view.edges, faces: view.faces }, frame };
+}
+
+/** An axis is drawn this far each way at least, mm (as the rebuild draws a reference to one: src/kernel/sketchRefs.ts). */
+const MIN_AXIS_HALF = 100;
+
+/**
+ * The round (cylindrical) faces' axes, each a stand-in "@f<face>": the axis
+ * projected into the sketch, long enough to cross the part (as the rebuild
+ * projects a reference to it), or why it can't be (square to the plane); in
+ * 3D, the axis along the face's length.
+ */
+function faceAxes(faces: FaceInfo[], mesh: MeshData, frame: Frame): ModelEdge[] {
+  const cylinders = faces.filter((f) => f.type === "cylinder" && f.cylinder);
+  if (!cylinders.length) return [];
+  // Half the length drawn: the part's box diagonal plus its corners' distances from the origin, as the rebuild has it.
+  let min: Vec3 = [Infinity, Infinity, Infinity];
+  let max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < mesh.positions.length; i += 3) {
+    min = [Math.min(min[0], mesh.positions[i]), Math.min(min[1], mesh.positions[i + 1]), Math.min(min[2], mesh.positions[i + 2])];
+    max = [Math.max(max[0], mesh.positions[i]), Math.max(max[1], mesh.positions[i + 1]), Math.max(max[2], mesh.positions[i + 2])];
+  }
+  const len = (v: Vec3) => Math.hypot(v[0], v[1], v[2]);
+  const half = Number.isFinite(min[0]) ? Math.max(MIN_AXIS_HALF, len([max[0] - min[0], max[1] - min[1], max[2] - min[2]]) + len(max) + len(min)) : MIN_AXIS_HALF;
+  return cylinders.map((f) => {
+    const c = f.cylinder!;
+    const at = (t: number): Vec3 => [c.origin[0] + c.axis[0] * t, c.origin[1] + c.axis[1] * t, c.origin[2] + c.axis[2] * t];
+    const poly3 = [at(c.axial[0]), at(c.axial[1])];
+    const id = faceAxisId(f.index);
+    const shape = projectAxis(c.origin, c.axis, frame, half);
+    return {
+      index: -1,
+      id,
+      kind: "line" as const,
+      poly: poly3.map((p) => to2D(frame, p)),
+      poly3,
+      entity: shape.ok ? ({ id, ...shape.shape, construction: true, ref: PENDING } as SketchEntity) : null,
+      ...(shape.ok ? {} : { problem: "the round face's axis is square to the sketch plane (it projects to a point): reference its circular edge's centre with a point instead" }),
+      inPlane: false,
+      faces: [f.index],
+      length: Math.abs(c.axial[1] - c.axial[0]),
+      axisOf: { face: f.index, radius: c.radius, origin: c.origin, axis: c.axis, axial: c.axial },
+    };
+  });
 }
 
 /**
@@ -263,6 +312,10 @@ export function modelEdge(m: ModelView, id: string): ModelEdge | undefined {
     const own = id.split(".")[0];
     return m.others.find((e) => e.id === own);
   }
+  if (id.startsWith("@f")) {
+    const own = id.split(".")[0];
+    return m.axes.find((e) => e.id === own);
+  }
   const index = modelIndex(id);
   return m.edges.find((e) => e.index === index);
 }
@@ -346,6 +399,24 @@ export function materialize(ids: Iterable<string>, m: ModelView, entities: Sketc
       }
       const { id: _stand, construction: _c, ref: _r, ...numbers } = edge.entity as SketchEntity & Record<string, unknown>;
       const e = { id: nextEntityId(out, ENTITY_PREFIX[edge.entity.type]), ...cleaned(numbers), ref: { sketch, entity: target.id }, ...(opts.convert ? { construction: false } : {}) } as SketchEntity;
+      out.push(e);
+      added.push(e);
+      map.set(id, e.id);
+      continue;
+    }
+    if (edge?.axisOf) {
+      // A round face's axis: a reference line to the face ({ face }: its axis), always construction.
+      if (!edge.entity) return edge.problem ?? REFERENCEABLE;
+      const sel = faceSelectorFor(m.source.faces, edge.axisOf.face);
+      if (!sel.ok) return `that round face can't be referenced: ${sel.error}`;
+      const key = JSON.stringify(sel.selector);
+      const at = out.findIndex((e) => e.type === "line" && !!e.ref && "face" in e.ref && JSON.stringify(e.ref.face) === key);
+      if (at >= 0) {
+        map.set(id, out[at].id);
+        continue;
+      }
+      const { id: _stand, construction: _c, ref: _r, ...numbers } = edge.entity as SketchEntity & Record<string, unknown>;
+      const e = { id: nextEntityId(out, ENTITY_PREFIX.line), ...cleaned(numbers), ref: { face: sel.selector } } as SketchEntity;
       out.push(e);
       added.push(e);
       map.set(id, e.id);
