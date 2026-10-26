@@ -22,7 +22,7 @@ import { constraintTargets, isDriven } from "../../geom/axes";
 import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem, type SmartOptions } from "./draft";
 import { faceAt, isModelId, isSketchStandIn, modelEdge, modelEntities, type ModelEdge, type ModelFace, type ModelView } from "./model";
 import { shapeWords } from "./names";
-import { flatMap, mapPoint, mapVector, planeMap, svgMatrix, toScreen, unmapPoint, useCameraFeed, visibleBounds, type CameraFeed, type PlaneMap } from "./planeView";
+import { boxOf, flatMap, mapPoint, mapVector, planeBounds, planeMap, sketchWorldPoints, svgMatrix, toScreen, unmapPoint, useCameraFeed, visibleBounds, type CameraFeed, type PlaneMap } from "./planeView";
 import { boxPick, nearer, otherSketchAt, PICK_PX, standInFor, type SceneHit, type SceneMiss } from "./scenePick";
 import { tangentStart } from "./tools/arcs";
 import { place, placeTyped, previewOf, snapClick, toolByName, typedClick, type Placement } from "./tools/run";
@@ -1073,13 +1073,8 @@ function planeArea(entities: SketchEntity[], model: ModelView, map: PlaneMap, si
   const seen = visibleBounds(map, size.w, size.h);
   if (!seen || map.edgeOn) return null;
   if (map.facing) return seen;
-  const xs: number[] = [0];
-  const ys: number[] = [0];
-  for (const e of entities) if (!(e.ref && ("datum" in e.ref || "face" in e.ref) && e.type === "line")) for (const pl of spanOf(e)) for (const p of pl) xs.push(p[0]), ys.push(p[1]);
-  for (const m of model.edges) for (const p of m.poly) xs.push(p[0]), ys.push(p[1]);
-  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-  const margin = Math.max(20, span / 8);
-  const own = { min: [Math.min(...xs) - margin, Math.min(...ys) - margin] as Vec2, max: [Math.max(...xs) + margin, Math.max(...ys) + margin] as Vec2 };
+  // Turned: the plane the 3D view draws (round the part's box and the sketch), within the view.
+  const own = planeBounds(model.frame, [...boxOf(model.edges.flatMap((m) => m.poly3)), ...sketchWorldPoints(entities, model.frame)]);
   const min: Vec2 = [Math.max(own.min[0], seen.min[0]), Math.max(own.min[1], seen.min[1])];
   const max: Vec2 = [Math.min(own.max[0], seen.max[0]), Math.min(own.max[1], seen.max[1])];
   return min[0] < max[0] && min[1] < max[1] ? { min, max } : null;

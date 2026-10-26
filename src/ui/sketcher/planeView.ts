@@ -16,7 +16,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { SketchEntity, Vec2, Vec3 } from "../../doc/types";
-import { to3D, type Frame } from "../../geom/frame";
+import { to2D, to3D, type Frame } from "../../geom/frame";
 import { entityPolylines } from "../../geom/profile";
 import type { SectionView } from "../evaluate/section";
 
@@ -150,6 +150,37 @@ export function screenDistance(p: Vec2, poly: Vec2[]): { d: number; segment: num
  * drawn plane: every entity's outline (a reference to an axis is left out:
  * it is drawn long enough to cross the whole part).
  */
+/**
+ * The sketch plane's drawn extent (sketch mm): the points (flat xyz: the
+ * part's box corners, the sketch's points) seen square on, with a margin of
+ * an eighth of their size (at least `least` mm); round the plane's origin,
+ * `least` each way, with none. The 3D view's plane rectangle and the turned
+ * sketch's grid both use it, so the grid fills the plane drawn.
+ */
+export function planeBounds(frame: Frame, points: ArrayLike<number>, least = 10): { min: Vec2; max: Vec2 } {
+  let min: Vec2 = [Infinity, Infinity];
+  let max: Vec2 = [-Infinity, -Infinity];
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const p = to2D(frame, [points[i], points[i + 1], points[i + 2]]);
+    min = [Math.min(min[0], p[0]), Math.min(min[1], p[1])];
+    max = [Math.max(max[0], p[0]), Math.max(max[1], p[1])];
+  }
+  if (!Number.isFinite(min[0])) return { min: [-least, -least], max: [least, least] };
+  const margin = Math.max(least, Math.max(max[0] - min[0], max[1] - min[1]) / 8);
+  return { min: [min[0] - margin, min[1] - margin], max: [max[0] + margin, max[1] + margin] };
+}
+
+/** The eight corners of the box round the points (world, flat xyz), flat xyz; none for none. */
+export function boxOf(points: Vec3[]): number[] {
+  if (!points.length) return [];
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) for (let k = 0; k < 3; k++) (min[k] = Math.min(min[k], p[k])), (max[k] = Math.max(max[k], p[k]));
+  const out: number[] = [];
+  for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) out.push(x, y, z);
+  return out;
+}
+
 export function sketchWorldPoints(entities: SketchEntity[], frame: Frame): number[] {
   const out: number[] = [];
   for (const e of entities) {

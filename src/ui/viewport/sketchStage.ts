@@ -9,6 +9,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { Vec2, Vec3 } from "../../doc/types";
 import { to2D, to3D, type Frame } from "../../geom/frame";
+import { planeBounds } from "../sketcher/planeView";
 
 /**
  * The corners (world, counter-clockwise about the normal) of the rectangle on
@@ -17,19 +18,8 @@ import { to2D, to3D, type Frame } from "../../geom/frame";
  * least `least` mm); round the plane's origin, `least` each way, with none.
  */
 export function planeRect(frame: Frame, points: ArrayLike<number>, least = 10): [Vec3, Vec3, Vec3, Vec3] {
-  let min: Vec2 = [Infinity, Infinity];
-  let max: Vec2 = [-Infinity, -Infinity];
-  for (let i = 0; i + 2 < points.length; i += 3) {
-    const p = to2D(frame, [points[i], points[i + 1], points[i + 2]]);
-    min = [Math.min(min[0], p[0]), Math.min(min[1], p[1])];
-    max = [Math.max(max[0], p[0]), Math.max(max[1], p[1])];
-  }
-  if (!Number.isFinite(min[0])) {
-    min = [-least, -least];
-    max = [least, least];
-  }
-  const margin = Math.max(least, (Math.max(max[0] - min[0], max[1] - min[1]) * 1) / 8);
-  const [x0, y0, x1, y1] = [min[0] - margin, min[1] - margin, max[0] + margin, max[1] + margin];
+  const { min, max } = planeBounds(frame, points, least);
+  const [x0, y0, x1, y1] = [min[0], min[1], max[0], max[1]];
   return [to3D(frame, [x0, y0]), to3D(frame, [x1, y0]), to3D(frame, [x1, y1]), to3D(frame, [x0, y1])];
 }
 
