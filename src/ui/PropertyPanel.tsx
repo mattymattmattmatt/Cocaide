@@ -307,7 +307,7 @@ function SketchProps({ form, onEdit, onProfileCard }: { form: EditorProps; onEdi
       <Field label="Geometry">
         <span className="readout">
           {entities.length} entities · {constraints.length} constraints
-          {dof !== null && ` · ${dof === 0 ? "fully defined" : `${dof} DOF free`}`}
+          {entities.length === 0 ? " · Empty sketch" : dof !== null && ` · ${dof === 0 ? "fully defined" : `${dof} DOF free`}`}
         </span>
       </Field>
       {entities.some((e) => (e as { ref?: unknown }).ref) && (

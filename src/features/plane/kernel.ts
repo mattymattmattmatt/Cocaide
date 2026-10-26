@@ -3,8 +3,9 @@
 // ctx.datums for what comes after. No body changes. A plane that cannot be
 // made says which reference to change and to what.
 
+import { sketchEntityPlace } from "../../geom/sketchEdge";
 import { formatDirection } from "../../geom/vec";
-import { edgePlace, nameOf, resolveDatum } from "../../kernel/datum";
+import { edgePlace, nameOf, resolveDatum, sketchSource } from "../../kernel/datum";
 import { OpError } from "../../kernel/ops";
 import { anglePlane, cleanDatum, flipPlane, midPlane, offsetPlane, planeDatum, threePointPlane, throughPointPlane, type PlaneDatum } from "../datum";
 import type { KernelOp } from "../kernelDefs";
@@ -47,6 +48,12 @@ export const kernel: KernelOp<PlaneFeature> = {
         if ("edge" in ref) {
           const place = f.refs[1] ? edgePlace(ctx, ref.edge, "refs[0].edge", { near: point(1) }) : edgePlace(ctx, ref.edge, "refs[0].edge", { t: f.t ?? 0 });
           // Through the point given, else the point of the edge at t; square to the edge there.
+          p = planeDatum(f.refs[1] ? point(1) : place.at, place.tangent);
+        } else if ("sketch" in ref) {
+          // Another sketch's line, arc or circle, as it was solved: square to it at t (or where it passes nearest the point), as an edge.
+          const { entity, frame } = sketchSource(ctx, ref, "refs[0]");
+          const place = sketchEntityPlace(entity, frame, f.refs[1] ? { near: point(1) } : { t: f.t ?? 0 });
+          if (typeof place === "string") throw new OpError(`refs[0]: ${place}`);
           p = planeDatum(f.refs[1] ? point(1) : place.at, place.tangent);
         } else {
           const axis = resolveDatum(ctx, ref, "axis", "refs[0]");

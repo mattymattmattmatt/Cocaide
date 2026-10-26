@@ -55,26 +55,41 @@ export class CadControls {
     private readonly dom: HTMLElement,
     private readonly hooks: Hooks,
   ) {
-    dom.addEventListener("pointerdown", this.onDown);
-    dom.addEventListener("pointermove", this.onMove);
-    dom.addEventListener("pointerup", this.onUp);
-    dom.addEventListener("pointercancel", this.onUp);
-    dom.addEventListener("wheel", this.onWheel, { passive: false });
-    dom.addEventListener("contextmenu", this.noDefault);
+    this.unlisten = this.listen(dom);
+  }
+
+  private readonly unlisten: () => void;
+
+  /**
+   * Takes the view's mouse on another element too (Phase P wave 2A: the sketch
+   * canvas laid over the view): its middle and right drags and its wheel move
+   * the view as they do on the view itself; the left button stays the
+   * element's (see leftTaken). Returns what stops it.
+   */
+  listen(el: HTMLElement): () => void {
+    el.addEventListener("pointerdown", this.onDown);
+    el.addEventListener("pointermove", this.onMove);
+    el.addEventListener("pointerup", this.onUp);
+    el.addEventListener("pointercancel", this.onUp);
+    el.addEventListener("wheel", this.onWheel, { passive: false });
+    el.addEventListener("contextmenu", this.noDefault);
     // No autoscroll or paste from the middle button.
-    dom.addEventListener("mousedown", this.noMiddle);
-    dom.addEventListener("auxclick", this.noMiddle);
+    el.addEventListener("mousedown", this.noMiddle);
+    el.addEventListener("auxclick", this.noMiddle);
+    return () => {
+      el.removeEventListener("pointerdown", this.onDown);
+      el.removeEventListener("pointermove", this.onMove);
+      el.removeEventListener("pointerup", this.onUp);
+      el.removeEventListener("pointercancel", this.onUp);
+      el.removeEventListener("wheel", this.onWheel);
+      el.removeEventListener("contextmenu", this.noDefault);
+      el.removeEventListener("mousedown", this.noMiddle);
+      el.removeEventListener("auxclick", this.noMiddle);
+    };
   }
 
   dispose() {
-    this.dom.removeEventListener("pointerdown", this.onDown);
-    this.dom.removeEventListener("pointermove", this.onMove);
-    this.dom.removeEventListener("pointerup", this.onUp);
-    this.dom.removeEventListener("pointercancel", this.onUp);
-    this.dom.removeEventListener("wheel", this.onWheel);
-    this.dom.removeEventListener("contextmenu", this.noDefault);
-    this.dom.removeEventListener("mousedown", this.noMiddle);
-    this.dom.removeEventListener("auxclick", this.noMiddle);
+    this.unlisten();
   }
 
   /** The pinned rotation centre, if one is pinned. */
@@ -239,7 +254,8 @@ export class CadControls {
     if (!d.moving) {
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < SLOP) return;
       d.moving = true;
-      this.dom.setPointerCapture?.(e.pointerId);
+      // On the element the press was on (the view, or what lies over it).
+      (e.currentTarget as Element | null)?.setPointerCapture?.(e.pointerId);
     }
     const dx = e.clientX - d.lastX;
     const dy = e.clientY - d.lastY;
@@ -272,7 +288,8 @@ export class CadControls {
     const d = this.drag;
     if (!d || e.pointerId !== d.id) return;
     this.drag = null;
-    if (this.dom.hasPointerCapture?.(e.pointerId)) this.dom.releasePointerCapture(e.pointerId);
+    const el = e.currentTarget as Element | null;
+    if (el?.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
     if (d.moving || d.button !== 1) return;
     // A middle click: twice quickly fits the part; once on the part pins the rotation centre there, on empty space unpins it.
     const now = performance.now();

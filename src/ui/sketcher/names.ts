@@ -1,11 +1,12 @@
 // How the sketcher names what it shows: an entity by its id ("c1"), a point
 // by its entity and name ("c1 centre", "l2 end"), the sketch axes ("X axis"),
 // and references to the model by what they are ("model edge (straight,
-// 40 mm, +Y)", "model edge (circle Ø6.6)", "axis Z"). Pure.
+// 40 mm, +Y)", "model edge (circle Ø6.6)", "axis Z"), and other sketches'
+// entities by sketch and id ("sketch_1 l2 (straight, 40 mm, +X)"). Pure.
 
 import type { DatumRef, SketchEntity, Vec2 } from "../../doc/types";
 import { dist2 } from "../../geom/vec";
-import { isModelId, modelEdge, type ModelView } from "./model";
+import { isModelId, isSketchStandIn, modelEdge, standInSource, type ModelView } from "./model";
 
 export interface Namer {
   /** An entity, a model edge's stand-in, or a sketch axis. */
@@ -28,6 +29,15 @@ export function namer(entities: SketchEntity[], model?: ModelView): Namer {
   };
   const entity = (id: string): string => {
     if (id === "X" || id === "Y") return `${id} axis`;
+    if (isSketchStandIn(id)) {
+      const src = standInSource(id);
+      const m = model && modelEdge(model, id);
+      return `${src?.sketch ?? "sketch"} ${src?.entity ?? ""}${m?.source ? ` (${shapeWords(m.source.entity)})` : ""}`.trim();
+    }
+    if (id.startsWith("@f")) {
+      const axis = model && modelEdge(model, id)?.axisOf;
+      return axis ? `axis of a round face (Ø${num(2 * axis.radius)})` : "axis of a round face";
+    }
     if (isModelId(id)) {
       const e = model && modelEdge(model, id)?.entity;
       return e ? `model edge (${shapeWords(e)})` : "model edge";
@@ -51,7 +61,12 @@ export function referenceName(e: SketchEntity): string {
   const ref = e.ref as DatumRef;
   if ("datum" in ref) return /^[XYZ]$/.test(ref.datum) ? `axis ${ref.datum}` : ref.datum === "Origin" ? "Origin" : ref.datum;
   if ("point" in ref) return `point [${ref.point.map((x) => Math.round(x * 1000) / 1000).join(", ")}]`;
-  if ("face" in ref) return "model face";
+  if ("face" in ref) return e.type === "line" ? "axis of a round face" : "model face";
+  if ("sketch" in ref) {
+    const whose = `${ref.sketch} ${ref.entity}`;
+    if (e.type === "point") return ref.at ? `${ref.at === "mid" ? "middle" : ref.at === "center" ? "centre" : ref.at} of ${whose}` : whose;
+    return `${whose} (${shapeWords(e)})`;
+  }
   if (e.type === "point") return ref.at ? `${ref.at === "mid" ? "middle" : ref.at === "center" ? "centre" : ref.at} of a model edge` : "centre of a model edge";
   return `model edge (${shapeWords(e)})`;
 }

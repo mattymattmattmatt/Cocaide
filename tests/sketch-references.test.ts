@@ -162,7 +162,7 @@ describe("reference entities in the document", () => {
 
   it("refuses references an entity can't be, saying what it can take", () => {
     expect(bad([L({ datum: "Top" })])).toEqual([
-      'sk: entities[0] "l1" ref: a line references a straight edge ({ "edge": <selector> }) or an axis ({ "datum": "Z" } or an axis feature), not Top, a plane',
+      'sk: entities[0] "l1" ref: a line references a straight edge ({ "edge": <selector> }), an axis ({ "datum": "Z" } or an axis feature) or another sketch\'s line ({ "sketch": <id>, "entity": <id> }), not Top, a plane',
     ]);
     expect(bad([L({ edge: topEdge([1, 0, 0]), at: "start" })])[0]).toMatch(/a line references .*, not a point of an edge \("at": "start"\); use a point entity for that/);
     expect(bad([{ id: "c1", type: "circle", center: [0, 0], radius: 1, ref: { edge: { type: "edge", kind: "line", pick: "all" } } }])[0]).toMatch(/a circle references a whole circular edge .*, not a straight edge/);

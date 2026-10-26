@@ -40,10 +40,10 @@ export const PLANE_MODE_SPECS: Readonly<Record<PlaneMode, ModeSpec>> = {
   threePoints: { refs: [POINT, POINT, POINT], fields: [], about: "through three points" },
   midplane: { refs: [PLANE, PLANE], fields: [], about: "half way between two parallel planes or faces, or the plane that halves the angle of two that meet" },
   normalToEdge: {
-    refs: [{ what: "an edge (straight, round or curved) or an axis", kinds: ["axis"], forms: ["edge", "datum"], wholeEdge: true }, POINT],
+    refs: [{ what: "an edge (straight, round or curved), an axis, or a sketch's line, arc or circle", kinds: ["axis"], forms: ["edge", "datum", "sketch"], wholeEdge: true }, POINT],
     optional: 1,
     fields: ["t"],
-    about: "square to an edge, at `t` along it (0 its start, 1 its end), or through a point refs[1]",
+    about: "square to an edge (or a sketch's line, arc or circle), at `t` along it (0 its start, 1 its end), or through a point refs[1]",
   },
   parallelThroughPoint: { refs: [PLANE, POINT], fields: [], about: "parallel to a plane, through a point" },
 };

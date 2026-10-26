@@ -104,9 +104,9 @@ describe("what the document checks", () => {
     expect(check({ face: { type: "planar", normal: [0, 0, 1] } }).errors).toEqual(['f: axis.face.pick: must be one of "largest", "smallest", "all" (got nothing)']);
     expect(check({ edge: { type: "edge", pick: "all" }, at: "top" }).errors).toEqual(['f: axis.at: must be "start", "end", "mid", "center" (got "top")']);
     expect(check({ datum: "Top", at: "start" }).errors).toEqual(['f: axis: unknown field "at" (allowed: datum)']);
-    expect(check({ datum: "Top", face: TOP }).errors).toEqual(["f: axis: give one of datum, face, edge or point (got datum and face)"]);
-    expect(check({}).errors).toEqual(["f: axis: needs one of datum, face, edge or point (got {})"]);
-    expect(check("Top").errors).toEqual(['f: axis: must be a reference: { "datum": "Top" }, { "face": <face selector> }, { "edge": <edge selector> } or { "point": [x, y, z] } (got "Top")']);
+    expect(check({ datum: "Top", face: TOP }).errors).toEqual(["f: axis: give one of datum, face, edge, point or sketch (got datum and face)"]);
+    expect(check({}).errors).toEqual(["f: axis: needs one of datum, face, edge, point or sketch (got {})"]);
+    expect(check("Top").errors).toEqual(['f: axis: must be a reference: { "datum": "Top" }, { "face": <face selector> }, { "edge": <edge selector> }, { "point": [x, y, z] } or { "sketch": <sketch id>, "entity": <entity id> } (got "Top")']);
     expect(check({ point: [0, 0] }).errors).toEqual(["f: axis.point: must be an array of 3 numbers (got [0,0])"]);
   });
 
