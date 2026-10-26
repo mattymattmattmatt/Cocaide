@@ -138,7 +138,7 @@ describe("{ sketch, entity, at? } in the document", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error).toMatch(/replaceFeature rejected: sketch_b: entities\[0\] "r1" ref\.entity: sketch_a has no entity "l1" \(it has a1, c1, p1, r1\): re-pick the reference, or delete it/);
-    expect(apply(d, { type: "deleteEntity", sketch: "sketch_a", entity: "l1" }).ok).toBe(false);
+    expect(apply(d, { type: "deleteEntity", sketch: "sketch_a", id: "l1" }).ok).toBe(false);
   });
 });
 

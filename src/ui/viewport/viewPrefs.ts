@@ -1,6 +1,7 @@
 // How the 3D view moves, set in Settings > Mouse and kept in this browser:
 // how fast a drag turns the part, whether rotating keeps Z up (a turntable),
-// whether view changes glide, and whether the view cube is shown. Pure apart
+// whether view changes glide, whether the view cube is shown, and whether a
+// sketch turns the view to face it as it opens and back as it closes. Pure apart
 // from the guarded localStorage reads and writes and the React hook.
 
 import { useSyncExternalStore } from "react";
@@ -14,9 +15,13 @@ export interface ViewPrefs {
   animate: boolean;
   /** The view cube in the view's top right corner. */
   viewCube: boolean;
+  /** Opening a sketch turns the view square onto its plane (Phase P wave 2A). */
+  sketchFace: boolean;
+  /** Finishing or cancelling a sketch turns the view back to where it was. */
+  sketchReturn: boolean;
 }
 
-export const DEFAULT_VIEW_PREFS: ViewPrefs = { rotateSpeed: 1, turntable: false, animate: true, viewCube: true };
+export const DEFAULT_VIEW_PREFS: ViewPrefs = { rotateSpeed: 1, turntable: false, animate: true, viewCube: true, sketchFace: true, sketchReturn: true };
 export const MIN_ROTATE_SPEED = 0.5;
 export const MAX_ROTATE_SPEED = 2;
 const STORE_KEY = "cocaide.viewPrefs.v1";
@@ -31,6 +36,8 @@ export function parseViewPrefs(raw: unknown): ViewPrefs {
     turntable: r.turntable === true,
     animate: r.animate !== false,
     viewCube: r.viewCube !== false,
+    sketchFace: r.sketchFace !== false,
+    sketchReturn: r.sketchReturn !== false,
   };
 }
 

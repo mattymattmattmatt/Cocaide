@@ -2,7 +2,8 @@
 // one document command (one undo step in the model). Inside the session
 // there is a draft-level undo stack too.
 
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { Constraint, DatumPlane, SketchEntity, SketchFeature, Vec2 } from "../../doc/types";
 import { isConstruction } from "../../doc/sketch";
 import { constraintTargets, isDriven, withAxes } from "../../geom/axes";
@@ -21,7 +22,7 @@ import { constraintSentence, describeConstraint, dropMatters, itemEntities, remo
 import { convertEdges, danglingRefs, isModelId, materialize, modelEdge, modelEntities, modelIdsOf, renamed, type ModelView } from "./model";
 import { namer, referenceName, shapeWords } from "./names";
 import { dimensionText, RELATION } from "./annotate";
-import { SketchCanvas, type CanvasEdit, type CanvasTarget, type DrawProgress, type Tool } from "./SketchCanvas";
+import { SketchCanvas, type CanvasEdit, type CanvasTarget, type CanvasView3D, type DrawProgress, type Tool } from "./SketchCanvas";
 import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
@@ -84,6 +85,19 @@ interface Props {
   onExportDxf?(entities: SketchEntity[]): void;
   /** Set by the sketcher: puts a DXF's geometry into the draft (one sketch undo step) and says what came in. */
   insertRef?: { current: SketchInsert | null };
+  /** The 3D view the sketch is drawn in (Phase P wave 2A); without it, a flat page of its own. */
+  view3d?: SketchView3D;
+}
+
+/** The 3D view a sketch is drawn in: the canvas's side of it, and where the sketcher's parts go. */
+export interface SketchView3D {
+  canvas: CanvasView3D;
+  /** Above the view: the sketch toolbar. Over the view: the canvas. Over the canvas: the tool strips, the status line, the plane's name. */
+  top: HTMLElement | null;
+  stage: HTMLElement | null;
+  over: HTMLElement | null;
+  /** Kept up to date with the draft's entities as drawn: the view's Fit and its plane read them. */
+  draft: { current: SketchEntity[] };
 }
 
 interface DraftState {
@@ -101,7 +115,7 @@ const MODES: [Tool, string, string, IconName][] = [
   ["convert", "Convert", "sketch.convert", "convertEntities"],
 ];
 
-export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef, onInsertDxf, onExportDxf, insertRef }: Props) {
+export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef, onInsertDxf, onExportDxf, insertRef, view3d }: Props) {
   const [past, setPast] = useState<DraftState[]>([]);
   const [future, setFuture] = useState<DraftState[]>([]);
   const [draft, setDraft] = useState<DraftState>(() => ({ entities: session.entities, constraints: session.isNew ? session.constraints : withOldNames(session.constraints) }));
@@ -755,11 +769,12 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     if (i.id === "X" || i.id === "Y") return `${i.id} axis of the sketch`;
     if (isModelId(i.id)) {
       const m = modelEdge(model, i.id);
+      if (m?.source) return `${m.source.sketch}'s ${RELATION_NOUN[m.source.entity.type].toLowerCase()} ${m.source.entity.id}${m.entity ? `: ${shapeWords(m.entity)} where it lands on this plane` : `: ${m.problem ?? "can't be referenced"}`}`;
       return m?.entity ? `Model edge: ${shapeWords(m.entity)}` : `Model edge: ${m?.problem ?? "can't be referenced"}`;
     }
     const e = draft.entities.find((x) => x.id === i.id);
     if (!e) return i.id;
-    if (e.ref) return `Reference: ${referenceName(e)} (${e.id}${isConstruction(e) ? ", construction" : ", converted"}): it follows the model`;
+    if (e.ref) return `Reference: ${referenceName(e)} (${e.id}${isConstruction(e) ? ", construction" : ", converted"}): it follows ${"sketch" in e.ref ? `sketch ${e.ref.sketch}` : "the model"}`;
     return `${RELATION_NOUN[e.type]} ${e.id}${e.construction ? " (construction)" : ""}`;
   };
 
@@ -930,9 +945,22 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     });
   };
 
+  // In the 3D view (Phase P wave 2A) the sketcher's parts go where the app keeps room for them: its toolbar above
+  // the view, its canvas over the view, its strips and status line over that; without it, one flat page as before.
+  const slot = (where: "top" | "stage" | "over", node: ReactNode): ReactNode => {
+    if (!view3d) return node;
+    const el = view3d[where];
+    return el ? createPortal(node, el) : null;
+  };
+  const inCenter = (node: ReactNode): ReactNode => (view3d ? node : <section className="center sketch-center">{node}</section>);
+  if (view3d) view3d.draft.current = entities;
+
   return (
     <ParametersContext.Provider value={params}>
-      <section className="center sketch-center">
+      {inCenter(
+        <>
+        {slot(
+          "top",
         <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
           {MODES.filter(([t]) => t !== "convert").map(([t, label, id, icon]) => (
             <ToolButton key={t} icon={icon} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${TOOL_TITLE[t] ?? label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
@@ -1075,9 +1103,13 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               )}
             </Popup>
           )}
-        </div>
+        </div>,
+        )}
+        {slot(
+          "stage",
         <SketchCanvas
           fitToken={fitToken}
+          view3d={view3d?.canvas}
           entities={entities}
           constraints={shownConstraints}
           model={model}
@@ -1112,7 +1144,11 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           edit={canvasEdit}
           regions={check.loops}
           problems={check.problems}
-        />
+        />,
+        )}
+        {slot(
+          "over",
+          <>
         {drawing && <ToolStrip tool={drawing} placed={progress.placed} arcNext={progress.arcNext} options={toolOptions} onOption={setOption} />}
         {editTool && (
           <div className="sketch-tool-strip edit-strip" data-testid="tool-strip">
@@ -1161,7 +1197,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             <span className="strip-prompt" data-testid="tool-prompt">
               {(() => {
                 const n = selection.filter((i) => i.kind === "face" || (i.kind === "entity" && isModelId(i.id))).length;
-                return n ? `${n} picked: Convert copies ${n === 1 ? "it" : "them"} in, linked to the model` : "Click model edges, or a face for its outline";
+                return n ? `${n} picked: Convert copies ${n === 1 ? "it" : "them"} in, linked to the model` : "Click model edges or other sketches' entities, or a face for its outline";
               })()}
             </span>
             <span className="strip-option">
@@ -1229,7 +1265,10 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           )}
         </div>
         <div className="sketch-plane-label">{planeName(session.plane.normal, session.plane.origin)}</div>
-      </section>
+          </>,
+        )}
+        </>,
+      )}
       <aside className="side right sketch-panel" data-testid="sketch-panel">
         <section className="panel">
           <h2>

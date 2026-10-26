@@ -1,0 +1,37 @@
+import { expect, test } from "@playwright/test";
+import { expectVolume, openApp, sketchClick, viewportClick } from "./helpers";
+
+test("debug", async ({ page }) => {
+  const problems = await openApp(page);
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  await viewportClick(page, [0, 12, 6]);
+  await page.getByTestId("tool-sketch").click();
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: "out/e2e/debug-1.png" });
+  await page.getByTestId("tool-circle").click();
+  await sketchClick(page, 20, 10);
+  await sketchClick(page, 24, 10);
+  await page.getByTestId("tool-dimension").click();
+  await sketchClick(page, 20, 10);
+  await sketchClick(page, 40, 5);
+  await page.getByTestId("modify-value").fill("12");
+  await page.getByTestId("modify-value").press("Enter");
+  await sketchClick(page, 28, 10);
+  const m = await page.evaluate(() => { const c = (document.querySelector("[data-testid=sketch-canvas] > g") as SVGGElement).getScreenCTM()!; return { a: c.a, b: c.b, c: c.c, d: c.d, e: c.e, f: c.f }; });
+  console.log("CTM", JSON.stringify([m.a, m.b, m.c, m.d, m.e, m.f]));
+  const [ax, ay] = [m.a * -20 + m.e, m.d * 0 + m.f];
+  await page.mouse.click(ax, ay);
+  await sketchClick(page, -10, 6);
+  await page.getByTestId("modify-value").fill("10");
+  await page.getByTestId("modify-value").press("Enter");
+  await page.screenshot({ path: "out/e2e/debug-2.png" });
+  await sketchClick(page, 32, 10);
+  await page.screenshot({ path: "out/e2e/debug-3.png" });
+  console.log("message", await page.getByTestId("sketch-message").textContent().catch(() => null));
+  await sketchClick(page, 45, 25);
+  await page.screenshot({ path: "out/e2e/debug-4.png" });
+  console.log("message", await page.getByTestId("sketch-message").textContent().catch(() => null));
+  console.log(problems);
+});
