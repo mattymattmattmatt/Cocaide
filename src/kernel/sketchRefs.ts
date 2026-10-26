@@ -8,13 +8,15 @@
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import type { DatumRef, SketchEntity, SketchFeature } from "../doc/types";
+import { sketchRefText } from "../features/datum";
 import { isAxisId } from "../geom/axes";
 import type { Frame } from "../geom/frame";
 import { edgePointOf, projectAxis, projectEdge, projectPoint, withPoint, withProjection } from "../geom/projection";
+import { sketchEntityEdge } from "../geom/sketchEdge";
 import { solveSketch } from "../geom/solver";
 import { len3, sub3 } from "../geom/vec";
 import { describePart, type DescribedPart } from "./bodies";
-import { resolveDatum, type DatumContext } from "./datum";
+import { resolveDatum, sketchSource, type DatumContext } from "./datum";
 import { boundingBoxOf } from "./measure";
 import { scoped } from "./oc";
 import { OpError } from "./ops";
@@ -83,6 +85,16 @@ export function projectReferences(ctx: DatumContext, f: SketchFeature, frame: Fr
     });
 
     function project(e: SketchEntity, ref: DatumRef, path: string, name: string): SketchEntity | string {
+      if ("sketch" in ref) {
+        // Another sketch's entity, as that sketch was solved: projected as a model edge would be.
+        if (e.type === "point") return withPoint(e, projectPoint(resolveDatum(ctx, ref, "point", path).at, frame), name);
+        const src = sketchSource(ctx, ref, path);
+        const edge = sketchEntityEdge(src.entity, src.frame);
+        if (typeof edge === "string") return `${path}: ${edge}`;
+        const shape = projectEdge(edge, frame);
+        if (!shape.ok) return `${path}: ${shape.error.replace(/^the (straight|circular) edge/, `${ref.sketch}'s ${src.entity.type} ${src.entity.id}`)}`;
+        return withProjection(e, shape.shape, name);
+      }
       if ("edge" in ref) {
         const edge = edgeOf(ref.edge, `${path}.edge`);
         if (e.type === "point") {
@@ -113,7 +125,8 @@ function isReferenceField(entities: SketchEntity[], field: string): boolean {
 /** A reference as the failure message names it: "an edge", "the start of an edge", "axis Z". */
 function refWhat(ref: DatumRef): string {
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of a model edge` : "a model edge";
+  if ("sketch" in ref) return sketchRefText(ref);
   if ("datum" in ref) return ref.datum;
-  if ("face" in ref) return "a face";
+  if ("face" in ref) return "a round face's axis";
   return "a point";
 }

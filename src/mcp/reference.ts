@@ -172,9 +172,16 @@ change the plate's width, and the circle (and the hole cut from it) moves with t
 (never profile) unless it says "construction": false (Convert Entities: the model's outline copied in as profile).
   line:   "ref": { "edge": <edge selector> }  - a straight edge (or a circular one seen edge-on, as the line it looks like)
           "ref": { "datum": "Z" }  (or "X", "Y", an axis feature's id) - an axis, drawn long enough to cross the part
+          "ref": { "face": <cylindrical face selector> }  - a round face's axis (a hole's or a tube's centre line), drawn the same
   circle: "ref": { "edge": <selector of a whole circular edge> }  - its plane must face the sketch
   arc:    "ref": { "edge": <selector of a part-circle edge> }
   point:  "ref": { "edge": <selector>, "at": "start" | "end" | "mid" | "center" }, { "datum": "Origin" }, a point feature
+Another (earlier) sketch's entity is referenced the same way, by { "sketch": <its id>, "entity": <its entity id> }: it is
+projected from that sketch as the rebuild solved it, so this sketch follows that one when it changes.
+  line:   "ref": { "sketch": "sk_base", "entity": "l2" }  - a line of it (or a circle or arc of it seen edge-on)
+  circle: "ref": { "sketch": "sk_base", "entity": "c1" }  - a circle of a sketch in a parallel plane; arc likewise
+  point:  "ref": { "sketch": "sk_base", "entity": "l2", "at": "end" }  - "start" | "end" | "mid" of a line or arc,
+          "center" of a circle or arc (a circle or arc alone is its centre), or a point entity alone
 A tilted circle (an ellipse in the sketch) or a freeform edge can't be referenced; the rebuild says so. A reference that
 no longer finds its edge fails the sketch, naming the entity: re-pick its selector, or delete it. A reference can't be
 fixed or dragged. Edge selectors are the ones fillet uses; pick them with the measure tool first. The sketch's frame is
@@ -401,6 +408,20 @@ Wherever a plane, an axis or a point is needed by reference (a sketch's or a mir
                                            a straight edge is an axis (start to end), a circular edge its axis (or its
                                            centre where a point is needed); with "at", that point of it
   { "point": [x, y, z] }                   a fixed point
+  { "sketch": "<id>", "entity": "<entity id>", "at": "start" | "end" | "mid" | "center" (optional) }
+                                           an entity of an earlier sketch, as it is solved: a line is an axis (start to
+                                           end); a circle or arc the axis through its centre square to its sketch (or
+                                           its centre where a point is needed); a point entity a point; with "at",
+                                           that point of it ("start", "end", "mid" of a line or arc; "center" of a
+                                           circle or arc). Rectangles, slots, ellipses and splines can't be referenced.
+Examples of the sketch form: a revolve about a sketch's centreline { "axis": { "sketch": "sk_profile", "entity": "l5" } };
+an axis feature along a sketch line { "op": "axis", "mode": "edge", "refs": [{ "sketch": "sk_layout", "entity": "l1" }] };
+a point at a circle's centre { "op": "point", "mode": "center", "refs": [{ "sketch": "sk_layout", "entity": "c1" }] };
+a circular pattern about a sketch circle's axis { "axis": { "ref": { "sketch": "sk_layout", "entity": "c2" } } };
+a plane square to a path sketch's line at its end (for a sweep's profile) { "op": "plane", "mode": "normalToEdge",
+"refs": [{ "sketch": "sk_path", "entity": "l1" }], "t": 1 }, or a point along an arc { "op": "point", "mode": "onEdge",
+"refs": [{ "sketch": "sk_path", "entity": "a1" }], "t": 0.5 }.
+Renaming the sketch rewrites these references; deleting it, or an entity they name, is refused until they change.
 Faces and edges are found again on every rebuild, so what stands on them follows the model. A part's packet lists
 its reference geometry (part.referenceGeometry: the defaults, and each plane, axis and point feature with its frame
 now); listFeatures gives each one's "now" too.

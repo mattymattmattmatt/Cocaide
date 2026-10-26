@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -44,8 +44,56 @@ import { adjacency, silhouette, type Adjacency } from "./viewport/silhouette";
 import { Triad, ViewCube, type CubeTurn } from "./viewport/viewCube";
 import { reducedMotion, setViewPrefs, useViewPrefs, viewPrefs } from "./viewport/viewPrefs";
 import { triadView, upFor, VIEW_LABEL, VIEW_ORDER, VIEWS, type ViewName } from "./viewport/views";
+// Phase P wave 2A: a sketch open in the view.
+import type { Frame as PlaneFrame } from "../geom/frame";
+import type { CameraFeed } from "./sketcher/planeView";
+import { boxCorners, facingFit, SketchPlaneLayer } from "./viewport/sketchStage";
 
 export type { ViewName } from "./viewport/views";
+
+/**
+ * Phase P wave 2A: a sketch open in the view. The view turns to face its plane
+ * as it opens (and back when it closes), draws the plane faintly, keeps an
+ * element over itself for the sketch canvas (whose middle and right drags and
+ * wheel move the view as on the view itself), and reports its camera to the
+ * canvas through `feed` after every frame that moves it. The part is always
+ * orthographic while a sketch is open.
+ */
+export interface SketchStage {
+  /** The session: a new one turns the view to face its plane, and keeps the view to go back to. */
+  id: string;
+  frame: PlaneFrame;
+  /** Turn to face the plane as the sketch opens (Settings > Mouse). */
+  face: boolean;
+  /** Go back to the view before when it closes (Settings > Mouse). */
+  back: boolean;
+  /** The part drawn see-through: its hidden edges show, and can be picked. */
+  seeThrough: boolean;
+  /** Where the view reports its camera for the canvas. */
+  feed: CameraFeed;
+  /** The element over the view that the sketch canvas goes into (null when it goes). */
+  onStage(el: HTMLDivElement | null): void;
+  /** Set by the view: picking and fitting for the sketch canvas. */
+  api: { current: SketchViewApi | null };
+  /** The world points the sketch spans (flat xyz): Fit frames them with the part. */
+  extent(): number[];
+  /** Buttons the view bar shows while sketching (See-through, Section at sketch plane). */
+  buttons?: ReactNode;
+}
+
+/** What the view does for an open sketch. */
+export interface SketchViewApi {
+  /** The part under these client pixels (an edge, a vertex, a face; the edges behind faces too while see-through), or null. */
+  pick(clientX: number, clientY: number): PickTarget | null;
+  /** Frames the part and the sketch from where the camera looks now. */
+  fit(): void;
+  /** Turns to face the sketch plane (again: from behind it), the part and the sketch fitted. */
+  face(): void;
+  /** A left drag on the sketch's empty space with the trackpad scheme: turns the view (pan: pans it), as a left drag on the view does. */
+  drag(phase: "start" | "move" | "end", dx: number, dy: number, pan: boolean): void;
+  /** The sketch's extent changed (something was drawn, moved or deleted): the plane is drawn round it again, as the canvas's grid is. */
+  replane(): void;
+}
 
 // What a click picks and what is selected: plain data, in a pure module (src/ui/model/selection.ts).
 export { EMPTY_SELECTION, type PickTarget, type Selection } from "./model/selection";
@@ -129,6 +177,8 @@ interface Props {
   peek?: PickTarget[] | null;
   /** What a click on the edge under the pointer would take with it (a session's tangency chain): lit up with it as the preselection. */
   pickReach?: ((target: PickTarget) => PickTarget[] | null) | null;
+  /** Phase P wave 2A: a sketch open in the view (see SketchStage). */
+  sketch?: SketchStage | null;
 }
 
 export interface FrameNode {
@@ -224,6 +274,11 @@ interface ViewportApi {
   /** Clears the pinned rotation centre. */
   unpin(): void;
   setCubeVisible(v: boolean): void;
+  /** Phase P wave 2A: a sketch opens on `frame` (turning to face it when `face`), or closes (null; back to the view before when `back`). */
+  setSketch(s: { frame: PlaneFrame; face: boolean } | null, back?: boolean): void;
+  /** The element over the view the sketch canvas lies in: the view's mouse works on it too. */
+  setStage(el: HTMLElement | null): void;
+  sketchApi: SketchViewApi;
   dispose(): void;
 }
 
@@ -265,6 +320,7 @@ export function Viewport({
   pickHint = null,
   peek: peekList = null,
   pickReach = null,
+  sketch = null,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ViewportApi | null>(null);
@@ -275,8 +331,8 @@ export function Viewport({
   const photoPointRef = useRef(onPhotoPoint);
   photoPointRef.current = onPhotoPoint;
   // Read by the view's own listeners, which are made once: always the newest.
-  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on) });
-  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on) };
+  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch });
+  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch };
   const [hover, setHover] = useState<Hover | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
@@ -344,6 +400,9 @@ export function Viewport({
     const previewLayer = new PreviewLayer(el, { add: cssColor(el, "--preview-add", "#1f6feb"), remove: cssColor(el, "--preview-remove", "#e5484d") });
     let previewLook: PreviewLook | null = null;
     scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group, previewLayer.group);
+    // Phase P wave 2A: the plane of an open sketch, drawn faintly.
+    const sketchPlane = new SketchPlaneLayer({ fill: cssColor(el, "--sketch-plane", "#3a8dde"), border: cssColor(el, "--sketch-plane-border", "#2f74c0") });
+    scene.add(sketchPlane.group);
     let photoMesh: THREE.Mesh | null = null;
     let photo: Underlay | null = null;
     let photoTexture: { url: string; texture: THREE.Texture } | null = null;
@@ -495,6 +554,129 @@ export function Viewport({
       cube.update(camera);
       triad.update(camera);
       settleSoon();
+      reportSketchCamera();
+    };
+
+    // ------------------------------------------------------------ Phase P wave 2A: a sketch open in the view
+    /** The open sketch's plane (null: no sketch open), the view to go back to, and the view the opening turned to (while the user hasn't moved it, a model arriving late is fitted again). */
+    let stageFrame: PlaneFrame | null = null;
+    let stageReturn: Pose | null = null;
+    let stageAuto: Pose | null = null;
+    let stageListen: (() => void) | null = null;
+    /** The camera, for the sketch canvas over the view. */
+    const reportSketchCamera = () => {
+      const feed = live.current.sketch?.feed;
+      if (!stageFrame || !feed) return;
+      const { up, right, forward } = controls.axes();
+      feed.set({
+        right: right.toArray() as Vec3,
+        up: up.toArray() as Vec3,
+        forward: forward.toArray() as Vec3,
+        target: controls.target.toArray() as Vec3,
+        wpp: controls.worldPerPixel(),
+        width: el.clientWidth,
+        height: el.clientHeight,
+        sketches: overlays.visible,
+      });
+    };
+    /** The visible part's mesh points and the sketch's (flat xyz): what Fit frames while a sketch is open. */
+    const stagePoints = (): number[] => {
+      const out: number[] = [];
+      const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+      if (pos) for (let i = 0; i < pos.count; i++) if (vertexBody[i] >= 0) out.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+      out.push(...(live.current.sketch?.extent() ?? []));
+      return out;
+    };
+    /** Square onto the sketch plane from its front (the side its normal points to; `behind`: the other), its x to the right, the part and the sketch fitted. */
+    const facePose = (frame: PlaneFrame, behind = false): Pose => {
+      const dir = new THREE.Vector3(...frame.z).multiplyScalar(behind ? -1 : 1);
+      // Framed as the sketch page always was: the sketch, the part seen square on and the origin, with room round them.
+      const f = facingFit(frame, stagePoints());
+      const dist = (f.wpp * (el.clientHeight || 1)) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+      const target = new THREE.Vector3(...f.center);
+      return { position: target.clone().addScaledVector(dir, dist), target, up: new THREE.Vector3(...frame.y) };
+    };
+    /** The plane drawn round the part (its visible box) and the sketch. */
+    const drawStagePlane = () => {
+      if (!stageFrame) return sketchPlane.set(null);
+      const box = visibleBox && !visibleBox.isEmpty() ? boxCorners(visibleBox.min.toArray() as Vec3, visibleBox.max.toArray() as Vec3) : [];
+      sketchPlane.set(stageFrame, [...box, ...(live.current.sketch?.extent() ?? [])]);
+    };
+    const samePose = (a: Pose, b: Pose) => a.position.distanceTo(b.position) < 1e-6 && a.target.distanceTo(b.target) < 1e-6 && a.up.distanceTo(b.up) < 1e-9;
+    /** The view is where opening the sketch put it, or still gliding there: the user hasn't moved it since. */
+    const atOpening = () => !!stageAuto && (samePose(controls.pose(), stageAuto) || (!!glideAnim && samePose(glideAnim.at(1), stageAuto)));
+    /** A sketch opens (turning to face it) or closes (back to the view before). */
+    const setSketch = (s: { frame: PlaneFrame; face: boolean } | null, back = true) => {
+      if (s) {
+        finishGlide();
+        stageReturn = controls.pose();
+        stageFrame = s.frame;
+        controls.pin(null);
+        controls.leftTaken = true;
+        helpers.visible = false;
+        drawStagePlane();
+        if (s.face) {
+          const to = facePose(s.frame);
+          stageAuto = to;
+          glideTo(to);
+        } else stageAuto = null;
+        render();
+        return;
+      }
+      const was = stageReturn;
+      stageFrame = null;
+      stageReturn = null;
+      stageAuto = null;
+      controls.leftTaken = areaOn;
+      helpers.visible = true;
+      drawStagePlane();
+      live.current.sketch?.feed.set(null);
+      if (back && was) glideTo(was);
+      render();
+    };
+    /** A model that came after the sketch opened (the part before an edited sketch): fitted again, if the view is still where opening put it. */
+    const stageModelArrived = () => {
+      if (!stageFrame) return;
+      drawStagePlane();
+      // (While the opening glide still runs, it carries on to the new framing; at rest, it jumps there.)
+      if (atOpening()) {
+        const gliding = !!glideAnim;
+        stageAuto = facePose(stageFrame);
+        glideTo(stageAuto, !gliding);
+      }
+    };
+    const sketchApi: SketchViewApi = {
+      pick: (x, y) => {
+        aim(x, y);
+        // See-through, the edges behind the faces are there to pick too.
+        return pickPart(x, y, true, !!live.current.sketch?.seeThrough)?.target ?? null;
+      },
+      fit: () => {
+        controls.pin(null);
+        fit();
+      },
+      face: () => {
+        if (!stageFrame) return;
+        const { forward } = controls.axes();
+        // Pressed again while square to it: from behind.
+        const facing = forward.dot(new THREE.Vector3(...stageFrame.z)) < -0.9999;
+        controls.pin(null);
+        glideTo(facePose(stageFrame, facing));
+      },
+      drag: (phase, dx, dy, pan) => {
+        if (pan) {
+          if (phase === "move") controls.pan(dx, dy);
+          return;
+        }
+        if (phase === "start") controls.beginDragTurn();
+        else if (phase === "move") controls.dragTurn(dx, dy);
+        else controls.endDragTurn();
+      },
+      replane: () => {
+        if (!stageFrame) return;
+        drawStagePlane();
+        render();
+      },
     };
 
     // The camera, once it has stopped moving: remembered for this document, and kept for Previous view.
@@ -507,7 +689,8 @@ export function Viewport({
         settleTimer = null;
         const cam = cameraState();
         history = pushView(history, cam);
-        if (live.current.memoryKey && mesh) saveView(live.current.memoryKey, { camera: cam });
+        // Not while a sketch is open: the view it faces is the sketch's, and the view before comes back when it closes.
+        if (live.current.memoryKey && mesh && !stageFrame) saveView(live.current.memoryKey, { camera: cam });
       }, 400);
     };
     const poseOfCamera = (c: CameraState): Pose | null => {
@@ -680,6 +863,14 @@ export function Viewport({
       datums.resize(w, h);
       evalLayer.resize(w, h);
       sectionPlanes.resize(w, h);
+      sketchPlane.resize(w, h);
+      // A sketch opening makes room for its toolbar above the view: it still faces its plane at the page's zoom, unless moved since.
+      if (stageFrame && atOpening()) {
+        const gliding = !!glideAnim;
+        stageAuto = facePose(stageFrame);
+        if (gliding) glideTo(stageAuto);
+        else controls.setPose(stageAuto);
+      }
       render();
     };
     const ro = new ResizeObserver(resize);
@@ -740,7 +931,8 @@ export function Viewport({
       return { position: f.target.clone().addScaledVector(d, f.dist), target: f.target, up: u };
     };
     /** Frames the part (or `on`) from `dir`, or from where the camera is now: gliding there unless `instant`. */
-    const fit = (dir?: Vec3, on?: Frame, up?: Vec3, instant = false) => glideTo(framed(dir, on, up), instant);
+    // While a sketch is open, Fit frames the sketch with the part.
+    const fit = (dir?: Vec3, on?: Frame, up?: Vec3, instant = false) => glideTo(framed(dir, on ?? (stageFrame ? { points: stagePoints() } : undefined), up), instant);
     /** A standard view: from its direction, the part fitted; it unpins the rotation centre. */
     const orient = (name: ViewName, instant = false) => {
       controls.pin(null);
@@ -1165,6 +1357,7 @@ export function Viewport({
       clipPlanes = [];
       applySection();
       redrawMarks();
+      stageModelArrived();
     };
 
     /** A photo pixel, in the model's XY plane. */
@@ -1252,7 +1445,8 @@ export function Viewport({
       const tri = h.faceIndex * 3;
       return faceRanges.findIndex((r) => tri >= r.start && tri < r.start + r.count);
     };
-    const pickPart = (clientX: number, clientY: number, everything = false): { target: PickTarget; distance: number } | null => {
+    /** `xray` (a sketch's see-through view): an edge or vertex behind a face is picked too. */
+    const pickPart = (clientX: number, clientY: number, everything = false, xray = false): { target: PickTarget; distance: number } | null => {
       if (!mesh) return null;
       const may = (kind: PickTarget["kind"]) => everything || allows(pickFilter, kind);
       // Hidden bodies are still in the mesh: look through them, and through what a section cuts away.
@@ -1264,7 +1458,7 @@ export function Viewport({
       const slack = 2 * PICK_PIXELS * worldPerPixel;
       raycaster.params.Line = { threshold: PICK_PIXELS * worldPerPixel };
       const edgeHit = edgeLines && may("edge") ? raycaster.intersectObject(edgeLines, false).find((h) => h.index !== undefined && !cutAway(h.point, edgeBody(segmentEdge[Math.floor(h.index / 2)]))) : undefined;
-      const frontEdge = edgeHit && (!faceHit || edgeHit.distance <= faceHit.distance + slack);
+      const frontEdge = edgeHit && (xray || !faceHit || edgeHit.distance <= faceHit.distance + slack);
       let hit: { target: PickTarget; distance: number } | null = null;
       if (frontEdge && edgeHit.index !== undefined) {
         // The face under the pointer beside the edge goes with it (which loop "Select loop" means).
@@ -1285,7 +1479,7 @@ export function Viewport({
           if (!s) continue;
           const d = Math.hypot(s.x - clientX, s.y - clientY);
           if (d > VERTEX_PIXELS || (best && d >= best.d)) continue;
-          if (front !== null && along(v.p) > front + slack) continue;
+          if (!xray && front !== null && along(v.p) > front + slack) continue;
           best = { v, d };
         }
       }
@@ -1702,6 +1896,10 @@ export function Viewport({
         under(x: number, y: number) {
           return underAt(x, y).map((h) => ({ ...h.target, label: otherLabel(h.target, shownView?.faces ?? [], shownView?.edges ?? []) }));
         },
+        /** Phase P wave 2A: the open sketch's plane as drawn, its corners (world), or null. */
+        sketchPlane() {
+          return sketchPlane.corners()?.map(r4) ?? null;
+        },
       };
     }
 
@@ -1884,6 +2082,13 @@ export function Viewport({
         cube.setVisible(v);
         render();
       },
+      setSketch,
+      setStage(stage: HTMLElement | null) {
+        stageListen?.();
+        stageListen = stage ? controls.listen(stage) : null;
+        if (stage) reportSketchCamera();
+      },
+      sketchApi,
       dispose() {
         ro.disconnect();
         if (settleTimer) clearTimeout(settleTimer);
@@ -1912,6 +2117,8 @@ export function Viewport({
         dropCapCache();
         caps.dispose();
         sectionPlanes.dispose();
+        sketchPlane.dispose();
+        stageListen?.();
         evalLayer.dispose();
         previewLayer.dispose();
         cube.dispose();
@@ -1933,12 +2140,40 @@ export function Viewport({
       restoreCamera(remembered, true);
       restoredAtMount.current = true;
     }
-    return () => api.current?.dispose();
+    return () => {
+      api.current?.dispose();
+      api.current = null;
+    };
   }, []);
 
   useEffect(() => {
     api.current?.setModel(view);
   }, [view]);
+
+  // ---- Phase P wave 2A: a sketch opens in the view (it turns to face it) and closes (back to the view before).
+  const sketchId = sketch?.id ?? null;
+  const sketchLatest = useRef(sketch);
+  if (sketch) sketchLatest.current = sketch;
+  /** A sketch is open now (read by effects that must not move the view meanwhile). */
+  const sketchLatestOpen = useRef(false);
+  sketchLatestOpen.current = !!sketch;
+  useEffect(() => {
+    const s = sketchLatest.current;
+    if (!sketchId || !s) return;
+    api.current?.setSketch({ frame: s.frame, face: s.face });
+    s.api.current = api.current?.sketchApi ?? null;
+    return () => {
+      s.api.current = null;
+      api.current?.setSketch(null, sketchLatest.current?.back ?? true);
+    };
+  }, [sketchId]);
+  /** The element over the view the sketch canvas goes into. */
+  const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    api.current?.setStage(stageEl);
+    sketchLatest.current?.onStage(stageEl);
+  }, [stageEl]);
+  // ---- end Phase P wave 2A
 
   useEffect(() => {
     api.current?.setHiddenBodies(hiddenBodies);
@@ -1955,7 +2190,8 @@ export function Viewport({
   // Re-frame when the app asks (a part opened); not when the view comes back with the camera it remembered.
   const fitSeen = useRef(fitToken);
   useEffect(() => {
-    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current)) api.current?.orient("iso", true);
+    // Not while a sketch is open (Phase P wave 2A): the sketch faces its plane, and the view goes back when it closes.
+    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current) && !sketchLatestOpen.current) api.current?.orient("iso", true);
     fitSeen.current = fitToken;
   }, [fitToken]);
 
@@ -2044,6 +2280,8 @@ export function Viewport({
   const normalTo = () => {
     const n = normalFace();
     if (n) api.current?.normalTo(n);
+    // Phase P wave 2A: in a sketch, with nothing selected, it faces the sketch plane again.
+    else if (sketch) api.current?.sketchApi.face();
     else onMessage?.("Normal to needs one flat face or plane: click one first.");
   };
   const togglePlanes = () => onDatumView?.({ ...datumView, planes: !datumView.planes });
@@ -2137,10 +2375,12 @@ export function Viewport({
   if (commandsRef) commandsRef.current = (id, at) => (id === "view.selectOther" ? selectOther(at) : viewCommands[id]?.());
 
   const picking = !!onPhotoPoint;
+  // A sketch's See-through model (Phase P wave 2A) draws the part as the photo picking does: translucent.
+  const seeThrough = !!sketch?.seeThrough;
   useEffect(() => {
-    api.current?.setGhost(picking);
+    api.current?.setGhost(picking || seeThrough);
     if (picking) api.current?.fitPhoto(); // points on the photo are placed from straight above
-  }, [picking, view]);
+  }, [picking, view, seeThrough]);
 
   const current = DISPLAY_STYLES.find((s) => s.style === display.style) ?? DISPLAY_STYLES[0];
   const sectionPlanesOn = activePlanes(section).length;
@@ -2148,8 +2388,10 @@ export function Viewport({
   const edges = view?.edges ?? [];
 
   return (
-    <div className={`viewport${picking ? " picking-photo" : ""}${vp.viewCube ? " with-cube" : ""}`}>
+    <div className={`viewport${picking ? " picking-photo" : ""}${vp.viewCube ? " with-cube" : ""}${sketch ? " sketching" : ""}`}>
       <div ref={host} className="viewport-canvas" data-testid="viewport" />
+      {/* Phase P wave 2A: the sketch canvas lies here, over the view and under its buttons. */}
+      {sketch && <div className="sketch-stage" ref={setStageEl} data-testid="sketch-stage" />}
       {box && (
         <div
           className={`box-select ${box.area ? "area" : box.crossing ? "crossing" : "window"}`}
@@ -2276,7 +2518,11 @@ export function Viewport({
           className="icon-only"
           aria-pressed={!display.perspective}
           onClick={togglePerspective}
-          title={`${display.perspective ? "Perspective: click for orthographic (parallel lines stay parallel, as on a drawing)" : "Orthographic: click for perspective"}${keyHint("view.perspective", prefs)}`}
+          title={
+            sketch
+              ? "Orthographic while sketching: a sketch is drawn on its plane in a parallel view; perspective comes back when you finish"
+              : `${display.perspective ? "Perspective: click for orthographic (parallel lines stay parallel, as on a drawing)" : "Orthographic: click for perspective"}${keyHint("view.perspective", prefs)}`
+          }
           aria-label={display.perspective ? "Perspective" : "Orthographic"}
           data-testid="view-perspective"
         >
@@ -2306,6 +2552,13 @@ export function Viewport({
         >
           <Icon name="plane" />
         </button>
+        {/* Phase P wave 2A: the sketch's own view buttons. */}
+        {sketch?.buttons && (
+          <>
+            <span className="sep" />
+            {sketch.buttons}
+          </>
+        )}
       </div>
       {viewMenu && (
         <Popup

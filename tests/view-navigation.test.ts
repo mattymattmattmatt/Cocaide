@@ -333,8 +333,9 @@ describe("view settings and memory", () => {
 
   it("reads the mouse view settings safely: speed held to 50–200 %, turntable off, animation and the cube on", () => {
     expect(parseViewPrefs(null)).toEqual(DEFAULT_VIEW_PREFS);
-    expect(DEFAULT_VIEW_PREFS).toEqual({ rotateSpeed: 1, turntable: false, animate: true, viewCube: true });
-    expect(parseViewPrefs({ rotateSpeed: 5, turntable: true, animate: false, viewCube: false })).toEqual({ rotateSpeed: 2, turntable: true, animate: false, viewCube: false });
+    expect(DEFAULT_VIEW_PREFS).toEqual({ rotateSpeed: 1, turntable: false, animate: true, viewCube: true, sketchFace: true, sketchReturn: true });
+    expect(parseViewPrefs({ rotateSpeed: 5, turntable: true, animate: false, viewCube: false })).toEqual({ rotateSpeed: 2, turntable: true, animate: false, viewCube: false, sketchFace: true, sketchReturn: true });
+    expect(parseViewPrefs({ sketchFace: false, sketchReturn: false })).toMatchObject({ sketchFace: false, sketchReturn: false });
     expect(parseViewPrefs({ rotateSpeed: 0.1 }).rotateSpeed).toBe(0.5);
     expect(parseViewPrefs({ rotateSpeed: "fast" }).rotateSpeed).toBe(1);
   });

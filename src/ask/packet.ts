@@ -23,7 +23,7 @@ import { describeEdgeSelector } from "../kernel/selectors";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import { fabricationChecks } from "../weldment/fabrication";
 import { defOf } from "../features/defs";
-import { DATUM_OPS, type Datum } from "../features/datum";
+import { DATUM_OPS, sketchRefText, type Datum } from "../features/datum";
 import { holeCount, wizardSpec } from "../features/hole/wizard";
 import { threadCallout } from "../features/hole/standards";
 import { copyPlaces } from "../features/sketchPattern/doc";
@@ -587,15 +587,19 @@ function referenceBrief(e: SketchEntity): Record<string, unknown> {
     references: refWords(e.ref!),
     ref: e.ref,
     construction: isConstruction(e),
-    follows: "the model: projected again on every rebuild; its numbers are not to be edited, and relations and dimensions to it follow the model",
+    follows:
+      e.ref && "sketch" in e.ref
+        ? `sketch ${e.ref.sketch}: projected again on every rebuild from ${e.ref.sketch} as it is solved; its numbers are not to be edited, and relations and dimensions to it follow that sketch`
+        : "the model: projected again on every rebuild; its numbers are not to be edited, and relations and dimensions to it follow the model",
   };
 }
 
-/** "the model edge (line edges parallel to +Y ...)", "the start of the model edge (...)", "axis Z", "Origin". */
+/** "the model edge (line edges parallel to +Y ...)", "the start of the model edge (...)", "axis Z", "Origin", "sketch_1's l2 (a line of another sketch)". */
 function refWords(ref: DatumRef): string {
   if ("edge" in ref) return `${ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of ` : ""}the model edge (${describeEdgeSelector(ref.edge)})`;
   if ("datum" in ref) return /^[XYZ]$/.test(ref.datum) ? `axis ${ref.datum}` : ref.datum;
   if ("point" in ref) return `the point [${ref.point.join(", ")}]`;
+  if ("sketch" in ref) return `${sketchRefText(ref)} (an entity of another sketch, followed as that sketch changes)`;
   return "a face";
 }
 

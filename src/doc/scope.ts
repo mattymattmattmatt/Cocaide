@@ -32,6 +32,7 @@ import { dimensionNames } from "./dimensions";
 import { rawConstraintEntities } from "./sketch";
 import { DEFAULT_BODY } from "./types";
 import { defOf } from "../features/defs";
+import { featureDatumRefs, sketchRefIds } from "../features/datum";
 
 export type WriteScope = string[];
 
@@ -63,6 +64,8 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       // A renamed sketch rewrites every expression that reads its dimensions (<sketch>.<name>): those must be in scope too.
       if (allowed && isObject(before) && before.op === "sketch" && isObject(after) && after.id !== undefined && after.id !== cmd.id) {
         allowed = readersInScope(doc, (n) => n.startsWith(`${cmd.id}.`), cmd.id, has);
+        // It rewrites the references to its entities ({ sketch, entity }) too.
+        allowed &&= doc.features.filter((f) => isObject(f) && f.id !== cmd.id && sketchRefIds(featureDatumRefs(f, defOf(f.op)?.datumRefs)).includes(cmd.id)).every((f) => has(String((f as Record<string, unknown>).id)));
       }
       break;
     }

@@ -168,10 +168,12 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (next.id !== cmd.id) {
         const renamed = String(next.id);
         if (indexOf(renamed) >= 0) return { ok: false, error: `${cmd.type}: a feature "${renamed}" already exists` };
-        const users = dependants(features, cmd.id);
+        // A reference to one of a renamed sketch's entities ({ sketch, entity }) follows it; any other use keeps the id.
+        const users = features.filter((f) => isObject(f) && references(f, { sketchRefs: false }).includes(cmd.id)).map((f) => String((f as { id: unknown }).id));
         if (users.length) {
           return { ok: false, error: `${cmd.type}: cannot rename ${cmd.id}; ${users.join(", ")} ${users.length === 1 ? "uses" : "use"} it` };
         }
+        renameSketchRefs(features, cmd.id, renamed);
       }
       const prev = features[i];
       features[i] = next;
@@ -1048,7 +1050,11 @@ export function dependants(features: unknown[], id: string): string[] {
   return features.filter((f) => isObject(f) && references(f).includes(id)).map((f) => String((f as { id: unknown }).id));
 }
 
-export function references(f: Record<string, unknown>): string[] {
+/**
+ * The features `f` uses, by id. `sketchRefs: false` leaves out the sketches it
+ * uses only through a { sketch, entity } reference (those follow a rename).
+ */
+export function references(f: Record<string, unknown>, opts: { sketchRefs?: boolean } = {}): string[] {
   const refs: string[] = [];
   if ((f.op === "extrude" || f.op === "cut") && typeof f.sketch === "string") refs.push(f.sketch);
   // A fillet or chamfer may treat the edges an earlier feature made (its own, or one of its sets).
@@ -1065,8 +1071,37 @@ export function references(f: Record<string, unknown>): string[] {
   if (f.op === "endCap" && typeof f.member === "string") refs.push(f.member);
   // A registry op says what it uses; any feature may stand on a plane, axis or point feature ({ "datum": id }).
   const d = defOf(f.op);
-  for (const id of [...(d?.references?.(f) ?? []), ...datumFeatureIds(featureDatumRefs(f, d?.datumRefs))]) if (!refs.includes(id)) refs.push(id);
+  const datumRefs = featureDatumRefs(f, d?.datumRefs);
+  const viaDatums = opts.sketchRefs === false ? datumFeatureIds(datumRefs.filter((r) => !("sketch" in r.ref))) : datumFeatureIds(datumRefs);
+  for (const id of [...(d?.references?.(f) ?? []), ...viaDatums]) if (!refs.includes(id)) refs.push(id);
   return refs;
+}
+
+/** Every { sketch: from, entity } reference in the features, rewritten to name sketch `to` (in place). */
+function renameSketchRefs(features: unknown[], from: string, to: string): void {
+  for (const f of features) {
+    if (!isObject(f)) continue;
+    for (const r of featureDatumRefs(f, defOf(f.op)?.datumRefs)) if ("sketch" in r.ref && r.ref.sketch === from) r.ref.sketch = to;
+  }
+}
+
+/**
+ * The references to sketch `sketch`'s entities ({ sketch, entity }) in the
+ * other features: which feature, and which entity, once each. An edit that
+ * takes such an entity out of the sketch is refused; the sketcher says so
+ * before it tries.
+ */
+export function sketchEntityUsers(features: unknown[], sketch: string): { feature: string; entity: string }[] {
+  const out: { feature: string; entity: string }[] = [];
+  for (const f of features) {
+    if (!isObject(f) || f.id === sketch) continue;
+    for (const { ref } of featureDatumRefs(f, defOf(f.op)?.datumRefs)) {
+      if (!("sketch" in ref) || ref.sketch !== sketch || typeof ref.entity !== "string") continue;
+      const use = { feature: String(f.id), entity: ref.entity };
+      if (!out.some((u) => u.feature === use.feature && u.entity === use.entity)) out.push(use);
+    }
+  }
+  return out;
 }
 
 /** The features that name a node: members that end there, joints and gussets at it. */

@@ -749,6 +749,21 @@ const ICONS = {
   ),
   tangentFaces: <path d="M3 18h7a6 6 0 0 0 6-6V4 M3 14h7a2 2 0 0 0 2-2V4" />,
   repeat: <path d="M4 12a8 8 0 0 1 14-5.3 M18 3v4h-4 M20 12a8 8 0 0 1-14 5.3 M6 21v-4h4" />,
+  seeThrough: (
+    <>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" {...face} fillOpacity={0.12} />
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z M4 7.5 12 3" />
+      <path d="M12 12l8-4.5 M12 12v9 M12 12 4 7.5" style={dash} />
+    </>
+  ),
+  sectionSketch: (
+    <>
+      <path d="M3 9l9-5 9 5-9 5z" {...face} fillOpacity={0.2} />
+      <path d="M3 9l9-5 9 5-9 5z" />
+      <path d="M5 13v3l7 4 7-4v-3" />
+      <path d="M8.5 11l3.5-2 3.5 2" style={dash} />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

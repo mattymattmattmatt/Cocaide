@@ -224,7 +224,7 @@ const MOUSE_ROWS: Record<MouseScheme, [string, string][]> = {
     ["Right-drag", "Pan"],
   ],
   trackpad: [
-    ["Drag", "Rotate the part in place (pan in a sketch or drawing)"],
+    ["Drag", "Rotate the part in place (in a sketch: dragging empty space; pan in a drawing)"],
     ["Shift + drag", "Pan"],
     ["Two-finger scroll or pinch", "Zoom at the pointer"],
     ["Click", "Select; Ctrl- or Shift-click adds"],
@@ -277,6 +277,14 @@ function MouseTab() {
       <label className="check settings-check" title="Standard views, Fit, the view cube, named views and Previous view glide over a quarter of a second (never with the system's reduce motion)">
         <input type="checkbox" checked={view.animate} onChange={(e) => setViewPrefs({ ...view, animate: e.target.checked })} data-testid="settings-animate" />
         Animate view changes
+      </label>
+      <label className="check settings-check" title="Opening a sketch (a new one, or one you edit) turns the view square onto its plane, its x to the right">
+        <input type="checkbox" checked={view.sketchFace} onChange={(e) => setViewPrefs({ ...view, sketchFace: e.target.checked })} data-testid="settings-sketch-face" />
+        Turn to face the sketch when it opens
+      </label>
+      <label className="check settings-check" title="Finishing or cancelling a sketch turns the view back to where it was before the sketch opened">
+        <input type="checkbox" checked={view.sketchReturn} onChange={(e) => setViewPrefs({ ...view, sketchReturn: e.target.checked })} data-testid="settings-sketch-return" />
+        Return to the previous view after a sketch
       </label>
       <table className="settings-table" data-testid="mouse-table">
         <tbody>

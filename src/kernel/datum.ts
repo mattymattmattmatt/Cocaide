@@ -1,14 +1,16 @@
 // Resolving reference geometry (DatumRef, DESIGN §2.1) on the part as it
 // stands at a feature's place in the history: a default plane, axis or the
 // origin; a plane, axis or point feature (ctx.datums); a face; an edge; a
-// point. The result is a plain frame. A reference that resolves to the wrong
-// kind, or to nothing, is an OpError that names it.
+// point; an entity of an earlier sketch, as it was solved. The result is a
+// plain frame. A reference that resolves to the wrong kind, or to nothing, is
+// an OpError that names it.
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
-import type { DatumRef, EdgePoint, EdgeSelector, FaceSelector, PlaneSpec, Vec3 } from "../doc/types";
+import type { DatumRef, EdgePoint, EdgeSelector, FaceSelector, PlaneSpec, SketchEntity, SketchEntityRef, SketchFeature, Vec3 } from "../doc/types";
 import type { ValidationResult } from "../doc/validate";
-import { aKind, DATUM_OPS, defaultDatum, facePlane, refPlaneFrame, xDirProblem, type Datum, type DatumKind, type DatumOf } from "../features/datum";
+import { aKind, DATUM_OPS, defaultDatum, facePlane, refPlaneFrame, sketchRefText, xDirProblem, type Datum, type DatumKind, type DatumOf } from "../features/datum";
 import { planeFrame, type Frame } from "../geom/frame";
+import { sketchEntityDatum } from "../geom/sketchEdge";
 import { dist3, formatDirection, normalize3, roundTo, sub3 } from "../geom/vec";
 import { describePart, type DescribedPart } from "./bodies";
 import { scoped, type OC } from "./oc";
@@ -23,6 +25,10 @@ export interface DatumContext {
   bodies: ReadonlyMap<string, TopoDS_Shape>;
   datums: ReadonlyMap<string, Datum>;
   missing(id: string, what: string): string;
+  /** The earlier sketches' frames (null: failed or suppressed): a { sketch, entity } reference reads them. */
+  profiles?: ReadonlyMap<string, { frame: Frame } | null>;
+  /** A sketch as the rebuild solved it (its entities where its references put them). */
+  sketch?(id: string): SketchFeature | undefined;
 }
 
 /**
@@ -52,8 +58,32 @@ export function planeSpecFrame(ctx: DatumContext, spec: PlaneSpec, path = "plane
 function resolve(ctx: DatumContext, ref: DatumRef, want: DatumKind | "any", path: string): Datum {
   if ("datum" in ref) return byId(ctx, ref.datum);
   if ("point" in ref) return { kind: "point", at: [...ref.point] };
+  if ("sketch" in ref) return fromSketch(ctx, ref, want, path);
   if (ctx.bodies.size === 0) throw new OpError(`${path}: there is no solid before this feature to take ${"face" in ref ? "a face" : "an edge"} from`);
   return "face" in ref ? fromFace(ctx, ref.face, path) : fromEdge(ctx, ref.edge, ref.at, want, path);
+}
+
+/**
+ * An entity of an earlier sketch as it was solved, and that sketch's frame, or
+ * OpError: the sketch failed or is suppressed, or has no such entity.
+ */
+export function sketchSource(ctx: DatumContext, ref: SketchEntityRef, path: string): { entity: SketchEntity; frame: Frame } {
+  const profile = ctx.profiles?.get(ref.sketch);
+  if (!profile || !ctx.sketch) {
+    const known = ctx.profiles?.has(ref.sketch);
+    throw new OpError(`${path}.sketch: ${known ? ctx.missing(ref.sketch, "sketch") : `there is no sketch "${ref.sketch}" before this feature`}, so ${sketchRefText(ref)} is not there to use`);
+  }
+  const f = ctx.sketch(ref.sketch);
+  const entity = f?.entities.find((e) => e.id === ref.entity);
+  if (!entity) throw new OpError(`${path}.entity: ${ref.sketch} has no entity "${ref.entity}"${f ? ` (it has ${f.entities.map((e) => e.id).join(", ") || "none"})` : ""}; re-pick the reference or delete it`);
+  return { entity, frame: profile.frame };
+}
+
+function fromSketch(ctx: DatumContext, ref: SketchEntityRef, want: DatumKind | "any", path: string): Datum {
+  const { entity, frame } = sketchSource(ctx, ref, path);
+  const d = sketchEntityDatum(entity, frame, ref.at, want);
+  if (typeof d === "string") throw new OpError(`${path}: ${d}`);
+  return d;
 }
 
 function byId(ctx: DatumContext, id: string): Datum {
@@ -204,6 +234,7 @@ export function nameOf(ref: DatumRef): string {
   if ("datum" in ref) return ref.datum;
   if ("face" in ref) return describeWanted(ref.face, 1).replace(/^1 /, "the ");
   if ("edge" in ref) return `${ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of ` : ""}the edge (${describeEdgeSelector(ref.edge)})`;
+  if ("sketch" in ref) return sketchRefText(ref);
   return `the point [${ref.point.map((x) => roundTo(x, 4)).join(", ")}]`;
 }
 

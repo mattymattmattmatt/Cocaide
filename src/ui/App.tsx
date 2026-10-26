@@ -14,7 +14,7 @@ import { sheetPDF } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing, visibleLength } from "../drafting/plan";
 import { sheetSVG } from "../drafting/svg";
 import { bodyPart, bodyPartFile } from "../doc/bodyPart";
-import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
+import { apply, nextId, sketchEntityUsers, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { rollbackAt, rollbackIndex, rollbackNext, rollbackPrevious, rolledBack } from "../doc/rollback";
@@ -53,7 +53,9 @@ import { PhotoBar } from "./PhotoBar";
 import { ProfileCard } from "./ProfileCard";
 import { PropertyPanel } from "./PropertyPanel";
 import { SectionsPanel } from "./SectionsPanel";
-import { SketchMode, type SketchSession } from "./sketcher/SketchMode";
+import { SketchMode, type SketchSession, type SketchView3D } from "./sketcher/SketchMode";
+import { CameraFeed, sketchPlaneSection, sketchWorldPoints } from "./sketcher/planeView";
+import { useViewPrefs } from "./viewport/viewPrefs";
 import { EMPTY_MODEL, modelView } from "./sketcher/model";
 import { commandLabel, useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
@@ -73,7 +75,7 @@ import { addPlane, sectionChoices } from "./evaluate/section";
 import { useSectionView } from "./evaluate/useSection";
 import { TABS } from "./model/tabs";
 import { Popup, ToolButton } from "./tools";
-import { EMPTY_SELECTION, Viewport, type EvalOverlay, type FrameNode, type HandlePhase, type PickTarget, type Selection, type Underlay } from "./Viewport";
+import { EMPTY_SELECTION, Viewport, type EvalOverlay, type FrameNode, type HandlePhase, type PickTarget, type Selection, type SketchViewApi, type Underlay } from "./Viewport";
 import { UI_OPS } from "../features/uiDefs";
 import { CommandManager } from "./model/CommandManager";
 import { makeToolCtx } from "./model/context";
@@ -869,6 +871,24 @@ export function App() {
   /** `weldment`: the sketch's "Weldment profile" box is ticked; the profile card opens. */
   const finishSketch = (drawn: SketchFeature, weldment = false, renames?: Record<string, string>) => {
     if (!sketch) return;
+    // A new sketch with nothing drawn in it makes no feature: it just closes, and says so.
+    if (sketch.isNew && drawn.entities.length === 0) {
+      setSketch(null);
+      setNotice({ kind: "info", text: "The sketch was empty, so nothing was added: draw something before Finish to keep a sketch." });
+      return;
+    }
+    // An entity another feature references ({ sketch, entity }: another sketch, an axis, a plane) can't go: say which, and what to do.
+    const gone = sketch.isNew ? [] : sketchEntityUsers(features, sketch.id).filter((u) => !drawn.entities.some((e) => e.id === u.entity));
+    if (gone.length) {
+      const ids = [...new Set(gone.map((u) => u.entity))];
+      const users = [...new Set(gone.map((u) => u.feature))];
+      const one = ids.length === 1;
+      setNotice({
+        kind: "error",
+        text: `${ids.join(", ")} ${one ? "is" : "are"} referenced by ${users.join(", ")}: undo the delete (Undo${keyFor("undo") ? `, ${keyFor("undo")}` : ""}) to keep ${one ? "it" : "them"}, or remove the reference${users.length === 1 && gone.length === 1 ? "" : "s"} in ${users.join(", ")} first.`,
+      });
+      return;
+    }
     // The plane as the document had it (a reference stays one), not the frame the sketcher drew on.
     const feature: SketchFeature = { ...drawn, plane: sketch.spec };
     const original = features.find((g) => g.id === sketch.id);
@@ -1715,11 +1735,110 @@ export function App() {
       live = false;
     };
   }, [sketch?.id, sketch?.isNew, kernel]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** The part as the sketch sees it: the view it is drawn in shows this, and the sketcher draws, hits and references it. */
+  const sketchSees = sketch ? (sketch.isNew ? view : before?.id === sketch.id ? before.view : null) : null;
   const sketchModel = useMemo(() => {
     if (!sketch) return EMPTY_MODEL;
     const frame = planeFrame(sketch.plane.normal, sketch.plane.origin, sketch.plane.xDir);
-    return modelView(sketch.isNew ? view : before?.id === sketch.id ? before.view : null, frame);
-  }, [sketch, view, before]);
+    // The other sketches it may reference are those in the part it sees (earlier ones), not itself.
+    return modelView(sketchSees, frame, { exclude: sketch.id });
+  }, [sketch, sketchSees]);
+
+  // ------------------------------------------------------------ Phase P wave 2A: the sketch in the 3D view
+  /** The view's camera for the sketch canvas (only the canvas follows it), its picking, the slots the sketcher's parts go into, the draft's entities. */
+  const sketchFeed = useMemo(() => new CameraFeed(), []);
+  const sketchViewApi = useRef<SketchViewApi | null>(null);
+  const sketchDraft = useRef<SketchEntity[]>([]);
+  const [sketchTop, setSketchTop] = useState<HTMLDivElement | null>(null);
+  const [sketchOver, setSketchOver] = useState<HTMLDivElement | null>(null);
+  const [sketchStageEl, setSketchStageEl] = useState<HTMLDivElement | null>(null);
+  /** The sketch view's own toggles: the part see-through, and the part cut away in front of the sketch plane. Each sketch starts with them off. */
+  const [seeThrough, setSeeThrough] = useState(false);
+  const [sectionAtSketch, setSectionAtSketch] = useState(false);
+  useEffect(() => {
+    setSeeThrough(false);
+    setSectionAtSketch(false);
+  }, [sketch?.id]);
+  const vprefs = useViewPrefs();
+  const sketchFrame = sketchModel.frame;
+  const sketchView3d = useMemo<SketchView3D>(
+    () => ({
+      canvas: {
+        feed: sketchFeed,
+        pick: (x, y) => sketchViewApi.current?.pick(x, y) ?? null,
+        fit: () => sketchViewApi.current?.fit(),
+        drag: (phase, dx, dy, pan) => sketchViewApi.current?.drag(phase, dx, dy, pan),
+        extentChanged: () => sketchViewApi.current?.replane(),
+      },
+      top: sketchTop,
+      stage: sketchStageEl,
+      over: sketchOver,
+      draft: sketchDraft,
+    }),
+    [sketchFeed, sketchTop, sketchStageEl, sketchOver],
+  );
+  const sketchSection = useMemo(() => (sketch && sectionAtSketch ? sketchPlaneSection(sketchFrame) : null), [sketch, sectionAtSketch, sketchFrame]);
+  /** What the view takes while a sketch is open: the part the sketch sees, nothing of the model's selection, tools or handles, always orthographic. */
+  const sketchViewport: Partial<Parameters<typeof Viewport>[0]> = sketch
+    ? {
+        view: sketchSees,
+        selection: EMPTY_SELECTION,
+        onPick: () => {},
+        onContext: undefined,
+        onPhotoPoint: null,
+        display: { ...display, perspective: false },
+        // The view is shown orthographic (perspective false), so a next with perspective on is the toggle: whatever was set before the sketch.
+        onDisplay: (next: DisplayState) =>
+          next.perspective
+            ? setNotice({ kind: "info", text: "A sketch is drawn in an orthographic view: perspective comes back when you finish or cancel the sketch." })
+            : changeDisplay({ ...next, perspective: display.perspective }),
+        ...(sketchSection ? { section: sketchSection } : {}),
+        onSectionPanel: () => {},
+        overlay: null,
+        dims: [],
+        handles: [],
+        filter: NO_FILTER,
+        onFilter: undefined,
+        onBox: undefined,
+        onDoubleClick: undefined,
+        sketch: {
+          id: sketch.id,
+          frame: sketchFrame,
+          face: vprefs.sketchFace,
+          back: vprefs.sketchReturn,
+          seeThrough,
+          feed: sketchFeed,
+          onStage: setSketchStageEl,
+          api: sketchViewApi,
+          extent: () => sketchWorldPoints(sketchDraft.current, sketchFrame),
+          buttons: (
+            <>
+              <button
+                className="icon-only"
+                aria-pressed={seeThrough}
+                onClick={() => setSeeThrough((v) => !v)}
+                aria-label="See-through model"
+                title="See-through model: the part translucent, so the edges behind its faces show and can be picked"
+                data-testid="sketch-see-through"
+              >
+                <Icon name="seeThrough" />
+              </button>
+              <button
+                className="icon-only"
+                aria-pressed={sectionAtSketch}
+                onClick={() => setSectionAtSketch((v) => !v)}
+                aria-label="Section at sketch plane"
+                title="Section at sketch plane: cut away the part in front of the sketch plane, to sketch inside it"
+                data-testid="sketch-section"
+              >
+                <Icon name="sectionSketch" />
+              </button>
+            </>
+          ),
+        },
+      }
+    : {};
+  // ------------------------------------------------------------ end Phase P wave 2A
 
   /** Everything the command palette can run: the model tools, the view commands, the general ones. */
   const paletteEntries = (): PaletteEntry[] => {
@@ -2033,33 +2152,10 @@ export function App() {
             />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>
-          {sketch ? (
-            <SketchMode
-              key={sketch.id}
-              session={sketch}
-              model={sketchModel}
-              onFinish={finishSketch}
-              onCancel={() => setSketch(null)}
-              applyRef={sketchApply}
-              onInsertDxf={() => void files.insertIntoSketch()}
-              onExportDxf={(entities) => files.exportSketch(entities, sketch.id)}
-              insertRef={files.sketchInsert}
-              onAsk={(t, draft, x, y) =>
-                openAsk(
-                  t.kind === "entity"
-                    ? { kind: "entity", sketch: draft.id, entity: t.entity }
-                    : t.kind === "constraint"
-                      ? { kind: "constraint", sketch: draft.id, index: t.index }
-                      : { kind: "feature", id: draft.id },
-                  x,
-                  y,
-                  { ...draft, plane: sketch.spec },
-                )
-              }
-            />
-          ) : (
+          {/* Phase P wave 2A: a sketch is drawn in the 3D view, so the centre (and the view in it) stays as it opens and closes; its toolbar goes above the view and its panel takes the right side's place. */}
             <>
-              <section className="center">
+              <section className={`center${sketch ? " sketch-center" : ""}`}>
+                {sketch && <div className="sketch-top" ref={setSketchTop} />}
                 <Viewport
                   // In a feature session: the part as it stands before the feature, its active field's items lit up, and the preview over it.
                   view={pickView ?? view}
@@ -2106,9 +2202,11 @@ export function App() {
                   onFilter={setFilter}
                   onBox={onBox}
                   onDoubleClick={(t) => void onDoubleClick(t)}
+                  {...sketchViewport}
                 />
-              {/* Above the view buttons, clear of the selection chip at the top. */}
-              <div className="view-chips">
+              {sketch && <div className="sketch-over" ref={setSketchOver} />}
+              {/* Above the view buttons, clear of the selection chip at the top (the Evaluate panels are docked in the right column). */}
+              {!sketch && <div className="view-chips">
                 {session && (
                   <div className={`session-prompt${effect?.error ? " failing" : ""}`} data-testid="session-prompt" role="status">
                     <strong>{sessionLabel(session)}</strong>
@@ -2143,13 +2241,13 @@ export function App() {
                     </button>
                   </div>
                 )}
-              </div>
-              {ask.previewDoc && (
+              </div>}
+              {!sketch && ask.previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
                   Previewing the proposal
                 </div>
               )}
-              {!ask.previewDoc && shownPhoto && doc && (
+              {!sketch && !ask.previewDoc && shownPhoto && doc && (
                 <PhotoBar
                   photo={shownPhoto}
                   stored={!photoImage || photoImage.sha256 !== photoSha ? "loading" : photoShown ? "shown" : "missing"}
@@ -2163,6 +2261,32 @@ export function App() {
                 />
               )}
               </section>
+              {sketch ? (
+                <SketchMode
+                  key={sketch.id}
+                  session={sketch}
+                  model={sketchModel}
+                  onFinish={finishSketch}
+                  onCancel={() => setSketch(null)}
+                  applyRef={sketchApply}
+                  onInsertDxf={() => void files.insertIntoSketch()}
+                  onExportDxf={(entities) => files.exportSketch(entities, sketch.id)}
+                  insertRef={files.sketchInsert}
+                  view3d={sketchView3d}
+                  onAsk={(t, draft, x, y) =>
+                    openAsk(
+                      t.kind === "entity"
+                        ? { kind: "entity", sketch: draft.id, entity: t.entity }
+                        : t.kind === "constraint"
+                          ? { kind: "constraint", sketch: draft.id, index: t.index }
+                          : { kind: "feature", id: draft.id },
+                      x,
+                      y,
+                      { ...draft, plane: sketch.spec },
+                    )
+                  }
+                />
+              ) : (
               <aside className="side right">
                 {/* The Evaluate panels (Measure, Mass properties, Section), docked above the tabs: they never cover the part. */}
                 {(measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
@@ -2283,8 +2407,8 @@ export function App() {
                   </div>
                 )}
               </aside>
+              )}
             </>
-          )}
           </>
           )}
         </main>

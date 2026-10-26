@@ -410,12 +410,24 @@ export interface DatumPlane {
  * - { edge }: a straight edge is an axis (start to end); a circular edge is its
  *   axis, or its centre where a point is needed. With `at`, that point of it.
  * - { point }: a fixed point.
+ * - { sketch, entity }: an entity of an earlier sketch, as the rebuild solved
+ *   it: a line is an axis (start to end); a circle or arc is the axis through
+ *   its centre square to its sketch, or its centre where a point is needed; a
+ *   point is a point. With `at`, that point of it ("center" of a circle or arc,
+ *   "start", "end" or "mid" of a line or arc). It follows that sketch.
  */
 export type DatumRef =
   | { datum: string }
   | { face: FaceSelector }
   | { edge: EdgeSelector; at?: EdgePoint }
-  | { point: Vec3 };
+  | { point: Vec3 }
+  | SketchEntityRef;
+/** A reference to an entity of an earlier sketch (DESIGN §2.9): see DatumRef. */
+export interface SketchEntityRef {
+  sketch: string;
+  entity: string;
+  at?: EdgePoint;
+}
 /** A point of an edge: its ends, the middle of its length, or a circle's centre. */
 export type EdgePoint = "start" | "end" | "mid" | "center";
 

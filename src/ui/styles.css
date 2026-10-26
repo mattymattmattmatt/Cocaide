@@ -1698,3 +1698,56 @@ svg.icon { flex: none; display: block; }
   .section-tag { bottom: 52px; }
 }
 .view-buttons { max-width: calc(100% - 24px); flex-wrap: wrap; }
+/* ======================================================= Phase P wave 2A: the sketch in the 3D view */
+/* A sketch is drawn over the 3D view: its toolbar above the view, its canvas over it (transparent), its strips over that. */
+:root {
+  --sketch-plane: #3a8dde;
+  --sketch-plane-border: #2f74c0;
+  --scene-hover: #2f7bff;
+  --scene-unusable: #b0563a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sketch-plane: #5aa2f0;
+    --sketch-plane-border: #6aaef5;
+    --scene-hover: #6ea8ff;
+    --scene-unusable: #e08a6a;
+  }
+}
+.center.sketch-center { display: flex; flex-direction: column; }
+.center.sketch-center > .viewport { position: relative; inset: auto; flex: 1; min-height: 0; }
+.center.sketch-center > .sketch-top { flex: none; }
+.center.sketch-center > .sketch-over { display: contents; }
+.viewport > .sketch-stage { position: absolute; inset: 0; }
+.sketch-stage > .sketch-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sketch-canvas.in-3d { background: transparent; }
+.sketch-canvas.in-3d .grid-minor { opacity: 0.35; }
+.sketch-canvas.in-3d .grid-major { opacity: 0.5; }
+/* Facing the plane, the model's edges are drawn flat on it as before, under the part's own; turned, those in the plane, and a picked one's landing place. */
+.sketch-canvas.in-3d .model-edge:not(.in-plane):not(.hover):not(.selected):not(.related) { stroke-opacity: 0.45; }
+.sketch-canvas.turned .model-edge.projected { stroke-dasharray: 5 4; }
+.sketch-canvas .entity.other-sketch { stroke: var(--sketch-reference); stroke-dasharray: 5 4; stroke-width: 1.6; }
+.sketch-canvas .entity.other-sketch.hover { stroke: var(--sketch-reference); stroke-width: 2.6; }
+.sketch-canvas .entity.other-sketch.selected { stroke: var(--sketch-selected); }
+.sketch-canvas .entity.other-sketch.point { fill: var(--sketch-reference); stroke: none; }
+.sketch-canvas .entity.face-axis { stroke: var(--sketch-reference); stroke-dasharray: 12 3 2 3; stroke-width: 1.4; }
+.sketch-canvas .entity.face-axis.hover { stroke-width: 2.4; }
+.sketch-canvas .entity.face-axis.selected { stroke: var(--sketch-selected); }
+/* What the pointer is on in the 3D view, lit where the view shows it; the drop from it onto the plane. */
+.sketch-canvas .scene-outline { fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.sketch-canvas .scene-outline.hover { stroke: var(--scene-hover); }
+.sketch-canvas .scene-outline.selected { stroke: var(--sketch-selected); stroke-opacity: 0.75; }
+.sketch-canvas .scene-outline.unusable { stroke: var(--scene-unusable); stroke-dasharray: 3 3; }
+.sketch-canvas .scene-outline.side { stroke: var(--scene-hover); stroke-width: 1.6; stroke-opacity: 0.8; }
+.sketch-canvas .scene-drop { stroke: var(--scene-hover); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+.sketch-canvas .scene-tip text { font-size: 11px; fill: var(--text); paint-order: stroke; stroke: var(--viewport-top); stroke-width: 3px; }
+.sketch-canvas .dimensions text { paint-order: stroke; stroke: var(--viewport-top); stroke-width: 3px; }
+.sketch-canvas.edge-on { cursor: not-allowed; }
+.sketch-edge-on {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 4; padding: 5px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--accent-2); box-shadow: 0 4px 14px rgb(0 0 0 / 0.1); pointer-events: none;
+}
+.viewport.sketching .section-tag { pointer-events: none; }
+/* Over the view, the sketch's status line and plane name sit above the view bar, clear of the triad. */
+.center.sketch-center .sketch-statusbar { bottom: 50px; left: 84px; }
+.center.sketch-center .sketch-plane-label { bottom: 50px; }
