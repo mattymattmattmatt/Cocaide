@@ -56,6 +56,8 @@ export interface PickField {
   takeFeature?(id: string): string | null;
   /** What to pick, for the status line and the empty field: "Pick edges to fillet". */
   prompt: string;
+  /** Active only when made so (a click on it, its button), never by default: a fillet's "new radius set". */
+  onRequest?: boolean;
 }
 
 /** What the active field is about, for the app: the status line, the filter, the highlight. */
@@ -92,13 +94,14 @@ export function activeField(fields: readonly PickField[], wanted: string | null 
   }
   if (wanted === null) return null;
   const picks = (f: PickField) => f.takes.length > 0;
+  sorted.splice(0, sorted.length, ...sorted.filter((f) => !f.onRequest));
   // Every field filled, and none takes picks in the view (an extrude's sketch): none is active; a sketch clicked in the tree still goes in.
   return sorted.find((f) => f.required && f.count === 0) ?? sorted.find((f) => f.count > 0 && picks(f)) ?? sorted.find((f) => f.count === 0) ?? null;
 }
 
 /** The next field after `key` (Tab), or before it (Shift+Tab), round the list. */
 export function nextField(fields: readonly PickField[], key: string | null, back = false): PickField | null {
-  const sorted = [...fields].sort((a, b) => a.order - b.order);
+  const sorted = [...fields].filter((f) => !f.onRequest || f.key === key).sort((a, b) => a.order - b.order);
   if (!sorted.length) return null;
   const i = sorted.findIndex((f) => f.key === key);
   if (i < 0) return sorted[back ? sorted.length - 1 : 0];

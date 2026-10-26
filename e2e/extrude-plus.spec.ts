@@ -92,17 +92,17 @@ test("a second direction, then a draft on the first", async ({ page }) => {
   await commit(page, "prop-direction2-distance", "3");
   await expectVolume(page, shown(800));
 
-  // Draft on direction 1, 5° inward: a frustum h/3 (A1 + A2 + sqrt(A1 A2)) with sides 10 and 10 - 2 x 5 tan 5°.
+  // Draft on direction 1, 2° inward (Phase P wave 2's default): a frustum h/3 (A1 + A2 + sqrt(A1 A2)) with sides 10 and 10 - 2 x 5 tan 2°.
   await page.getByTestId("prop-draft").check();
-  await expect(page.getByTestId("prop-draft-angle")).toHaveValue("5");
-  const top = 10 - 2 * 5 * Math.tan((5 * Math.PI) / 180);
+  await expect(page.getByTestId("prop-draft-angle")).toHaveValue("2");
+  const top = 10 - 2 * 5 * Math.tan((2 * Math.PI) / 180);
   const frustum = (5 / 3) * (100 + top * top + 10 * top);
   await expect.poll(() => volumeOf(page)).toBeCloseTo(300 + frustum, 2);
   // Outward: the top grows instead.
   await page.getByTestId("prop-draft-outward").check();
-  const wide = 10 + 2 * 5 * Math.tan((5 * Math.PI) / 180);
+  const wide = 10 + 2 * 5 * Math.tan((2 * Math.PI) / 180);
   await expect.poll(() => volumeOf(page)).toBeCloseTo(300 + (5 / 3) * (100 + wide * wide + 10 * wide), 2);
-  expect((await feature(page, "ext"))!.draft).toEqual({ angle: 5, outward: true });
+  expect((await feature(page, "ext"))!.draft).toEqual({ angle: 2, outward: true });
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
 });
 
@@ -139,7 +139,8 @@ test("a chamfer of two distances, flipped, then a distance and an angle", async 
   await viewportClick(page, [0, -10, 20]); // the top front edge
   await expect(page.getByTestId("selection")).toContainText(/edge/i);
   await page.getByTestId("tool-chamfer").click();
-  await expectVolume(page, shown(8000 - 0.5 * 20));
+  // It starts at a tenth of the narrower face beside the edge (Phase P wave 2): 2 on a 20 mm cube.
+  await expectVolume(page, shown(8000 - 0.5 * 2 * 2 * 20));
 
   // Distance – distance: 2 on the top face, 1 on the front: a triangle 2 x 1 / 2 along 20 mm.
   await page.getByTestId("prop-chamfer-type").selectOption("distances");
@@ -184,40 +185,42 @@ test("up to a curved face by Use selected", async ({ page }) => {
 });
 
 test("fillet: the edges of a picked face, and a radius set whose radius is edited in place", async ({ page }) => {
-  // A 20 mm cube. Its top face picked, then Fillet: R1 on the four top edges, (1 - π/4)·1²·20 each, less a little
-  // where they meet at the corners (each corner's blend overlaps the two edges' runs).
+  // A 20 mm cube. Its top face picked, then Fillet: R2 (a tenth of the 20 mm faces beside the edges) on the four top
+  // edges, (1 - π/4)·2²·20 each, less a little where they meet at the corners (each corner's blend overlaps the two edges' runs).
   await openDocument(page, [sketch("sk", [rect("r1", [0, 0], 20, 20)]), { id: "cube", op: "extrude", sketch: "sk", distance: 20 }]);
   const corner = 1 - Math.PI / 4;
   await viewportClick(page, [3, 2, 20]);
   await expect(page.getByTestId("selection")).toContainText("normal +Z");
   await page.getByTestId("tool-fillet").click();
-  await expect.poll(async () => 8000 - (await volumeOf(page))).toBeGreaterThan(4 * corner * 20 - 1);
-  expect(8000 - (await volumeOf(page))).toBeLessThan(4 * corner * 20);
-  expect(await feature(page, "fillet_1")).toMatchObject({ faces: [{ type: "planar", normal: [0, 0, 1] }], radius: 1 });
+  await expect.poll(async () => 8000 - (await volumeOf(page))).toBeGreaterThan(4 * corner * 4 * 20 - 8);
+  expect(8000 - (await volumeOf(page))).toBeLessThan(4 * corner * 4 * 20);
+  expect(await feature(page, "fillet_1")).toMatchObject({ faces: [{ type: "planar", normal: [0, 0, 1] }], radius: 2 });
 
-  // An edge picked and used as well, then left out again (×): back to the face's edges alone.
+  // An edge as well, then left out again (×): back to the face's edges alone. The fillet is open with OK and Cancel
+  // (Phase P wave 2): Edges made the active field, the edge clicked goes straight in.
   const faceOnly = await volumeOf(page);
+  await page.getByTestId("prop-edges-pick").click();
+  await expect(page.getByTestId("prop-edges-pick")).toHaveAttribute("data-active", "true");
   await viewportClick(page, [10, -10, 10]);
-  await page.getByTestId("prop-edges-use").click();
   await expect.poll(() => volumeOf(page)).toBeLessThan(faceOnly - 0.1);
   expect(await feature(page, "fillet_1")).toMatchObject({ edges: { type: "edge" }, faces: [{ type: "planar" }] });
   await page.getByTestId("prop-edges-remove-0").click();
   await expect.poll(() => volumeOf(page)).toBeCloseTo(faceOnly, 2);
   expect((await feature(page, "fillet_1"))!.edges).toBeUndefined();
 
-  // A vertical edge as a radius set of its own (it starts at R1), then R3. The set's fillet meets the top's at a corner,
-  // so the volume is only bounded: more removed than with the set at R1.
+  // A vertical edge as a radius set of its own (it starts at the fillet's R2), then R3: Add a radius set, then its edge
+  // clicked (in the session the next click starts the set; the set's own field takes more). The set's fillet meets the
+  // top's at a corner, so the volume is only bounded: more removed than with the set at R2.
   await page.getByTestId("prop-fillet-sets-add").click();
-  await expect(page.getByTestId("command-error")).toContainText("Click the edges for the new radius");
+  await expect(page.getByTestId("prop-fillet-sets-new-pick")).toHaveAttribute("data-active", "true");
   await viewportClick(page, [10, -10, 10]);
-  await expect(page.getByTestId("selection")).toContainText("edge");
-  await page.getByTestId("prop-fillet-sets-add").click();
-  await expect(page.getByTestId("prop-fillet-sets-radius-0")).toHaveValue("1");
+  await expect(page.getByTestId("prop-fillet-sets-radius-0")).toHaveValue("2");
+  await expect(page.getByTestId("prop-fillet-sets-0-pick")).toHaveAttribute("data-active", "true");
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
-  const atOne = await volumeOf(page);
+  const atTwo = await volumeOf(page);
   await commit(page, "prop-fillet-sets-radius-0", "3");
   await expect.poll(async () => ((await feature(page, "fillet_1"))!.sets as { radius: number }[])[0].radius).toBe(3);
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
-  await expect.poll(() => volumeOf(page)).toBeLessThan(atOne - 1);
+  await expect.poll(() => volumeOf(page)).toBeLessThan(atTwo - 1);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/fillet-radius-sets.png` });
 });

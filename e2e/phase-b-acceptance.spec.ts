@@ -6,12 +6,12 @@ import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { importSTEP, loadOC, scoped, volumeOf } from "../src/kernel";
 import { isValidShape } from "../src/kernel/measure";
-import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
 
 const BRACKET = "18,994.728";
 
-/** The whole bracket, by hand: sketch, dimensions, extrude, hole. */
-async function buildBracket(page: Page) {
+/** The whole bracket, by hand: sketch, dimensions, extrude, hole (`holeOpen`: the hole left open with OK and Cancel). */
+async function buildBracket(page: Page, holeOpen = false) {
   await page.getByTestId("new-part").click();
   await expect(page.getByTestId("status")).toHaveText("No solid yet");
   await commit(page, "doc-name", "bracket");
@@ -39,15 +39,20 @@ async function buildBracket(page: Page) {
   await page.getByTestId("tool-extrude").click();
   await commit(page, "prop-distance", "6");
   await expectVolume(page, "19,200");
+  // The extrude opened with OK and Cancel (Phase P wave 2): OK keeps it.
+  await okFeature(page);
 
   // Click the top face and drill the hole.
   await viewportClick(page, [-10, 5, 6]);
   await expect(page.getByTestId("selection")).toContainText("normal +Z");
   await page.getByTestId("tool-hole").click();
+  // A new hole starts as the largest M size that sits on the face (M12 on the 40 mm plate): Custom, for a plain Ø6.6.
+  await page.getByTestId("prop-hole-size").selectOption("");
   await commit(page, "prop-center-x", "30");
   await commit(page, "prop-center-y", "0");
   await commit(page, "prop-diameter", "6.6");
   await expectVolume(page, BRACKET);
+  if (!holeOpen) await okFeature(page);
 }
 
 test("a human makes the bracket with no JSON editing", async ({ page }) => {
@@ -120,19 +125,23 @@ test("a human makes the bracket with no JSON editing", async ({ page }) => {
 
 test("undo returns the previous solid, redo brings it back", async ({ page }) => {
   const problems = await openApp(page);
-  await buildBracket(page);
+  await buildBracket(page, true);
 
-  await page.getByTestId("undo").click(); // diameter 6.6 -> 5
-  await expect(page.getByTestId("holes")).toHaveText("1 × Ø5");
+  // The hole still open (Phase P wave 2): undo goes back one change at a time within it, redo forward again.
+  await page.getByTestId("undo").click(); // diameter 6.6 -> 13.5 (the plain hole M12's clearance gave)
+  await expect(page.getByTestId("holes")).toHaveText("1 × Ø13.5");
   await page.getByTestId("undo").click(); // centre y
   await page.getByTestId("undo").click(); // centre x
-  await page.getByTestId("undo").click(); // the hole itself
+  await page.keyboard.press("Control+Shift+z");
+  await page.keyboard.press("Control+Shift+z");
+  await page.keyboard.press("Control+Shift+z");
+  await expectVolume(page, BRACKET);
+  await okFeature(page);
+
+  // Kept, the hole is one undo step: undo takes all of it, redo brings it back.
+  await page.getByTestId("undo").click();
   await expectVolume(page, "19,200");
   await expect(page.getByTestId("holes")).toHaveText("none");
-
-  await page.keyboard.press("Control+Shift+z");
-  await page.keyboard.press("Control+Shift+z");
-  await page.keyboard.press("Control+Shift+z");
   await page.keyboard.press("Control+Shift+z");
   await expectVolume(page, BRACKET);
   expect(problems).toEqual([]);
@@ -149,6 +158,7 @@ test("a bad selector shows the error, not a crash", async ({ page }) => {
   await page.getByTestId("tool-fillet").click();
   await commit(page, "prop-radius", "0.5");
   await expectVolume(page, "18,993.578");
+  await okFeature(page);
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
   await commit(page, "prop-diameter", "5");

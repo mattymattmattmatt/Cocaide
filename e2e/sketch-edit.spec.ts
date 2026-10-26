@@ -7,7 +7,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import type { Constraint, SketchEntity, Vec2 } from "../src/doc/types";
-import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
 
 const SHOTS = process.env.SHOTS_DIR;
 
@@ -208,6 +208,8 @@ test("a circular pattern of circles cuts through a plate", async ({ page }) => {
   await page.getByTestId("tool-extrude").click();
   await commit(page, "prop-distance", "10");
   await expectVolume(page, "36,000");
+  // OK keeps the extrude (Phase P wave 2: it opened with OK and Cancel), so its top face can be clicked.
+  await okFeature(page);
 
   // On its top face: a circle of radius 4 at [20, 0], six of them round the origin.
   await viewportClick(page, [-25, 25, 10]);

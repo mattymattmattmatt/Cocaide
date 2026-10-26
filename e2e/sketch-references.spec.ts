@@ -5,7 +5,7 @@
 // shows the part as it stood before it.
 
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, sketchClick, viewportClick, waitForRebuild } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, sketchClick, viewportClick, waitForRebuild } from "./helpers";
 
 let problems: string[] = [];
 
@@ -97,6 +97,8 @@ test("dimension a circle to a model edge: the hole follows the edge when the pla
   await page.getByTestId("prop-extent").selectOption("throughAll");
   await waitForRebuild(page);
   await expectVolume(page, "18,825.082");
+  // OK keeps the cut (Phase P wave 2: it opened with OK and Cancel) before another sketch is edited.
+  await okFeature(page);
 
   // Make the plate 100 wide in its own sketch: the right edge moves 10 mm, and the hole goes with it.
   await page.getByTestId("feature-sketch_1").locator(".feature-row").dblclick();

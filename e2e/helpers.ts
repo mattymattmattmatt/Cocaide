@@ -53,6 +53,15 @@ export async function commit(page: Page, testId: string, value: string) {
   await input.press("Enter");
 }
 
+/**
+ * OK on the feature open with OK and Cancel (Phase P wave 2: a tool's new
+ * feature, or Edit feature, opens a session; OK keeps it as one undo step).
+ */
+export async function okFeature(page: Page) {
+  await page.getByTestId("session-ok").click();
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
+}
+
 /** Drops a file on the viewport, as a user would. */
 export async function dropFile(page: Page, path: string, type: string) {
   const b64 = readFileSync(path).toString("base64");

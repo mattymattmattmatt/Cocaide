@@ -6,7 +6,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import type { Vec3 } from "../src/doc/types";
-import { commit, expectVolume, openApp, savedDocument, viewportClick, waitForRebuild } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, viewportClick, waitForRebuild } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   (page as unknown as { problems: string[] }).problems = await openApp(page);
@@ -53,7 +53,11 @@ test("the toolbar is a CommandManager: Sketch always there, the tools on tabs, t
   await page.keyboard.press("s");
   await page.getByTestId("bar-tool.extrude").click();
   await expect(page.getByTestId("feature-extrude_1")).toBeVisible();
-  await expectVolume(page, "32,000"); // 80 x 40 x 10 from the sketch on Top: the plate and its hole filled
+  // 80 x 40 x 10 from the sketch on Top, away from the part (Phase P wave 2: a new boss goes where the part is not): under the plate.
+  await expectVolume(page, "50,994.728");
+  // Enter in the view: OK on the extrude open with OK and Cancel; Enter again repeats it.
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("feature-extrude_2")).toBeVisible();
 });
@@ -74,7 +78,7 @@ test("Ctrl- and Shift-click select several faces and edges; a plain click starts
   await expect(chip).toHaveCount(0);
 });
 
-test("a fillet's edges: Use selected edges moves it to the edge picked now", async ({ page }) => {
+test("a fillet's edges: in its session a click puts the edge picked now in, and a click on the first takes that out", async ({ page }) => {
   await viewportClick(page, [0, -20, 6]); // the top front edge
   await page.getByTestId("tool-fillet").click();
   await commit(page, "prop-radius", "2");
@@ -82,12 +86,15 @@ test("a fillet's edges: Use selected edges moves it to the edge picked now", asy
   const front = JSON.stringify((await feature(page, "fillet_1"))!.edges);
   await expect(page.getByTestId("prop-edges")).toContainText("-Y");
 
-  await viewportClick(page, [0, 20, 6]); // the top back edge
-  await page.getByTestId("prop-edges-use").click();
-  await expect(page.getByTestId("prop-edges")).toContainText("+Y");
+  // The fillet is open with OK and Cancel, its edges field active (Phase P wave 2): clicks go straight into it.
+  await viewportClick(page, [0, 20, 6]); // the top back edge: in
   await expect.poll(async () => JSON.stringify((await feature(page, "fillet_1"))!.edges)).not.toBe(front);
+  await viewportClick(page, [0, -20, 6]); // the top front edge: out again
+  await expect(page.getByTestId("prop-edges")).toContainText("+Y");
+  await expect(page.getByTestId("prop-edges")).not.toContainText("-Y");
   await expect.poll(async () => (await feature(page, "fillet_1"))!.radius).toBe(2);
   await expectVolume(page, "18,926.05"); // the same edge length, so the same volume
+  await okFeature(page);
 });
 
 test("a second pattern direction makes a grid, and goes again with its spacing and count", async ({ page }) => {

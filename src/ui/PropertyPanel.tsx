@@ -155,7 +155,8 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
     },
     feature(id, op) {
       const f = current();
-      const taker = f?.takeFeature && treeTakes(f.treeOps, op) ? f : fields().find((x) => x.takeFeature && treeTakes(x.treeOps, op));
+      // The active field, or one the feature still needs (a pattern's features, command-first); else the tree click is the tree's (it asks to finish first).
+      const taker = f?.takeFeature && treeTakes(f.treeOps, op) ? f : fields().find((x) => x.takeFeature && x.required && x.count === 0 && treeTakes(x.treeOps, op));
       if (!taker?.takeFeature) return { taken: false };
       const err = taker.takeFeature(id);
       setPickError(err ? { text: err, at: Date.now() } : null);
@@ -294,6 +295,7 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
                 type="button"
                 className={`session-pin${session.keepOpen ? " on" : ""}`}
                 aria-pressed={session.keepOpen}
+                aria-label="Repeat after OK"
                 title={session.keepOpen ? "Keeping the panel open: OK starts another one (click to stop)" : "Keep the panel open: OK starts another one, for several in a row"}
                 onClick={() => session.setKeepOpen(!session.keepOpen)}
                 data-testid="session-pin"

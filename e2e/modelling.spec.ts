@@ -2,7 +2,7 @@
 // edge picks, patterns, and the JSON tab, all in the browser.
 
 import { expect, test } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   const problems = await openApp(page);
@@ -118,6 +118,8 @@ test("chamfers a picked edge and patterns the hole", async ({ page }) => {
   await page.getByTestId("tool-chamfer").click();
   await commit(page, "prop-chamfer-distance", "1");
   await expectVolume(page, "18,954.728"); // 0.5 x 1 x 1 x 80
+  // OK keeps the chamfer (Phase P wave 2: it opened with OK and Cancel), so the hole clicked in the tree is a selection.
+  await okFeature(page);
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
   await page.getByTestId("tool-pattern").click();
@@ -126,6 +128,7 @@ test("chamfers a picked edge and patterns the hole", async ({ page }) => {
   await commit(page, "prop-spacing", "20");
   await commit(page, "prop-count", "4");
   await expect(page.getByTestId("holes")).toHaveText(/^4 /);
+  await okFeature(page);
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
   await page.getByTestId("tool-pattern").click();

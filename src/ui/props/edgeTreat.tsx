@@ -7,6 +7,10 @@ import { edgesSelectorFor } from "../../kernel/synthesize";
 import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
 import type { EdgeSelector, FaceSelector } from "../../doc/types";
 import { Field, NumberInput, type NumberValue } from "../fields";
+import { PickWrap } from "./FeatureForm";
+import type { PickField } from "./picking";
+import { pickFieldFor, type PickEnv } from "./pickFields";
+import { usePickHost, type PickHost } from "./pickHost";
 import { asList, type FieldProps, type FieldSpec, type FormContext, type Raw } from "./spec";
 
 /** The ops whose faces a fillet or chamfer may take "the edges it made" from. */
@@ -52,6 +56,67 @@ export function removeSetPatch(f: Raw, i: number): Raw {
   return { sets: sets.length ? sets : null };
 }
 
+/**
+ * The fillet with radius set `i`'s edges changed; with none left (null), the
+ * set keeps its faces and features, or goes when it has none.
+ */
+export function setEdgesPatch(f: Raw, i: number, edges: unknown): Raw {
+  const sets = Array.isArray(f.sets) ? (f.sets as Raw[]) : [];
+  const set = sets[i];
+  if (!set) return {};
+  if (edges !== null && edges !== undefined) return { sets: sets.map((s, k) => (k === i ? { ...s, edges } : s)) };
+  const { edges: _gone, ...rest } = set;
+  void _gone;
+  if (!asList(rest.faces).length && !(Array.isArray(rest.features) && rest.features.length)) return removeSetPatch(f, i);
+  return { sets: sets.map((s, k) => (k === i ? rest : s)) };
+}
+
+/** The fillet with a new radius set on these edges, at its radius now. */
+export function newSetPatch(f: Raw, resolved: Raw, edges: unknown): Raw {
+  const r = typeof resolved.radius === "number" ? resolved.radius : 1;
+  const sets = Array.isArray(f.sets) ? (f.sets as Raw[]) : [];
+  return { sets: [...sets, { edges, radius: r }] };
+}
+
+/** The key of the session field the first click of a new radius set goes into. */
+export const NEW_SET_FIELD = "sets.new";
+/** Where the radius sets' fields sit among the fillet's selection fields (after edges, faces and features). */
+const SETS_ORDER = 100;
+
+/** A radius set's edges as a field: what pickFieldFor reads them as. */
+const setEdgesSpec = (i: number): FieldSpec => ({
+  kind: "edges",
+  key: `sets.${i}.edges`,
+  label: `Radius set ${i + 1}`,
+  optional: true,
+  propagation: true,
+  prompt: `Pick edges for radius set ${i + 1}`,
+  get: (f) => (Array.isArray(f.sets) ? (f.sets as Raw[])[i]?.edges : undefined),
+});
+const NEW_SET_SPEC: FieldSpec = { kind: "edges", key: NEW_SET_FIELD, label: "New radius set", optional: true, propagation: true, prompt: "Pick the edges for a new radius", get: () => undefined };
+
+const envOf = (host: PickHost, p: FieldProps): PickEnv => ({ view: host.view, before: p.before, bodies: p.bodies, edge: host.edge, chainOf: host.chainOf, passes: host.passes });
+const refusal = (r: unknown) => (typeof r === "string" ? r : null);
+
+/** One radius set's row; in a session its edges are a live field (clicks put edges in and take them out). */
+function SetRow({ p, i, set }: { p: FieldProps; i: number; set: Raw }) {
+  const host = usePickHost();
+  const field = host ? pickFieldFor(setEdgesSpec(i), p.f, p, SETS_ORDER + i, envOf(host, p), (value) => refusal(p.update(setEdgesPatch(p.f, i, value)))) : null;
+  return (
+    <PickWrap field={field} tid={`prop-fillet-sets-${i}`}>
+      <span className="selector-line">
+        <span className="set-text">{describeSet(set)}</span>
+        <span className="set-radius">
+          <NumberInput value={(set.radius ?? "") as NumberValue} min={0} onCommit={(v) => p.update(setRadiusPatch(p.f, i, "radius", v))} ariaLabel={`Radius of set ${i + 1}`} testId={`prop-fillet-sets-radius-${i}`} />
+        </span>
+        <button type="button" className="selector-remove" aria-label={`Remove radius set ${i + 1}`} title="Remove this set" onClick={() => p.update(removeSetPatch(p.f, i))} data-testid={`prop-fillet-sets-remove-${i}`}>
+          ×
+        </button>
+      </span>
+    </PickWrap>
+  );
+}
+
 /** The fillet with radius set `i`'s radius (or end radius) changed. */
 export function setRadiusPatch(f: Raw, i: number, key: "radius" | "radius2", value: unknown): Raw {
   const sets = Array.isArray(f.sets) ? (f.sets as Raw[]) : [];
@@ -86,39 +151,52 @@ export function edgeChoiceFields(prefix: string): FieldSpec[] {
   ];
 }
 
-/** The fillet's other radius sets: listed, removable, and "Add a radius set" from the edges selected. */
+/**
+ * The fillet's other radius sets: listed, removable, and "Add a radius set"
+ * of the edges selected. In a session each set's edges are a live field,
+ * and Add makes the next click in the view start a new set (it is then that
+ * set's field, for more of its edges).
+ */
 export function RadiusSets(p: FieldProps) {
   const sets = Array.isArray(p.f.sets) ? (p.f.sets as Raw[]) : [];
+  const host = usePickHost();
+  const newSet: PickField | null = host
+    ? {
+        ...pickFieldFor(NEW_SET_SPEC, p.f, p, SETS_ORDER + sets.length, envOf(host, p), (value) => {
+          if (value === null || value === undefined) return null;
+          const r = refusal(p.update(newSetPatch(p.f, p.resolved, value)));
+          if (!r) host.setActive(`sets.${sets.length}.edges`);
+          return r;
+        })!,
+        onRequest: true,
+      }
+    : null;
+  const add = () => {
+    // In a session the next click in the view starts the set; outside one, the edges selected are the set.
+    if (host) {
+      p.setError(null);
+      return host.setActive(NEW_SET_FIELD);
+    }
+    const patch = addSetPatch(p.f, p.resolved, p);
+    if (typeof patch === "string") return p.setError(patch);
+    p.setError(null);
+    p.update(patch);
+  };
   return (
     <>
       <Field label="Radius sets" block hint="Other edges with radii of their own, in this one fillet">
         <span className="readout" data-testid="prop-fillet-sets">
           {sets.map((s, i) => (
-            <span key={i} className="selector-line">
-              <span className="set-text">{describeSet(s)}</span>
-              <span className="set-radius">
-                <NumberInput value={(s.radius ?? "") as NumberValue} min={0} onCommit={(v) => p.update(setRadiusPatch(p.f, i, "radius", v))} ariaLabel={`Radius of set ${i + 1}`} testId={`prop-fillet-sets-radius-${i}`} />
-              </span>
-              <button type="button" className="selector-remove" aria-label={`Remove radius set ${i + 1}`} title="Remove this set" onClick={() => p.update(removeSetPatch(p.f, i))} data-testid={`prop-fillet-sets-remove-${i}`}>
-                ×
-              </button>
-            </span>
+            <SetRow key={i} p={p} i={i} set={s} />
           ))}
           {!sets.length && <span className="muted">none: every edge takes the radius above</span>}
         </span>
       </Field>
-      <button
-        type="button"
-        onClick={() => {
-          const patch = addSetPatch(p.f, p.resolved, p);
-          if (typeof patch === "string") return p.setError(patch);
-          p.setError(null);
-          p.update(patch);
-        }}
-        data-testid="prop-fillet-sets-add"
-      >
-        Add the selected edges as a radius set
-      </button>
+      <PickWrap field={newSet} tid="prop-fillet-sets-new">
+        <button type="button" onClick={add} data-testid="prop-fillet-sets-add">
+          {host ? "Add a radius set" : "Add the selected edges as a radius set"}
+        </button>
+      </PickWrap>
     </>
   );
 }

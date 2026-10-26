@@ -217,7 +217,13 @@ export function App() {
   const [sessionBefore, setSessionBefore] = useState<{ feature: string; key: string; view: RebuildView } | null>(null);
   const sessionKey = useRef<string | undefined>(undefined);
   /** What the view shows and picks on in a session (null until the part before an edited feature has come). */
-  const pickView = session && sessionBefore?.feature === session.id ? sessionBefore.view : null;
+  const beforeView = session && sessionBefore?.feature === session.id ? sessionBefore.view : null;
+  // A plane, axis or point has no solid to preview: the feature's own datum, from the newest rebuild, is shown (and read out in its panel) with the part before it.
+  const ownDatum = session ? view?.datums?.[session.id] : undefined;
+  const pickView = useMemo(
+    () => (beforeView && ownDatum && session ? { ...beforeView, datums: { ...beforeView.datums, [session.id]: ownDatum } } : beforeView),
+    [beforeView, ownDatum, session],
+  );
   /** What the feature adds and removes, as last built; with its error when the newest preview failed. */
   const [effect, setEffect] = useState<{ feature: string; added: MeshData | null; removed: MeshData | null; error?: string } | null>(null);
   const lastGoodEffect = useRef<{ feature: string; added: MeshData | null; removed: MeshData | null } | null>(null);
@@ -225,6 +231,11 @@ export function App() {
   const [activeField, setActiveField] = useState<ActiveFieldSummary | null>(null);
   const [peek, setPeek] = useState<PickTarget[] | null>(null);
   const [edgeOptions, setEdgeOptions] = useState<EdgeOptions>(DEFAULT_EDGE_OPTIONS);
+  /**
+   * What was last clicked in the view in this session (on the part before the feature): the panel's selection, for
+   * what reads one (a type that needs a face, Use selected). Its own state, so a rebuild's re-mapping of the selection never touches it.
+   */
+  const [sessionClick, setSessionClick] = useState<Selection>(EMPTY_SELECTION);
   const pickRouter = useRef<PickRouter | null>(null);
   // A session gone (OK, Cancel, undo past its start): its preview goes with it.
   useEffect(() => {
@@ -235,6 +246,7 @@ export function App() {
     lastGoodEffect.current = null;
     setActiveField(null);
     setPeek(null);
+    setSessionClick(EMPTY_SELECTION);
   }, [session]);
   /** A session's preview from the worker: the part before the feature (kept by its key), and what the feature does. */
   const takePreview = (sp: SessionPreview) => {
@@ -1190,6 +1202,7 @@ export function App() {
   const onPick = useCallback((target: PickTarget | null, additive: boolean) => {
     if (sessionRef.current && !measuringRef.current) {
       if (!target) return;
+      setSessionClick((sel) => pickInto(sel, target, additive));
       const r = pickRouter.current ? pickRouter.current.pick(target) : "none";
       if (r === "none") setNotice({ kind: "info", text: `${sessionRef.current.id} has no field to pick into now: change it in the panel, then OK (Enter) or Cancel (Esc).` });
       return;
@@ -1295,7 +1308,8 @@ export function App() {
         return;
       }
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
-      if (sessionRef.current && e.key === "Escape" && !document.querySelector(".context-menu, .value-box, .session-guard")) {
+      // Esc in a menu, a box or a dialog (the palette, a file's dialog) closes that, not the session.
+      if (sessionRef.current && e.key === "Escape" && !document.querySelector(".context-menu, .value-box, .session-guard, .modal-backdrop, [role='dialog']")) {
         e.preventDefault();
         sessionApi.cancel();
         return;
@@ -2249,7 +2263,7 @@ export function App() {
                               }
                             : undefined
                         }
-                        selection={selection}
+                        selection={session?.id === selectedFeature ? sessionClick : selection}
                         dispatch={d.dispatch}
                         onEditSketch={editSketch}
                         onSelectFeature={setSelectedFeature}

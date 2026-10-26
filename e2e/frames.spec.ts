@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument } from "./helpers";
 import { addParameter, saveSHS } from "./sections";
 
 async function addNode(page: Page, name: string, at: string[]) {
@@ -130,12 +130,15 @@ test("a weld at a joint, an end cap and a gusset: notes in the weld table, plate
   await page.getByTestId("prop-cap-start").click();
   await expectVolume(page, "3,059,520");
   await expect(page.getByTestId("body-cap_1")).toContainText("4,800 mm³");
+  // The cap opened with OK and Cancel (Phase P wave 2): OK keeps it before another feature is picked in the tree.
+  await okFeature(page);
 
   // A gusset in the corner of leg a and the left rail: 100 legs, 6 thick, its corner clipped 10.
   await page.getByTestId("feature-corner_a").locator(".feature-row").click();
   await page.getByTestId("prop-joint-gusset").click();
   await expect(page.getByTestId("body-gusset_1")).toContainText("29,700 mm³");
   await expect(page.getByTestId("interference")).toHaveCount(0);
+  await okFeature(page);
 
   // A cap on a mitred end is refused, and says why.
   await page.getByTestId("feature-rail_front").locator(".feature-row").click();
