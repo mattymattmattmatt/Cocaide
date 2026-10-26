@@ -5,8 +5,10 @@
 
 import { DOC_DEFS } from "../../../features/docIndex";
 import { refFromSelection } from "../../props/datumRef";
-import type { Vec3 } from "../../../doc/types";
+import type { FaceSelector, Vec3 } from "../../../doc/types";
 import { wizardSpec } from "../../../features/hole/wizard";
+import { facePlaneFrame, to3D } from "../../../geom/frame";
+import { selectFaces } from "../../../kernel/selectors";
 import { selectionSize } from "../selection";
 import { patternSpacingFor, widthAlong } from "../smartDefaults";
 import { recalled } from "../toolMemory";
@@ -45,6 +47,38 @@ export function seedWidth(ctx: ToolCtx, seed: Raw, dir: Vec3): number {
   return NaN;
 }
 
+/** Where the seed is (a hole's first centre, the middle of an extrude's sketch), or null. */
+function seedPoint(ctx: ToolCtx, seed: Raw): Vec3 | null {
+  const view = ctx.view;
+  if (!view) return null;
+  if (seed.op === "hole" && Array.isArray(seed.center) && seed.face) {
+    const face = selectFaces(view.faces, seed.face as FaceSelector).matches[0];
+    const c = seed.center as unknown[];
+    if (!face?.normal || !face.point || typeof c[0] !== "number" || typeof c[1] !== "number") return null;
+    return to3D(facePlaneFrame(face.normal, face.point), [c[0], c[1]]);
+  }
+  if ((seed.op === "extrude" || seed.op === "cut") && typeof seed.sketch === "string") {
+    const pts = view.sketches.find((s) => s.id === seed.sketch)?.polylines.flatMap((p) => p.points) ?? [];
+    if (!pts.length) return null;
+    return pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length, s[2] + p[2] / pts.length] as Vec3, [0, 0, 0] as Vec3);
+  }
+  return null;
+}
+
+/** The way along ±X or ±Y with the most of the part ahead of the seed: where a row of copies has room (+X when it can't be told). */
+export function roomiestDirection(ctx: ToolCtx, seed: Raw): Vec3 {
+  const box = ctx.view?.measurements?.boundingBox;
+  const at = seedPoint(ctx, seed);
+  if (!box || !at) return [1, 0, 0];
+  const room: [Vec3, number][] = [
+    [[1, 0, 0], box.max[0] - at[0]],
+    [[-1, 0, 0], at[0] - box.min[0]],
+    [[0, 1, 0], box.max[1] - at[1]],
+    [[0, -1, 0], at[1] - box.min[1]],
+  ];
+  return room.reduce((best, r) => (r[1] > best[1] + 1e-6 ? r : best))[0];
+}
+
 /** The new pattern of the selected feature, or what to select first. */
 export function patternFeature(ctx: ToolCtx, op: "linearPattern" | "circularPattern"): Raw | string {
   const { selected } = ctx;
@@ -62,8 +96,10 @@ export function patternFeature(ctx: ToolCtx, op: "linearPattern" | "circularPatt
   if (op === "linearPattern") {
     // Spaced half as much again as the seed is wide along the row (an edge picked: along it; else +X).
     const edge = ctx.view && ctx.selection.edges.length === 1 ? ctx.view.edges[ctx.selection.edges[0]] : undefined;
-    const dir: Vec3 = edge?.kind === "line" && edge.direction ? edge.direction : [1, 0, 0];
-    return { id, op, feature: selected.id, ...(along ? { along } : { direction: [1, 0, 0] }), spacing: patternSpacingFor(seedWidth(ctx, selected, dir)), count: count(3) };
+    // Along the edge picked; else the way along X or Y with the most of the part ahead of the seed (room for the copies).
+    const roomy = roomiestDirection(ctx, selected);
+    const dir: Vec3 = edge?.kind === "line" && edge.direction ? edge.direction : roomy;
+    return { id, op, feature: selected.id, ...(along ? { along } : { direction: roomy }), spacing: patternSpacingFor(seedWidth(ctx, selected, dir)), count: count(3) };
   }
   return { id, op, feature: selected.id, axis: along ? { ref: along } : { origin: [0, 0, 0], direction: [0, 0, 1] }, count: count(4) };
 }

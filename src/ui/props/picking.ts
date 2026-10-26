@@ -78,7 +78,9 @@ export function promptLine(f: Pick<PickField, "prompt" | "count">): string {
 
 /**
  * The field that is active: the one named, if it is shown; else the first
- * empty one the feature needs, else the first empty one, else the first.
+ * empty one the feature needs; else the first that holds picks already (the
+ * selection made before the tool went into it: more go there); else the first
+ * empty one; else none.
  */
 export function activeField(fields: readonly PickField[], wanted: string | null | undefined): PickField | null {
   const sorted = [...fields].sort((a, b) => a.order - b.order);
@@ -87,7 +89,9 @@ export function activeField(fields: readonly PickField[], wanted: string | null 
     if (named) return named;
   }
   if (wanted === null) return null;
-  return sorted.find((f) => f.required && f.count === 0) ?? sorted.find((f) => f.count === 0 && f.takes.length > 0) ?? sorted[0] ?? null;
+  const picks = (f: PickField) => f.takes.length > 0;
+  // Every field filled, and none takes picks in the view (an extrude's sketch): none is active; a sketch clicked in the tree still goes in.
+  return sorted.find((f) => f.required && f.count === 0) ?? sorted.find((f) => f.count > 0 && picks(f)) ?? sorted.find((f) => f.count === 0) ?? null;
 }
 
 /** The next field after `key` (Tab), or before it (Shift+Tab), round the list. */

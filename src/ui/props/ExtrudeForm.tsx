@@ -7,6 +7,7 @@
 
 import type { Vec3 } from "../../doc/types";
 import { sketchNormal } from "../model/sketchPlane";
+import { EXTRUDE_DRAFT_ANGLE } from "../model/smartDefaults";
 import { Field } from "../fields";
 import {
   contourLabel,
@@ -159,7 +160,7 @@ export function extrudeFields(op: "extrude" | "cut"): FieldSpec[] {
       testId: "prop-draft",
       when: (f) => !f.thin,
       get: (f) => !!f.draft,
-      set: (v) => ({ draft: v ? { angle: 5 } : null }),
+      set: (v) => ({ draft: v ? { angle: EXTRUDE_DRAFT_ANGLE } : null }),
       hint: "Tapered sides",
     },
     { kind: "number", key: "draft.angle", label: "Draft angle", unit: "°", min: 0, testId: "prop-draft-angle", when: (f) => !!f.draft },
@@ -205,7 +206,7 @@ export function extrudeFields(op: "extrude" | "cut"): FieldSpec[] {
       set: (v, f) => {
         const { draft: _old, ...rest } = d2(f) ?? {};
         void _old;
-        return { direction2: v ? { ...rest, draft: { angle: 5 } } : rest };
+        return { direction2: v ? { ...rest, draft: { angle: EXTRUDE_DRAFT_ANGLE } } : rest };
       },
     },
     { kind: "number", key: "direction2.draft.angle", label: "Draft angle", unit: "°", min: 0, testId: "prop-direction2-draft-angle", when: (f) => !!d2(f)?.draft },

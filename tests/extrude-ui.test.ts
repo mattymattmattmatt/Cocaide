@@ -183,10 +183,10 @@ describe("direction 2, start, thin, draft", () => {
   it("the draft, thin and direction 2 tick boxes send whole objects; the thin side's default is left out", () => {
     const f: Raw = { id: "e", op: "extrude", sketch: "sketch_1", distance: 6 };
     const field = (tid: string) => EXTRUDE_FIELDS.find((s) => fieldTestId(s) === tid)!;
-    expect(commitPatch(field("prop-draft"), true, f, form(f))).toEqual({ draft: { angle: 5 } });
+    expect(commitPatch(field("prop-draft"), true, f, form(f))).toEqual({ draft: { angle: 2 } }); // Phase P: a 2° draft to start with
     expect(commitPatch(field("prop-draft-angle"), 7, { ...f, draft: { angle: 5, outward: true } }, form(f))).toEqual({ draft: { angle: 7, outward: true } });
     expect(commitPatch(field("prop-thin-side"), "outside", { ...f, thin: { thickness: 2, side: "mid" } }, form(f))).toEqual({ thin: { thickness: 2 } });
-    expect(commitPatch(field("prop-direction2-draft"), true, { ...f, direction2: { extent: "blind", distance: 2 } }, form(f))).toEqual({ direction2: { extent: "blind", distance: 2, draft: { angle: 5 } } });
+    expect(commitPatch(field("prop-direction2-draft"), true, { ...f, direction2: { extent: "blind", distance: 2 } }, form(f))).toEqual({ direction2: { extent: "blind", distance: 2, draft: { angle: 2 } } });
     expect(commitPatch(field("prop-direction-mode"), "reversed", f, form(f))).toEqual({ direction: [0, 0, -1] });
   });
 });

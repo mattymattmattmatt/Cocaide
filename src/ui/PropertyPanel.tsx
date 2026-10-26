@@ -331,7 +331,6 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
           {session.failing.replaceAll(`${featureId}: `, "")}
         </div>
       )}
-      {session && status?.error && <div className="session-note muted small">The view keeps the last preview that built; fix the value, or OK keeps it with the error.</div>}
       {status?.error && (
         <div
           className="feature-error standalone"
@@ -346,6 +345,7 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
           {status.error.replaceAll(`${featureId}: `, "")}
         </div>
       )}
+      {session && status?.error && <div className="session-note muted small">The view keeps the last preview that built: change the value, or OK keeps it with the error.</div>}
       <div className="prop-body">
         {ui ? (
           ui.Editor ? <ui.Editor {...editorProps} /> : <FeatureForm fields={ui.fields ?? []} {...editorProps} />

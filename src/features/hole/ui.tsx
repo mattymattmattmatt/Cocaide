@@ -227,7 +227,8 @@ function positionField(p: FieldProps, view: RebuildView | null): PickField | nul
     takes: ["faces"],
     count: face ? centres.length : 0,
     required: true,
-    items: own.map((index) => ({ kind: "face" as const, index, point: view!.faces[index].centroid })),
+    // Its centres show as points to drag (handles); its whole face is not lit up.
+    items: [],
     prompt: "Click a flat face where the hole goes",
     toggle(t) {
       if (t.kind !== "face" || !view) return "Click a flat face where the hole goes";

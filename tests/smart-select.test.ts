@@ -222,6 +222,8 @@ describe("picking into a session's fields", () => {
     expect(activeField(list, "gone")!.key).toBe("neutral");
     expect(activeField(list, null)).toBeNull();
     expect(activeField([field("faces", 10, 2, true)], undefined)!.key).toBe("faces");
+    // Selection-first: the field the selection went into stays active (more edges go there), not an empty alternative.
+    expect(activeField([field("faces", 20, 0), field("edges", 10, 1), field("features", 30, 0)], undefined)!.key).toBe("edges");
     expect(nextField(list, "faces")!.key).toBe("neutral");
     expect(nextField(list, "bodies")!.key).toBe("faces");
     expect(nextField(list, "faces", true)!.key).toBe("bodies");

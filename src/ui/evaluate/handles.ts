@@ -24,6 +24,7 @@ import type { EdgeSelector, FaceSelector } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
 import { fmt } from "../model/selection";
 import { intoFace } from "../model/smartSelect";
+import { widthAcross } from "../model/smartDefaults";
 import type { Raw } from "../model/ToolContext";
 import { patchAt } from "../props/spec";
 
@@ -259,6 +260,32 @@ function onDefaultAxis(p: Vec3, tol: number): boolean {
   return near(p[1], p[2]) || near(p[0], p[2]) || near(p[0], p[1]);
 }
 
+/**
+ * A point on a face where a handle can stand: the face's middle, or, when
+ * that is on one of the origin's axes (a face centred on the origin), a third
+ * of the way from it toward the face's farthest corner, so the handle is not
+ * hidden behind the origin's own arrows.
+ */
+function clearOfAxes(p: Vec3, face: FaceInfo, view: RebuildView): Vec3 {
+  const size = Math.sqrt(face.area) || 1;
+  if (!onDefaultAxis(p, size * 0.03)) return p;
+  const range = view.mesh?.faceRanges[face.index];
+  if (!view.mesh || !range) return p;
+  const { positions, indices } = view.mesh;
+  let far: Vec3 | null = null;
+  let best = -1;
+  for (let k = range.start; k < range.start + range.count; k++) {
+    const v = indices[k];
+    const q: Vec3 = [positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]];
+    const d = len3(sub3(q, p));
+    if (d > best) {
+      best = d;
+      far = q;
+    }
+  }
+  return far ? add3(p, scale3(sub3(far, p), 1 / 3)) : p;
+}
+
 /** Is a 2D point inside a closed polyline (even-odd)? */
 function inside2(p: Vec2, poly: Vec2[]): boolean {
   let c = false;
@@ -430,7 +457,11 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     // The draft: an arc at a side of the profile, from straight up the wall to where the wall leans.
     const draft = num("draft.angle");
     if (draft !== undefined && distance !== undefined && extent === "blind") {
-      const side = anchor.outline.reduce((best, p) => (dot3(sub3(p, anchor.at), anchor.frame.x) > dot3(sub3(best, anchor.at), anchor.frame.x) ? p : best), anchor.outline[0]);
+      // The middle of the profile's side toward the sketch's +x: the far x of its outline, half way up its y.
+      const fr = anchor.frame;
+      const xs = anchor.outline.map((p) => dot3(sub3(p, fr.origin), fr.x));
+      const ys = anchor.outline.map((p) => dot3(sub3(p, fr.origin), fr.y));
+      const side = to3D(fr, [Math.max(...xs), (Math.min(...ys) + Math.max(...ys)) / 2]);
       const o0 = sub3(side, anchor.at);
       const o = normalize3(len3(sub3(o0, scale3(d, dot3(o0, d)))) > 1e-9 ? sub3(o0, scale3(d, dot3(o0, d))) : anchor.frame.x);
       const outward = (resolved.draft as Raw | undefined)?.outward === true;
@@ -527,7 +558,8 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     const edge = firstEdge(resolved, view);
     if (edge === undefined) return [];
     const e = view.edges[edge];
-    const [fa, fb] = e.faces;
+    // A fillet's radius is the same on both faces: its arrow runs into the wider one (it has room to be dragged out).
+    const [fa, fb] = op === "fillet" && e.faces.length === 2 && widthAcross(view, e.faces[1], edge) > widthAcross(view, e.faces[0], edge) ? [e.faces[1], e.faces[0]] : e.faces;
     const variable = op === "fillet" && num("radius2") !== undefined;
     const at = variable ? alongEdge(view, edge, 0.15) : e.mid;
     const ua = fa !== undefined ? intoFace(view, edge, fa, at) : null;
@@ -570,8 +602,9 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     const t = num("thickness");
     if (!face?.normal || t === undefined) return [];
     const outward = resolved.outward === true;
-    out.push({ id: `${id}:thickness`, feature: id, key: "thickness", origin: face.centroid, dir: outward ? face.normal : scale3(face.normal, -1), value: t, scale: 1, min: 0, locked: locked("thickness"), label: "Wall", snap: "length" });
-    out.push({ id: `${id}:flip`, feature: id, key: "outward", kind: "flip", origin: face.centroid, dir: face.normal, value: 0, scale: 1, min: null, label: outward ? "Walls inside" : "Walls outside", write: (f) => ({ outward: f.outward === true ? null : true }) });
+    const at = clearOfAxes(face.centroid, face, view);
+    out.push({ id: `${id}:thickness`, feature: id, key: "thickness", origin: at, dir: outward ? face.normal : scale3(face.normal, -1), value: t, scale: 1, min: 0, locked: locked("thickness"), label: "Wall", snap: "length" });
+    out.push({ id: `${id}:flip`, feature: id, key: "outward", kind: "flip", origin: at, dir: face.normal, value: 0, scale: 1, min: null, label: outward ? "Walls inside" : "Walls outside", write: (f) => ({ outward: f.outward === true ? null : true }) });
     return out;
   }
 
@@ -583,7 +616,7 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
     const n = resolved.flip === true ? scale3(neutral.direction, -1) : neutral.direction;
     const axis = cross3(face.normal, n);
     if (len3(axis) < 1e-9) return [];
-    return [{ id: `${id}:angle`, feature: id, key: "angle", kind: "angle", origin: face.centroid, dir: n, axis: normalize3(axis), zero: normalize3(n), radius: Math.max(Math.sqrt(face.area) * 0.35, 2), value: angle, scale: 1, min: 0, max: 45, locked: locked("angle"), label: "Draft", snap: "angle" }];
+    return [{ id: `${id}:angle`, feature: id, key: "angle", kind: "angle", origin: clearOfAxes(face.centroid, face, view), dir: n, axis: normalize3(axis), zero: normalize3(n), radius: Math.max(Math.sqrt(face.area) * 0.35, 2), value: angle, scale: 1, min: 0, max: 45, locked: locked("angle"), label: "Draft", snap: "angle" }];
   }
 
   if (op === "hole" && view && typeof resolved.points !== "string") {

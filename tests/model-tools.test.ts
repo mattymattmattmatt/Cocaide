@@ -295,8 +295,9 @@ describe("Pattern and Mirror", () => {
     const { ctx, out } = harness(doc, view, { selected: hole });
     run("tool.linearPattern", ctx);
     run("tool.circularPattern", ctx);
+    // The hole is at x = 30 on a plate spanning x -40..40: the row runs toward -X, where the part has room for the copies.
     expect(out.created).toEqual([
-      { id: "pattern_1", op: "linearPattern", feature: "hole_1", direction: [1, 0, 0], spacing: 10, count: 3 },
+      { id: "pattern_1", op: "linearPattern", feature: "hole_1", direction: [-1, 0, 0], spacing: 10, count: 3 },
       { id: "circular_1", op: "circularPattern", feature: "hole_1", axis: { origin: [0, 0, 0], direction: [0, 0, 1] }, count: 4 },
     ]);
     const none = harness(doc, view);

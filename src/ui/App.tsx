@@ -91,7 +91,7 @@ import type { MeshData } from "../kernel/mesh";
 import { useFeatureSession } from "./model/useSession";
 import { convexity, faceEdgesOf, faceLoopNear, loopOf, passes, tangencyChain, tangentFaces } from "./model/smartSelect";
 import { promptLine, type ActiveFieldSummary } from "./props/picking";
-import { sessionLabel } from "./model/session";
+import { mergePatch, sessionLabel } from "./model/session";
 import { DEFAULT_EDGE_OPTIONS, type EdgeOptions } from "./props/pickFields";
 import type { PickRouter, SessionLink } from "./props/pickHost";
 import type { PreviewLook } from "./viewport/preview";
@@ -309,7 +309,7 @@ export function App() {
   const viewDoc = useMemo(() => {
     if (!rolled || !preview) return rolled;
     const r = rolled as RawDocument;
-    return { ...r, features: r.features.map((f) => (f.id === preview.id ? { ...f, ...preview.patch } : f)) };
+    return { ...r, features: r.features.map((f) => (f.id === preview.id ? mergePatch(f, preview.patch) : f)) };
   }, [rolled, preview]);
   /** The document's name: its view (camera, display style) is remembered under it in this browser. */
   const docName = typeof doc?.name === "string" ? doc.name : "";
@@ -692,7 +692,7 @@ export function App() {
   // ------------------------------------------------------------ direct manipulation
 
   /** The features with a handle's drag applied, for placing the handles while it moves. */
-  const resolvedLive = useMemo(() => (preview ? resolved.map((f) => (f.id === preview.id ? { ...f, ...preview.patch } : f)) : resolved), [resolved, preview]);
+  const resolvedLive = useMemo(() => (preview ? resolved.map((f) => (f.id === preview.id ? mergePatch(f, preview.patch) : f)) : resolved), [resolved, preview]);
   /** The handles shown: the selected feature's (an extrude's depth, an offset plane's distance), else those of the extrude whose end face is selected. */
   const handles = useMemo<HandleSpec[]>(() => {
     if (!view || mode !== "model" || ask.previewDoc) return [];

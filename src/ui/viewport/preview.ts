@@ -78,7 +78,7 @@ export class PreviewLayer {
       // What it adds: solid, in the accent colour, a little in front where it meets the part's own faces.
       const mesh = new THREE.Mesh(
         this.geometry(look.added),
-        new THREE.MeshStandardMaterial({ color: this.colours.add, metalness: 0.1, roughness: 0.5, transparent: true, opacity: 0.92, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2, ...clipping }),
+        new THREE.MeshStandardMaterial({ color: this.colours.add.clone().lerp(new THREE.Color(0xffffff), 0.3), metalness: 0.1, roughness: 0.5, transparent: true, opacity: 0.88, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2, ...clipping }),
       );
       mesh.renderOrder = 2;
       this.group.add(mesh, this.edges(look.added, this.colours.add.clone().multiplyScalar(0.6), 0.9, true));

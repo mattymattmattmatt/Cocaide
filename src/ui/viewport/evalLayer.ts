@@ -30,12 +30,12 @@ interface Tag {
 
 const MEASURE_COLOR = 0xc2255c;
 const DIM_COLOR = 0x1c7ed6;
-const HANDLE_COLOR = 0x1971c2;
-const HANDLE_HOT = 0xf08c00;
+const HANDLE_COLOR = 0xf08c00;
+const HANDLE_HOT = 0xd9480f;
 const LOCKED_COLOR = 0x868e96;
 /** A pattern's count knob, and a flip button. */
-const COUNT_COLOR = 0x0c8599;
-const FLIP_COLOR = 0x5c7cfa;
+const COUNT_COLOR = 0x0ca678;
+const FLIP_COLOR = 0x495057;
 /** An arc's ball and a point's disc on screen, pixels. */
 const BALL_PX = 13;
 const POINT_PX = 18;
