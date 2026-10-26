@@ -14,7 +14,7 @@ import { sheetPDF } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing, visibleLength } from "../drafting/plan";
 import { sheetSVG } from "../drafting/svg";
 import { bodyPart, bodyPartFile } from "../doc/bodyPart";
-import { apply, nextId, type Command, type RawDocument } from "../doc/commands";
+import { apply, nextId, sketchEntityUsers, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { rollbackAt, rollbackIndex, rollbackNext, rollbackPrevious, rolledBack } from "../doc/rollback";
@@ -689,6 +689,18 @@ export function App() {
     if (sketch.isNew && drawn.entities.length === 0) {
       setSketch(null);
       setNotice({ kind: "info", text: "The sketch was empty, so nothing was added: draw something before Finish to keep a sketch." });
+      return;
+    }
+    // An entity another feature references ({ sketch, entity }: another sketch, an axis, a plane) can't go: say which, and what to do.
+    const gone = sketch.isNew ? [] : sketchEntityUsers(features, sketch.id).filter((u) => !drawn.entities.some((e) => e.id === u.entity));
+    if (gone.length) {
+      const ids = [...new Set(gone.map((u) => u.entity))];
+      const users = [...new Set(gone.map((u) => u.feature))];
+      const one = ids.length === 1;
+      setNotice({
+        kind: "error",
+        text: `${ids.join(", ")} ${one ? "is" : "are"} referenced by ${users.join(", ")}: undo the delete (Undo${keyFor("undo") ? `, ${keyFor("undo")}` : ""}) to keep ${one ? "it" : "them"}, or remove the reference${users.length === 1 && gone.length === 1 ? "" : "s"} in ${users.join(", ")} first.`,
+      });
       return;
     }
     // The plane as the document had it (a reference stays one), not the frame the sketcher drew on.

@@ -211,6 +211,17 @@ test("another sketch's line, hovered in 3D and dimensioned to, is a reference th
   await expect(page.getByTestId("sketch-canvas")).toBeVisible();
   expect((await firstPoint(page, "c1"))[1]).toBeCloseTo(19, 6);
   await page.getByTestId("cancel-sketch").click();
+
+  // Deleting the guide's line, which the sketch references: Finish says who uses it and what to do, and the guide stays open.
+  await page.getByTestId("feature-guide").locator(".feature-row").dblclick();
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  await sketchClick(page, 0, 24);
+  await page.keyboard.press("Delete");
+  await page.getByTestId("finish-sketch").click();
+  await expect(page.getByTestId("notice")).toContainText(`l1 is referenced by ${f.id}: undo the delete`);
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  await page.getByTestId("cancel-sketch").click();
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
 });
 
 test("turned edge-on, drawing pauses with a hint; Ctrl+8 faces the plane again", async ({ page }) => {

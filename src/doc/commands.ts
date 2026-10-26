@@ -1085,6 +1085,25 @@ function renameSketchRefs(features: unknown[], from: string, to: string): void {
   }
 }
 
+/**
+ * The references to sketch `sketch`'s entities ({ sketch, entity }) in the
+ * other features: which feature, and which entity, once each. An edit that
+ * takes such an entity out of the sketch is refused; the sketcher says so
+ * before it tries.
+ */
+export function sketchEntityUsers(features: unknown[], sketch: string): { feature: string; entity: string }[] {
+  const out: { feature: string; entity: string }[] = [];
+  for (const f of features) {
+    if (!isObject(f) || f.id === sketch) continue;
+    for (const { ref } of featureDatumRefs(f, defOf(f.op)?.datumRefs)) {
+      if (!("sketch" in ref) || ref.sketch !== sketch || typeof ref.entity !== "string") continue;
+      const use = { feature: String(f.id), entity: ref.entity };
+      if (!out.some((u) => u.feature === use.feature && u.entity === use.entity)) out.push(use);
+    }
+  }
+  return out;
+}
+
 /** The features that name a node: members that end there, joints and gussets at it. */
 export function nodeUsers(features: unknown[], node: string): string[] {
   return features

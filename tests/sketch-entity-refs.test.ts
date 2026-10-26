@@ -7,7 +7,7 @@
 // deletes that are refused, and the sketcher's stand-ins for them.
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { apply, dependants, type RawDocument } from "../src/doc/commands";
+import { apply, dependants, sketchEntityUsers, type RawDocument } from "../src/doc/commands";
 import type { SketchEntity, Vec3 } from "../src/doc/types";
 import { allErrors, validateDocument } from "../src/doc/validate";
 import { possibleKinds, sketchRefKinds, sketchRefText } from "../src/features/datum";
@@ -139,6 +139,15 @@ describe("{ sketch, entity, at? } in the document", () => {
     if (r.ok) return;
     expect(r.error).toMatch(/replaceFeature rejected: sketch_b: entities\[0\] "r1" ref\.entity: sketch_a has no entity "l1" \(it has a1, c1, p1, r1\): re-pick the reference, or delete it/);
     expect(apply(d, { type: "deleteEntity", sketch: "sketch_a", id: "l1" }).ok).toBe(false);
+    // Who uses which of its entities, once each: what the sketcher names when an edit would take one away.
+    const axis = { id: "ax", op: "axis", mode: "edge", refs: [{ sketch: "sketch_a", entity: "l1" }] };
+    const pt = { id: "pt", op: "point", mode: "center", refs: [{ sketch: "sketch_a", entity: "a1" }] };
+    expect(sketchEntityUsers(doc(sketchA, sketchB, axis, pt).features, "sketch_a")).toEqual([
+      { feature: "sketch_b", entity: "l1" },
+      { feature: "ax", entity: "l1" },
+      { feature: "pt", entity: "a1" },
+    ]);
+    expect(sketchEntityUsers(doc(sketchA, sketchB).features, "sketch_b")).toEqual([]);
   });
 });
 

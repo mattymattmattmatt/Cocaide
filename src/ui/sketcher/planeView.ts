@@ -149,11 +149,6 @@ export function screenDistance(p: Vec2, poly: Vec2[]): { d: number; segment: num
 // ---------------------------------------------------------------- the sketch in the view
 
 /**
- * The world points the sketch spans (flat xyz), for the view's Fit and its
- * drawn plane: every entity's outline (a reference to an axis is left out:
- * it is drawn long enough to cross the whole part).
- */
-/**
  * The sketch plane's drawn extent (sketch mm): the points (flat xyz: the
  * part's box corners, the sketch's points) seen square on, with a margin of
  * an eighth of their size (at least `least` mm); round the plane's origin,
@@ -184,6 +179,11 @@ export function boxOf(points: Vec3[]): number[] {
   return out;
 }
 
+/**
+ * The world points the sketch spans (flat xyz), for the view's Fit and its
+ * drawn plane: every entity's outline (a reference to an axis is left out:
+ * it is drawn long enough to cross the whole part).
+ */
 export function sketchWorldPoints(entities: SketchEntity[], frame: Frame): number[] {
   const out: number[] = [];
   for (const e of entities) {
