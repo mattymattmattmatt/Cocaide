@@ -109,6 +109,8 @@ export interface ThreadSpec {
   class: string;
   /** Thread depth, mm, or "through" (threaded as deep as the drill goes). */
   depth: number | "through";
+  /** An external thread (on a shaft, class 6g), from a thread feature; a tapped hole's is internal. */
+  external?: boolean;
 }
 
 /** The numbers of a hole: what the kernel cuts and the drawing calls out. */
