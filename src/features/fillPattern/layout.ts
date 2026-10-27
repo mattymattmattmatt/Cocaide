@@ -70,8 +70,16 @@ function candidates(spec: FillSpec, seed: Vec2, reach: number): Vec2[] | string 
 
 /** Polylines' pieces, as segments [a, b]. */
 function segmentsOf(lines: readonly Vec2[][]): [Vec2, Vec2][] {
+  // Polylines' ends within a hair of each other are made one point, so the loops they make are closed exactly
+  // (a mesh's single-precision polyline next to an exact line, a circle's end a rounding away from its start).
+  const ends: Vec2[] = [];
+  const snap = (p: Vec2): Vec2 => ends.find((q) => Math.abs(q[0] - p[0]) < 1e-4 && Math.abs(q[1] - p[1]) < 1e-4) ?? (ends.push(p), p);
   const out: [Vec2, Vec2][] = [];
-  for (const line of lines) for (let i = 0; i + 1 < line.length; i++) out.push([line[i], line[i + 1]]);
+  for (const raw of lines) {
+    if (raw.length < 2) continue;
+    const line = [snap(raw[0]), ...raw.slice(1, -1), snap(raw[raw.length - 1])];
+    for (let i = 0; i + 1 < line.length; i++) out.push([line[i], line[i + 1]]);
+  }
   return out;
 }
 
@@ -195,7 +203,10 @@ export function edgePolyline(e: BoundaryEdge, other: Vec3[] | null, step = Math.
     const closed = Math.hypot(e.start[0] - e.end[0], e.start[1] - e.end[1], e.start[2] - e.end[2]) < 1e-7 * Math.max(1, e.radius) && e.length > Math.PI * e.radius;
     const sweep = closed ? 2 * Math.PI : e.length / e.radius;
     const k = Math.max(4, Math.ceil(sweep / step));
+    // The ends exactly the edge's own, so neighbouring edges (and a whole circle's ends) meet exactly: the inside test counts on it.
     return Array.from({ length: k + 1 }, (_, i) => {
+      if (i === 0) return e.start;
+      if (i === k) return closed ? e.start : e.end;
       const t = (sweep * i) / k;
       return [c[0] + Math.cos(t) * s0[0] + Math.sin(t) * w[0], c[1] + Math.cos(t) * s0[1] + Math.sin(t) * w[1], c[2] + Math.cos(t) * s0[2] + Math.sin(t) * w[2]] as Vec3;
     });

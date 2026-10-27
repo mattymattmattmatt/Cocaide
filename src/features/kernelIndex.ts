@@ -16,6 +16,9 @@ import { kernel as rib } from "./rib/kernel";
 import { kernel as sketchPattern } from "./sketchPattern/kernel";
 import { kernel as importOp } from "./import/kernel";
 import { kernel as coordinateSystem } from "./coordinateSystem/kernel";
+import { kernel as tablePattern } from "./tablePattern/kernel";
+import { kernel as curvePattern } from "./curvePattern/kernel";
+import { kernel as fillPattern } from "./fillPattern/kernel";
 
 export const KERNEL_DEFS = [
   scale,
@@ -31,4 +34,7 @@ export const KERNEL_DEFS = [
   sketchPattern,
   importOp,
   coordinateSystem,
+  tablePattern,
+  curvePattern,
+  fillPattern,
 ];

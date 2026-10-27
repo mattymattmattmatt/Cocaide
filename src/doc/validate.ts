@@ -2083,14 +2083,15 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
   let ref: DatumRef | null = null;
   switch (forms[0]) {
     case "datum": {
-      c.keys(v, path, ["datum", "part"]);
+      // "part" (a coordinate system's plane, axis or origin) is checked on its own below.
+      c.keys(v, path, v.part !== undefined ? ["datum", "part"] : ["datum"]);
       const id = v.datum;
       if (typeof id !== "string" || id === "") {
-        c.fail(`${path}.datum`, `must name a default (${RESERVED_DATUMS.join(", ")}) or an earlier plane, axis, point or coordinate system (got ${describe(id)})`);
+        c.fail(`${path}.datum`, `must name a default (${RESERVED_DATUMS.join(", ")}) or an earlier plane, axis or point (got ${describe(id)})`);
       } else if (!defaultDatum(id) && !earlier.has(id)) {
         c.fail(`${path}.datum`, `"${id}" is not a feature before this one (the defaults are ${RESERVED_DATUMS.join(", ")})`);
       } else if (!defaultDatum(id) && !Object.hasOwn(DATUM_OPS, earlier.get(id)!)) {
-        c.fail(`${path}.datum`, `"${id}" is ${article(earlier.get(id)!)}, not a plane, axis, point or coordinate system`);
+        c.fail(`${path}.datum`, `"${id}" is ${article(earlier.get(id)!)}, not a plane, axis or point`);
       } else if (v.part !== undefined && earlier.get(id) !== CSYS_OP) {
         c.fail(`${path}.part`, `only a coordinate system has parts; "${id}" is ${defaultDatum(id) ? "a default" : article(earlier.get(id)!)}: remove "part"`);
       } else if (v.part !== undefined && !CSYS_PARTS.includes(v.part as CsysPart)) {

@@ -22,6 +22,9 @@ import { ui as sketchPattern } from "./sketchPattern/ui";
 import { ui as hole } from "./hole/ui";
 import { ui as importOp } from "./import/ui";
 import { ui as coordinateSystem } from "./coordinateSystem/ui";
+import { ui as tablePattern } from "./tablePattern/ui";
+import { ui as curvePattern } from "./curvePattern/ui";
+import { ui as fillPattern } from "./fillPattern/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -42,4 +45,7 @@ export const UI_OP_LIST: UiOp[] = [
   hole,
   importOp,
   coordinateSystem,
+  tablePattern,
+  curvePattern,
+  fillPattern,
 ];
