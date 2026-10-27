@@ -112,6 +112,7 @@ import { selectEdges, selectFaces } from "../kernel/selectors";
 import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import type { EdgeSelector, FaceSelector } from "../doc/types";
 import { rawParameters } from "../doc/parameters";
+import { clickedCentre } from "../features/hole/wizard";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -1807,6 +1808,21 @@ export function App() {
       onto = { face: s.selector };
     }
     const p = pasteFeatures(doc, c, onto);
+    // A hole pasted onto a face goes where the face was clicked (its other centres keep their spacing to the first).
+    const clickedAt = selection.point;
+    const face = onto && view ? view.faces[selection.faces[0]] : undefined;
+    if (onto && clickedAt && face) {
+      const at = clickedCentre(face, clickedAt, undefined);
+      if (typeof at !== "string")
+        for (const f of p.features) {
+          if (f.op !== "hole") continue;
+          if (Array.isArray(f.center)) f.center = at;
+          else if (Array.isArray(f.centers) && Array.isArray(f.centers[0])) {
+            const [x0, y0] = f.centers[0] as number[];
+            f.centers = (f.centers as number[][]).map(([x, y]) => [Math.round((at[0] + x - x0) * 1e3) / 1e3, Math.round((at[1] + y - y0) * 1e3) / 1e3]);
+          }
+        }
+    }
     const problem = treeDispatch({ type: "insertFeatures", features: p.features, ...(opts.index !== undefined ? { index: opts.index } : {}) });
     if (problem) {
       if (problem !== FINISH_FIRST) setNotice({ kind: "error", text: problem });

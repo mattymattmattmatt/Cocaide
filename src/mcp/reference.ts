@@ -441,6 +441,14 @@ is the face's level along the normal among the planes the matching faces lie in:
 +Z), 2 the next in, -1 the furthest in; unlike offset it still finds the face when the face moves (a taller block), so
 prefer it. near keeps the match whose centre is closest; it is fragile, prefer normal/rank/radius.
 A feature needing one face fails if the selector picks 0 or several.
+Every face and edge selector may also carry:
+- "createdBy": "<feature id>" - only faces (edges) that feature made. The rebuild records who made each face and edge
+  (listFaces / listEdges give madeBy); "the cylindrical face hole_2 made" stays right when other holes are added. A
+  feature is refused a place in the history before a feature whose faces its selectors name this way.
+- "hint": { "centroid": [x,y,z], "normal"?: [x,y,z], "size"?: area or length } - where its face (edge) was when picked.
+  When the selector later matches nothing or several (an upstream edit moved it), the rebuild finds it again near the
+  hint (made by the same feature) and warns "<id>: an edge moved — re-found it (check)"; when it can't tell, the feature
+  fails listing the candidates. Selectors made from picks in the app carry both; write createdBy when you can.
 
 ## Edge selectors
 { "type": "edge", "pick": "all" | "longest" | "shortest",
@@ -467,7 +475,9 @@ fullyDefine(sketch, datum?) - adds the missing relations and dimensions. holes(f
   circle, a grid, the face's corners or points (a hole and its pattern).
 listFeatures, getFeature(id) - read the document and each feature's rebuild status.
 addFeature(feature, index?) - id is optional (one is made from the op). updateFeature(id, patch) - shallow merge; null removes a field.
-deleteFeature(id), reorderFeature(id, index), suppressFeature(id, suppressed).
+deleteFeature(id), reorderFeature(id, index, folder?), suppressFeature(id, suppressed).
+setFolder(id, folder | null), suppressFolder(id, suppressed) - the tree's folders: { "name", "features": [ids next to each other] }.
+A feature may carry "note": a short comment (500 characters at most) shown in the tree; the rebuild ignores it (updateFeature(id, { "note": "..." })).
 setParameter(name, value), deleteParameter(name), renameParameter(from, to) - a value is a number or "=expression".
 setDimension(sketch, index | name, value) - index into the sketch's constraints, or the dimension's name ("d2", "width").
 renameDimension(sketch, index | name, to), setDriven(sketch, index | name, driven) - name a dimension (expressions follow), make it driven or driving.

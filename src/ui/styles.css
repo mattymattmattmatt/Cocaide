@@ -1859,3 +1859,8 @@ svg.icon { flex: none; display: block; }
 .pm-actions .icon-only:disabled { opacity: 0.3; cursor: default; }
 .name-parameter { position: fixed; z-index: 70; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); }
 .name-parameter input { height: 26px; font-family: var(--mono); border: 1px solid var(--border); border-radius: 5px; padding: 0 6px; background: var(--panel); color: var(--text); }
+.modal.params-manager .link-button { height: auto; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.modal.params-manager .pm-name .link-button { font-family: var(--mono); }
+.modal.params-manager th .link-button { font-weight: 600; }
+.modal.params-manager .param-add input:first-child { flex: 0 0 200px; }
+.modal.params-manager .param-add input:nth-child(2) { flex: 1; }

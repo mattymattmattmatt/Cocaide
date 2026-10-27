@@ -84,6 +84,7 @@ function faceRow(topo: PartTopology, i: number): Record<string, unknown> {
   if (f.body) row.body = f.body;
   const by = topo.faceOrigins[i];
   if (by) row.madeBy = by;
+  if (f.modifiedBy?.length) row.changedBy = f.modifiedBy;
   const fr = faceFrame(f);
   if (fr) {
     // Where a sketch on it, or a hole's center, puts its 2D coordinates.
@@ -167,6 +168,7 @@ function edgeRow(topo: PartTopology, i: number): Record<string, unknown> {
     return { type: f.type, ...(f.normal ? { normal: r3v(f.normal) } : {}), ...(f.cylinder ? { radius: r6(f.cylinder.radius) } : {}), ...(topo.faceOrigins[fi] ? { madeBy: topo.faceOrigins[fi] } : {}) };
   });
   if (e.body) row.body = e.body;
+  if (e.createdBy) row.madeBy = e.createdBy;
   return row;
 }
 

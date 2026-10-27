@@ -191,7 +191,20 @@ export function ParametersManager({ doc, dispatch, onError, onGoTo, onClose }: P
             add();
           }}
         >
-          <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} aria-label="New parameter name" data-testid="pm-add-name" />
+          <input
+            placeholder="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter on the name goes on to the value while it is empty.
+              if (e.key === "Enter" && !value.trim()) {
+                e.preventDefault();
+                (e.currentTarget.nextElementSibling as HTMLInputElement | null)?.focus();
+              }
+            }}
+            aria-label="New parameter name"
+            data-testid="pm-add-name"
+          />
           <input placeholder="value or =expression" value={value} onChange={(e) => setValue(e.target.value)} aria-label="New parameter value" data-testid="pm-add-value" />
           <button type="submit" data-testid="pm-add">
             <Icon name="plus" size={14} /> Add
