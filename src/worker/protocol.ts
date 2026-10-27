@@ -38,6 +38,8 @@ export interface RebuildView {
   bodies: BodyRange[];
   /** The plane, axis and point features that built, by id, in order: where each is now (the viewport draws and picks them). */
   datums: Record<string, Datum>;
+  /** By feature id: whose faces and edges its selectors matched (the tree's parents and children through the part's geometry). */
+  uses?: Record<string, string[]>;
 }
 
 /**

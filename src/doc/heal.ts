@@ -44,8 +44,28 @@ function canonical(v: unknown): string {
  */
 export function replaceSelectorPatch(f: Record<string, unknown>, from: unknown, to: unknown): Record<string, unknown> | null {
   const want = canonical(from);
-  const hit = selectorsIn(f).find((s) => canonical(s.selector) === want);
-  return hit ? setAtPath(f, hit.path, to) : null;
+  const list = selectorsIn(f);
+  // As written; else (its numbers were expressions) the one with the same hint.
+  const hint = isObject(from) && from.hint !== undefined ? canonical(from.hint) : null;
+  const hit = list.find((s) => canonical(s.selector) === want) ?? (hint ? list.find((s) => s.selector.hint !== undefined && canonical(s.selector.hint) === hint) : undefined);
+  return hit ? writeSelectorPatch(f, hit.path, to) : null;
+}
+
+/**
+ * The patch that writes `value` at `path`: one selector in place of one, or,
+ * where the old one was an item of a list, a list of them in its place.
+ */
+export function writeSelectorPatch(f: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
+  const m = /^(.*)\[(\d+)\]$/.exec(path);
+  if (!Array.isArray(value) || !m) return setAtPath(f, path, value);
+  const parent = m[1];
+  const steps = parent.match(/[^.[\]]+/g) ?? [];
+  let list: unknown = f;
+  for (const s of steps) list = (list as Record<string, unknown>)?.[s];
+  if (!Array.isArray(list)) return setAtPath(f, path, value);
+  const next = [...list];
+  next.splice(Number(m[2]), 1, ...value);
+  return setAtPath(f, parent, next);
 }
 
 /** The patch that writes `value` at `path` ("edges[0]", "upTo.face") of the feature: its top-level field, copied with the change. */

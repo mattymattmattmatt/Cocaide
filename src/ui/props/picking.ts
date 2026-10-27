@@ -161,7 +161,9 @@ export function toggleFace(list: readonly FaceSelector[], faces: FaceInfo[], ind
   const at = per.findIndex((m) => m.includes(index));
   if (at < 0) {
     const s = faceSelectorFor(faces, index);
-    return s.ok ? [...list, s.selector] : s.error;
+    // A picked face that could not be found again (a hint, matching nothing) is broken: the face picked now replaces it (Re-pick).
+    const kept = list.filter((x, i) => !(x.hint && per[i].length === 0));
+    return s.ok ? [...kept, s.selector] : s.error;
   }
   const rest: FaceSelector[] = [];
   for (const i of per[at]) {
@@ -219,6 +221,8 @@ export function addEdges(v: unknown, edges: EdgeInfo[], faces: FaceInfo[], add: 
 
 function remake(list: number[], unresolved: EdgeSelector[], edges: EdgeInfo[], faces: FaceInfo[]): EdgeSelector | EdgeSelector[] | null | string {
   if (!list.length) return unresolved.length === 0 ? null : unresolved.length === 1 ? unresolved[0] : unresolved;
+  // A picked edge that could not be found again (it has a hint, and still matches nothing) is broken: what is picked now replaces it (Re-pick).
+  unresolved = unresolved.filter((s) => !s.hint);
   const s = edgesSelectorFor(edges, faces, list);
   if (!s.ok) return s.error;
   if (!unresolved.length) return s.selector;

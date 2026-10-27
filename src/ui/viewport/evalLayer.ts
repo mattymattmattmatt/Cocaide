@@ -18,6 +18,8 @@ export interface EvalOverlay {
   lines: { from: Vec3; to: Vec3; label?: string }[];
   points: Vec3[];
   centreOfMass?: { at: Vec3; label: string } | null;
+  /** Where a broken reference was last seen (What's wrong, Re-pick): a red ring with its label. */
+  ghosts?: { at: Vec3; label: string }[];
 }
 
 interface Tag {
@@ -137,6 +139,16 @@ export class EvalLayer {
       ring.renderOrder = 8;
       this.overlayGroup.add(ring);
       this.tags.push({ el: this.tag(o.centreOfMass.label, "eval-label com-label", "com-label"), at: o.centreOfMass.at, dx: 10, dy: 6 });
+    }
+    if (o.ghosts?.length) {
+      // A broken reference's last-known place: a hollow red ring over everything, and what it was.
+      const g = new THREE.BufferGeometry().setFromPoints(o.ghosts.map((x) => new THREE.Vector3(...x.at)));
+      for (const [size, opacity] of [[22, 0.35], [12, 0.9]] as const) {
+        const ring = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xe03131, size, sizeAttenuation: false, depthTest: false, transparent: true, opacity }));
+        ring.renderOrder = 10;
+        this.overlayGroup.add(ring);
+      }
+      o.ghosts.forEach((x, i) => this.tags.push({ el: this.tag(x.label, "eval-label ghost-label", `ghost-label-${i}`), at: x.at, dx: 12, dy: -12 }));
     }
   }
 

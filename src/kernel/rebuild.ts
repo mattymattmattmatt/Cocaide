@@ -31,7 +31,7 @@ import { drillHoles, holeSites, type PointSketch } from "./hole";
 import { patternInstances } from "./pattern";
 import { getOC, type OC, type Scope, scoped } from "./oc";
 import { Provenance, snapshot, withProvenance } from "./provenance";
-import { listenForHealing, type HealEvent } from "./selectors";
+import { listenForHealing, listenForMatches, type HealEvent } from "./selectors";
 import { edgeSelectorFor, faceSelectorFor } from "./synthesize";
 import type { EdgeInfo, FaceInfo } from "./topology";
 import type { EdgeSelector, FaceSelector } from "../doc/types";
@@ -127,6 +127,8 @@ export interface RebuildResult {
   datums: Record<string, Datum>;
   /** Every warning of the features (the same text as their FeatureStatus.warnings), in order. */
   warnings: string[];
+  /** By feature id: the features whose faces or edges its selectors matched (its parents through the part's geometry), in history order. */
+  uses: Record<string, string[]>;
   /** Which feature made each face and edge (src/kernel/provenance.ts). */
   provenance: Provenance;
   /** Gives faces and edges described from `solid` (in place) the feature that made each and those that changed it. */
@@ -176,6 +178,8 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
   /** Reference geometry made by plane, axis and point features, by id. */
   const datums = new Map<string, Datum>();
 
+  /** Whose faces and edges each feature picked, by feature. */
+  const usesBy = new Map<string, string[]>();
   const result = (): RebuildResult => {
     const solid = bodies.size === 0 ? null : bodies.size === 1 ? [...bodies.values()][0] : scoped((s) => copyOut(compound(oc, s, [...bodies.values()])));
     const ranges = scoped((s) => bodyRanges(oc, s, bodies));
@@ -200,6 +204,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
       ...(faceOrigins ? { faceOrigins } : {}),
       datums: Object.fromEntries(datums),
       warnings: features.flatMap((f) => f.warnings ?? []),
+      uses: Object.fromEntries(usesBy),
       provenance: trace,
       label: (topo) => trace.label(topo),
       dispose: () => {
@@ -429,9 +434,19 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
       message: `${current}: ${what} moved — re-found it (check)`,
     });
   };
+  /** Whose faces and edges the feature running now picked. */
+  let uses = new Set<string>();
+  const usesOf = () => {
+    uses.delete(current);
+    const order = v.features.map((f) => f.id);
+    if (uses.size) usesBy.set(current, [...uses].sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+    return {};
+  };
+  listenForMatches((makers) => makers.forEach((m) => m && uses.add(m)), () =>
   listenForHealing(heard, () => {
   for (const vf of v.features) {
     heals = [];
+    uses = new Set();
     const raw = vf.feature;
     const op = vf.op;
     if (!raw) {
@@ -729,7 +744,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
           runKernelOp(ctx, raw);
       }
       if (facesBefore) madeFaces.set(raw.id, new Set([...signatures()].filter((sig) => !facesBefore.has(sig))));
-      features.push({ id: raw.id, op, ok: true, ...(heals.length ? { warnings: heals.map((h) => h.message), heals } : {}) });
+      features.push({ id: raw.id, op, ok: true, ...(heals.length ? { warnings: heals.map((h) => h.message), heals } : {}), ...usesOf() });
     } catch (e) {
       const messages = e instanceof OpError ? e.message.split("\n") : [`kernel error: ${kernelMessage(oc, e)}`];
       const prefixed = messages.map((m) => `${raw.id}: ${m}`);
@@ -740,10 +755,10 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
         tools.delete(raw.id);
       }
       errors.push(...prefixed);
-      features.push({ id: raw.id, op, ok: false, error: prefixed.join("\n") });
+      features.push({ id: raw.id, op, ok: false, error: prefixed.join("\n"), ...usesOf() });
     }
   }
-  });
+  }));
 
   for (const t of tools.values()) t.tool.delete();
   // Each joint checks its own work: the members it shaped must not overlap.

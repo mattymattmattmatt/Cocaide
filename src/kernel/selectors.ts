@@ -52,6 +52,20 @@ export type HealEvent =
   | { kind: "edge"; selector: EdgeSelector; index: number; faces: FaceInfo[]; edges: EdgeInfo[]; healing: Healing };
 let healListener: ((h: HealEvent) => void) | null = null;
 
+/** Told the makers of what each selector matched (the rebuild lists, per feature, whose faces and edges it picked). */
+let matchListener: ((makers: (string | undefined)[]) => void) | null = null;
+
+/** Listens to what selectors match while `run` runs. */
+export function listenForMatches<T>(listener: (makers: (string | undefined)[]) => void, run: () => T): T {
+  const was = matchListener;
+  matchListener = listener;
+  try {
+    return run();
+  } finally {
+    matchListener = was;
+  }
+}
+
 /** Listens to re-found selectors while `run` runs (the rebuild does: it warns, and offers the selector written for where the face is now). */
 export function listenForHealing<T>(listener: (h: HealEvent) => void, run: () => T): T {
   const was = healListener;
@@ -121,6 +135,12 @@ function nearest<T extends { centroid: Vec3 }>(items: T[], p: Vec3): T[] {
 }
 
 export function selectFaces(infos: FaceInfo[], selector: FaceSelector): Selection {
+  const r = selectFacesHealing(infos, selector);
+  matchListener?.(r.matches.map((f) => f.createdBy));
+  return r;
+}
+
+function selectFacesHealing(infos: FaceInfo[], selector: FaceSelector): Selection {
   const strict = selectFacesStrictly(infos, selector);
   if (!selector.hint || (strict.matches.length === 1 && !strict.tie)) return strict;
   // Picked once, now gone or no longer alone: find it again near where it was. First among the faces the selector
@@ -250,6 +270,12 @@ export interface EdgeSelection {
 }
 
 export function selectEdges(edges: EdgeInfo[], faces: FaceInfo[], sel: EdgeSelector, path = "edges"): EdgeSelection {
+  const r = selectEdgesHealing(edges, faces, sel, path);
+  if (!r.error) matchListener?.(r.matches.map((e) => e.createdBy));
+  return r;
+}
+
+function selectEdgesHealing(edges: EdgeInfo[], faces: FaceInfo[], sel: EdgeSelector, path: string): EdgeSelection {
   const strict = selectEdgesStrictly(edges, faces, sel, path);
   if (!sel.hint || (strict.matches.length === 1 && !strict.tie && !strict.error)) return strict;
   const relaxed = selectEdgesStrictly(edges, faces, relaxedEdge(sel), path);

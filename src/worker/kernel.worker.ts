@@ -134,6 +134,7 @@ function viewOf(kernel: OC, result: RebuildResult): RebuildView {
     edges: topo.edges,
     bodies,
     datums: result.datums,
+    uses: result.uses,
   };
 }
 
