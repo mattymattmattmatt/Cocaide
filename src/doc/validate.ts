@@ -70,10 +70,10 @@ import {
 import { validateDrawing } from "./drawing";
 import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
-import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
+import { aKinds, CSYS_OP, CSYS_PARTS, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
 import { isSketchAxis } from "./sketch";
 import { pointNames } from "../geom/curves";
-import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
+import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition, type CsysPart } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
 
@@ -413,7 +413,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       feature = validateSplit(raw, c, earlier);
       break;
     case "move":
-      feature = validateMove(raw, c);
+      feature = validateMove(raw, c, earlier);
       break;
     case "deleteBody":
       feature = validateDeleteBody(raw, c);
@@ -2083,16 +2083,20 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
   let ref: DatumRef | null = null;
   switch (forms[0]) {
     case "datum": {
-      c.keys(v, path, ["datum"]);
+      c.keys(v, path, ["datum", "part"]);
       const id = v.datum;
       if (typeof id !== "string" || id === "") {
-        c.fail(`${path}.datum`, `must name a default (${RESERVED_DATUMS.join(", ")}) or an earlier plane, axis or point (got ${describe(id)})`);
+        c.fail(`${path}.datum`, `must name a default (${RESERVED_DATUMS.join(", ")}) or an earlier plane, axis, point or coordinate system (got ${describe(id)})`);
       } else if (!defaultDatum(id) && !earlier.has(id)) {
         c.fail(`${path}.datum`, `"${id}" is not a feature before this one (the defaults are ${RESERVED_DATUMS.join(", ")})`);
       } else if (!defaultDatum(id) && !Object.hasOwn(DATUM_OPS, earlier.get(id)!)) {
-        c.fail(`${path}.datum`, `"${id}" is ${article(earlier.get(id)!)}, not a plane, axis or point`);
+        c.fail(`${path}.datum`, `"${id}" is ${article(earlier.get(id)!)}, not a plane, axis, point or coordinate system`);
+      } else if (v.part !== undefined && earlier.get(id) !== CSYS_OP) {
+        c.fail(`${path}.part`, `only a coordinate system has parts; "${id}" is ${defaultDatum(id) ? "a default" : article(earlier.get(id)!)}: remove "part"`);
+      } else if (v.part !== undefined && !CSYS_PARTS.includes(v.part as CsysPart)) {
+        c.fail(`${path}.part`, `must be one of ${CSYS_PARTS.map((p) => `"${p}"`).join(", ")} (got ${describe(v.part)})`);
       } else {
-        ref = { datum: id };
+        ref = v.part !== undefined ? { datum: id, part: v.part as CsysPart } : { datum: id };
       }
       break;
     }
@@ -2166,7 +2170,7 @@ const EDGE_POINTS: readonly EdgePoint[] = ["start", "end", "mid", "center"];
 
 /** A reference as the messages name it: "Top", "plane_1", "a face", "the start of an edge", "[1, 2, 3]". */
 function refName(ref: DatumRef): string {
-  if ("datum" in ref) return ref.datum;
+  if ("datum" in ref) return ref.part ? `${ref.datum}'s ${ref.part === "origin" ? "origin" : ref.part}` : ref.datum;
   if ("face" in ref) return "a face";
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of an edge` : "an edge";
   if ("sketch" in ref) return sketchRefText(ref);
@@ -2278,8 +2282,12 @@ function validateSplit(raw: Record<string, unknown>, c: Checker, earlier: Map<st
   return { id: raw.id as string, op: "split", body, plane, ...(newBody ? { newBody } : {}) };
 }
 
-function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | null {
-  c.keys(raw, "", ["id", "op", "bodies", "translate", "rotate", "copy", "newBody"]);
+function validateMove(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): MoveFeature | null {
+  c.keys(raw, "", ["id", "op", "bodies", "translate", "rotate", "fromSystem", "toSystem", "copy", "newBody"]);
+  // From one coordinate system (or plane) to another: both, or neither.
+  const fromSystem = raw.fromSystem === undefined ? undefined : validateDatumRef(raw.fromSystem, "fromSystem", c, earlier, "plane");
+  const toSystem = raw.toSystem === undefined ? undefined : validateDatumRef(raw.toSystem, "toSystem", c, earlier, "plane");
+  if ((raw.fromSystem === undefined) !== (raw.toSystem === undefined)) c.fail(raw.fromSystem === undefined ? "fromSystem" : "toSystem", 'goes with "fromSystem" and "toSystem" both: the bodies move from the one to the other');
   const bodies = bodyList(raw.bodies, "bodies", c);
   const translate = raw.translate === undefined ? undefined : c.vec3(raw, "translate", "");
   let rotate: MoveFeature["rotate"];
@@ -2299,7 +2307,7 @@ function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | n
       if (axis && angle !== undefined) rotate = { axis, angle };
     }
   }
-  if (raw.translate === undefined && raw.rotate === undefined) c.fail("", 'needs "translate", "rotate" or both');
+  if (raw.translate === undefined && raw.rotate === undefined && raw.fromSystem === undefined) c.fail("", 'needs "translate", "rotate", or "fromSystem" and "toSystem"');
   if (raw.copy !== undefined && typeof raw.copy !== "boolean") c.fail("copy", `must be true or false (got ${describe(raw.copy)})`);
   const newBody = optionalNewBody(raw, c);
   if (newBody !== undefined && raw.copy !== true) c.fail("newBody", "names a copy: it goes with \"copy\": true");
@@ -2311,6 +2319,7 @@ function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | n
     bodies,
     ...(translate ? { translate } : {}),
     ...(rotate ? { rotate } : {}),
+    ...(fromSystem && toSystem ? { fromSystem, toSystem } : {}),
     ...(raw.copy === true ? { copy: true } : {}),
     ...(newBody ? { newBody } : {}),
   };

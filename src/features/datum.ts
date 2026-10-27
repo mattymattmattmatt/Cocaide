@@ -6,7 +6,7 @@
 // Pure, and imported by the document layer: it must not import values from
 // src/doc, src/kernel or src/ui (see tests/registry.test.ts).
 
-import type { DatumPlane, DatumRef, EdgeSelector, FaceSelector, RefPlane, Vec3 } from "../doc/types";
+import type { CsysPart, DatumPlane, DatumRef, EdgeSelector, FaceSelector, RefPlane, Vec3 } from "../doc/types";
 import type { Checker } from "../doc/validate";
 import { planeFrame, type Frame } from "../geom/frame";
 import { add3, cross3, dot3, normalize3, scale3, sub3 } from "../geom/vec";
@@ -34,12 +34,26 @@ export interface PointDatum {
   kind: "point";
   at: Vec3;
 }
+/**
+ * A coordinate system (op "coordinateSystem"): its origin and three unit
+ * axes, right-handed (z = x × y). As a reference it is one of its parts
+ * (csysPart): a plane, an axis or its origin.
+ */
+export interface FrameDatum {
+  kind: "frame";
+  origin: Vec3;
+  x: Vec3;
+  y: Vec3;
+  z: Vec3;
+}
 /** Reference geometry resolved at rebuild time into plain frames. */
-export type Datum = PlaneDatum | AxisDatum | PointDatum;
+export type Datum = PlaneDatum | AxisDatum | PointDatum | FrameDatum;
+/** What a reference resolves to where it is used: a plane, an axis or a point (a coordinate system is one of its parts). */
+export type RefDatum = PlaneDatum | AxisDatum | PointDatum;
 export type DatumOf<K extends DatumKind> = Extract<Datum, { kind: K }>;
 
 /** The default reference geometry, by name. Feature ids may not use these names. */
-export const DEFAULT_DATUMS: Readonly<Record<string, Datum>> = {
+export const DEFAULT_DATUMS: Readonly<Record<string, RefDatum>> = {
   Top: { kind: "plane", origin: [0, 0, 0], normal: [0, 0, 1], xDir: [1, 0, 0] },
   Front: { kind: "plane", origin: [0, 0, 0], normal: [0, -1, 0], xDir: [1, 0, 0] },
   Right: { kind: "plane", origin: [0, 0, 0], normal: [1, 0, 0], xDir: [0, 1, 0] },
@@ -51,12 +65,70 @@ export const DEFAULT_DATUMS: Readonly<Record<string, Datum>> = {
 export const RESERVED_DATUMS: readonly string[] = Object.keys(DEFAULT_DATUMS);
 
 /** The default plane, axis or origin of this name, if it is one. */
-export function defaultDatum(name: string): Datum | undefined {
+export function defaultDatum(name: string): RefDatum | undefined {
   return Object.hasOwn(DEFAULT_DATUMS, name) ? DEFAULT_DATUMS[name] : undefined;
 }
 
-/** The ops that make reference geometry, and what each makes. Their results go in the rebuild's `datums`. */
-export const DATUM_OPS: Readonly<Record<string, DatumKind>> = { plane: "plane", axis: "axis", point: "point" };
+/**
+ * The ops that make reference geometry, and what each makes. Their results go
+ * in the rebuild's `datums`. A coordinate system is listed as a plane (its XY
+ * plane, what it is when nothing says otherwise); as a reference it can be any
+ * of its parts (possibleKinds).
+ */
+export const DATUM_OPS: Readonly<Record<string, DatumKind>> = { plane: "plane", axis: "axis", point: "point", coordinateSystem: "plane" };
+
+/** The op of a coordinate system feature. */
+export const CSYS_OP = "coordinateSystem";
+
+/** The parts of a coordinate system a reference may name ({ "datum": "cs1", "part": "XY" }). */
+export const CSYS_PARTS: readonly CsysPart[] = ["XY", "YZ", "ZX", "X", "Y", "Z", "origin"];
+
+/** What a part of a coordinate system is: a plane, an axis or a point. */
+export function csysPartKind(part: CsysPart): DatumKind {
+  return part === "origin" ? "point" : part.length === 2 ? "plane" : "axis";
+}
+
+/**
+ * A coordinate system's part as plain reference geometry: "XY" the plane
+ * through its origin with normal Z and x along X ("YZ": normal X, x along Y;
+ * "ZX": normal Y, x along Z), "X" / "Y" / "Z" an axis through its origin,
+ * "origin" a point. Without a part: what `want` needs (its XY plane, its Z
+ * axis or its origin), the XY plane when anything will do.
+ */
+export function csysPart(f: FrameDatum, part: CsysPart | undefined, want: DatumKind | "any" = "any"): RefDatum {
+  const p = part ?? (want === "axis" ? "Z" : want === "point" ? "origin" : "XY");
+  switch (p) {
+    case "XY":
+      return { kind: "plane", origin: f.origin, normal: f.z, xDir: f.x };
+    case "YZ":
+      return { kind: "plane", origin: f.origin, normal: f.x, xDir: f.y };
+    case "ZX":
+      return { kind: "plane", origin: f.origin, normal: f.y, xDir: f.z };
+    case "X":
+      return { kind: "axis", origin: f.origin, direction: f.x };
+    case "Y":
+      return { kind: "axis", origin: f.origin, direction: f.y };
+    case "Z":
+      return { kind: "axis", origin: f.origin, direction: f.z };
+    case "origin":
+      return { kind: "point", at: f.origin };
+  }
+}
+
+/**
+ * The frame of a coordinate system made from an origin and two directions:
+ * x along `xDir`, y the part of `yDir` square to x, z = x × y (right-handed).
+ * Null when the directions are parallel or one is zero.
+ */
+export function csysFrame(origin: Vec3, xDir: Vec3, yDir: Vec3): FrameDatum | null {
+  if (Math.hypot(...xDir) < 1e-12 || Math.hypot(...yDir) < 1e-12) return null;
+  const x = normalize3(xDir);
+  const laid = sub3(yDir, scale3(x, dot3(yDir, x)));
+  if (Math.hypot(...laid) < 1e-9 * Math.hypot(...yDir)) return null;
+  const y = normalize3(laid);
+  const z = cross3(x, y);
+  return { kind: "frame", origin: clean(origin), x: clean(x), y: clean(y), z: clean(z) };
+}
 
 /** "a plane", "an axis", "a point". */
 export function aKind(kind: DatumKind): string {
@@ -80,6 +152,8 @@ export function possibleKinds(ref: DatumRef, earlier?: ReadonlyMap<string, strin
     const d = defaultDatum(ref.datum);
     if (d) return [d.kind];
     const op = earlier?.get(ref.datum);
+    // A coordinate system is the part it names, else whatever is needed (its XY plane, Z axis or origin).
+    if (op === CSYS_OP) return ref.part ? [csysPartKind(ref.part)] : ["plane", "axis", "point"];
     const kind = op !== undefined && Object.hasOwn(DATUM_OPS, op) ? DATUM_OPS[op] : undefined;
     return kind ? [kind] : [];
   }
@@ -210,6 +284,8 @@ export function featureDatumRefs(raw: Record<string, unknown>, registry?: (raw: 
       return [...datumRefsAt(raw, "along"), ...datumRefsAt(raw, "along2")];
     case "circularPattern":
       return inside("axis", "ref");
+    case "move":
+      return datumRefsAt(raw, "fromSystem", "toSystem");
     default:
       return registry ? registry(raw) : [];
   }
@@ -399,6 +475,7 @@ export function flipAxis(a: AxisDatum): AxisDatum {
 
 /** A resolved frame with its noise cleaned, as the rebuild keeps it. */
 export function cleanDatum(d: Datum): Datum {
+  if (d.kind === "frame") return { kind: "frame", origin: clean(d.origin), x: clean(d.x), y: clean(d.y), z: clean(d.z) };
   if (d.kind === "plane") return { kind: "plane", origin: clean(d.origin), normal: clean(d.normal), xDir: clean(d.xDir) };
   if (d.kind === "axis") return { kind: "axis", origin: clean(d.origin), direction: clean(d.direction) };
   return { kind: "point", at: clean(d.at) };
@@ -530,7 +607,7 @@ function formExample(f: RefForm): string {
 
 /** A reference as validation messages name it: "Top", "a face", "the start of an edge", "the point [1, 2, 3]", "sketch_1's l2". */
 export function refText(ref: DatumRef): string {
-  if ("datum" in ref) return ref.datum;
+  if ("datum" in ref) return ref.part ? `${ref.datum} ${ref.part}` : ref.datum;
   if ("face" in ref) return "a face";
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of an edge` : "an edge";
   if ("sketch" in ref) return sketchRefText(ref);

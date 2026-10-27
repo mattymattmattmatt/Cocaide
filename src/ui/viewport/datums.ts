@@ -173,7 +173,10 @@ export class DatumLayer {
       }
     };
     for (const s of this.shapes) {
-      if (s.kind === "point") nearPoint(s.id, s.at, 3);
+      if (s.kind === "frame") {
+        nearPoint(s.id, s.at, 4);
+        for (const tip of s.tips) nearSegment(s.id, s.at, tip);
+      } else if (s.kind === "point") nearPoint(s.id, s.at, 3);
       else if (s.kind === "axis") nearSegment(s.id, s.ends[0], s.ends[1]);
       else {
         const c = s.corners;
@@ -241,7 +244,24 @@ export class DatumLayer {
     for (const s of this.shapes) {
       const st = this.state(s.id);
       const tint = st === "selected" ? c.select : st === "hovered" ? c.hover : null;
-      if (s.kind === "plane") {
+      if (s.kind === "frame") {
+        // A coordinate system: a red-green-blue triad at its origin, as the origin's, thinner, with arrowheads.
+        (["x", "y", "z"] as const).forEach((axis, i) => {
+          const tip = s.tips[i];
+          const color = tint ?? AXIS_COLORS[axis];
+          this.group.add(this.line([s.at, tip], color, tint ? 2.6 : 1.8, { depthTest: false, order: 5 }));
+          const along = new THREE.Vector3(...tip).sub(new THREE.Vector3(...s.at)).normalize();
+          const head = new THREE.Mesh(new THREE.ConeGeometry(s.size * 0.07, s.size * 0.22, 12), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true }));
+          head.position.set(...tip);
+          head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), along);
+          head.renderOrder = 5;
+          this.group.add(head);
+        });
+        const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...s.at)]);
+        const dot = new THREE.Points(g, new THREE.PointsMaterial({ color: tint ?? c.point, size: 7, sizeAttenuation: false, depthTest: false }));
+        dot.renderOrder = 6;
+        this.group.add(dot);
+      } else if (s.kind === "plane") {
         const [a, b, cc, d] = s.corners;
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.Float32BufferAttribute([...a, ...b, ...cc, ...a, ...cc, ...d], 3));

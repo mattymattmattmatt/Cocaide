@@ -8,7 +8,7 @@
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import type { DatumRef, EdgePoint, EdgeSelector, FaceSelector, PlaneSpec, SketchEntity, SketchEntityRef, SketchFeature, Vec3 } from "../doc/types";
 import type { ValidationResult } from "../doc/validate";
-import { aKind, DATUM_OPS, defaultDatum, facePlane, refPlaneFrame, sketchRefText, xDirProblem, type Datum, type DatumKind, type DatumOf } from "../features/datum";
+import { aKind, csysPart, DATUM_OPS, defaultDatum, facePlane, refPlaneFrame, sketchRefText, xDirProblem, type Datum, type DatumKind, type DatumOf, type RefDatum } from "../features/datum";
 import { planeFrame, type Frame } from "../geom/frame";
 import { sketchEntityDatum } from "../geom/sketchEdge";
 import { dist3, formatDirection, normalize3, roundTo, sub3 } from "../geom/vec";
@@ -37,8 +37,8 @@ export interface DatumContext {
  * its axis). `path` is the reference's field, for messages ("axis", "plane.ref").
  */
 export function resolveDatum<K extends DatumKind>(ctx: DatumContext, ref: DatumRef, want: K, path?: string): DatumOf<K>;
-export function resolveDatum(ctx: DatumContext, ref: DatumRef, want: "any", path?: string): Datum;
-export function resolveDatum(ctx: DatumContext, ref: DatumRef, want: DatumKind | "any", path = "ref"): Datum {
+export function resolveDatum(ctx: DatumContext, ref: DatumRef, want: "any", path?: string): RefDatum;
+export function resolveDatum(ctx: DatumContext, ref: DatumRef, want: DatumKind | "any", path = "ref"): RefDatum {
   const got = resolve(ctx, ref, want, path);
   if (want !== "any" && got.kind !== want) throw new OpError(`${path}: ${nameOf(ref)} is ${aKind(got.kind)}, but ${aKind(want)} is needed here`);
   return got;
@@ -55,8 +55,14 @@ export function planeSpecFrame(ctx: DatumContext, spec: PlaneSpec, path = "plane
   return refPlaneFrame(plane, spec);
 }
 
-function resolve(ctx: DatumContext, ref: DatumRef, want: DatumKind | "any", path: string): Datum {
-  if ("datum" in ref) return byId(ctx, ref.datum);
+function resolve(ctx: DatumContext, ref: DatumRef, want: DatumKind | "any", path: string): RefDatum {
+  if ("datum" in ref) {
+    const d = byId(ctx, ref.datum);
+    // A coordinate system is one of its parts: the one named, else the kind needed.
+    if (d.kind === "frame") return csysPart(d, ref.part, want);
+    if (ref.part) throw new OpError(`${path}.part: only a coordinate system has parts; ${ref.datum} is ${aKind(d.kind)}`);
+    return d;
+  }
   if ("point" in ref) return { kind: "point", at: [...ref.point] };
   if ("sketch" in ref) return fromSketch(ctx, ref, want, path);
   if (ctx.bodies.size === 0) throw new OpError(`${path}: there is no solid before this feature to take ${"face" in ref ? "a face" : "an edge"} from`);
@@ -79,7 +85,7 @@ export function sketchSource(ctx: DatumContext, ref: SketchEntityRef, path: stri
   return { entity, frame: profile.frame };
 }
 
-function fromSketch(ctx: DatumContext, ref: SketchEntityRef, want: DatumKind | "any", path: string): Datum {
+function fromSketch(ctx: DatumContext, ref: SketchEntityRef, want: DatumKind | "any", path: string): RefDatum {
   const { entity, frame } = sketchSource(ctx, ref, path);
   const d = sketchEntityDatum(entity, frame, ref.at, want);
   if (typeof d === "string") throw new OpError(`${path}: ${d}`);
@@ -185,7 +191,7 @@ export function edgePlace(ctx: DatumContext, sel: EdgeSelector, path: string, wh
   });
 }
 
-function fromFace(ctx: DatumContext, sel: FaceSelector, path: string): Datum {
+function fromFace(ctx: DatumContext, sel: FaceSelector, path: string): RefDatum {
   return scoped((s) => {
     const part = describePart(ctx.oc, s, ctx.bodies as Map<string, TopoDS_Shape>, false);
     const found = selectFaces(part.faceInfos, sel);
@@ -205,7 +211,7 @@ function fromFace(ctx: DatumContext, sel: FaceSelector, path: string): Datum {
   });
 }
 
-function fromEdge(ctx: DatumContext, sel: EdgeSelector, at: EdgePoint | undefined, want: DatumKind | "any", path: string): Datum {
+function fromEdge(ctx: DatumContext, sel: EdgeSelector, at: EdgePoint | undefined, want: DatumKind | "any", path: string): RefDatum {
   const edge = findEdge(ctx, sel, `${path}.edge`);
   const what = edge.kind === "line" ? "straight edge" : edge.kind === "circle" ? "circular edge" : "curved edge";
   switch (at) {
@@ -231,7 +237,7 @@ function fromEdge(ctx: DatumContext, sel: EdgeSelector, at: EdgePoint | undefine
 
 /** A reference as messages name it: "Top", "plane_1", "the planar face normal +Z", "the edge (line edges parallel to +Z)". */
 export function nameOf(ref: DatumRef): string {
-  if ("datum" in ref) return ref.datum;
+  if ("datum" in ref) return ref.part ? `${ref.datum}'s ${ref.part}` : ref.datum;
   if ("face" in ref) return describeWanted(ref.face, 1).replace(/^1 /, "the ");
   if ("edge" in ref) return `${ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of ` : ""}the edge (${describeEdgeSelector(ref.edge)})`;
   if ("sketch" in ref) return sketchRefText(ref);

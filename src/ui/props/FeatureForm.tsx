@@ -15,7 +15,7 @@ import { selectionSize, type PickTarget } from "../model/selection";
 import type { PickField } from "./picking";
 import { isPickSpec, pickFieldFor, type EdgeOptions } from "./pickFields";
 import { usePickField, usePickHost } from "./pickHost";
-import { datumChoices, describeRef, isDatum, refFromSelection, type DatumKind, type DatumRef } from "./datumRef";
+import { choiceRef, datumChoices, describeRef, isDatum, refChoiceId, refFromSelection, type DatumKind, type DatumRef } from "./datumRef";
 import {
   acceptsOf,
   asList,
@@ -295,7 +295,7 @@ function PlaneField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpec, 
     return out;
   };
   const choices = spec.refs ? datumChoices(p.before, ["plane"]) : [];
-  const current = !asRef ? CUSTOM : isDatum(asRef.ref) ? asRef.ref.datum : PICKED;
+  const current = !asRef ? CUSTOM : isDatum(asRef.ref) ? refChoiceId(asRef.ref) : PICKED;
   return (
     <>
       {spec.refs && (
@@ -307,7 +307,7 @@ function PlaneField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpec, 
               placeholder="Choose a plane…"
               onChange={(id) => {
                 if (id === PICKED) return;
-                if (id !== CUSTOM) return commit({ type: "ref", ref: { datum: id } });
+                if (id !== CUSTOM) return commit({ type: "ref", ref: choiceRef(id) });
                 // Written out where the reference is now, so the plane does not jump.
                 const now = asRef ? planeSpecFrameIn(asRef as RefPlane, p.view) : null;
                 commit(now && typeof now !== "string" ? roundPlane(frameAsDatumPlane(now)) : plane);
@@ -374,7 +374,7 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
   // A field that takes only picked geometry (a cylinder's face) offers no planes, axes or points to choose.
   const choices = spec.forms && !spec.forms.includes("datum") ? [] : datumChoices(p.before, accepts);
   const picked = ref !== undefined && ref !== null && !isDatum(ref);
-  const current = ref === undefined || ref === null ? "" : isDatum(ref) ? ref.datum : PICKED;
+  const current = ref === undefined || ref === null ? "" : isDatum(ref) ? refChoiceId(ref) : PICKED;
   const options: [string, string][] = [...(spec.optional ? [["", "None"] as [string, string]] : []), ...choices.map((c): [string, string] => [c.id, c.label]), ...(picked ? [[PICKED, "Picked in the view"] as [string, string]] : [])];
   const edge = ref && "edge" in ref ? ref : null;
   const someSelected = selectionSize(p.selection) > 0;
@@ -389,7 +389,7 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
             onChange={(id) => {
               if (id === PICKED) return;
               if (id === "") return spec.optional && commit(null);
-              commit({ datum: id });
+              commit(choiceRef(id));
             }}
             testId={tid}
           />

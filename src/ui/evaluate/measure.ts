@@ -69,7 +69,8 @@ export function kernelRef(item: MeasureItem): MeasureRef {
       return { kind: "point", at: item.at };
     case "datum": {
       const d = item.datum;
-      return d.kind === "plane" ? { kind: "plane", origin: d.origin, normal: d.normal } : d.kind === "axis" ? { kind: "axis", origin: d.origin, direction: d.direction } : { kind: "point", at: d.at };
+      // A coordinate system measures from its origin.
+      return d.kind === "plane" ? { kind: "plane", origin: d.origin, normal: d.normal } : d.kind === "axis" ? { kind: "axis", origin: d.origin, direction: d.direction } : { kind: "point", at: d.kind === "frame" ? d.origin : d.at };
     }
   }
 }
@@ -211,6 +212,7 @@ export function singleRows(item: MeasureItem): MeasureRow[] {
       const d = item.datum;
       if (d.kind === "plane") return [{ key: "origin", label: "Origin", xyz: d.origin }, { key: "normal", label: "Normal", xyz: d.normal }];
       if (d.kind === "axis") return [{ key: "origin", label: "Through", xyz: d.origin }, { key: "direction", label: "Direction", xyz: d.direction }];
+      if (d.kind === "frame") return [{ key: "origin", label: "Origin", xyz: d.origin }, { key: "z", label: "Z", xyz: d.z }];
       return [{ key: "point", label: "Point", xyz: d.at }];
     }
   }

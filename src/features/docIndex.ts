@@ -15,6 +15,7 @@ import { def as loft } from "./loft/doc";
 import { def as rib } from "./rib/doc";
 import { def as sketchPattern } from "./sketchPattern/doc";
 import { def as importOp } from "./import/doc";
+import { def as coordinateSystem } from "./coordinateSystem/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -29,4 +30,5 @@ export const DOC_DEFS = [
   rib,
   sketchPattern,
   importOp,
+  coordinateSystem,
 ];

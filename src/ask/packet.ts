@@ -396,6 +396,7 @@ function datumFrame(d: Datum): Record<string, unknown> {
   const r = (v: readonly number[]) => v.map((x) => round6(x) + 0);
   if (d.kind === "plane") return { kind: "plane", origin: r(d.origin), normal: r(d.normal), xDir: r(d.xDir) };
   if (d.kind === "axis") return { kind: "axis", origin: r(d.origin), direction: r(d.direction) };
+  if (d.kind === "frame") return { kind: "coordinateSystem", origin: r(d.origin), x: r(d.x), y: r(d.y), z: r(d.z) };
   return { kind: "point", at: r(d.at) };
 }
 
