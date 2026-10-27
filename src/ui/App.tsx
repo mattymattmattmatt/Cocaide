@@ -1959,6 +1959,12 @@ export function App() {
     const list = view.faces.filter((x) => x.createdBy === hoverFeature).map((x): PickTarget => ({ kind: "face", index: x.index, point: x.centroid }));
     return list.length ? list : null;
   }, [hoverFeature, view, session]);
+  /** A session's pointer tip, with whose face or edge is under the pointer (on the part before the feature). */
+  const withMaker = (hint: string | null, t: PickTarget): string | null => {
+    if (!hint || !pickView) return hint;
+    const made = t.kind === "face" ? pickView.faces[t.index]?.createdBy : t.kind === "edge" ? pickView.edges[t.index]?.createdBy : undefined;
+    return made ? `${hint} (the ${t.kind} ${made} made)` : hint;
+  };
   /** A number field right-clicked: make a parameter of its value, or link it to one. */
   const valueMenu = useCallback(
     (x: number, y: number, field: ValueField) => {
@@ -2519,7 +2525,8 @@ export function App() {
                   fitToken={fitToken}
                   selection={(!ask.previewDoc && sessionSelection) || selection}
                   preview={ask.previewDoc ? null : previewLook}
-                  pickHint={session ? (t) => pickRouter.current?.hint(t) ?? null : null}
+                  // What a click would do, and whose face or edge it is ("the face fillet_2 made").
+                  pickHint={session ? (t) => withMaker(pickRouter.current?.hint(t) ?? null, t) : null}
                   pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
                   // A reference field active: another sketch's entity clicked in the view goes into it ({ sketch, entity, at? }).
                   sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : null}

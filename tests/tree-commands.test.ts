@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { apply, type Command, type RawDocument } from "../src/doc/commands";
 import { copyFeatures, pasteFeatures } from "../src/doc/clipboard";
-import { fragileSelectors, replaceSelectorPatch, selectorsIn, setAtPath } from "../src/doc/heal";
+import { fragileSelectors, replaceSelectorPatch, selectorsIn, setAtPath, writeSelectorPatch } from "../src/doc/heal";
 import { createHistory, record, undo } from "../src/doc/history";
 import { foldersOf, moveProblem, provenanceRefs } from "../src/doc/tree";
 import { references } from "../src/doc/commands";
@@ -192,6 +192,16 @@ describe("the selectors of a feature (What's wrong)", () => {
     const patch = replaceSelectorPatch(f, { pick: "all", length: 80, kind: "line", type: "edge" }, healed)!;
     expect(patch).toEqual({ edges: [healed, f.edges[1]] });
     expect(setAtPath({ upTo: { face: { a: 1 } } }, "upTo.face", { b: 2 })).toEqual({ upTo: { face: { b: 2 } } });
+  });
+
+  it("Make robust may write several selectors in place of one item of a list; a selector with expressions is found by its hint", () => {
+    const f = { id: "s", op: "shell", faces: [{ type: "planar", normal: [0, 0, 1], offset: 6, pick: "all" }, { type: "planar", normal: [0, 0, -1], pick: "largest" }], thickness: 1 };
+    const a = { type: "planar", normal: [0, 0, 1], pick: "largest", hint: { centroid: [0, 0, 6] } };
+    const b = { type: "planar", normal: [0, 0, 1], pick: "smallest", hint: { centroid: [5, 0, 6] } };
+    expect(writeSelectorPatch(f, "faces[0]", [a, b])).toEqual({ faces: [a, b, f.faces[1]] });
+    const g = { id: "h", op: "hole", face: { type: "planar", normal: [0, 0, 1], offset: "=t", pick: "largest", hint: { centroid: [0, 0, 6] } } };
+    const read = { type: "planar", normal: [0, 0, 1], offset: 6, pick: "largest", hint: { centroid: [0, 0, 6] } };
+    expect(replaceSelectorPatch(g, read, a)).toEqual({ face: a });
   });
 
   it("fragile selectors: by offset, by position only, by length (none once they carry a hint)", () => {
