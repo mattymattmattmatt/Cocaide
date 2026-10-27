@@ -76,6 +76,7 @@ import { isSketchAxis } from "./sketch";
 import { pointNames } from "../geom/curves";
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
+import { folderGap } from "./tree";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
 
 export interface ValidatedFeature {
@@ -112,6 +113,8 @@ export interface ValidationResult {
   drawing: Drawing | null;
   /** What is wrong with the drawing. Never stops the part rebuilding. */
   drawingErrors: string[];
+  /** The tree's folders that are not right: they never stop the rebuild (a folder builds nothing), but commands may not make new ones. */
+  folderErrors?: string[];
   /** The part's properties (part number, description ...); empty when it has none or they are wrong. */
   properties: PartProperties;
 }
@@ -134,7 +137,7 @@ const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /** Every error in the document, flattened, in feature order. */
 export function allErrors(v: ValidationResult): string[] {
-  return [...v.headerErrors, ...v.features.flatMap((f) => f.errors), ...v.drawingErrors];
+  return [...v.headerErrors, ...v.features.flatMap((f) => f.errors), ...v.drawingErrors, ...(v.folderErrors ?? [])];
 }
 
 /** The typed document, or null when anything failed validation. */
@@ -159,7 +162,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -311,6 +314,33 @@ export function validateDocument(input: unknown): ValidationResult {
       r.fail("rollback", `must be the id of a feature, the first one below the rollback bar (got ${describe(input.rollback)}); remove "rollback" to roll to the end`);
       result.headerErrors.push(...r.errors);
     }
+  }
+  if (input.folders !== undefined) {
+    // The tree's folders: each a run of features next to each other in the history; a feature in one at most.
+    const r = new Checker("document");
+    const order = Array.isArray(input.features) ? input.features.map((f) => (isObject(f) ? String(f.id) : "")) : [];
+    if (!Array.isArray(input.folders)) r.fail("folders", `must be a list of { "id", "name", "features": [feature ids] } (got ${describe(input.folders)})`);
+    else {
+      const seenIds = new Set<string>();
+      const taken = new Map<string, string>();
+      input.folders.forEach((f, i) => {
+        const at = `folders[${i}]`;
+        if (!isObject(f)) return r.fail(at, `must be { "id", "name", "features" } (got ${describe(f)})`);
+        r.keys(f, at, ["id", "name", "features"]);
+        if (typeof f.id !== "string" || !ID_PATTERN.test(f.id)) return r.fail(`${at}.id`, `must be an identifier like "folder_1" (got ${describe(f.id)})`);
+        if (seenIds.has(f.id)) return r.fail(`${at}.id`, `duplicate folder id "${f.id}"`);
+        seenIds.add(f.id);
+        if (typeof f.name !== "string" || f.name.trim() === "" || f.name.length > 60) r.fail(`${at}.name`, `must be a name of 1 to 60 characters (got ${describe(f.name)})`);
+        if (!Array.isArray(f.features) || f.features.length === 0 || !f.features.every((x) => typeof x === "string")) return r.fail(`${at}.features`, `must list the ids of its features, at least one (got ${describe(f.features)})`);
+        for (const x of f.features as string[]) {
+          if (taken.has(x)) r.fail(`${at}.features`, `"${x}" is in folder "${taken.get(x)}" already: a feature is in one folder at most`);
+          taken.set(x, String(f.id));
+        }
+        const gap = folderGap({ id: f.id, name: String(f.name), features: f.features as string[] }, order);
+        if (gap) r.fail(`${at}.features`, gap.replace(/^folder "[^"]*": /, ""));
+      });
+    }
+    result.folderErrors = r.errors;
   }
   if (input.welds !== undefined) {
     const welds = new Checker("document");

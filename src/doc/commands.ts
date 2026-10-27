@@ -37,6 +37,7 @@ import {
 import { allErrors, isObject, validateDocument } from "./validate";
 import { defOf } from "../features/defs";
 import { datumFeatureIds, featureDatumRefs, mapDatumSelector } from "../features/datum";
+import { foldersAfterMove, foldersOf, orderProblems, renameCreatedBy } from "./tree";
 
 /** A document as plain JSON: what a .cocaide.json parses to. */
 export type RawDocument = Record<string, unknown> & { features: Record<string, unknown>[] };
@@ -51,8 +52,22 @@ export type Command =
    */
   | { type: "replaceFeature"; id: string; feature: Record<string, unknown> | Feature; renames?: Record<string, string> }
   | { type: "deleteFeature"; id: string }
-  | { type: "reorderFeature"; id: string; index: number }
+  /**
+   * Moves a feature to `index` in the history. Refused when it would come before what it uses (a sketch, a
+   * feature whose faces it picks, a sketch whose dimensions it reads) or after what uses it. `folder`: the folder
+   * it goes in (null: none); left out, it joins a folder it lands inside and leaves its own when moved away.
+   */
+  | { type: "reorderFeature"; id: string; index: number; folder?: string | null }
   | { type: "suppressFeature"; id: string; suppressed: boolean }
+  /** Several new features at once (paste, duplicate): at `index`, or at the rollback bar; one undo step. */
+  | { type: "insertFeatures"; features: (Record<string, unknown> | Feature)[]; index?: number; folder?: string }
+  /**
+   * Adds, changes (name, features: merged) or removes (null) a folder of the tree. Its features must be next to
+   * each other in the history. Removing a folder keeps its features.
+   */
+  | { type: "setFolder"; id: string; folder: { name?: string; features?: string[] } | null }
+  /** Suppresses (or unsuppresses) every feature of a folder. */
+  | { type: "suppressFolder"; id: string; suppressed: boolean }
   | { type: "setName"; name: string }
   /** Sets a document parameter (a number, or "=expression"); sketches whose dimensions use it are re-solved. */
   | { type: "setParameter"; name: string; value: number | string }
@@ -156,6 +171,61 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       features.splice(at, 0, f);
       break;
     }
+    case "insertFeatures": {
+      if (!Array.isArray(cmd.features) || cmd.features.length === 0) return { ok: false, error: "insertFeatures: features must be a list of features" };
+      const list = cmd.features.map((f) => structuredClone(f) as Record<string, unknown>);
+      for (const f of list) {
+        if (typeof f.id === "string" && (indexOf(f.id) >= 0 || list.filter((g) => g.id === f.id).length > 1)) return { ok: false, error: `insertFeatures: a feature "${f.id}" already exists` };
+      }
+      const bar = typeof doc.rollback === "string" ? indexOf(doc.rollback) : -1;
+      const at = cmd.index ?? (bar >= 0 ? bar : features.length);
+      if (!Number.isInteger(at) || at < 0 || at > features.length) return { ok: false, error: `insertFeatures: index ${at} is outside 0..${features.length}` };
+      features.splice(at, 0, ...list);
+      if (cmd.folder !== undefined) {
+        const folders = foldersOf(doc);
+        const f = folders.find((x) => x.id === cmd.folder);
+        if (!f) return { ok: false, error: `insertFeatures: no folder "${cmd.folder}"` };
+        f.features = [...f.features, ...list.map((x) => String(x.id))];
+        doc.folders = folders;
+      }
+      break;
+    }
+    case "setFolder": {
+      const folders = foldersOf(doc).map((f) => ({ ...f }));
+      const i = folders.findIndex((f) => f.id === cmd.id);
+      if (cmd.folder === null) {
+        if (i < 0) return { ok: false, error: `setFolder: no folder "${cmd.id}"` };
+        folders.splice(i, 1);
+      } else {
+        if (!isObject(cmd.folder)) return { ok: false, error: `setFolder: folder must be { name, features } or null (got ${JSON.stringify(cmd.folder)})` };
+        if (i < 0 && indexOf(cmd.id) >= 0) return { ok: false, error: `setFolder: "${cmd.id}" is a feature's id; give the folder another` };
+        const was = i >= 0 ? folders[i] : { id: cmd.id, name: cmd.id, features: [] as string[] };
+        const next = { ...was, ...(cmd.folder.name !== undefined ? { name: cmd.folder.name } : {}), ...(cmd.folder.features !== undefined ? { features: [...cmd.folder.features] } : {}) };
+        // A feature is in one folder: taken into this one, it leaves its other.
+        const order = features.map((f) => String(f.id));
+        next.features.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+        for (const f of folders) if (f.id !== cmd.id) f.features = f.features.filter((x) => !next.features.includes(x));
+        if (i >= 0) folders[i] = next;
+        else folders.push(next);
+        for (let k = folders.length - 1; k >= 0; k--) if (folders[k].features.length === 0 && folders[k].id !== cmd.id) folders.splice(k, 1);
+      }
+      if (folders.length) doc.folders = folders;
+      else delete doc.folders;
+      break;
+    }
+    case "suppressFolder": {
+      const f = foldersOf(doc).find((x) => x.id === cmd.id);
+      if (!f) return { ok: false, error: `suppressFolder: no folder "${cmd.id}"` };
+      for (const id of f.features) {
+        const i = indexOf(id);
+        if (i < 0) continue;
+        const next = { ...features[i] };
+        if (cmd.suppressed) next.suppressed = true;
+        else delete next.suppressed;
+        features[i] = next;
+      }
+      break;
+    }
     case "updateFeature":
     case "replaceFeature": {
       const i = need(cmd.id);
@@ -174,6 +244,9 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
           return { ok: false, error: `${cmd.type}: cannot rename ${cmd.id}; ${users.join(", ")} ${users.length === 1 ? "uses" : "use"} it` };
         }
         renameSketchRefs(features, cmd.id, renamed);
+        // Faces and edges picked by who made them follow the maker's new id; so does its folder.
+        renameCreatedBy(features, cmd.id, renamed);
+        if (Array.isArray(doc.folders)) doc.folders = foldersOf(doc).map((f) => ({ ...f, features: f.features.map((x) => (x === cmd.id ? renamed : x)) }));
       }
       const prev = features[i];
       features[i] = next;
@@ -215,6 +288,12 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         };
       }
       features.splice(i, 1);
+      // Out of its folder; a folder left empty goes.
+      if (Array.isArray(doc.folders)) {
+        const folders = foldersOf(doc).map((f) => ({ ...f, features: f.features.filter((x) => x !== cmd.id) })).filter((f) => f.features.length);
+        if (folders.length) doc.folders = folders;
+        else delete doc.folders;
+      }
       // The bar sat above the deleted feature: it now sits above the one after it, or at the end.
       if (doc.rollback === cmd.id) {
         const after = features[i];
@@ -249,8 +328,18 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         else delete doc.rollback;
       }
       features.splice(cmd.index, 0, moved);
-      const problem = orderProblem(features);
+      // Nothing may come to stand before what it uses (that was not so already).
+      const was = new Set(orderProblems(input.features as Record<string, unknown>[], (f) => references(f)));
+      const problem = orderProblems(features, (f) => references(f)).find((p) => !was.has(p));
       if (problem) return { ok: false, error: `reorderFeature: ${problem}` };
+      // Folders stay whole: into the folder it lands inside, out of the one it left.
+      const folders = foldersOf(doc);
+      if (folders.length || (cmd.folder !== undefined && cmd.folder !== null)) {
+        const next = foldersAfterMove(folders, features, cmd.id, cmd.folder);
+        if (typeof next === "string") return { ok: false, error: `reorderFeature: ${next}` };
+        if (next.length) doc.folders = next;
+        else delete doc.folders;
+      }
       break;
     }
     case "suppressFeature": {
@@ -1111,17 +1200,6 @@ export function nodeUsers(features: unknown[], node: string): string[] {
     .map((f) => String((f as { id: unknown }).id));
 }
 
-function orderProblem(features: unknown[]): string | null {
-  const seen = new Set<string>();
-  for (const f of features) {
-    if (!isObject(f)) continue;
-    for (const ref of references(f)) {
-      if (!seen.has(ref)) return `${String(f.id)} uses ${ref}, which would come after it`;
-    }
-    if (typeof f.id === "string") seen.add(f.id);
-  }
-  return null;
-}
 
 /** The first free id of the form prefix_1, prefix_2, ... */
 export function nextId(doc: unknown, prefix: string): string {
