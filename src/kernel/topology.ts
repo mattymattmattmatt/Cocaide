@@ -36,6 +36,10 @@ export interface FaceInfo {
   cylinder?: CylinderInfo;
   /** The body the face belongs to, when the part has been described body by body. */
   body?: string;
+  /** Provenance (src/kernel/provenance.ts): the feature that made this face, when the rebuild recorded it. */
+  createdBy?: string;
+  /** The features after it that changed this face (trimmed it, cut into it), in order. */
+  modifiedBy?: string[];
 }
 
 export function listFaces(oc: OC, s: Scope, shape: TopoDS_Shape): TopoDS_Face[] {
@@ -80,7 +84,9 @@ export function faceInfo(oc: OC, s: Scope, face: TopoDS_Face, index: number): Fa
     const ax = s.track(plane.Axis());
     const d = s.track(ax.Direction());
     const loc = s.track(plane.Location());
-    const n = normalize3(scale3([d.X(), d.Y(), d.Z()], reversed ? -1 : 1));
+    // A mirrored plane's placement is left-handed: its surface normal (x × y) is then opposite its axis.
+    const direct = s.track(plane.Position()).Direct();
+    const n = normalize3(scale3([d.X(), d.Y(), d.Z()], (reversed ? -1 : 1) * (direct ? 1 : -1)));
     const point: Vec3 = [loc.X(), loc.Y(), loc.Z()];
     return { index, type: "plane", area, centroid, normal: n, point, offset: dot3(point, n) };
   }
@@ -146,6 +152,10 @@ export interface EdgeInfo {
   seam: boolean;
   /** The body the edge belongs to, when the part has been described body by body. */
   body?: string;
+  /** Provenance (src/kernel/provenance.ts): the feature that made this edge, when the rebuild recorded it. */
+  createdBy?: string;
+  /** The features after it that changed this edge (shortened it, split it), in order. */
+  modifiedBy?: string[];
 }
 
 const HASH_BOUND = 1 << 30;
@@ -183,7 +193,7 @@ export function describeEdges(oc: OC, s: Scope, shape: TopoDS_Shape, faces: Topo
   return { edges, infos };
 }
 
-function edgeInfo(oc: OC, s: Scope, edge: TopoDS_Edge, index: number): EdgeInfo {
+export function edgeInfo(oc: OC, s: Scope, edge: TopoDS_Edge, index: number): EdgeInfo {
   const props = s.track(new oc.GProp_GProps());
   oc.BRepGProp.LinearProperties(edge, props, false, false);
   const cm = s.track(props.CentreOfMass());

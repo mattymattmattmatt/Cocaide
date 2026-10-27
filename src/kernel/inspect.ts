@@ -82,7 +82,7 @@ export function newFailures(before: Built, after: Built): string[] {
 export type Picked = { faces: FaceInfo[]; edges?: undefined } | { edges: EdgeInfo[]; faces?: undefined };
 
 /** Runs a face or edge selector (raw JSON, validated here) on a solid. With bodies, faces and edges know theirs. */
-export function selectOn(oc: OC, solid: TopoDS_Shape, selector: unknown, tool: string, bodies: BodyRange[] = []): Picked | string {
+export function selectOn(oc: OC, solid: TopoDS_Shape, selector: unknown, tool: string, bodies: BodyRange[] = [], label?: (topo: { faces: FaceInfo[]; edges: EdgeInfo[] }) => void): Picked | string {
   const c = new Checker(tool);
   const isEdge = isObject(selector) && selector.type === "edge";
   const sel = isEdge ? validateEdgeSelector(selector, "selector", c) : validateFaceSelector(selector, "selector", c);
@@ -91,6 +91,8 @@ export function selectOn(oc: OC, solid: TopoDS_Shape, selector: unknown, tool: s
     const faces = describeFaces(oc, s, solid);
     const edges = isEdge ? describeEdges(oc, s, solid, faces.faces).infos : [];
     if (bodies.length > 1) labelBodies({ faces: faces.infos, edges }, bodies);
+    // Which feature made each (a selector's createdBy reads it).
+    label?.({ faces: faces.infos, edges });
     if (!isEdge) return { faces: selectFaces(faces.infos, sel as FaceSelector).matches };
     const r = selectEdges(edges, faces.infos, sel as EdgeSelector, "selector");
     if (r.error) return `${tool}: ${r.error}`;

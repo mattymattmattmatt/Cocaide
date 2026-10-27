@@ -120,6 +120,8 @@ function viewOf(kernel: OC, result: RebuildResult): RebuildView {
     : { faces: [], edges: [] };
   const bodies = result.bodies.map(({ name, faces, edges }) => ({ name, faces, edges }));
   if (bodies.length > 1) labelBodies(topo, bodies);
+  // Which feature made each face and edge (and changed it since): picking, the tree and What's wrong read it.
+  result.label(topo);
   return {
     ok: result.ok,
     name: result.name,
