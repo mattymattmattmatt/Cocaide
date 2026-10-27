@@ -318,6 +318,67 @@ test("a sketch and a feature session never run together: a fillet still waiting 
   await expect(page.getByTestId("finish-sketch")).toBeVisible();
 });
 
+test("review: command-first fillet reads the part once its edge comes; it says what it waits on; a second Esc in a field cancels", async ({ page }) => {
+  await page.getByTestId("tool-fillet").click();
+  await expect(page.getByTestId("session-pending")).toHaveText("Not in the part yet: pick edges to fillet.");
+  await viewportClick(page, [0, -20, 6]);
+  // The 6 mm side beside the edge: a tenth of it, rounded down (as selection-first has it), not the tool's 1.
+  await expect.poll(async () => (await feature(page, "fillet_1"))?.radius).toBe(0.5);
+  await page.getByTestId("prop-radius").fill("0.8");
+  await page.getByTestId("prop-radius").press("Escape");
+  await expect(page.getByTestId("prop-radius")).toHaveValue("0.5");
+  await expect(page.getByTestId("session-bar")).toBeVisible();
+  await page.getByTestId("prop-radius").press("Escape");
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
+  expect(await feature(page, "fillet_1")).toBeUndefined();
+});
+
+test("review: an edit left unchanged closes without a question; a changed one asks, and Esc goes back to it", async ({ page }) => {
+  await page.getByTestId("feature-ext_1").locator(".feature-row").dblclick();
+  await expect(page.getByTestId("session-title")).toHaveText("Edit ext_1");
+  await page.getByTestId("feature-hole_1").locator(".feature-row").click();
+  await expect(page.getByTestId("session-guard")).toHaveCount(0);
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
+  await page.getByTestId("feature-ext_1").locator(".feature-row").dblclick();
+  await commit(page, "prop-distance", "9");
+  await page.getByTestId("feature-hole_1").locator(".feature-row").click();
+  await expect(page.getByTestId("session-guard")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("session-guard")).toHaveCount(0);
+  await expect(page.getByTestId("session-title")).toHaveText("Edit ext_1");
+  expect((await feature(page, "ext_1"))!.distance).toBe(9);
+});
+
+test("review: a mirror's plane is picked in the view; Revolve with no centreline waits for its axis", async ({ page }) => {
+  await page.getByTestId("feature-hole_1").locator(".feature-row").click();
+  await page.getByTestId("tool-mirror").click();
+  await expect(page.getByTestId("session-title")).toHaveText("Add mirror_1");
+  await waitForRebuild(page);
+  await viewportClick(page, [40, 0, 3]);
+  await expect.poll(async () => (await feature(page, "mirror_1"))?.plane).toMatchObject({ type: "ref", ref: { face: { type: "planar", normal: [1, 0, 0] } } });
+  await page.getByTestId("session-ok").click();
+  await openDocument(page, {
+    version: 1,
+    units: "mm",
+    name: "turned",
+    features: [
+      { id: "prof", op: "sketch", plane: { type: "ref", ref: { datum: "Front" } }, entities: [{ id: "r1", type: "rect", center: [15, 10], w: 10, h: 20 }], constraints: [] },
+      { id: "ax", op: "sketch", plane: { type: "ref", ref: { datum: "Front" } }, entities: [{ id: "l1", type: "line", start: [0, 0], end: [0, 30] }], constraints: [] },
+    ],
+  });
+  await page.getByTestId("feature-prof").locator(".feature-row").click();
+  await page.getByTestId("tool-revolve-menu").click();
+  await page.getByTestId("tool-revolve").click();
+  await expect(page.getByTestId("session-pending")).toHaveText("Not in the part yet: pick the axis.");
+  const [x, y] = await page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.project([0, 0, 20]));
+  await page.mouse.move(x, y);
+  await expect(page.getByTestId("sketch-pick-tip")).toContainText("Click to use it for Axis");
+  await page.mouse.click(x, y);
+  await expect.poll(async () => (await feature(page, "revolve_1"))?.axis).toEqual({ sketch: "ax", entity: "l1" });
+  await waitForRebuild(page);
+  await expectVolume(page, "18,849.55"); // π (20² - 10²) 20
+});
+
 async function openDocument(page: Page, doc: Raw) {
   const text = JSON.stringify(doc, null, 2);
   await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
