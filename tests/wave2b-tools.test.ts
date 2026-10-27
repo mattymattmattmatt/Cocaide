@@ -10,7 +10,7 @@ import { REVOLVE_FIELDS, defaultAxisIn, preferredLine } from "../src/features/re
 import { UI_OPS } from "../src/features/uiDefs";
 import { loadOC, type OC } from "../src/kernel";
 import { draftFeature, draftNeutral, shellFeature } from "../src/ui/model/tools/dress";
-import { openProfile, revolveFeature, sketchAxisLine } from "../src/ui/model/tools/revolve";
+import { openProfile, revolveComplete, revolveDraft, revolveFeature, sketchAxisLine } from "../src/ui/model/tools/revolve";
 import { mirrorFeature } from "../src/ui/model/tools/mirror";
 import { PATTERNABLE } from "../src/ui/model/tools/pattern";
 import { toolById } from "../src/ui/model/registry";
@@ -60,6 +60,28 @@ describe("Revolve: the axis it finds", () => {
     expect(sketchAxisLine([RECT] as never)).toBe("Draw a centreline in the sketch to turn about (Shift+L), or select an axis or a straight edge, then Revolve.");
   });
 
+  it("with no line to turn about, a session opens with the axis to be picked; an open profile then turns as a thin wall", () => {
+    const doc = sketchDoc([RECT]);
+    const { ctx } = harness(doc, viewOf(oc, doc));
+    expect(typeof revolveFeature(ctx, false)).toBe("string");
+    const draft = revolveDraft(ctx, false);
+    expect(draft).toEqual({ id: "revolve_1", op: "revolve", sketch: "sketch_1" });
+    // Not complete without its axis: it waits for the pick.
+    expect(allErrors(validateDocument({ ...doc, features: [...doc.features, draft as Raw] })).length).toBeGreaterThan(0);
+    const complete = revolveComplete(ctx);
+    expect(complete({ ...draft, axis: { datum: "Y" } })).toEqual({ ...draft, axis: { datum: "Y" } });
+    // An open chain (an L of two lines) turns as a 2 mm wall, as Revolve with its axis found has it.
+    const open = sketchDoc([
+      { id: "l1", type: "line", start: [10, 0], end: [10, 20] },
+      { id: "l2", type: "line", start: [10, 20], end: [20, 20] },
+    ]);
+    const o = harness(open, viewOf(oc, open)).ctx;
+    expect(revolveComplete(o)({ ...revolveDraft(o, false), axis: { datum: "Y" } })).toMatchObject({ thin: { thickness: 2 } });
+    // Nothing to cut yet, or no sketch: no session, the tool says why.
+    expect(revolveDraft(ctx, true)).toBeNull();
+    expect(revolveDraft(harness({ version: 1, units: "mm", name: "e", features: [] } as RawDocument, null).ctx, false)).toBeNull();
+  });
+
   it("makes the revolve of the latest sketch about it, or a revolved cut; asks for a sketch first", () => {
     const doc = sketchDoc([RECT, CENTERLINE]);
     const { ctx, out } = harness(doc, viewOf(oc, doc));
@@ -93,14 +115,14 @@ describe("Shell and Draft: from the selection", () => {
     expect(shellFeature(harness({ ...doc, features: [] }, null).ctx)).toBe("Shell needs a solid: make one first.");
   });
 
-  it("Draft about the bottom face when only the sides are picked; about a picked base face; 3°", () => {
+  it("Draft about the bottom face when only the sides are picked; about a picked base face; 1° (Phase P default)", () => {
     const doc = boxDoc();
     const view = viewOf(oc, doc);
     const side = (n: number[]) => faceWhere(view, (f) => f.type === "plane" && f.normal!.every((c, i) => Math.abs(c - n[i]) < 1e-9));
     const sides = [side([1, 0, 0]), side([-1, 0, 0]), side([0, 1, 0]), side([0, -1, 0])];
     const f = draftFeature(harness(doc, view, { selection: { faces: sides, edges: [] } }).ctx) as Raw;
     expect(f.neutral).toEqual({ face: { type: "planar", normal: [0, 0, -1], pick: "largest" } });
-    expect(f.angle).toBe(3);
+    expect(f.angle).toBe(1);
     expect(f.faces).toHaveLength(4);
     // The top face picked with one side: square to it, so it is the base the side drafts about.
     const withBase = draftFeature(harness(doc, view, { selection: { faces: [side([1, 0, 0]), side([0, 0, 1])], edges: [] } }).ctx) as Raw;
@@ -228,7 +250,8 @@ describe("review fixes", () => {
     const view = viewOf(oc, stand);
     const upright = view.bodies.find((b) => b.name === "upright")!;
     const faces = Array.from({ length: upright.faces[1] - upright.faces[0] }, (_, i) => upright.faces[0] + i);
-    expect(shellFeature(harness(stand, view, { selection: { faces, edges: [] } }).ctx)).toEqual({ id: "shell_1", op: "shell", faces: [], thickness: 2, body: "upright" });
+    // The wall: a tenth of the upright's thinnest extent (8 mm), rounded down to a round value (Phase P smart defaults).
+    expect(shellFeature(harness(stand, view, { selection: { faces, edges: [] } }).ctx)).toEqual({ id: "shell_1", op: "shell", faces: [], thickness: 0.5, body: "upright" });
     expect(shellFeature(harness(stand, view).ctx)).toBe(
       `The part has ${view.bodies.length} bodies: click the faces to remove, or a body in the Bodies panel for a closed hollow one, then Shell.`,
     );

@@ -18,16 +18,20 @@ export function extrudeFeature(ctx: ToolCtx, op: "extrude" | "cut"): Raw | strin
   if (op === "extrude" && bodies.length > 1) feature.newBody = nextBodyName(bodies);
   // Where the sketch is: as the last rebuild placed it (a sketch on a face or a plane feature is where that is now).
   const frame = sketchFrameIn(sk, ctx.view);
-  if (op === "cut" && ctx.view?.measurements?.boundingBox && typeof frame !== "string") {
-    // Cut toward the material: if nothing of the part lies in front of the sketch plane, cut backwards.
+  if (ctx.view?.measurements?.boundingBox && typeof frame !== "string") {
     const { min, max } = ctx.view.measurements.boundingBox;
     const n = frame.z;
     let far = -Infinity;
+    let near = Infinity;
     for (let i = 0; i < 8; i++) {
       const c: Vec3 = [i & 1 ? max[0] : min[0], i & 2 ? max[1] : min[1], i & 4 ? max[2] : min[2]];
-      far = Math.max(far, dot3(n, c) - dot3(n, frame.origin));
+      const d = dot3(n, c) - dot3(n, frame.origin);
+      far = Math.max(far, d);
+      near = Math.min(near, d);
     }
-    if (far <= 1e-6) feature.direction = n.map((c) => -c + 0);
+    // A cut goes into the material: if nothing of the part lies in front of the sketch plane, it cuts backwards.
+    // A boss goes away from it: if the part lies wholly in front of the sketch plane, it grows backwards.
+    if (op === "cut" ? far <= 1e-6 : near >= -1e-6 && far > 1e-6) feature.direction = n.map((c) => -c + 0);
   }
   return feature;
 }

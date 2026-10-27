@@ -5,7 +5,7 @@
 // status line and Display/Delete Relations panel.
 
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, sketchClick } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, sketchClick } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   const problems = await openApp(page);
@@ -137,6 +137,7 @@ test("the Modify box takes functions and units, spins, and a renamed dimension d
   await commit(page, "prop-distance", "=sketch_1.width / 2");
   await expect(page.getByTestId("properties").locator(".expr-value")).toHaveText("= 20");
   await expectVolume(page, "20,320"); // 40 × 25.4 × 20
+  await okFeature(page);
 
   // Change the width in the sketch: the depth follows.
   await page.getByTestId("feature-sketch_1").locator(".feature-row").dblclick();

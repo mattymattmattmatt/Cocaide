@@ -8,10 +8,13 @@ import type { DatumPlane, EdgeSelector, FaceSelector, RefPlane, Vec3 } from "../
 import { frameAsDatumPlane } from "../../features/datum";
 import { round9 } from "../model/names";
 import { planeSpecFrameIn } from "../model/sketchPlane";
-import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
+import { describeEdgeSelector, describeWanted, selectEdges, selectFaces } from "../../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor, facesSelectorFor } from "../../kernel/synthesize";
 import { DirectionInput, Field, NumberInput, Select, Vec3Input, type NumberValue } from "../fields";
-import { selectionSize } from "../model/selection";
+import { selectionSize, type PickTarget } from "../model/selection";
+import type { PickField } from "./picking";
+import { isPickSpec, pickFieldFor, type EdgeOptions } from "./pickFields";
+import { usePickField, usePickHost } from "./pickHost";
 import { datumChoices, describeRef, isDatum, refFromSelection, type DatumKind, type DatumRef } from "./datumRef";
 import {
   acceptsOf,
@@ -34,13 +37,70 @@ const PICKED = "__picked";
 /** The select value of an inline plane (a point and a normal). */
 const CUSTOM = "__custom";
 
-export function FeatureForm({ fields, ...p }: FieldProps & { fields: FieldSpec[] }) {
+/**
+ * `order`: where these fields sit among the panel's selection fields (Tab
+ * goes through them in order), for an editor that shows several forms.
+ */
+export function FeatureForm({ fields, order = 0, ...p }: FieldProps & { fields: FieldSpec[]; order?: number }) {
   return (
     <>
-      {visibleFields(fields, p.f, p).map((spec) => (
-        <FieldView key={`${spec.kind}:${spec.key}`} spec={spec} p={p} />
+      {visibleFields(fields, p.f, p).map((spec, i) => (
+        <FieldView key={`${spec.kind}:${spec.key}`} spec={spec} p={p} order={order + i} />
       ))}
     </>
+  );
+}
+
+/**
+ * A selection field during a session: active (outlined, what the view's
+ * clicks go into) or not; a click on it or focus makes it active. Its pick
+ * field goes to the session's host.
+ */
+export function PickWrap({ field, children, tid }: { field: PickField | null; children: ReactNode; tid: string }) {
+  const host = usePickHost();
+  usePickField(field);
+  if (!host || !field) return <>{children}</>;
+  const active = host.active === field.key;
+  return (
+    <div
+      className={`pick-field${active ? " active" : ""}${field.count ? "" : " empty"}`}
+      data-testid={`${tid}-pick`}
+      data-active={active || undefined}
+      onPointerDown={() => !active && host.setActive(field.key)}
+      onFocus={() => !active && host.setActive(field.key)}
+    >
+      {children}
+      {active && (
+        <span className="pick-prompt" data-testid="pick-prompt">
+          {field.takes.length ? `${field.prompt}: click in the view (again to take it out)` : field.prompt}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** For an edge field in a session: tangent propagation (on by default) and which corners it takes. */
+function EdgeOptionsRow({ tid }: { tid: string }) {
+  const host = usePickHost();
+  if (!host) return null;
+  const { edge, setEdge } = host;
+  return (
+    <span className="pick-options">
+      <label className="check" title="Picking an edge takes the edges that run on smoothly from it too (a fillet's boundary, a slot's outline)">
+        <input type="checkbox" checked={edge.propagate} onChange={(e) => setEdge({ ...edge, propagate: e.target.checked })} data-testid={`${tid}-propagate`} />
+        Tangent propagation
+      </label>
+      <Select
+        value={edge.kinds}
+        options={[
+          ["all", "All edges"],
+          ["convex", "Outside corners only"],
+          ["concave", "Inside corners only"],
+        ]}
+        onChange={(v) => setEdge({ ...edge, kinds: v as EdgeOptions["kinds"] })}
+        testId={`${tid}-corners`}
+      />
+    </span>
   );
 }
 
@@ -50,7 +110,7 @@ function Choice({ value, options, placeholder, onChange, testId }: { value: stri
   return <Select value={value} options={all} onChange={onChange} testId={testId} />;
 }
 
-function FieldView({ spec, p }: { spec: FieldSpec; p: FieldProps }) {
+function FieldView({ spec, p, order }: { spec: FieldSpec; p: FieldProps; order: number }) {
   const v = fieldValue(spec, p.f, p);
   // A field's own `set` may refuse a value with an Error that says what to do (a mode that needs something selected first).
   const commit = (value: unknown) => {
@@ -64,6 +124,32 @@ function FieldView({ spec, p }: { spec: FieldSpec; p: FieldProps }) {
     return p.update(patch);
   };
   const tid = fieldTestId(spec);
+  // In a session, a selection field is live: the view's clicks go into it while it is active.
+  const host = usePickHost();
+  const field =
+    host && isPickSpec(spec)
+      ? pickFieldFor(spec, p.f, p, order, { view: host.view, before: p.before, bodies: p.bodies, edge: host.edge, chainOf: host.chainOf, passes: host.passes }, (value) => {
+          let patch: Record<string, unknown>;
+          try {
+            patch = commitPatch(spec, value, p.f, p);
+          } catch (e) {
+            return e instanceof Error ? e.message : String(e);
+          }
+          const r = p.update(patch);
+          return typeof r === "string" ? r : null;
+        })
+      : null;
+  const view = renderField(spec, p, v, commit, tid, field);
+  return field ? (
+    <PickWrap field={field} tid={tid}>
+      {view}
+    </PickWrap>
+  ) : (
+    view
+  );
+}
+
+function renderField(spec: FieldSpec, p: FieldProps, v: unknown, commit: (value: unknown) => string | null | void, tid: string, field: PickField | null): ReactNode {
   switch (spec.kind) {
     case "number":
       return (
@@ -103,7 +189,7 @@ function FieldView({ spec, p }: { spec: FieldSpec; p: FieldProps }) {
     case "face":
     case "faces":
     case "edges":
-      return <SelectorField spec={spec} value={v} commit={commit} tid={tid} p={p} />;
+      return <SelectorField spec={spec} value={v} commit={commit} tid={tid} p={p} field={field} />;
     case "feature":
     case "sketch": {
       const options = featureChoices(p.before, spec.kind === "sketch" ? ["sketch"] : spec.ops);
@@ -354,17 +440,23 @@ function DatumRefField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
 }
 
 /** Faces or edges picked in the view, as selectors: listed in words, replaced by "Use selected". */
-function SelectorField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpec, { kind: "face" | "faces" | "edges" }>; value: unknown; commit(v: unknown): void; tid: string; p: FieldProps }) {
+function SelectorField({ spec, value, commit, tid, p, field }: { spec: Extract<FieldSpec, { kind: "face" | "faces" | "edges" }>; value: unknown; commit(v: unknown): void; tid: string; p: FieldProps; field: PickField | null }) {
   const { selection, view } = p;
+  const host = usePickHost();
+  const session = !!host && !!field;
+  /** In a session each selector is a chip: hovered, what it finds lights up in the view. */
+  const chip = (items: () => PickTarget[]) =>
+    session ? { className: "selector-line pick-chip", onPointerEnter: () => host!.peek(items()), onPointerLeave: () => host!.peek(null) } : { className: "selector-line" };
   const lines: ReactNode[] = [];
   let use: { label: string; disabled: boolean; run(): void };
   if (spec.kind === "edges") {
     const list = asList<EdgeSelector>(value);
     // An optional list (a fillet that may name faces instead) can be emptied one selector at a time.
     const removable = spec.optional === true;
+    const pickView = host?.view ?? view;
     list.forEach((e, i) =>
       lines.push(
-        <span key={i} className="selector-line">
+        <span key={i} {...chip(() => (pickView ? selectEdges(pickView.edges, pickView.faces, e).matches.map((m) => ({ kind: "edge" as const, index: m.index, point: m.mid })) : []))}>
           {describeEdgeSelector(e)}
           {removable && (
             <button
@@ -396,9 +488,10 @@ function SelectorField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
   } else {
     const list = asList<FaceSelector>(value);
     const removable = spec.kind === "faces" && (spec.optional || list.length > 1);
+    const pickView = host?.view ?? view;
     list.forEach((s, i) =>
       lines.push(
-        <span key={i} className="selector-line">
+        <span key={i} {...chip(() => (pickView ? selectFaces(pickView.faces, s).matches.map((m) => ({ kind: "face" as const, index: m.index, point: m.centroid })) : []))}>
           {describeWanted(s, 1).replace(/^1 /, "")}
           {removable && (
             <button type="button" className="selector-remove" aria-label={`Leave out face ${i + 1}`} title="Leave this face out" onClick={() => commit(list.filter((_, k) => k !== i))} data-testid={`${tid}-remove-${i}`}>
@@ -432,10 +525,11 @@ function SelectorField({ spec, value, commit, tid, p }: { spec: Extract<FieldSpe
   return (
     <>
       <Field label={spec.label} hint={spec.hint} block>
-        <span className="readout" data-testid={tid}>
-          {lines.length ? lines : <span className="muted">none: select in the view (Ctrl-click for more), then {use.label}</span>}
+        <span className={`readout${session ? " pick-box" : ""}`} data-testid={tid} tabIndex={session ? 0 : undefined}>
+          {lines.length ? lines : session ? <span className="muted">none yet</span> : <span className="muted">none: select in the view (Ctrl-click for more), then {use.label}</span>}
         </span>
       </Field>
+      {session && spec.kind === "edges" && spec.propagation && <EdgeOptionsRow tid={tid} />}
       <button
         type="button"
         disabled={use.disabled}

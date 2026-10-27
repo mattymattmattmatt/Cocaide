@@ -19,7 +19,7 @@ import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { rollbackAt, rollbackIndex, rollbackNext, rollbackPrevious, rolledBack } from "../doc/rollback";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import type { Constraint, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2 } from "../doc/types";
+import type { Constraint, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2, Vec3 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { DATUM_OPS, DEFAULT_DATUMS, frameAsDatumPlane } from "../features/datum";
 import { planeFrame } from "../geom/frame";
@@ -57,7 +57,7 @@ import { SketchMode, type SketchSession, type SketchView3D } from "./sketcher/Sk
 import { CameraFeed, sketchPlaneSection, sketchWorldPoints } from "./sketcher/planeView";
 import { useViewPrefs } from "./viewport/viewPrefs";
 import { EMPTY_MODEL, modelView } from "./sketcher/model";
-import { useDocument } from "./useDocument";
+import { commandLabel, useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
 import { SheetView, type SheetTarget } from "./drawing/SheetView";
 import { Icon, type IconName } from "./icons";
@@ -68,7 +68,7 @@ import { DEFAULT_DISPLAY, loadView, saveView, type DisplayState } from "./evalua
 import { dimensionPatch, featureDimensions, type Dimension3D } from "./evaluate/dimensions3d";
 import { MassPanel, MeasurePanel, SectionPanel, ValueBox } from "./evaluate/EvaluatePanels";
 import { FILTER_KINDS, mergeBox, NO_FILTER, toggleFilter, type SelectFilter } from "./evaluate/filter";
-import { featureHandles, handlePatch, ownerOfFace, type HandleSpec } from "./evaluate/handles";
+import { featureHandles, handlePatch, handleText, handleTip, ownerOfFace, type HandleSpec, type HandleValue } from "./evaluate/handles";
 import { kernelRef, measure, measureItems, measurePick } from "./evaluate/measure";
 import type { PaletteEntry } from "./evaluate/palette";
 import { addPlane, sectionChoices } from "./evaluate/section";
@@ -82,11 +82,21 @@ import { makeToolCtx } from "./model/context";
 import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
 import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
-import { carrySelection } from "./model/carrySelection";
+import { carrySelection, sameSolid } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, EvaluatePanel, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
 import { deleteBody } from "./model/tools/bodies";
 import { onPlane, PLANES } from "./model/tools/sketch";
+import { SupersededError } from "../worker/client";
+import type { SessionPreview } from "../worker/protocol";
+import type { MeshData } from "../kernel/mesh";
+import { useFeatureSession } from "./model/useSession";
+import { convexity, faceEdgesOf, faceLoopNear, faceLoops, loopOf, passes, tangencyChain, tangentFaces } from "./model/smartSelect";
+import { promptLine, type ActiveFieldSummary } from "./props/picking";
+import { mergePatch, neededText, sessionLabel } from "./model/session";
+import { DEFAULT_EDGE_OPTIONS, type EdgeOptions } from "./props/pickFields";
+import type { PickRouter, SessionLink } from "./props/pickHost";
+import type { PreviewLook } from "./viewport/preview";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -138,6 +148,9 @@ function fileBase(name: string): string {
   return name.replace(/[^\w.-]+/g, "_") || "part";
 }
 
+/** What a tree edit answers while a feature session is open (the session's question says the rest; no notice). */
+const FINISH_FIRST = "Finish the feature that is open first: OK or Cancel it.";
+
 /** Files that open the part-level ask as a drawing rather than as a document. */
 const DRAWING_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"];
 
@@ -181,6 +194,121 @@ export function App() {
   /** A value being typed where it is shown: a dimension on the model, or a handle's. */
   const [valueBox, setValueBox] = useState<{ x: number; y: number; dim?: Dimension3D; handle?: HandleSpec } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // ------------------------------------------------------------ feature sessions (Phase P wave 2)
+  // A tool's new feature, or Edit feature, opens a session: OK and Cancel in the panel, a live preview over the part
+  // as it stands before the feature (what it adds tinted, what it removes as a red ghost), selection fields the view's
+  // clicks go into, and handles. The rules are in src/ui/model/session.ts and useSession.ts.
+  const sessionRunTool = useRef<(id: string) => void>(() => undefined);
+  /** What a new feature still waiting for its picks waits on, in the panel's words ("Pick edges to fillet"). */
+  const [sessionNeeds, setSessionNeeds] = useState<string | null>(null);
+  /** The whole part as the view showed it when the session opened: Cancel shows it again at once (not the cancelled feature until the rebuild comes). */
+  const sessionStartView = useRef<RebuildView | null>(null);
+  const sessionApi = useFeatureSession({
+    d,
+    view,
+    selectedFeature,
+    select: (id) => {
+      setSelectedFeature(id);
+      if (id) setRightTab("properties");
+    },
+    notice: (kind, text) => setNotice({ kind, text }),
+    clearSelection: () => setSelection(EMPTY_SELECTION),
+    runTool: (id) => sessionRunTool.current(id),
+    needs: sessionNeeds,
+    restored: () => {
+      const start = sessionStartView.current;
+      if (!start) return;
+      shownView.current = start;
+      setView(start);
+    },
+  });
+  const session = sessionApi.session;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  /** The part before the session's feature (what the view shows and picks on), by the worker's key for it. */
+  const [sessionBefore, setSessionBefore] = useState<{ feature: string; key: string; view: RebuildView } | null>(null);
+  const sessionKey = useRef<string | undefined>(undefined);
+  /** What the view shows and picks on in a session (null until the part before an edited feature has come). */
+  const beforeView = session && sessionBefore?.feature === session.id ? sessionBefore.view : null;
+  // A plane, axis or point has no solid to preview: the feature's own datum, from the newest rebuild, is shown (and read out in its panel) with the part before it.
+  const ownDatum = session ? view?.datums?.[session.id] : undefined;
+  const pickView = useMemo(
+    () => (beforeView && ownDatum && session ? { ...beforeView, datums: { ...beforeView.datums, [session.id]: ownDatum } } : beforeView),
+    [beforeView, ownDatum, session],
+  );
+  /** What the feature adds and removes, as last built; with its error when the newest preview failed. */
+  const [effect, setEffect] = useState<{ feature: string; added: MeshData | null; removed: MeshData | null; error?: string } | null>(null);
+  const lastGoodEffect = useRef<{ feature: string; added: MeshData | null; removed: MeshData | null } | null>(null);
+  /** The panel's active selection field, as it reports it; a chip lit up; how edge fields take picks. */
+  const [activeField, setActiveField] = useState<ActiveFieldSummary | null>(null);
+  const [peek, setPeek] = useState<PickTarget[] | null>(null);
+  const [edgeOptions, setEdgeOptions] = useState<EdgeOptions>(DEFAULT_EDGE_OPTIONS);
+  /**
+   * What was last clicked in the view in this session (on the part before the feature): the panel's selection, for
+   * what reads one (a type that needs a face, Use selected). Its own state, so a rebuild's re-mapping of the selection never touches it.
+   */
+  const [sessionClick, setSessionClick] = useState<Selection>(EMPTY_SELECTION);
+  const pickRouter = useRef<PickRouter | null>(null);
+  // A session gone (OK, Cancel, undo past its start): its preview goes with it.
+  useEffect(() => {
+    if (session) return;
+    setSessionBefore(null);
+    sessionKey.current = undefined;
+    setEffect(null);
+    lastGoodEffect.current = null;
+    setActiveField(null);
+    setPeek(null);
+    setSessionClick(EMPTY_SELECTION);
+    setSessionNeeds(null);
+  }, [session]);
+  /** A session's preview from the worker: the part before the feature (kept by its key), and what the feature does. */
+  const takePreview = (sp: SessionPreview) => {
+    if (sp.before) {
+      sessionKey.current = sp.beforeKey;
+      setSessionBefore({ feature: sp.feature, key: sp.beforeKey, view: sp.before });
+    }
+    if (sp.ok) {
+      lastGoodEffect.current = { feature: sp.feature, added: sp.added, removed: sp.removed };
+      setEffect(lastGoodEffect.current);
+    } else if (sessionRef.current?.pending) {
+      // A new feature still waiting for its picks is not in the document: nothing to preview yet, and nothing failed.
+      setEffect(null);
+    } else {
+      // A failed preview keeps the last one that built on screen, with the reason.
+      const last = lastGoodEffect.current;
+      setEffect({ feature: sp.feature, added: last?.added ?? null, removed: last?.removed ?? null, error: sp.error });
+    }
+  };
+  /** In a session the view lights up the active field's items (instead of the selection) and picks only what it takes. */
+  const sessionSelection = useMemo<Selection | null>(() => {
+    if (!session) return null;
+    const items = activeField?.items ?? [];
+    const vertices = items.flatMap((t) => (t.kind === "vertex" ? [{ edge: t.edge, at: t.at }] : []));
+    const datums = items.flatMap((t) => (t.kind === "datum" ? [t.id] : []));
+    return {
+      faces: items.flatMap((t) => (t.kind === "face" ? [t.index] : [])),
+      edges: items.flatMap((t) => (t.kind === "edge" ? [t.index] : [])),
+      ...(vertices.length ? { vertices } : {}),
+      ...(datums.length ? { datums } : {}),
+    };
+  }, [session, activeField]);
+  // Undo's tooltip: in a session, the last change within it (or, with none, the session itself: undo then cancels it).
+  const undoTip = session ? (d.transaction?.canUndoWithin ? `the last change to ${session.id}` : `${sessionLabel(session)} (cancels it)`) : d.undoLabel;
+  const sessionFilter = useMemo<SelectFilter | null>(() => (session && activeField?.takes.length ? new Set(activeField.takes) : null), [session, activeField]);
+  /** The session link the property panel's selection fields work through. */
+  const sessionLink: SessionLink = {
+    router: pickRouter,
+    report: setActiveField,
+    view: pickView,
+    peek: setPeek,
+    edge: edgeOptions,
+    setEdge: setEdgeOptions,
+    initialActive: session?.active,
+    needs: setSessionNeeds,
+    chainOf: (edge) => (pickView ? tangencyChain(pickView, edge) : [edge]),
+    passes: (edge) => (pickView ? passes(pickView, edge, edgeOptions.kinds) : true),
+  };
   const measuringRef = useRef(measuring);
   measuringRef.current = measuring;
   const editor = useRef<EditorHandle>(null);
@@ -196,7 +324,8 @@ export function App() {
 
   const { parsed, doc } = d;
   const params = useMemo(() => documentParameters(doc), [doc]);
-  const ask = useAsk({ kernel: kernel.port, doc, replaceDoc: d.replaceDoc, library });
+  // An accepted proposal waits for an open feature session to be finished (OK or Cancel, asked first): it never lands inside one.
+  const ask = useAsk({ kernel: kernel.port, doc, replaceDoc: (next) => void sessionApi.finishFirst("put the proposal in", () => d.replaceDoc(next)), library });
   /** In the sketcher: replaces the draft with an accepted ask's sketch. */
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
@@ -209,7 +338,7 @@ export function App() {
   const viewDoc = useMemo(() => {
     if (!rolled || !preview) return rolled;
     const r = rolled as RawDocument;
-    return { ...r, features: r.features.map((f) => (f.id === preview.id ? { ...f, ...preview.patch } : f)) };
+    return { ...r, features: r.features.map((f) => (f.id === preview.id ? mergePatch(f, preview.patch) : f)) };
   }, [rolled, preview]);
   /** The document's name: its view (camera, display style) is remembered under it in this browser. */
   const docName = typeof doc?.name === "string" ? doc.name : "";
@@ -223,6 +352,15 @@ export function App() {
   };
   /** The section view (Phase P): up to three planes, kept on while you work and remembered for the document. */
   const sectionCtl = useSectionView(docName, view, selection, (kind, text) => setNotice({ kind, text }));
+  // The view bar's Section menu and the Section tag open the docked Section panel: unfolded (a fresh one) and scrolled into sight.
+  const [sectionReveal, setSectionReveal] = useState(0);
+  const revealSection = useCallback(() => {
+    sectionCtl.openPanel();
+    setSectionReveal((n) => n + 1);
+  }, [sectionCtl]);
+  useEffect(() => {
+    if (sectionReveal) requestAnimationFrame(() => document.querySelector('[data-testid="section-panel"]')?.scrollIntoView({ block: "nearest" }));
+  }, [sectionReveal]);
   const section = sectionCtl.section;
   /** The frame's nodes, where the viewport draws them. */
   const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
@@ -309,14 +447,22 @@ export function App() {
   }, [kernel]);
 
   // Rebuild whenever the document text parses; the newest request wins. A handle's drag rebuilds at once.
+  // In a feature session the preview comes with it: the part before the feature, and what the feature adds and removes.
+  // (An assistant's proposal shown instead of the document has no session in it: the view shows the proposal alone meanwhile.)
+  const sessionFeature = ask.previewDoc ? null : (session?.id ?? null);
+  /** The session the last rebuild was asked for: one opening or closing rebuilds at once (its preview, or the part as it was), not after the typing pause. */
+  const rebuiltFor = useRef<string | null>(null);
   useEffect(() => {
     if (viewDoc === null) return;
     const ticket = ++latest.current;
+    const sessionMoved = rebuiltFor.current !== sessionFeature;
+    rebuiltFor.current = sessionFeature;
     const timer = setTimeout(async () => {
       setBusy(true);
       try {
-        const { view: v, ms } = await kernel.rebuild(viewDoc);
+        const { view: v, ms, session: sp } = await kernel.rebuild(viewDoc, sessionFeature ? { feature: sessionFeature, have: sessionKey.current } : undefined);
         if (ticket !== latest.current) return;
+        if (sp && sessionRef.current?.id === sp.feature) takePreview(sp);
         const before = shownView.current;
         shownView.current = v;
         builtDoc.current = viewDoc;
@@ -324,19 +470,21 @@ export function App() {
         setRebuildMs(ms);
         // Face, edge and vertex indices belong to the previous solid; a whole body picked (Bodies panel) stays picked by name;
         // planes, axes and points are ids, and stay picked while they exist.
-        setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
+        // The same solid again (a session closed, an OK that changed nothing): the selection stays as it is.
+        if (!sameSolid(before, v)) setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
         if (needsFit.current && v.mesh) {
           needsFit.current = false;
           setFitToken((t) => t + 1);
         }
       } catch (e) {
-        if (ticket === latest.current) setNotice({ kind: "error", text: `Rebuild crashed: ${(e as Error).message}` });
+        // A rebuild a newer one overtook is not an error: the newer one is on its way.
+        if (ticket === latest.current && !(e instanceof SupersededError)) setNotice({ kind: "error", text: `Rebuild crashed: ${(e as Error).message}` });
       } finally {
         if (ticket === latest.current) setBusy(false);
       }
-    }, preview ? 20 : REBUILD_DELAY_MS);
+    }, preview || sessionMoved ? 20 : REBUILD_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [viewDoc, kernel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewDoc, kernel, sessionFeature]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // In the drawing: project the rebuilt part for its views. The worker reuses its rebuild, so this is only the projection.
   const viewsKey = shownDrawing ? shownDrawing.views.map((v) => `${v.id}:${v.look}`).join(",") : "";
@@ -369,10 +517,10 @@ export function App() {
     }
   }, [d.text, d.savedText]);
 
-  // A selected feature that no longer exists (undo, delete) is deselected.
+  // A selected feature that no longer exists (undo, delete) is deselected; a new feature still waiting for its picks is the session's own.
   useEffect(() => {
-    if (selectedFeature && !doc?.features.some((f) => f.id === selectedFeature)) setSelectedFeature(null);
-  }, [doc, selectedFeature]);
+    if (selectedFeature && !doc?.features.some((f) => f.id === selectedFeature) && !(session?.pending && session.id === selectedFeature)) setSelectedFeature(null);
+  }, [doc, selectedFeature, session]);
 
   const run = useCallback(
     (cmd: Command): string | null => {
@@ -383,14 +531,61 @@ export function App() {
     [d],
   );
 
-  /** Adds a feature, selects it and shows its properties. */
+  /** The tree's edits (suppress, reorder, delete, rename): in a session they wait for it to be finished (asked). */
+  const treeDispatch = (cmd: Command): string | null => {
+    if (!sessionRef.current) return d.dispatch(cmd);
+    sessionApi.finishFirst(commandLabel(cmd).toLowerCase(), () => run(cmd));
+    return FINISH_FIRST;
+  };
+
+  /**
+   * Adds a feature in a session: selected, its properties open with OK and
+   * Cancel, previewed as it changes (a session open already is kept first,
+   * when it can be; else asked about).
+   */
   const create = (feature: Record<string, unknown>) => {
-    if (run({ type: "addFeature", feature }) === null) {
-      setSelectedFeature(String(feature.id));
-      setRightTab("properties");
-      setSelection(EMPTY_SELECTION);
-      setNotice(null);
-    }
+    const tool = lastTool.current ?? undefined;
+    sessionApi.finishFirst(
+      `add ${String(feature.id)}`,
+      () => {
+        // The part as it is now is the part before the new feature: shown and picked on until the worker sends its own.
+        // (The newest rebuild's: a session cancelled just now to make way for this one has put the part back already.)
+        const now = shownView.current ?? view;
+        if (now) setSessionBefore({ feature: String(feature.id), key: "", view: now });
+        sessionStartView.current = now;
+        if (sessionApi.openCreate(feature, tool)) setNotice(null);
+      },
+      true,
+    );
+  };
+  /** A new feature still waiting for its picks (command-first): its session opens with the field to pick into active. */
+  const draftFeature = (feature: Record<string, unknown>, opts: { active?: string; complete?: (f: Record<string, unknown>) => Record<string, unknown> } = {}) => {
+    const tool = lastTool.current ?? undefined;
+    sessionApi.finishFirst(
+      `add ${String(feature.id)}`,
+      () => {
+        const now = shownView.current ?? view;
+        if (now) setSessionBefore({ feature: String(feature.id), key: "", view: now });
+        sessionStartView.current = now;
+        if (sessionApi.openDraft(feature, { tool, active: opts.active, complete: opts.complete })) setNotice(null);
+      },
+      true,
+    );
+  };
+  /** Edit feature: a session on it (another open session is asked about first). */
+  const editFeature = (id: string) => {
+    if (sessionRef.current?.id === id) return;
+    sessionApi.finishFirst(`edit ${id}`, () => {
+      // Below the rollback bar a feature isn't built, so there is nothing to preview: its Properties change it, a step at a time, as before.
+      if (features.findIndex((f) => f.id === id) >= bar) {
+        setSelectedFeature(id);
+        setRightTab("properties");
+        setNotice({ kind: "info", text: `${id} is below the rollback bar, so it isn't built: change it in Properties, or drag the bar below it (right-click it: Roll to end) to see it as you edit it.` });
+        return;
+      }
+      sessionStartView.current = shownView.current ?? view;
+      if (sessionApi.openEdit(id)) setNotice(null);
+    });
   };
 
   /** Loads a whole document (new, example, file). Starts a fresh undo history. */
@@ -480,8 +675,9 @@ export function App() {
 
   // ------------------------------------------------------------ rollback
 
-  /** The bar to just above the feature at `index` (the feature count: the end), as one undo step. */
-  const rollTo = (index: number) => {
+  /** The bar to just above the feature at `index` (the feature count: the end), as one undo step; with a feature open, once it is finished. */
+  const rollTo = (index: number) => void sessionApi.finishFirst("move the rollback bar", () => rollToNow(index));
+  const rollToNow = (index: number) => {
     if (!doc) return;
     const before = rollbackAt(doc, index);
     if (before === (typeof doc.rollback === "string" ? doc.rollback : null)) return;
@@ -554,16 +750,23 @@ export function App() {
   // ------------------------------------------------------------ direct manipulation
 
   /** The features with a handle's drag applied, for placing the handles while it moves. */
-  const resolvedLive = useMemo(() => (preview ? resolved.map((f) => (f.id === preview.id ? { ...f, ...preview.patch } : f)) : resolved), [resolved, preview]);
+  const resolvedLive = useMemo(() => (preview ? resolved.map((f) => (f.id === preview.id ? mergePatch(f, preview.patch) : f)) : resolved), [resolved, preview]);
   /** The handles shown: the selected feature's (an extrude's depth, an offset plane's distance), else those of the extrude whose end face is selected. */
   const handles = useMemo<HandleSpec[]>(() => {
     if (!view || mode !== "model" || ask.previewDoc) return [];
+    // In a session: the open feature's handles, on the part before it (its own datums, as the newest rebuild has them).
+    if (session) {
+      const f = resolvedLive.find((g) => g.id === session.id);
+      const raw = features.find((g) => g.id === session.id);
+      if (!f || !raw || f.suppressed === true || !pickView) return [];
+      return featureHandles(f, raw, { ...pickView, datums: { ...pickView.datums, ...view.datums } }, resolvedLive);
+    }
     const at = (id: string) => features.findIndex((f) => f.id === id);
     const of = (id: string) => {
       const f = resolvedLive.find((g) => g.id === id);
       const raw = features.find((g) => g.id === id);
       if (!f || !raw || f.suppressed === true || at(id) >= bar) return [];
-      return featureHandles(f, raw, view);
+      return featureHandles(f, raw, view, resolvedLive);
     };
     if (selectedFeature) {
       const h = of(selectedFeature);
@@ -574,10 +777,23 @@ export function App() {
       if (owner) return of(owner.feature);
     }
     return [];
-  }, [view, mode, ask.previewDoc, resolvedLive, features, bar, selectedFeature, selection, measuring]);
-  const onHandle = (h: HandleSpec, phase: HandlePhase, value: number) => {
+  }, [view, mode, ask.previewDoc, resolvedLive, features, bar, selectedFeature, selection, measuring, session, pickView]);
+  /** A session's preview as the view draws it; a failure is marked at the feature (its handle, else what it acts on, else the part's middle). */
+  const previewLook = useMemo<PreviewLook | null>(() => {
+    if (!session || !effect || effect.feature !== session.id) return null;
+    let failed: PreviewLook["failed"] = null;
+    if (effect.error) {
+      const box = (pickView ?? view)?.measurements?.boundingBox;
+      const at = handles[0] ? handleTip(handles[0]) : (activeField?.items[0]?.point ?? (box ? (box.min.map((v, i) => (v + box.max[i]) / 2) as Vec3) : ([0, 0, 0] as Vec3)));
+      failed = { at, text: effect.error.replace(`${session.id}: `, "") };
+    }
+    return { added: effect.added, removed: effect.removed, failed };
+  }, [session, effect, handles, activeField, pickView, view]);
+  const onHandle = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => {
     const raw = features.find((f) => f.id === h.feature);
     if (!raw) return;
+    // A flip button: the direction turned round, at once.
+    if (h.kind === "flip") return void (phase === "end" && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }));
     if (phase === "start") {
       // The feature stays picked through the live rebuilds (the face picked first won't survive them).
       setSelectedFeature(h.feature);
@@ -585,8 +801,9 @@ export function App() {
     } else if (phase === "move") setPreview({ id: h.feature, patch: handlePatch(h, raw, value) });
     else {
       setPreview(null);
-      if (phase === "end" && value !== h.value && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }) === null) {
-        setNotice({ kind: "info", text: `${h.feature}: ${h.label.toLowerCase()} ${value} mm. Ctrl+Z puts it back.` });
+      const moved = JSON.stringify(value) !== JSON.stringify(h.kind === "point" ? h.at : h.value);
+      if (phase === "end" && moved && run({ type: "updateFeature", id: h.feature, patch: handlePatch(h, raw, value) }) === null && !sessionRef.current) {
+        setNotice({ kind: "info", text: `${h.feature}: ${h.label.toLowerCase()} ${handleText(h, value)}. Ctrl+Z puts it back.` });
       }
     }
   };
@@ -630,6 +847,8 @@ export function App() {
   };
   /** A double-click on the model shows the dimensions of the feature that made what was clicked. */
   const onDoubleClick = async (target: PickTarget | null) => {
+    // In a feature session the view shows the part before the feature, and its clicks are the session's picks: no dimensions of another feature.
+    if (sessionRef.current) return;
     if (!target) return setDimsOf(null);
     if (target.kind === "datum") return features.some((f) => f.id === target.id) ? showDimensions(target.id) : undefined;
     const v = view;
@@ -957,6 +1176,8 @@ export function App() {
 
   const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, dropped?: { drawing: Drawing; photo?: Photo; readAs: "drawing" | "photo" }) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+    // The assistant works on the part as it is: an open feature session is finished first (asked).
+    if (sessionRef.current) return void sessionApi.finishFirst("ask the assistant", () => setTimeout(() => openAskRef.current(target, x, y, draftSketch, dropped), 0));
     if (ask.previewDoc && (target.kind === "face" || target.kind === "edge" || target.kind === "part")) {
       return setNotice({ kind: "error", text: "Accept or discard the open proposal first: the viewport is showing it." });
     }
@@ -1012,7 +1233,10 @@ export function App() {
   };
   const openAskRef = useRef(openAsk);
   openAskRef.current = openAsk;
+  /** The last thing right-clicked in the view, with where (and the face beside an edge): the smart selections start from it. */
+  const rightClicked = useRef<PickTarget | null>(null);
   const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
+    rightClicked.current = target;
     // Empty space: the menu for the whole part.
     if (!target) return contextMenuRef.current({ kind: "part" }, x, y);
     // Select what was right-clicked, the usual CAD way: its menu acts on it, and it stays outlined while an ask is open.
@@ -1028,17 +1252,133 @@ export function App() {
 
   // A plain click selects one face or edge; Ctrl- or Shift-click adds one, or takes it out again.
   // While measuring, a click adds to what is measured without Ctrl, and a third starts again.
-  const onPick = useCallback(
-    (target: PickTarget | null, additive: boolean) => setSelection((sel) => (measuringRef.current ? measurePick(sel, target) : pickInto(sel, target, additive))),
-    [],
-  );
+  // In a feature session a click goes into the panel's active selection field instead (no Ctrl needed: again takes it out).
+  const onPick = useCallback((target: PickTarget | null, additive: boolean) => {
+    if (sessionRef.current && !measuringRef.current) {
+      if (!target) return;
+      setSessionClick((sel) => pickInto(sel, target, additive));
+      const r = pickRouter.current ? pickRouter.current.pick(target) : "none";
+      if (r === "none") setNotice({ kind: "info", text: `${sessionRef.current.id} has no field to pick into now: change it in the panel, then OK (Enter) or Cancel (Esc).` });
+      return;
+    }
+    setSelection((sel) => (measuringRef.current ? measurePick(sel, target) : pickInto(sel, target, additive)));
+  }, []);
+  /** A box over the view: in a session, what it took goes into the active field; else the selection. */
+  const onBox = (sel: Selection, additive: boolean) => {
+    if (sessionRef.current) {
+      const targets: PickTarget[] = [
+        ...sel.faces.map((index): PickTarget => ({ kind: "face", index, point: [0, 0, 0] })),
+        ...sel.edges.map((index): PickTarget => ({ kind: "edge", index, point: [0, 0, 0] })),
+        ...(sel.vertices ?? []).map((v): PickTarget => ({ kind: "vertex", edge: v.edge, at: v.at, point: [0, 0, 0] })),
+      ];
+      if (targets.length) pickRouter.current?.box(targets);
+      return;
+    }
+    setSelection((prev) => mergeBox(prev, sel, additive));
+  };
+
+  /** The smart selections (on an edge: its tangency chain, its loop, its face's edges; on a face: its tangent faces, a loop's edges), into the session's field or the selection. */
+  const smartSelect = (kind: "tangency" | "loop" | "faceEdges" | "tangentFaces" | "faceLoop", target: PickTarget) => {
+    const v = sessionRef.current ? pickView : view;
+    if (!v || (target.kind !== "edge" && target.kind !== "face")) return;
+    const edges = (list: number[]): PickTarget[] => list.map((index) => ({ kind: "edge", index, point: v.edges[index]?.mid ?? [0, 0, 0] }));
+    const t = target.kind === "edge" && kind !== "tangentFaces" && kind !== "faceLoop" ? target : null;
+    const f = target.kind === "face" ? target : null;
+    const picked: PickTarget[] =
+      t && kind === "tangency"
+        ? edges(tangencyChain(v, t.index))
+        : t && kind === "loop"
+          ? edges(loopOf(v, t.index, t.face))
+          : t && kind === "faceEdges"
+            ? edges(faceEdgesOf(v, t.index, t.face))
+            : f && kind === "tangentFaces"
+              ? tangentFaces(v, f.index).map((index): PickTarget => ({ kind: "face", index, point: v.faces[index]?.centroid ?? [0, 0, 0] }))
+              : f && kind === "faceLoop"
+                ? edges(faceLoopNear(v, f.index, f.point))
+                : [];
+    takeSmart(picked);
+  };
+  /** What a smart selection found: into the session's active field, or as the selection. */
+  const takeSmart = (picked: PickTarget[]) => {
+    if (!picked.length) return;
+    if (sessionRef.current) {
+      const r = pickRouter.current ? pickRouter.current.box(picked) : "none";
+      if (r === "none") setNotice({ kind: "info", text: "Make a field active in the panel first: the edges or faces go into it." });
+      return;
+    }
+    setSelection({ faces: picked.flatMap((p) => (p.kind === "face" ? [p.index] : [])), edges: picked.flatMap((p) => (p.kind === "edge" ? [p.index] : [])) });
+    setNotice({ kind: "info", text: `Selected ${picked.length} ${picked[0].kind === "face" ? "face" : "edge"}${picked.length === 1 ? "" : "s"}.` });
+  };
+  /**
+   * The smart selections as commands (the palette, or a key bound in
+   * Settings): grown from what is selected, or, in a session, from what the
+   * active field holds.
+   */
+  const smartCommand = (kind: "tangency" | "loop" | "faceEdges" | "tangentFaces") => {
+    const v = sessionRef.current ? pickView : view;
+    if (!v) return;
+    const held = sessionRef.current ? (activeField?.items ?? []) : null;
+    const edges = held ? held.flatMap((t) => (t.kind === "edge" ? [t.index] : [])) : selection.edges;
+    const faces = held ? held.flatMap((t) => (t.kind === "face" ? [t.index] : [])) : selection.faces;
+    const asEdges = (list: number[]): PickTarget[] => [...new Set(list)].map((index) => ({ kind: "edge", index, point: v.edges[index]?.mid ?? [0, 0, 0] }));
+    if (kind === "tangency" || kind === "loop") {
+      if (!edges.length) return setNotice({ kind: "info", text: kind === "tangency" ? "Select an edge first: its tangency chain is selected." : "Select an edge first: the loop it is in is selected." });
+      return takeSmart(asEdges(kind === "tangency" ? edges.flatMap((e) => tangencyChain(v, e)) : loopOf(v, edges[0])));
+    }
+    if (!faces.length) return setNotice({ kind: "info", text: kind === "faceEdges" ? "Select a face first: its edges are selected." : "Select a face first: the faces tangent to it are selected." });
+    if (kind === "faceEdges") return takeSmart(asEdges(faces.flatMap((f) => faceLoops(v, f).flat())));
+    takeSmart([...new Set(faces.flatMap((f) => tangentFaces(v, f)))].map((index): PickTarget => ({ kind: "face", index, point: v.faces[index]?.centroid ?? [0, 0, 0] })));
+  };
+  const SMART_COMMANDS = { "select.tangency": "tangency", "select.loop": "loop", "select.faceEdges": "faceEdges", "select.tangentFaces": "tangentFaces" } as const;
+  /** The smart selection entries of a right-click on an edge or a face. */
+  const smartEntries = (target: PickTarget): MenuEntry[] => {
+    if (target.kind === "edge") {
+      const v = sessionRef.current ? pickView : view;
+      const c = v ? convexity(v, target.index) : "smooth";
+      return [
+        { label: "Select tangency chain", icon: "tangentChain", hint: "This edge and the edges that run on smoothly from it", onClick: () => smartSelect("tangency", target), testId: "ctx-select-tangency" },
+        { label: "Select loop", icon: "edgeLoop", hint: "The boundary loop it is in, on the face beside it under the pointer", onClick: () => smartSelect("loop", target), testId: "ctx-select-loop" },
+        { label: "Select the face's edges", icon: "faceEdges", hint: `Every edge of the face beside it (this edge is ${c === "smooth" ? "smooth" : c === "convex" ? "an outside corner" : "an inside corner"})`, onClick: () => smartSelect("faceEdges", target), testId: "ctx-select-face-edges" },
+      ];
+    }
+    if (target.kind === "face") {
+      return [
+        { label: "Select tangent faces", icon: "tangentFaces", hint: "This face and the faces that run on smoothly from it", onClick: () => smartSelect("tangentFaces", target), testId: "ctx-select-tangent-faces" },
+        { label: "Select the loop's edges", icon: "edgeLoop", hint: "The edges of the face's loop nearest the pointer (its outline, or a hole's edge)", onClick: () => smartSelect("faceLoop", target), testId: "ctx-select-face-loop" },
+      ];
+    }
+    return [];
+  };
 
   // Escape clears the selection; Ctrl+Shift+Z redoes too (Ctrl+Y is the usual one). Every other key is a command below.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (sketch || e.defaultPrevented) return;
       const t = e.target as HTMLElement;
+      // A feature session: Ctrl+Enter is OK anywhere; out of the fields, Esc is Cancel and Tab goes to the next selection field.
+      if (sessionRef.current && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        sessionApi.ok();
+        return;
+      }
+      // The question asked before finishing the session: Esc is "Back to it" (nothing is lost).
+      if (sessionRef.current && e.key === "Escape" && sessionApi.guard) {
+        e.preventDefault();
+        sessionApi.answer("back");
+        return;
+      }
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
+      // Esc in a menu, a box or a dialog (the palette, a file's dialog) closes that, not the session.
+      if (sessionRef.current && e.key === "Escape" && !document.querySelector(".context-menu, .value-box, .session-guard, .modal-backdrop, [role='dialog']")) {
+        e.preventDefault();
+        sessionApi.cancel();
+        return;
+      }
+      if (sessionRef.current && e.key === "Tab" && !t.closest(".properties")) {
+        e.preventDefault();
+        pickRouter.current?.next(e.shiftKey);
+        return;
+      }
       if (e.key === "Escape") {
         setSelection(EMPTY_SELECTION);
         setDimsOf(null);
@@ -1061,21 +1401,27 @@ export function App() {
    */
   const toolCtx: ToolCtx = makeToolCtx(
     // Rolled back, the tools see the part as it is shown: the features above the bar (the latest sketch there, its bodies).
-    { doc, view, selection, selected, resolved: bar < features.length ? resolved.slice(0, bar) : resolved, features: bar < features.length ? features.slice(0, bar) : features, library },
+    { doc, view, selection, selected, resolved: bar < features.length ? resolved.slice(0, bar) : resolved, features: bar < features.length ? features.slice(0, bar) : features, library, memory: sessionApi.memory },
     {
       run,
       create,
-      replace: (next, select) => {
-        d.replaceDoc(next);
-        if (select) {
-          setSelectedFeature(select);
-          setRightTab("properties");
-        }
-        setNotice(null);
-      },
+      draft: draftFeature,
+      replace: (next, select) =>
+        void sessionApi.finishFirst(
+          "go on",
+          () => {
+            d.replaceDoc(next);
+            if (select) {
+              setSelectedFeature(select);
+              setRightTab("properties");
+            }
+            setNotice(null);
+          },
+          true,
+        ),
       notice: (text, kind = "error") => setNotice({ kind, text }),
       clearNotice: () => setNotice(null),
-      startSketch,
+      startSketch: (plane) => void sessionApi.finishFirst("start the sketch", () => startSketch(plane), true),
       setSelection,
       selectFeature: setSelectedFeature,
       setRightTab,
@@ -1097,6 +1443,7 @@ export function App() {
     lastTool.current = id;
     t.run(toolCtx);
   };
+  sessionRunTool.current = (id) => runToolRef.current(id);
   /** One choice in a tool's own dropdown (Sketch ▾ → Top): Enter repeats that tool. */
   const runToolItem = (t: ToolDef, item: ToolItem) => {
     lastTool.current = t.id;
@@ -1129,6 +1476,27 @@ export function App() {
    */
   const contextMenu = (target: MenuTarget, x: number, y: number) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+    /** The right-click in the view this menu is for, when it is (smart selections start from it). */
+    const clicked = rightClicked.current && (target.kind === "face" || target.kind === "edge") && rightClicked.current.kind === target.kind && "index" in rightClicked.current && rightClicked.current.index === target.index ? rightClicked.current : null;
+    // In a session, a right-click in the view is about the session: OK, Cancel, and the smart selections into its field.
+    const s = sessionRef.current;
+    if (s && (target.kind === "face" || target.kind === "edge" || target.kind === "vertex" || target.kind === "part")) {
+      const fit: MenuEntry = { label: "Zoom to fit", icon: "fit", shortcut: keyFor("view.fit", prefs) ?? undefined, onClick: () => viewCommands.current?.("view.fit"), testId: "ctx-view.fit" };
+      setMenu({
+        x,
+        y,
+        title: sessionLabel(s),
+        items: [
+          { label: "OK", icon: "check", shortcut: "Enter", onClick: () => sessionApi.ok(), testId: "ctx-session-ok" },
+          { label: "Cancel", icon: "x", shortcut: "Esc", onClick: () => sessionApi.cancel(), testId: "ctx-session-cancel" },
+          "sep",
+          ...(clicked ? smartEntries(clicked) : []),
+          ...(target.kind !== "part" ? (["sep", { label: "Select other…", icon: "select", onClick: () => viewCommands.current?.("view.selectOther", { x, y }), testId: "ctx-select-other" }] as MenuEntry[]) : []),
+          fit,
+        ],
+      });
+      return;
+    }
     // Ask AI… about it: a reference feature as the feature it is, a default plane or the origin as part of the whole part, a vertex as its edge.
     const askTarget: AskTarget =
       target.kind === "datum"
@@ -1192,10 +1560,8 @@ export function App() {
         {
           label: "Edit feature",
           icon: OP_ICON[op] ?? "sketch",
-          onClick: () => {
-            setSelectedFeature(id);
-            setRightTab("properties");
-          },
+          hint: "Open it with OK and Cancel: changes preview live, OK keeps them as one undo step",
+          onClick: () => editFeature(id),
           testId: "ctx-edit-feature",
         },
         ...(sketchId ? [{ label: "Edit sketch", icon: "sketch", onClick: () => editSketch(sketchId), testId: "ctx-edit-sketch" } as MenuEntry] : []),
@@ -1253,6 +1619,8 @@ export function App() {
         items = [
           ...toolsFor({ kind: "face", index: target.index }),
           "sep",
+          ...(clicked ? smartEntries(clicked) : []),
+          "sep",
           selectOther,
           ...(flat ? [viewCmd("view.normal", "Normal to", "front")] : []),
           viewCmd("view.fit", "Zoom to fit", "fit"),
@@ -1261,7 +1629,7 @@ export function App() {
         break;
       }
       case "edge":
-        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", selectOther, viewCmd("view.fit", "Zoom to fit", "fit")];
+        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", ...(clicked ? smartEntries(clicked) : []), "sep", selectOther, viewCmd("view.fit", "Zoom to fit", "fit")];
         break;
       case "part":
         title = "Part";
@@ -1313,7 +1681,9 @@ export function App() {
         ];
         break;
     }
-    setMenu({ x, y, title, items: [...items, "sep", ask] });
+    // In a session, what a menu does waits for the session to be finished (OK or Cancel, asked first).
+    const held = (list: MenuEntry[]): MenuEntry[] => (s ? list.map((e) => (typeof e === "object" && "onClick" in e ? { ...e, onClick: () => void sessionApi.finishFirst(e.label.toLowerCase().replace(/…$/, ""), e.onClick) } : e)) : list);
+    setMenu({ x, y, title, items: held([...items, "sep", ask]) });
   };
   /** A default plane or the origin right-clicked in the tree: picked (so its entries act on it), then its menu. */
   const datumMenu = (id: string, x: number, y: number) => {
@@ -1359,15 +1729,31 @@ export function App() {
         ? {
             delete: () => {
               if (!selectedFeature) return setNotice({ kind: "info", text: "Select a feature in the tree to delete it." });
-              const problem = d.dispatch({ type: "deleteFeature", id: selectedFeature });
-              if (problem) setNotice({ kind: "error", text: problem });
-              else setSelectedFeature(null);
+              const id = selectedFeature;
+              const open = sessionRef.current;
+              if (open && open.id === id) {
+                // The feature open now: a new one is simply dropped (as Cancel); one being edited goes back as it was, then is deleted (Ctrl+Z brings it back).
+                sessionApi.cancel();
+                if (open.kind === "create") return;
+                const problem = d.dispatch({ type: "deleteFeature", id: open.originalId });
+                if (problem) return setNotice({ kind: "error", text: problem });
+                setSelectedFeature(null);
+                return setNotice({ kind: "info", text: `Deleted ${open.originalId}. Ctrl+Z brings it back.` });
+              }
+              sessionApi.finishFirst(`delete ${id}`, () => {
+                const problem = d.dispatch({ type: "deleteFeature", id });
+                // A new feature cancelled just now is gone already: nothing more to do.
+                if (problem && !problem.startsWith("deleteFeature: no feature")) setNotice({ kind: "error", text: problem });
+                else setSelectedFeature(null);
+              });
             },
-            repeat: () => lastTool.current && runTool(lastTool.current),
+            // Enter in the view: OK in a session; else the last tool again, as a new session.
+            repeat: () => (sessionRef.current ? sessionApi.ok() : lastTool.current && runTool(lastTool.current)),
             ...Object.fromEntries(MODEL_TOOLS.map((t) => [t.id, () => runTool(t.id)])),
             palette: () => setPaletteOpen(true),
             ...Object.fromEntries(FILTER_KINDS.map((f) => [f.command, () => setFilter((x) => toggleFilter(x, f.kind))])),
             "select.clear": () => setFilter(NO_FILTER),
+            ...Object.fromEntries(Object.entries(SMART_COMMANDS).map(([id, kind]) => [id, () => smartCommand(kind)])),
             "rollback.previous": rollPrevious,
             "rollback.next": rollNext,
             "rollback.end": rollEnd,
@@ -1513,6 +1899,7 @@ export function App() {
       ...COMMANDS.filter((c) => c.group === "View" && !c.planned).map((c) => entry(c.id, "View", () => viewCommands.current?.(c.id))),
       ...FILTER_KINDS.map((f) => entry(f.command, "Selection", () => setFilter((x) => toggleFilter(x, f.kind)))),
       entry("select.clear", "Selection", () => setFilter(NO_FILTER)),
+      ...Object.entries(SMART_COMMANDS).map(([id, kind]) => entry(id, "Selection", () => smartCommand(kind))),
       entry("rollback.previous", "History", rollPrevious, { disabled: bar === 0 ? "The bar is at the top" : undefined }),
       entry("rollback.next", "History", rollNext, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
       entry("rollback.end", "History", rollEnd, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
@@ -1673,7 +2060,7 @@ export function App() {
           </div>
         )}
         {!sketch && mode === "model" && (
-          <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} />
+          <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
 
         {notice && (
@@ -1758,14 +2145,23 @@ export function App() {
               view={view}
               selectedId={selectedFeature}
               onSelect={(id) => {
-                setSelectedFeature(id);
-                if (id) setRightTab("properties");
-                // A plane, axis or point picked in the tree is picked in the view too: shown, and what Sketch or Plane works on.
-                if (id && Object.hasOwn(DATUM_OPS, String(features.find((g) => g.id === id)?.op))) setSelection({ faces: [], edges: [], datums: [id] });
+                const s = sessionRef.current;
+                if (s) {
+                  // In a session: the open feature stays; a feature its active field takes goes into it (a seed, a sketch); anything else asks first.
+                  if (!id || id === s.id) return;
+                  const picked = pickRouter.current?.feature(id, features.find((g) => g.id === id)?.op);
+                  if (picked?.taken) return;
+                }
+                sessionApi.finishFirst(`select ${id}`, () => {
+                  setSelectedFeature(id);
+                  if (id) setRightTab("properties");
+                  // A plane, axis or point picked in the tree is picked in the view too: shown, and what Sketch or Plane works on.
+                  if (id && Object.hasOwn(DATUM_OPS, String(features.find((g) => g.id === id)?.op))) setSelection({ faces: [], edges: [], datums: [id] });
+                });
               }}
-              onEditSketch={editSketch}
-              dispatch={d.dispatch}
-              onError={(text) => setNotice({ kind: "error", text })}
+              onEditSketch={(id) => void sessionApi.finishFirst(`edit ${id}`, () => editSketch(id))}
+              dispatch={treeDispatch}
+              onError={(text) => text !== FINISH_FIRST && setNotice({ kind: "error", text })}
               onAsk={sketch ? undefined : contextMenu}
               pickedDatums={selection.datums ?? []}
               datumView={datumView}
@@ -1775,7 +2171,8 @@ export function App() {
               rollback={bar}
               onRollback={sketch ? undefined : rollTo}
               onRollbackMenu={sketch ? undefined : rollbackMenu}
-              onShowDimensions={sketch ? undefined : showDimensions}
+              // A double-click opens the feature with OK and Cancel (Edit feature); its dimensions are on its right-click menu.
+              onShowDimensions={sketch ? undefined : editFeature}
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} />
             <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
@@ -1809,9 +2206,17 @@ export function App() {
               <section className={`center${sketch ? " sketch-center" : ""}`}>
                 {sketch && <div className="sketch-top" ref={setSketchTop} />}
                 <Viewport
-                  view={view}
+                  // In a feature session: the part as it stands before the feature, its active field's items lit up, and the preview over it.
+                  view={(!ask.previewDoc && pickView) || view}
                   fitToken={fitToken}
-                  selection={selection}
+                  selection={(!ask.previewDoc && sessionSelection) || selection}
+                  preview={ask.previewDoc ? null : previewLook}
+                  pickHint={session ? (t) => pickRouter.current?.hint(t) ?? null : null}
+                  pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
+                  // A reference field active: another sketch's entity clicked in the view goes into it ({ sketch, entity, at? }).
+                  sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : null}
+                  sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : null}
+                  peek={peek}
                   onPick={onPick}
                   onContext={onContext}
                   underlay={underlay}
@@ -1828,50 +2233,47 @@ export function App() {
                   section={section}
                   onSection={sectionCtl.setSection}
                   onSectionToggle={sectionCtl.toggleShown}
-                  onSectionPanel={sectionCtl.openPanel}
+                  onSectionPanel={revealSection}
                   overlay={overlay}
                   dims={dims}
                   onDimension={(dim, x, y) => setValueBox({ x, y, dim })}
                   handles={handles}
                   onHandle={onHandle}
                   // A locked handle's value is set by an expression: typing a number here would replace it.
-                  onHandleLabel={(handle, x, y) => (handle.locked ? setNotice({ kind: "info", text: handle.locked }) : setValueBox({ x, y, handle }))}
-                  filter={filter}
+                  onHandleLabel={(handle, x, y) =>
+                    handle.locked
+                      ? setNotice({ kind: "info", text: handle.locked })
+                      : handle.kind === "flip"
+                        ? onHandle(handle, "end", handle.value)
+                        : handle.kind === "point"
+                          ? (document.querySelector<HTMLInputElement>('[data-testid="prop-center-x"]')?.focus(), setNotice({ kind: "info", text: "Type the centre in Properties, or drag the point on its face." }))
+                          : setValueBox({ x, y, handle })
+                  }
+                  // The selection filter follows the active field (edges for a fillet's edges, faces for a shell's faces).
+                  filter={sessionFilter ?? filter}
                   onFilter={setFilter}
-                  onBox={(sel, additive) => setSelection((prev) => mergeBox(prev, sel, additive))}
+                  onBox={onBox}
                   onDoubleClick={(t) => void onDoubleClick(t)}
                   {...sketchViewport}
                 />
               {sketch && <div className="sketch-over" ref={setSketchOver} />}
-              {!sketch && (measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
-                <div className="eval-panels">
-                  {measuring && measured && (
-                    <MeasurePanel
-                      result={measured}
-                      busy={!!pairKey && !closestNow}
-                      error={closestNow?.error ?? null}
-                      onClose={() => setMeasuring(false)}
-                      onClear={() => setSelection(EMPTY_SELECTION)}
-                    />
-                  )}
-                  {weighing && <MassPanel mass={mass?.value ?? null} error={mass?.error ?? null} busy={mass?.view !== view} onClose={() => setWeighing(false)} />}
-                  {section?.on && sectionCtl.panelOpen && (
-                    <SectionPanel
-                      section={section}
-                      choices={sectionChoices(view?.datums ?? {})}
-                      faceOk={selection.faces.length === 1 && view?.faces[selection.faces[0]]?.type === "plane"}
-                      box={box}
-                      bodies={(view?.bodies ?? []).map((b) => b.name)}
-                      onPlane={sectionCtl.planeTo}
-                      onChange={sectionCtl.setSection}
-                      onAdd={() => sectionCtl.setSection(addPlane(section, view?.datums ?? {}, box))}
-                      onClose={sectionCtl.close}
-                    />
-                  )}
-                </div>
-              )}
-              {/* Above the view buttons, clear of the selection chip and the Evaluate panels at the top. */}
+              {/* Above the view buttons, clear of the selection chip at the top (the Evaluate panels are docked in the right column). */}
               {!sketch && <div className="view-chips">
+                {session && (
+                  <div className={`session-prompt${effect?.error ? " failing" : ""}`} data-testid="session-prompt" role="status">
+                    <strong>{sessionLabel(session)}</strong>
+                    <span data-testid="session-prompt-text">
+                      {session.pending && !activeField
+                        ? `Pick what ${session.id} needs`
+                        : activeField
+                          ? promptLine(activeField)
+                          : effect?.error
+                            ? `It fails: ${effect.error.replace(`${session.id}: `, "")}`
+                            : "Change it in the panel, or drag its handles"}
+                    </span>
+                    <span className="session-keys">Enter OK · Esc Cancel</span>
+                  </div>
+                )}
                 {rolledCount > 0 && !ask.previewDoc && (
                   <div className="rollback-banner" data-testid="rollback-banner" role="status">
                     <Icon name="rollback" />
@@ -1938,6 +2340,35 @@ export function App() {
                 />
               ) : (
               <aside className="side right">
+                {/* The Evaluate panels (Measure, Mass properties, Section), docked above the tabs: they never cover the part. */}
+                {(measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
+                  <div className="eval-panels eval-dock" data-testid="eval-dock">
+                    {measuring && measured && (
+                      <MeasurePanel
+                        result={measured}
+                        busy={!!pairKey && !closestNow}
+                        error={closestNow?.error ?? null}
+                        onClose={() => setMeasuring(false)}
+                        onClear={() => setSelection(EMPTY_SELECTION)}
+                      />
+                    )}
+                    {weighing && <MassPanel mass={mass?.value ?? null} error={mass?.error ?? null} busy={mass?.view !== view} onClose={() => setWeighing(false)} />}
+                    {section?.on && sectionCtl.panelOpen && (
+                      <SectionPanel
+                        key={sectionReveal}
+                        section={section}
+                        choices={sectionChoices(view?.datums ?? {})}
+                        faceOk={selection.faces.length === 1 && view?.faces[selection.faces[0]]?.type === "plane"}
+                        box={box}
+                        bodies={(view?.bodies ?? []).map((b) => b.name)}
+                        onPlane={sectionCtl.planeTo}
+                        onChange={sectionCtl.setSection}
+                        onAdd={() => sectionCtl.setSection(addPlane(section, view?.datums ?? {}, box))}
+                        onClose={sectionCtl.close}
+                      />
+                    )}
+                  </div>
+                )}
                 <div className="tabs" role="tablist">
                   <button role="tab" aria-selected={rightTab === "properties"} onClick={() => setRightTab("properties")} data-testid="tab-properties">
                     Properties
@@ -1987,10 +2418,32 @@ export function App() {
                         key={selectedFeature}
                         doc={doc}
                         featureId={selectedFeature}
-                        view={view}
-                        selection={selection}
+                        // In a session the editor works on the part before the feature (what the view picks on); its status is the newest rebuild's.
+                        view={session?.id === selectedFeature && pickView ? pickView : view}
+                        status={view?.features.find((s) => s.id === selectedFeature)}
+                        session={
+                          session && session.id === selectedFeature
+                            ? {
+                                kind: session.kind,
+                                label: sessionLabel(session),
+                                pending: session.pending,
+                                pendingProblem: neededText(session, sessionNeeds) ?? undefined,
+                                failing: effect?.error,
+                                ok: () => void sessionApi.ok(),
+                                cancel: sessionApi.cancel,
+                                keepOpen: sessionApi.keepOpen,
+                                setKeepOpen: sessionApi.setKeepOpen,
+                                repeatable: session.kind === "create" && !!session.tool,
+                                link: sessionLink,
+                                onDraft: sessionApi.onDraft,
+                                onRenamed: sessionApi.onRenamed,
+                              }
+                            : undefined
+                        }
+                        selection={session?.id === selectedFeature ? sessionClick : selection}
                         dispatch={d.dispatch}
-                        onEditSketch={editSketch}
+                        // A sketch opened from a feature's panel (its Edit sketch): the feature open with OK and Cancel is finished first, as from the tree.
+                        onEditSketch={(id) => void sessionApi.finishFirst(`edit ${id}`, () => editSketch(id))}
                         onSelectFeature={setSelectedFeature}
                         onAsk={contextMenu}
                         onProfileCard={setProfileCard}
@@ -2027,6 +2480,30 @@ export function App() {
           />
         )}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+        {session && sessionApi.guard && (
+          <div className="session-guard" role="alertdialog" aria-label={`${sessionLabel(session)} is open`} data-testid="session-guard">
+            <p data-testid="session-guard-text">{sessionApi.guardText}</p>
+            <div className="session-guard-actions">
+              {sessionApi.guard.failing ? (
+                <button className="primary" onClick={() => sessionApi.answer("keepError")} data-testid="guard-keep-error" autoFocus>
+                  Keep it with the error
+                </button>
+              ) : (
+                !sessionApi.guard.noKeep && (
+                  <button className="primary" onClick={() => sessionApi.answer("ok")} data-testid="guard-ok" autoFocus>
+                    <Icon name="check" size={14} /> OK
+                  </button>
+                )
+              )}
+              <button onClick={() => sessionApi.answer("cancel")} data-testid="guard-cancel">
+                <Icon name="x" size={14} /> {session.kind === "create" ? "Cancel it" : "Cancel the changes"}
+              </button>
+              <button onClick={() => sessionApi.answer("back")} data-testid="guard-back">
+                Back to {session.id}
+              </button>
+            </div>
+          </div>
+        )}
         {shortcutBar && !sketch && (
           <Popup x={shortcutBar.x} y={shortcutBar.y} bar onClose={() => setShortcutBar(null)} label="Shortcut bar" testId="shortcut-bar">
             {(close) =>

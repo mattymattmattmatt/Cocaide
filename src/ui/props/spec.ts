@@ -57,6 +57,14 @@ interface Base {
   get?(f: Raw, c: FormContext): unknown;
   /** Build the patch another way (default: the value at `key`; see `omitDefault`). */
   set?(value: unknown, f: Raw, c: FormContext): Raw;
+  /**
+   * A selection field (faces, edges, a reference, bodies, features, a sketch)
+   * is live during a session: clicks in the view go into it while it is
+   * active. False keeps one out (the editor picks for it another way).
+   */
+  pickable?: false;
+  /** What to pick, in the status line while it is active ("Pick edges to fillet"); default "Pick <label>". */
+  prompt?: string;
 }
 
 export type FieldSpec =
@@ -88,7 +96,7 @@ export type FieldSpec =
   /** Several faces, picked in the view ("Use selected faces"). */
   | (Base & { kind: "faces"; optional?: boolean })
   /** One or more edges, picked in the view ("Use selected edges"). */
-  | (Base & { kind: "edges"; optional?: boolean })
+  | (Base & { kind: "edges"; optional?: boolean; propagation?: boolean })
   /** One face, picked in the view ("Use selected face"). */
   | (Base & { kind: "face" })
   /** One earlier feature, of these ops if given. */

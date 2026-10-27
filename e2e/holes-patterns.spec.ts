@@ -70,7 +70,8 @@ test("Hole Wizard: an M6 counterbore at three sketch points, numbers from the ta
   await expect(page.getByTestId("prop-id")).toHaveValue("hole_1");
   await expect(page.getByTestId("prop-hole-position")).toHaveValue("points");
   await expect(page.getByTestId("prop-hole-points")).toHaveValue("pts");
-  await expectVolume(page, shown(PLATE - 3 * cyl(5, T)));
+  // With no face clicked to size it by, a new hole is an M5 (Phase P wave 2): its normal fit's Ø5.5.
+  await expectVolume(page, shown(PLATE - 3 * cyl(5.5, T)));
 
   // Counterbore, then M6: the table's Ø6.6 clearance (normal fit) and Ø11 x 6.5 counterbore (ISO 4762 head).
   await page.getByTestId("prop-hole-kind-counterbore").click();
@@ -147,9 +148,9 @@ test("linear pattern of two features, one instance skipped, along an edge picked
   await expectVolume(page, shown(PLATE - 6 * cyl(4, T)));
   expect(await feature(page, "pattern_1")).toMatchObject({ features: ["a", "b"], skip: [3], count: 4, spacing: 20 });
 
-  // The direction from the plate's front top edge (along +X), picked in the view: it follows the model.
+  // The direction from the plate's front top edge (along +X), picked in the view: it follows the model. The pattern is
+  // open with OK and Cancel (Phase P wave 2) and "Direction from" is its active field: the click goes straight into it.
   await viewportClick(page, [0, -D / 2, T]);
-  await page.getByTestId("prop-pattern-along-use").click();
   await expect(page.getByTestId("prop-pattern-along-ref")).toBeVisible();
   await expect(page.getByTestId("prop-pattern-direction")).toHaveCount(0);
   expect((await feature(page, "pattern_1"))!.along).toHaveProperty("edge");

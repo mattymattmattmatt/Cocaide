@@ -7,7 +7,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import type { Vec3 } from "../src/doc/types";
-import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick, waitForRebuild } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, sketchClick, viewportClick, waitForRebuild } from "./helpers";
 
 const SHOTS = process.env.SHOTS_DIR;
 const PI = Math.PI;
@@ -138,8 +138,9 @@ test("shells a box from its top face (right-click), then drafts two sides about 
   await page.getByTestId("tool-extrude").click();
   await commit(page, "prop-distance", "20");
   await expectVolume(page, shown(8000));
+  await okFeature(page);
 
-  // Right-click the top face: Shell (remove this face), 2 mm walls: 20³ - 16 x 16 x 18.
+  // Right-click the top face: Shell (remove this face), 2 mm walls (a tenth of the cube's 20): 20³ - 16 x 16 x 18.
   await viewportRightClick(page, [0, 0, 20]);
   await page.getByTestId("ctx-shell").click();
   await expectVolume(page, shown(8000 - 16 * 16 * 18));
@@ -149,16 +150,20 @@ test("shells a box from its top face (right-click), then drafts two sides about 
   await expectVolume(page, shown(8000 - 18 * 18 * 19));
   await commit(page, "prop-thickness", "2");
   await expectVolume(page, shown(8000 - 16 * 16 * 18));
+  await okFeature(page);
 
-  // Two outer sides, +X and -Y, picked; Draft finds the bottom face for the neutral plane, 3°.
+  // Two outer sides, +X and -Y, picked; Draft finds the bottom face for the neutral plane, 1° (Phase P wave 2's default).
   await viewportClick(page, [10, 0, 10]);
+  await expect(page.getByTestId("selection")).toContainText("normal +X");
   await viewportClick(page, [0, -10, 10], { shift: true });
+  await expect(page.getByTestId("selection")).toHaveText("Selected: 2 faces");
   await page.getByTestId("tool-draft").click();
+  await expect(page.getByTestId("session-title")).toHaveText("Add draft_1");
   const draft = ((await savedDocument(page)) as { features: Record<string, unknown>[] }).features.at(-1)!;
-  expect(draft).toMatchObject({ op: "draft", angle: 3, neutral: { face: { type: "planar", normal: [0, 0, -1] } } });
+  expect(draft).toMatchObject({ op: "draft", angle: 1, neutral: { face: { type: "planar", normal: [0, 0, -1] } } });
   expect(draft.faces).toHaveLength(2);
-  // The cross-section at height z is (20 - z tan 3°)², less the cavity.
-  const t = Math.tan((3 * PI) / 180);
+  // The cross-section at height z is (20 - z tan 1°)², less the cavity.
+  const t = Math.tan((1 * PI) / 180);
   const expected = 8000 - 8000 * t + (8000 * t * t) / 3 - 16 * 16 * 18;
   await expect.poll(() => volumeOf(page)).toBeLessThan(8000 - 16 * 16 * 18);
   expect(Math.abs((await volumeOf(page)) - expected)).toBeLessThan(0.01);

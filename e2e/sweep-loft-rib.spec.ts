@@ -9,7 +9,7 @@
 // along it (a thread grooved into a rod, from either end).
 
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, viewportClick, waitForRebuild } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, viewportClick, waitForRebuild } from "./helpers";
 
 const SHOTS = process.env.SHOTS_DIR;
 const PI = Math.PI;
@@ -80,6 +80,8 @@ test("sweeps a circle profile up a path sketch, then cuts a groove with Swept cu
   await expect(page.getByTestId("prop-path-kind")).toHaveValue("sketch");
   await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/sweep-rod.png` });
+  // OK keeps the sweep (Phase P wave 2: it opened with OK and Cancel), so the path clicked in the tree is a selection.
+  await okFeature(page);
 
   // The path sketch selected in the tree, Swept cut runs a round section along it (both sketches are used, so no
   // profile sketch is offered); at 4 mm it bores the rod: π·(5² - 2²)·100.

@@ -185,6 +185,11 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.exportFaceDxf", label: "Export a flat face as DXF", group: "Model tools", key: null },
   { id: "sketch.insertDxf", label: "Insert a DXF drawing into the sketch", group: "Sketch", key: null },
   { id: "sketch.exportDxf", label: "Export the sketch as DXF", group: "Sketch", key: null },
+  // Phase P wave 2: smart selection, grown from what is selected (in a feature session, from what its active field holds).
+  { id: "select.tangency", label: "Select the tangency chain of the selected edges", group: "Model tools", key: null },
+  { id: "select.loop", label: "Select the loop the selected edge is in", group: "Model tools", key: null },
+  { id: "select.faceEdges", label: "Select every edge of the selected faces", group: "Model tools", key: null },
+  { id: "select.tangentFaces", label: "Select the faces tangent to the selected faces", group: "Model tools", key: null },
 ];
 
 export interface InputPrefs {

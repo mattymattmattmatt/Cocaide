@@ -1607,6 +1607,97 @@ svg.icon { flex: none; display: block; }
 .import-turns button:hover { border-color: var(--accent); }
 .cut-list-head:has([data-testid="cut-list-plates"]) { justify-content: flex-start; gap: 6px; }
 .cut-list-head:has([data-testid="cut-list-plates"]) h2 { margin-right: auto; }
+
+/* ======================================================= Phase P W2: feature sessions (OK and Cancel, live selection fields, preview) */
+:root {
+  --session-ok: #1a7f37;
+  --session-ok-hover: #156b2e;
+  --preview-add: #1f6feb;
+  --preview-remove: #e5484d;
+  --pick-active: #1f6feb;
+  --pick-active-bg: #eef5ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --session-ok: #2ea043; --session-ok-hover: #3fb950; --preview-add: #4c8dff; --preview-remove: #ff6369; --pick-active: #4c8dff; --pick-active-bg: #13213a; }
+}
+/* the session's bar on top of the panel: what it is, Cancel and OK */
+.properties.in-session { gap: 9px; }
+.session-bar {
+  display: flex; align-items: center; gap: 8px; margin: -4px -4px 2px; padding: 6px 6px 6px 10px;
+  border-radius: 10px; background: color-mix(in srgb, var(--session-ok) 9%, var(--panel)); border: 1px solid color-mix(in srgb, var(--session-ok) 35%, var(--border));
+}
+.session-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.session-actions button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.session-actions .session-ok { background: var(--session-ok); border: 1px solid var(--session-ok); color: #fff; }
+.session-actions .session-ok:hover { background: var(--session-ok-hover); border-color: var(--session-ok-hover); }
+.session-actions .session-cancel { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+.session-actions .session-cancel:hover { border-color: var(--bad); color: var(--bad); }
+.session-actions .session-pin { width: 30px; padding: 0; justify-content: center; background: none; border: 1px solid transparent; color: var(--muted); }
+.session-actions .session-pin:hover { border-color: var(--border); color: var(--text); }
+.session-actions .session-pin.on { color: var(--session-ok); border-color: color-mix(in srgb, var(--session-ok) 45%, transparent); background: var(--panel); }
+.prop-header .prop-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--panel-2); color: var(--accent); flex: none; }
+.session-pending { padding: 6px 10px; border-radius: 8px; background: var(--pick-active-bg); border: 1px dashed var(--pick-active); font-size: 12px; }
+.session-note { font-size: 12px; margin-top: -4px; }
+/* a selection field: the active one outlined, what the view's clicks go into */
+.pick-field { position: relative; display: flex; flex-direction: column; gap: 6px; margin: 0 -6px; padding: 4px 6px 6px; border-radius: 9px; border: 1px solid transparent; cursor: pointer; }
+.pick-field:hover:not(.active) { border-color: var(--border); }
+.pick-field.active { border-color: var(--pick-active); background: color-mix(in srgb, var(--pick-active-bg) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pick-active) 14%, transparent); }
+.pick-field .pick-box { min-height: 28px; padding: 4px 6px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); gap: 4px; outline: none; }
+.pick-field.active .pick-box { border-color: var(--pick-active); }
+.pick-field .pick-chip { padding: 2px 4px 2px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); font-size: 12px; }
+.pick-field .pick-chip:hover { border-color: var(--pick-active); background: var(--pick-active-bg); }
+.pick-prompt { font-size: 12px; color: var(--pick-active); padding-left: 118px; }
+.pick-options { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-left: 118px; font-size: 12px; }
+.pick-options select { height: 26px; font-size: 12px; }
+.pick-error { margin-top: 2px; }
+/* the view: what the session asks for, the pointer's tip, a failed preview's marker */
+.session-prompt {
+  display: flex; align-items: center; gap: 10px; white-space: nowrap; max-width: 100%;
+  padding: 5px 12px; border-radius: 999px; font-size: 12px;
+  background: color-mix(in srgb, var(--panel) 95%, transparent); border: 1px solid var(--pick-active); box-shadow: 0 4px 14px rgb(0 0 0 / 0.1);
+}
+.session-prompt span { overflow: hidden; text-overflow: ellipsis; }
+.session-prompt .session-keys { color: var(--muted); flex: none; }
+.session-prompt.failing { border-color: var(--bad); }
+.face-tip .pick-hint { color: var(--pick-active); font-weight: 600; }
+.preview-failed {
+  position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; margin: -12px 0 0 -12px; max-width: 280px;
+  padding: 3px 9px 3px 7px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 3px 10px rgb(0 0 0 / 0.2);
+}
+/* asked before something that needs the session finished */
+.session-guard {
+  position: fixed; z-index: 70; right: 24px; top: 120px; width: min(380px, calc(100vw - 32px));
+  padding: 14px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); box-shadow: 0 12px 36px rgb(0 0 0 / 0.22);
+  display: flex; flex-direction: column; gap: 12px; font-size: 13px;
+}
+.session-guard p { margin: 0; line-height: 1.45; }
+.session-guard-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-guard-actions button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 12px; border-radius: 7px; cursor: pointer; }
+/* Phase P W2 (7b): the Evaluate panels docked in the right column above its tabs (they never cover the part); each folds under its title */
+.side.right > .eval-dock {
+  position: static; inset: auto; z-index: auto; width: auto; flex: none; max-height: 48%; overflow: auto;
+  padding: 10px 10px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--panel-2);
+}
+.eval-dock .eval-panel { box-shadow: none; background: var(--panel); border-radius: 8px; }
+.eval-panel header button.fold {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 2px 2px; color: var(--text); text-align: left; font: inherit;
+}
+.eval-panel header button.fold:hover { background: none; }
+.eval-panel header button.fold > .icon:first-child { color: var(--muted); transform: rotate(90deg); transition: transform 0.12s ease; }
+.eval-panel.folded header button.fold > .icon:first-child { transform: none; }
+.eval-panel.folded { padding-bottom: 8px; }
+.eval-panel.folded header { margin-bottom: 0; }
+/* Phase P W2 (7b): the view bar keeps clear of the right column and of the Section tag at every width from 1280 px:
+   with the two side columns the view is under ~700 px wide below 1420 px, so the bar keeps to its icons and the tag sits above it;
+   narrower still, the bar wraps upward rather than running under the right column */
+@media (max-width: 1420px) {
+  .view-buttons .label { display: none; }
+  .view-buttons button { padding: 0 6px; }
+  .section-tag { bottom: 52px; }
+}
+.view-buttons { max-width: calc(100% - 24px); flex-wrap: wrap; }
 /* ======================================================= Phase P wave 2A: the sketch in the 3D view */
 /* A sketch is drawn over the 3D view: its toolbar above the view, its canvas over it (transparent), its strips over that. */
 :root {
@@ -1660,3 +1751,13 @@ svg.icon { flex: none; display: block; }
 /* Over the view, the sketch's status line and plane name sit above the view bar, clear of the triad. */
 .center.sketch-center .sketch-statusbar { bottom: 50px; left: 84px; }
 .center.sketch-center .sketch-plane-label { bottom: 50px; }
+/* ======================================================= Phase P W2B review: feature sessions polish */
+/* The question asked before finishing a session: its first answer is the session's own green OK (or Keep it with the error). */
+.session-guard-actions button.primary { background: var(--session-ok); border: 1px solid var(--session-ok); color: #fff; font-weight: 600; }
+.session-guard-actions button.primary:hover { background: var(--session-ok-hover); border-color: var(--session-ok-hover); }
+.session-guard-actions button:not(.primary) { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+.session-guard-actions button:not(.primary):hover { border-color: var(--text); }
+/* A tree row keeps its words inside it: a long id ends in an ellipsis instead of running under the row's buttons (the open feature's row shows them all the time). */
+.feature-list .feature-row { overflow: hidden; }
+.feature-list .feature-row .feature-id { min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 0.2 auto; }
+.feature-list .feature-row .feature-body { flex: 0 4 auto; }

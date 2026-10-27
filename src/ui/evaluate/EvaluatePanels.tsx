@@ -1,4 +1,5 @@
-// The Evaluate panels over the 3D view: Measure (stays open while you pick),
+// The Evaluate panels, docked in the right column above Properties (never
+// over the part): Measure (stays open while you pick),
 // Mass Properties, Section view; and the small box that edits a value in
 // place (a dimension shown on the model, a handle's value). Thin: the numbers
 // come from measure.ts, the kernel and inertia.ts.
@@ -38,18 +39,55 @@ function CopyButton({ text, testId, label = "Copy" }: { text: string; testId?: s
   );
 }
 
-function Panel({ title, icon, testId, onClose, children, actions }: { title: string; icon: Parameters<typeof Icon>[0]["name"]; testId: string; onClose(): void; children: ReactNode; actions?: ReactNode }) {
+/**
+ * One Evaluate panel, docked in the right column above Properties: its title
+ * folds it away (it stays open, its numbers kept, until it is closed).
+ */
+function Panel({
+  title,
+  icon,
+  testId,
+  onClose,
+  children,
+  actions,
+  folded: given,
+  onFold,
+  foldTestId,
+}: {
+  title: string;
+  icon: Parameters<typeof Icon>[0]["name"];
+  testId: string;
+  onClose(): void;
+  children: ReactNode;
+  actions?: ReactNode;
+  /** Folded, when the panel keeps it itself (the Section panel, whose children then show what it folds to). */
+  folded?: boolean;
+  onFold?(folded: boolean): void;
+  foldTestId?: string;
+}) {
+  const [own, setOwn] = useState(false);
+  const kept = given !== undefined;
+  const folded = kept ? given : own;
   return (
-    <section className="eval-panel" data-testid={testId} aria-label={title}>
+    <section className={`eval-panel${folded ? " folded" : ""}`} data-testid={testId} aria-label={title} data-folded={folded || undefined}>
       <header>
-        <Icon name={icon} />
-        <h3>{title}</h3>
-        {actions}
+        <button
+          className="fold"
+          aria-expanded={!folded}
+          title={folded ? `Show ${title}` : `Fold ${title} to its title`}
+          onClick={() => (kept ? onFold?.(!folded) : setOwn(!folded))}
+          data-testid={foldTestId ?? `${testId}-fold`}
+        >
+          <Icon name="chevron" size={13} />
+          <Icon name={icon} />
+          <h3>{title}</h3>
+        </button>
+        {!folded && actions}
         <button className="close" aria-label={`Close ${title}`} title="Close" onClick={onClose} data-testid={`${testId}-close`}>
           <Icon name="x" size={14} />
         </button>
       </header>
-      {children}
+      {kept || !folded ? children : null}
     </section>
   );
 }
@@ -248,17 +286,10 @@ export function SectionPanel({
       icon="section"
       testId="section-panel"
       onClose={onClose}
-      actions={
-        <button
-          className="link"
-          onClick={() => onChange({ ...section, collapsed: !section.collapsed })}
-          title={section.collapsed ? "Show the section's settings" : "Fold the panel to its title: the section stays on"}
-          aria-expanded={!section.collapsed}
-          data-testid="section-collapse"
-        >
-          <Icon name={section.collapsed ? "down" : "up"} size={13} />
-        </button>
-      }
+      // Folded to its title (and the planes' names), the section stays on.
+      folded={!!section.collapsed}
+      onFold={(collapsed) => onChange({ ...section, collapsed })}
+      foldTestId="section-collapse"
     >
       {section.collapsed ? (
         <p className="muted small section-summary" data-testid="section-summary">

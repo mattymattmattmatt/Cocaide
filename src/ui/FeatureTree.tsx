@@ -73,7 +73,7 @@ interface Props {
   onRollback?(index: number): void;
   /** Right-click on the rollback bar. */
   onRollbackMenu?(x: number, y: number): void;
-  /** Double-click on a feature other than a sketch: show its dimensions on the model. */
+  /** Double-click on a feature other than a sketch (the app opens it to edit, with OK and Cancel). */
   onShowDimensions?(id: string): void;
 }
 
@@ -302,7 +302,7 @@ export function FeatureTree({
                       : f.op === "sketch"
                         ? "Double-click to edit the sketch"
                         : onShowDimensions
-                          ? "Double-click to show its dimensions on the model"
+                          ? "Double-click to edit it (OK and Cancel; its dimensions are on its right-click menu)"
                           : undefined
                   }
                 >

@@ -7,8 +7,14 @@
 
 import { Icon, type IconName } from "../../ui/icons";
 import { Field, NumberInput, Select, type NumberValue } from "../../ui/fields";
-import { FeatureForm } from "../../ui/props/FeatureForm";
+import { FeatureForm, PickWrap } from "../../ui/props/FeatureForm";
+import type { PickField } from "../../ui/props/picking";
+import { usePickHost } from "../../ui/props/pickHost";
 import type { FieldProps, FieldSpec } from "../../ui/props/spec";
+import type { FaceSelector } from "../../doc/types";
+import { selectFaces } from "../../kernel/selectors";
+import { faceSelectorFor } from "../../kernel/synthesize";
+import type { RebuildView } from "../../worker/protocol";
 import type { UiOp } from "../uiDefs";
 import { HOLE_KINDS, holeKind, screwSize, type HoleFit, type HoleKind, type HoleSpec } from "./standards";
 import {
@@ -196,7 +202,57 @@ function End({ p }: { p: FieldProps }) {
   );
 }
 
-const FACE: FieldSpec[] = [{ kind: "face", key: "face", label: "Face", testId: "prop-hole-face", hint: "The flat face it is drilled into, against its outward normal" }];
+// The face is picked with the position in a session (a click on a flat face places the hole there), so it is not a pick field of its own.
+const FACE: FieldSpec[] = [{ kind: "face", key: "face", label: "Face", testId: "prop-hole-face", hint: "The flat face it is drilled into, against its outward normal", pickable: false }];
+
+/** How near a click must be to a centre (mm) to take that hole out again. */
+const NEAR_CENTRE = 2;
+
+/**
+ * The hole's position as a live selection field in a session: a click on a
+ * flat face drills it there (on a new face: the hole moves there; on its own
+ * face: another centre, or that centre out again when the click is on it).
+ */
+function positionField(p: FieldProps, view: RebuildView | null): PickField | null {
+  const { f, resolved } = p;
+  if (placement(f) === "points") return null;
+  const face = resolved.face as FaceSelector | undefined;
+  const own = face && view ? selectFaces(view.faces, face).matches.map((m) => m.index) : [];
+  const centres = centresOf(resolved) as number[][];
+  return {
+    key: "position",
+    label: "Position",
+    order: 50,
+    kind: "point",
+    takes: ["faces"],
+    count: face ? centres.length : 0,
+    required: true,
+    // Its centres show as points to drag (handles); its whole face is not lit up.
+    items: [],
+    prompt: "Click a flat face where the hole goes",
+    toggle(t) {
+      if (t.kind !== "face" || !view) return "Click a flat face where the hole goes";
+      const clicked = view.faces[t.index];
+      if (clicked?.type !== "plane") return "That face is not flat: click a flat face for the hole";
+      if (!own.includes(t.index)) {
+        const s = faceSelectorFor(view.faces, t.index);
+        if (!s.ok) return s.error;
+        const at = clickedCentre(clicked, t.point, undefined);
+        if (typeof at === "string") return at;
+        // In a part of several bodies, the hole drills the body clicked (as Hole on a face picked first does).
+        const r = p.update({ face: s.selector, ...centresPatch([at]), ...(view.bodies.length > 1 && clicked.body ? { bodies: [clicked.body] } : {}) });
+        return typeof r === "string" ? r : null;
+      }
+      const at = clickedCentre(clicked, t.point, face?.type === "planar" ? face.normal : undefined);
+      if (typeof at === "string") return at;
+      const near = centres.findIndex((c) => Math.hypot(Number(c[0]) - at[0], Number(c[1]) - at[1]) < NEAR_CENTRE);
+      const patch = near >= 0 ? removeCentrePatch(f, near) : addCentrePatch(f, at, resolved);
+      if (!patch) return near >= 0 ? "That is the hole's only centre: click elsewhere on the face to move it, or drag its handle" : null;
+      const r = p.update(patch);
+      return typeof r === "string" ? r : null;
+    },
+  };
+}
 
 /** Where: centres on the face (typed or clicked), or a sketch's points. */
 function Position({ p }: { p: FieldProps }) {
@@ -210,8 +266,11 @@ function Position({ p }: { p: FieldProps }) {
     p.setError(null);
     p.update(patch);
   };
+  // In a session, the position is a live selection field: a click on a flat face drills the hole there.
+  const host = usePickHost();
+  const field = host ? positionField(p, host.view ?? view) : null;
   return (
-    <>
+    <PickWrap field={field} tid="prop-hole-position">
       <Field label="Position" hint={mode === "points" ? "A hole at each point of the sketch: move the points and the holes follow" : "Centres in the face's plane, from the origin projected onto it"}>
         <Select
           value={mode}
@@ -285,7 +344,7 @@ function Position({ p }: { p: FieldProps }) {
           </span>
         </>
       )}
-    </>
+    </PickWrap>
   );
 }
 

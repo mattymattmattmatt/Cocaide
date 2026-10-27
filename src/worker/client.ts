@@ -2,7 +2,15 @@
 
 import type { KernelMethod, KernelPort } from "../ask/kernel";
 import type { Closest, MassProperties, MeasureRef } from "../kernel/evaluate";
-import type { EvaluateQuery, EvaluateResult, KernelRequest, KernelResponse, RebuildView } from "./protocol";
+import type { EvaluateQuery, EvaluateResult, KernelRequest, KernelResponse, RebuildView, SessionPreview } from "./protocol";
+
+/** A rebuild the worker skipped because a newer one was waiting. */
+export class SupersededError extends Error {
+  constructor() {
+    super("a newer rebuild was asked for");
+    this.name = "SupersededError";
+  }
+}
 
 type Pending = { resolve: (r: KernelResponse) => void; reject: (e: Error) => void };
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
@@ -42,10 +50,17 @@ export class KernelClient {
     });
   }
 
-  async rebuild(doc: unknown): Promise<{ view: RebuildView; ms: number }> {
-    const r = await this.request({ type: "rebuild", doc });
+  /**
+   * Rebuilds the document. With `session`, the feature session's preview comes
+   * too (`have`: the key of the part before it the caller already holds). A
+   * rebuild overtaken by a newer one before the worker reached it rejects with
+   * SupersededError: only the newest is built.
+   */
+  async rebuild(doc: unknown, session?: { feature: string; have?: string }): Promise<{ view: RebuildView; ms: number; session?: SessionPreview }> {
+    const r = await this.request({ type: "rebuild", doc, ...(session ? { session } : {}) });
+    if (r.type === "superseded") throw new SupersededError();
     if (r.type !== "rebuilt") throw new Error("unexpected kernel reply");
-    return { view: r.view, ms: r.ms };
+    return { view: r.view, ms: r.ms, ...(r.session ? { session: r.session } : {}) };
   }
 
   /**

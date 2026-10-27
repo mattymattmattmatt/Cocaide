@@ -46,9 +46,12 @@ interface Props {
   redo(): void;
   canUndo: boolean;
   canRedo: boolean;
+  /** What undo and redo would do, for their tooltips ("Add fillet_2"; "the last change to fillet_2" in a session). */
+  undoLabel?: string;
+  redoLabel?: string;
 }
 
-export function CommandManager({ ctx, prefs, runTool, runItem, undo, redo, canUndo, canRedo }: Props) {
+export function CommandManager({ ctx, prefs, runTool, runItem, undo, redo, canUndo, canRedo, undoLabel, redoLabel }: Props) {
   const tabs = visibleTabs();
   const [tab, setTab] = useToolTab(tabs);
 
@@ -114,8 +117,8 @@ export function CommandManager({ ctx, prefs, runTool, runItem, undo, redo, canUn
   return (
     <div className="toolbar command-manager" role="toolbar" aria-label="Modelling">
       <div className="cm-pinned">
-        <ToolButton icon="undo" label="Undo" onClick={undo} disabled={!canUndo} title={`Undo${keyHint("undo", prefs)}`} testId="undo" />
-        <ToolButton icon="redo" label="Redo" onClick={redo} disabled={!canRedo} title={`Redo${keyHint("redo", prefs)}`} testId="redo" />
+        <ToolButton icon="undo" label="Undo" onClick={undo} disabled={!canUndo} title={`Undo${undoLabel && canUndo ? `: ${undoLabel}` : ""}${keyHint("undo", prefs)}`} testId="undo" />
+        <ToolButton icon="redo" label="Redo" onClick={redo} disabled={!canRedo} title={`Redo${redoLabel && canRedo ? `: ${redoLabel}` : ""}${keyHint("redo", prefs)}`} testId="redo" />
         <span className="sep" />
         {groups(toolbarGroups("pinned"))}
       </div>

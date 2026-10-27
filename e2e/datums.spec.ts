@@ -4,7 +4,7 @@
 // view, shown the usual CAD way.
 
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
+import { commit, okFeature, expectVolume, openApp, savedDocument, sketchClick, viewportClick } from "./helpers";
 
 type Hook = { __cocaideViewport: { datums(): string[]; datumPoint(id: string): [number, number] | null } };
 const drawn = (page: Page) => page.evaluate(() => (window as unknown as Hook).__cocaideViewport.datums());
@@ -44,6 +44,8 @@ test("an offset plane from Top, a sketch on it, extruded: the body sits at the o
   await commit(page, "prop-distance", "10");
   // The plate is 0..6; the cylinder 20..30 above it.
   await expect(boundingBox(page)).toHaveText("80 × 40 × 30 mm");
+  // OK keeps the extrude (Phase P wave 2: it opened with OK and Cancel) before the plane is picked in the tree.
+  await okFeature(page);
   // Move the plane and the cylinder goes with it.
   await page.getByTestId("feature-plane_1").locator(".feature-row").click();
   await commit(page, "prop-distance", "40");
@@ -104,6 +106,7 @@ test("a sketch on a face of the bracket follows the face when the extrude gets d
   await page.getByTestId("tool-extrude").click();
   await commit(page, "prop-distance", "10");
   await expect(boundingBox(page)).toHaveText("80 × 40 × 16 mm");
+  await okFeature(page);
   // Deeper plate: the boss stands on its new top face.
   await page.getByTestId("feature-ext_1").locator(".feature-row").click();
   await commit(page, "prop-distance", "10");
@@ -125,6 +128,8 @@ test("an axis from the hole's wall; a point at its rim's centre", async ({ page 
   await expect(page.getByTestId("feature-axis_1")).toBeVisible();
   await expect(page.getByTestId("prop-datum-where")).toHaveText(/^through 30, 0, -?[\d.]+ · along [+-]Z$/);
   expect(await drawn(page)).toContain("axis_1");
+  // OK keeps the axis (it opened with OK and Cancel): the next click is a selection again.
+  await okFeature(page);
   // The rim's near side.
   await viewportClick(page, [30 + 2.33, -2.33, 6]);
   await expect(page.getByTestId("selection")).toContainText("circular edge");

@@ -2,8 +2,9 @@
 // sketch turned about an axis found for it. An axis or a straight edge
 // selected in the view wins; else a centreline of the sketch that has the
 // whole profile on one side of it; else the one line drawn apart from the
-// profile; else it asks for one. The new feature's properties open, where
-// the axis, angle and the rest can be changed.
+// profile; else its session opens with the axis waiting to be picked in the
+// view. The new feature's properties open, where the axis, angle and the
+// rest can be changed.
 
 import type { SketchEntity } from "../../../doc/types";
 import { axisCrossing, openChain, regionSegs, type Line2 } from "../../../features/revolve/band";
@@ -97,9 +98,36 @@ export function openProfile(entities: readonly SketchEntity[], axis: Raw): boole
   }
 }
 
+/**
+ * A new revolve whose sketch has no line to turn about: its session opens
+ * with the axis waiting to be picked (an axis, a straight edge, a round face,
+ * another sketch's line), or null when there is no sketch to turn.
+ */
+export function revolveDraft(ctx: ToolCtx, cut: boolean): Raw | null {
+  const sk = ctx.sketchFor();
+  if (!ctx.doc || !sk) return null;
+  const bodies = ctx.bodies();
+  if (cut && bodies.length === 0) return null;
+  return { id: ctx.nextId(cut ? "revolve_cut" : "revolve"), op: "revolve", sketch: sk.id, ...(cut ? { operation: "remove" } : bodies.length > 1 ? { newBody: nextBodyName(bodies) } : {}) };
+}
+
+/** Command-first, the axis picked settles the rest: an open profile then turns as a thin wall, as Revolve with the axis known has it. */
+export function revolveComplete(ctx: ToolCtx): (f: Raw) => Raw {
+  return (f) => {
+    const sk = ctx.resolved.find((g) => g.id === f.sketch);
+    if (!sk || !f.axis || typeof f.axis !== "object" || f.thin) return f;
+    return openProfile((Array.isArray(sk.entities) ? sk.entities : []) as SketchEntity[], f.axis as Raw) ? { ...f, thin: { thickness: 2 } } : f;
+  };
+}
+
 const run = (cut: boolean) => (ctx: ToolCtx) => {
   const f = revolveFeature(ctx, cut);
-  if (typeof f === "string") return ctx.notice(f);
+  if (typeof f === "string") {
+    // No line in the sketch to turn about: open it, the axis to be picked in the view.
+    const draft = ctx.draft ? revolveDraft(ctx, cut) : null;
+    if (draft) return ctx.draft!(draft, { active: "axis", complete: revolveComplete(ctx) });
+    return ctx.notice(f);
+  }
   ctx.create(f);
   if (f.thin) ctx.notice("The profile is open, so it turns as a thin wall (2 mm): change the wall in Properties.", "info");
 };

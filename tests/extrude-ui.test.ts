@@ -25,7 +25,7 @@ import {
   startPatch,
   thinPatch,
 } from "../src/ui/props/extrude";
-import { addSetPatch, chamferType, chamferTypePatch, describeSet, removeSetPatch, setRadiusPatch, variablePatch } from "../src/ui/props/edgeTreat";
+import { addSetPatch, chamferType, chamferTypePatch, describeSet, newSetPatch, removeSetPatch, setEdgesPatch, setRadiusPatch, variablePatch } from "../src/ui/props/edgeTreat";
 import { commitPatch, fieldTestId, visibleFields, type FormContext } from "../src/ui/props/spec";
 import { UI_OPS } from "../src/features/uiDefs";
 import type { RebuildView } from "../src/worker/protocol";
@@ -183,10 +183,10 @@ describe("direction 2, start, thin, draft", () => {
   it("the draft, thin and direction 2 tick boxes send whole objects; the thin side's default is left out", () => {
     const f: Raw = { id: "e", op: "extrude", sketch: "sketch_1", distance: 6 };
     const field = (tid: string) => EXTRUDE_FIELDS.find((s) => fieldTestId(s) === tid)!;
-    expect(commitPatch(field("prop-draft"), true, f, form(f))).toEqual({ draft: { angle: 5 } });
+    expect(commitPatch(field("prop-draft"), true, f, form(f))).toEqual({ draft: { angle: 2 } }); // Phase P: a 2° draft to start with
     expect(commitPatch(field("prop-draft-angle"), 7, { ...f, draft: { angle: 5, outward: true } }, form(f))).toEqual({ draft: { angle: 7, outward: true } });
     expect(commitPatch(field("prop-thin-side"), "outside", { ...f, thin: { thickness: 2, side: "mid" } }, form(f))).toEqual({ thin: { thickness: 2 } });
-    expect(commitPatch(field("prop-direction2-draft"), true, { ...f, direction2: { extent: "blind", distance: 2 } }, form(f))).toEqual({ direction2: { extent: "blind", distance: 2, draft: { angle: 5 } } });
+    expect(commitPatch(field("prop-direction2-draft"), true, { ...f, direction2: { extent: "blind", distance: 2 } }, form(f))).toEqual({ direction2: { extent: "blind", distance: 2, draft: { angle: 2 } } });
     expect(commitPatch(field("prop-direction-mode"), "reversed", f, form(f))).toEqual({ direction: [0, 0, -1] });
   });
 });
@@ -277,6 +277,21 @@ describe("fillet and chamfer editors", () => {
     const two = { ...f, sets: [{ edges: f.edges, radius: 2 }, { faces: [{ type: "planar", normal: [0, 0, 1], pick: "largest" }], radius: 1 }] };
     expect(setRadiusPatch(two, 1, "radius", 4)).toEqual({ sets: [two.sets[0], { ...two.sets[1], radius: 4 }] });
     expect(setRadiusPatch(two, 0, "radius", "=r")).toEqual({ sets: [{ ...two.sets[0], radius: "=r" }, two.sets[1]] });
+  });
+
+  it("in a session, a radius set's edges are picked: a new set at the fillet's radius, its edges changed, and gone with its last edge", () => {
+    const f: Raw = { id: "f", op: "fillet", edges: { type: "edge", direction: [1, 0, 0], pick: "all" }, radius: 2 };
+    const upright = { type: "edge", kind: "line", direction: [0, 0, 1], pick: "all" };
+    const made = newSetPatch(f, f, upright);
+    expect(made).toEqual({ sets: [{ edges: upright, radius: 2 }] });
+    const one = { ...f, ...made };
+    const other = { type: "edge", kind: "line", direction: [0, 1, 0], pick: "all" };
+    expect(setEdgesPatch(one, 0, other)).toEqual({ sets: [{ edges: other, radius: 2 }] });
+    // The last edge out: a set of edges alone goes; one with faces too keeps them.
+    expect(setEdgesPatch(one, 0, null)).toEqual({ sets: null });
+    const faces = [{ type: "planar", normal: [0, 0, 1], pick: "largest" }];
+    expect(setEdgesPatch({ ...f, sets: [{ edges: upright, faces, radius: 3 }] }, 0, null)).toEqual({ sets: [{ faces, radius: 3 }] });
+    expect(setEdgesPatch(one, 4, other)).toEqual({});
   });
 
   it("the chamfer type sets its fields: equal, distance–distance, angle–distance", () => {

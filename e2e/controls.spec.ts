@@ -158,10 +158,14 @@ test("S brings the tools to the pointer, Enter repeats the last, Delete deletes 
   await expect(page.getByTestId("bar-tool.combine")).toBeDisabled();
   await page.getByTestId("bar-tool.fillet").click();
   await expect(page.getByTestId("shortcut-bar")).toHaveCount(0);
-  await expect(page.getByTestId("notice")).toContainText("edge");
-  await page.getByTestId("notice").getByRole("button", { name: "Dismiss" }).click();
+  // Nothing selected: the fillet opens waiting for its edges (Phase P wave 2), and Esc cancels it; Enter repeats it.
+  await expect(page.getByTestId("session-prompt-text")).toHaveText("Pick edges to fillet");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId("notice")).toContainText("edge");
+  await expect(page.getByTestId("session-prompt-text")).toHaveText("Pick edges to fillet");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("session-bar")).toHaveCount(0);
   // Delete: the selected feature goes; Ctrl+Z brings it back.
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
   await page.keyboard.press("Delete");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -25,7 +25,8 @@ import {
 } from "./evaluate/display";
 import type { Dimension3D } from "./evaluate/dimensions3d";
 import { allows, boxOf, boxSelect, FILTER_KINDS, NO_FILTER, type Projected, type SelectFilter } from "./evaluate/filter";
-import { alongAxis, dragValue, type HandleSpec } from "./evaluate/handles";
+import { beginDrag, moveDrag, type HandleDrag, type HandleSpec, type HandleValue } from "./evaluate/handles";
+import { loadSpin } from "./sketcher/modify";
 import { activePlanes, cutsBody, offsetArrow, sectionPlane, setPlane, type SectionView } from "./evaluate/section";
 import { Icon, type IconName } from "./icons";
 import { inputPrefs, keyHint, pointer, useCommands, useInputPrefs } from "./input";
@@ -34,6 +35,10 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
+import { PreviewLayer, type PreviewLook } from "./viewport/preview";
+import { sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
+import { entityPolylines } from "../geom/profile";
+import { sketchRefText } from "../features/datum";
 import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
 import { SectionCaps, type CapSource } from "./viewport/sectionCaps";
 import { clipMaterial, clipPlanesOf, SectionPlanes } from "./viewport/sectionLayer";
@@ -44,6 +49,7 @@ import { reducedMotion, setViewPrefs, useViewPrefs, viewPrefs } from "./viewport
 import { triadView, upFor, VIEW_LABEL, VIEW_ORDER, VIEWS, type ViewName } from "./viewport/views";
 // Phase P wave 2A: a sketch open in the view.
 import type { Frame as PlaneFrame } from "../geom/frame";
+import { to3D } from "../geom/frame";
 import type { CameraFeed } from "./sketcher/planeView";
 import { boxCorners, facingFit, SketchPlaneLayer } from "./viewport/sketchStage";
 
@@ -157,7 +163,7 @@ interface Props {
   onDimension?(d: Dimension3D, clientX: number, clientY: number): void;
   /** Drag handles (direct manipulation), and what dragging one does: start, the value as it moves, end or cancel. */
   handles?: HandleSpec[];
-  onHandle?(h: HandleSpec, phase: HandlePhase, value: number): void;
+  onHandle?(h: HandleSpec, phase: HandlePhase, value: HandleValue): void;
   /** A click on a handle's value: type one there. */
   onHandleLabel?(h: HandleSpec, clientX: number, clientY: number): void;
   /** The selection filter: only these kinds are picked (empty: anything). */
@@ -167,6 +173,18 @@ interface Props {
   onBox?(sel: Selection, additive: boolean): void;
   /** A double-click on the part (or empty space: null). */
   onDoubleClick?(target: PickTarget | null): void;
+  /** A feature session's preview over the part: what the feature adds and removes, and where it failed (src/ui/viewport/preview.ts). */
+  preview?: PreviewLook | null;
+  /** What a click on the thing under the pointer would do (a session's field: "Click to add it to Edges"), for the pointer's tip. */
+  pickHint?: ((target: PickTarget) => string | null) | null;
+  /** Things to light up as if hovered (a session field's chip under the pointer). */
+  peek?: PickTarget[] | null;
+  /** What a click on the edge under the pointer would take with it (a session's tangency chain): lit up with it as the preselection. */
+  pickReach?: ((target: PickTarget) => PickTarget[] | null) | null;
+  /** A session's reference field takes other sketches' entities: a click on one drawn in the view goes to it first (true: taken). */
+  sketchPick?: ((hit: SketchEntityHit) => boolean) | null;
+  /** What a click on such an entity would do, for the pointer's tip ("Click to use it for Axis"). */
+  sketchHint?: ((hit: SketchEntityHit) => string | null) | null;
   /** Phase P wave 2A: a sketch open in the view (see SketchStage). */
   sketch?: SketchStage | null;
 }
@@ -258,7 +276,9 @@ interface ViewportApi {
   /** Every face and edge under these client pixels, nearest first (Select Other). */
   under(clientX: number, clientY: number): UnderPointer[];
   /** Lights one up while the Select Other list is hovered (null: none). */
-  preview(t: PickTarget | null): void;
+  preview(t: PickTarget | PickTarget[] | null): void;
+  /** A feature session's preview: what the feature adds and removes (null: none). */
+  setPreview(look: PreviewLook | null): void;
   /** Clears the pinned rotation centre. */
   unpin(): void;
   setCubeVisible(v: boolean): void;
@@ -304,6 +324,12 @@ export function Viewport({
   onFilter,
   onBox,
   onDoubleClick,
+  preview = null,
+  pickHint = null,
+  peek: peekList = null,
+  pickReach = null,
+  sketchPick = null,
+  sketchHint = null,
   sketch = null,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -318,6 +344,8 @@ export function Viewport({
   const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch });
   live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch };
   const [hover, setHover] = useState<Hover | null>(null);
+  /** Another sketch's entity under the pointer, when a session's reference field takes one (its tip, in the view's pixels). */
+  const [sketchHover, setSketchHover] = useState<{ x: number; y: number; hit: SketchEntityHit } | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
   /** Zoom to area is waiting for its box. */
@@ -380,7 +408,10 @@ export function Viewport({
       onDimension: (d, x, y) => live.current.onDimension?.(d, x, y),
       onHandleLabel: (h, x, y) => (h.kind === "section" ? sectionLabel(h) : live.current.onHandleLabel?.(h, x, y)),
     });
-    scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group);
+    // A feature session's preview: what it adds in the accent colour, what it removes as a red ghost.
+    const previewLayer = new PreviewLayer(el, { add: cssColor(el, "--preview-add", "#1f6feb"), remove: cssColor(el, "--preview-remove", "#e5484d") });
+    let previewLook: PreviewLook | null = null;
+    scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group, previewLayer.group);
     // Phase P wave 2A: the plane of an open sketch, drawn faintly.
     const sketchPlane = new SketchPlaneLayer({ fill: cssColor(el, "--sketch-plane", "#3a8dde"), border: cssColor(el, "--sketch-plane-border", "#2f74c0") });
     scene.add(sketchPlane.group);
@@ -406,8 +437,10 @@ export function Viewport({
     let edgeSegments: Float32Array = new Float32Array(0);
     let selection: Selection = EMPTY_SELECTION;
     let hovered: PickTarget | null = null;
-    /** The row of Select Other's list under the pointer (shown through what is in front of it). */
-    let peek: PickTarget | null = null;
+    /** Another sketch's entity under the pointer (a session's reference field takes it): lit up as the pick a click makes. */
+    let sketchHot: SketchEntityHit | null = null;
+    /** What is lit up through whatever hides it: Select Other's row under the pointer, a session field's chip under the pointer. */
+    let peek: PickTarget[] = [];
     /** One end of an edge per vertex of the part (the lowest edge that ends there stands for it), for picking vertices. */
     let vertices: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
@@ -531,6 +564,7 @@ export function Viewport({
       renderer.render(scene, eye());
       placeLabels();
       placeDatumLabels();
+      previewLayer.place(eye(), el.clientWidth, el.clientHeight);
       cube.update(camera);
       triad.update(camera);
       settleSoon();
@@ -1020,6 +1054,34 @@ export function Viewport({
       return dots;
     };
 
+    /** The edges a click on this one would take (its chain, in a session with propagation on), it first. */
+    const reachOf = (t: PickTarget & { index: number }): number[] => {
+      const r = pickReachRef.current?.(t);
+      return r?.length ? r.flatMap((x) => (x.kind === "edge" ? [x.index] : [])) : [t.index];
+    };
+    /** The sketch entity under the pointer, lit up: its curve as a hovered edge is, and the point of it a click takes. */
+    const sketchMark = (): THREE.Object3D | null => {
+      const hot = sketchHot;
+      if (!hot) return null;
+      const sk = shownView?.sketches.find((x) => x.id === hot.sketch);
+      const e = sk?.entities.find((x) => x.id === hot.entity);
+      if (!sk || !e) return null;
+      const group = new THREE.Group();
+      const pts: number[] = [];
+      for (const line of entityPolylines(e)) {
+        for (let i = 0; i + 1 < line.length; i++) pts.push(...to3D(sk.frame, line[i]), ...to3D(sk.frame, line[i + 1]));
+      }
+      if (pts.length && !hot.at) {
+        const g = new LineSegmentsGeometry();
+        g.setPositions(pts);
+        const l = new LineSegments2(g, hoverEdgeWhole);
+        l.renderOrder = 5;
+        group.add(l);
+      }
+      const dot = hot.at || e.type === "point" ? vertexDots([hot.point], HOVER_COLOR, 11) : null;
+      if (dot) group.add(dot);
+      return group.children.length ? group : null;
+    };
     const redrawMarks = () => {
       disposeGroup(marks);
       const edges = shownView?.edges ?? [];
@@ -1029,13 +1091,15 @@ export function Viewport({
         hovered?.kind === "face" && !selection.faces.includes(hovered.index)
           ? faceMesh([hovered.index], HOVER_COLOR, 0.3)
           : hovered?.kind === "edge" && !selection.edges.includes(hovered.index)
-            ? edgeMarks([hovered.index], hoverEdgeMat, hoverEdgeWhole)
+            ? edgeMarks(reachOf(hovered), hoverEdgeMat, hoverEdgeWhole)
             : hovered?.kind === "vertex"
               ? vertexDots([hovered.point], HOVER_COLOR, 10)
               : null;
       // Select Other's row under the pointer: lit up through whatever hides it.
-      const look = peek?.kind === "face" ? faceMesh([peek.index], HOVER_COLOR, 0.42, true) : peek?.kind === "edge" ? edgeMarks([peek.index], hoverEdgeMat, hoverEdgeWhole) : null;
-      for (const o of [...sel, hov, look]) if (o) marks.add(o);
+      const peekFaces = peek.flatMap((t) => (t.kind === "face" ? [t.index] : []));
+      const peekEdges = peek.flatMap((t) => (t.kind === "edge" ? [t.index] : []));
+      const look = [peekFaces.length ? faceMesh(peekFaces, HOVER_COLOR, 0.42, true) : null, peekEdges.length ? edgeMarks(peekEdges, hoverEdgeMat, hoverEdgeWhole) : null];
+      for (const o of [...sel, hov, ...look, sketchMark()]) if (o) marks.add(o);
       datums.mark(selection.datums ?? [], hovered?.kind === "datum" ? hovered.id : null);
       relabelDatums();
       render();
@@ -1153,7 +1217,10 @@ export function Viewport({
       const cutKey = JSON.stringify(sectionState?.bodies ?? null);
       if (cutKey !== outlineCutKey) buildOutlines();
       clipModel();
-      if (!moved) redrawMarks();
+      if (!moved) {
+        redrawMarks();
+        previewLayer.set(previewLook, clipPlanes);
+      }
       caps.set(capSources(), clipPlanes, visibleBox && !visibleBox.isEmpty() ? visibleBox.getCenter(new THREE.Vector3()) : center, radius * 2 + 1);
       sectionPlanes.set(sectionState, boxNow());
       sectionHandles = makeSectionHandles();
@@ -1409,6 +1476,11 @@ export function Viewport({
       const rect = renderer.domElement.getBoundingClientRect();
       return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
     };
+    /** The same, as a pair (what the sketch entity picking reads). */
+    const projectPx = (p: Vec3): [number, number] | null => {
+      const q = project(p);
+      return q ? [q.x, q.y] : null;
+    };
     /** The face a ray hit's triangle belongs to (−1: none). */
     const faceAt = (h: THREE.Intersection) => {
       if (h.faceIndex === undefined || h.faceIndex === null) return -1;
@@ -1431,7 +1503,9 @@ export function Viewport({
       const frontEdge = edgeHit && (xray || !faceHit || edgeHit.distance <= faceHit.distance + slack);
       let hit: { target: PickTarget; distance: number } | null = null;
       if (frontEdge && edgeHit.index !== undefined) {
-        hit = { target: { kind: "edge", index: segmentEdge[Math.floor(edgeHit.index / 2)], point: edgeHit.point.toArray() as Vec3 }, distance: edgeHit.distance };
+        // The face under the pointer beside the edge goes with it (which loop "Select loop" means).
+        const beside = faceHit ? faceAt(faceHit) : -1;
+        hit = { target: { kind: "edge", index: segmentEdge[Math.floor(edgeHit.index / 2)], point: edgeHit.point.toArray() as Vec3, ...(beside >= 0 ? { face: beside } : {}) }, distance: edgeHit.distance };
       } else if (faceHit && may("face")) {
         const index = faceAt(faceHit);
         if (index >= 0) hit = { target: { kind: "face", index, point: faceHit.point.toArray() as Vec3 }, distance: faceHit.distance };
@@ -1535,7 +1609,9 @@ export function Viewport({
     const targetKey = (t: PickTarget | null) => (!t ? "" : t.kind === "datum" ? `d:${t.id}` : t.kind === "vertex" ? `v:${t.edge}:${t.at}` : `${t.kind}:${t.index}`);
     const sameTarget = (a: PickTarget | null, b: PickTarget | null) => targetKey(a) === targetKey(b);
     // A handle being dragged: which one, how far along its arrow the drag started, and the value now.
-    let drag: { h: HandleSpec; t0: number; value: number; id: number } | null = null;
+    let drag: { g: HandleDrag; h: HandleSpec; value: HandleValue; id: number } | null = null;
+    /** A flip button pressed: it turns the direction round when it is let go there (a click), not on a press that moves on. */
+    let flipPress: { h: HandleSpec; x: number; y: number; id: number } | null = null;
     // Zoom to area: the next left-drag draws the area to zoom to (Esc or the button again cancels).
     let areaOn = false;
     const setArea = (on: boolean) => {
@@ -1552,17 +1628,27 @@ export function Viewport({
       const hot = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
       if (evalLayer.setHot(hot?.id ?? null)) render();
       renderer.domElement.style.cursor = hot ? (hot.locked ? "not-allowed" : "grab") : "";
-      const target = hot ? null : pickAt(e.clientX, e.clientY);
+      const rect = renderer.domElement.getBoundingClientRect();
+      // A session's reference field takes other sketches' entities: one under the pointer wins, as a click on it does.
+      const sketchHit = !hot && sketchPickRef.current && overlays.visible && shownView?.sketches?.length ? sketchEntityAt(shownView.sketches, projectPx, e.clientX, e.clientY) : null;
+      const sketchKey = (h: SketchEntityHit | null) => (h ? `${h.sketch}:${h.entity}:${h.at ?? ""}` : "");
+      if (sketchKey(sketchHit) !== sketchKey(sketchHot)) {
+        sketchHot = sketchHit;
+        redrawMarks();
+      }
+      setSketchHover(sketchHit ? { x: e.clientX - rect.left, y: e.clientY - rect.top, hit: sketchHit } : null);
+      const target = hot || sketchHit ? null : pickAt(e.clientX, e.clientY);
       if (!sameTarget(target, hovered)) {
         hovered = target;
         redrawMarks();
       }
-      const rect = renderer.domElement.getBoundingClientRect();
       setHover(target ? { x: e.clientX - rect.left, y: e.clientY - rect.top, target } : null);
     };
     const onLeave = () => {
       hovered = null;
+      sketchHot = null;
       setHover(null);
+      setSketchHover(null);
       // A handle lit up under the pointer goes back to its own colour when the pointer leaves.
       evalLayer.setHot(null);
       redrawMarks();
@@ -1630,6 +1716,11 @@ export function Viewport({
         return;
       }
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+      // A session's reference field: another sketch's line, arc, circle or point drawn in the view, before the model under it.
+      if (e.button === 0 && sketchPickRef.current && overlays.visible && shownView?.sketches?.length) {
+        const hit = sketchEntityAt(shownView.sketches, projectPx, e.clientX, e.clientY);
+        if (hit && sketchPickRef.current(hit)) return;
+      }
       if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
       else if (e.altKey && allows(pickFilter, "face")) {
         // Alt+click: the next face behind the one picked (not while the filter leaves faces out).
@@ -1672,13 +1763,13 @@ export function Viewport({
       }, 50);
     };
     /** A section arrow dragged: its plane's offset, live; cancelled, back to where it was. */
-    const dragSection = (h: HandleSpec, phase: HandlePhase, value: number) => {
+    const dragSection = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => {
       const v = live.current.section;
       const i = h.plane ?? 0;
-      if (!v?.planes[i]) return;
+      if (!v?.planes[i] || typeof value !== "number") return;
       live.current.onSection?.(setPlane(v, i, { ...v.planes[i], offset: phase === "cancel" ? h.value : value }));
     };
-    const handleEvent = (h: HandleSpec, phase: HandlePhase, value: number) => (h.kind === "section" ? dragSection(h, phase, value) : live.current.onHandle?.(h, phase, value));
+    const handleEvent = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => (h.kind === "section" ? dragSection(h, phase, value) : live.current.onHandle?.(h, phase, value));
 
     // Handles are grabbed before anything else sees the press (the controls would turn the view, a click would pick).
     const handleDown = (e: PointerEvent) => {
@@ -1691,30 +1782,34 @@ export function Viewport({
         live.current.onMessage?.(`${h.label}: ${h.locked}.`);
         return;
       }
+      // A flip button: a click turns the direction round (no drag).
+      if (h.kind === "flip") {
+        flipPress = { h, x: e.clientX, y: e.clientY, id: e.pointerId };
+        return;
+      }
       aim(e.clientX, e.clientY);
-      const t0 = alongAxis(h.origin, h.dir, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3);
-      if (t0 === null) {
-        live.current.onMessage?.("That arrow points straight at you: turn the view a little to drag it.");
+      const g = beginDrag(h, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3);
+      if (!g) {
+        live.current.onMessage?.(h.kind === "angle" || h.kind === "point" ? "You are looking along that handle's plane: turn the view a little to drag it." : "That arrow points straight at you: turn the view a little to drag it.");
         return;
       }
       finishGlide();
-      drag = { h, t0, value: h.value, id: e.pointerId };
+      drag = { g, h, value: g.start, id: e.pointerId };
       el.setPointerCapture?.(e.pointerId);
       renderer.domElement.style.cursor = "grabbing";
       hovered = null;
       setHover(null);
-      evalLayer.setHandles(allHandles(), { h, value: h.value });
-      handleEvent(h, "start", h.value);
+      evalLayer.setHandles(allHandles(), { h, value: g.start });
+      handleEvent(h, "start", g.start);
       render();
     };
     const handleMove = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.id) return;
       e.stopPropagation();
       aim(e.clientX, e.clientY);
-      const t = alongAxis(drag.h.origin, drag.h.dir, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3);
-      if (t === null) return;
-      const value = dragValue(drag.h, drag.h.value, t - drag.t0, e.shiftKey);
-      if (value === drag.value) return;
+      // Snapped to the steps in Settings (Units: the spin steps), Shift for a tenth of them.
+      const value = moveDrag(drag.g, raycaster.ray.origin.toArray() as Vec3, raycaster.ray.direction.toArray() as Vec3, e.shiftKey, loadSpin());
+      if (value === null || JSON.stringify(value) === JSON.stringify(drag.value)) return;
       drag.value = value;
       evalLayer.setHandles(allHandles(), { h: drag.h, value });
       handleEvent(drag.h, "move", value);
@@ -1727,10 +1822,17 @@ export function Viewport({
       if ("pointerId" in e && el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
       renderer.domElement.style.cursor = "";
       evalLayer.setHandles(allHandles(), null);
-      handleEvent(d.h, phase, phase === "end" ? d.value : d.h.value);
+      handleEvent(d.h, phase, phase === "end" ? d.value : d.g.start);
       render();
     };
     const handleUp = (e: PointerEvent) => {
+      if (flipPress && e.pointerId === flipPress.id) {
+        const f = flipPress;
+        flipPress = null;
+        e.stopPropagation();
+        if (Math.hypot(e.clientX - f.x, e.clientY - f.y) < 5) handleEvent(f.h, "end", f.h.value);
+        return;
+      }
       if (!drag || e.pointerId !== drag.id) return;
       e.stopPropagation();
       endDrag(e, "end");
@@ -1844,6 +1946,10 @@ export function Viewport({
         /** Ends a glide now, at the view it was going to. */
         finishGlide,
         /** What is under these client pixels, nearest first (Select Other's list). */
+        /** What a feature session's preview draws now: what it adds, what it removes, the failure marker. */
+        sessionPreview() {
+          return previewLayer.shown();
+        },
         under(x: number, y: number) {
           return underAt(x, y).map((h) => ({ ...h.target, label: otherLabel(h.target, shownView?.faces ?? [], shownView?.edges ?? []) }));
         },
@@ -2017,11 +2123,17 @@ export function Viewport({
       },
       under: underAt,
       unpin: () => controls.pin(null),
-      preview(t: PickTarget | null) {
-        if (sameTarget(t, peek)) return;
-        peek = t;
+      preview(t: PickTarget | PickTarget[] | null) {
+        const next = t === null ? [] : Array.isArray(t) ? t : [t];
+        if (next.length === peek.length && next.every((x, i) => sameTarget(x, peek[i]))) return;
+        peek = next;
         hovered = null;
         redrawMarks();
+      },
+      setPreview(look: PreviewLook | null) {
+        previewLook = look;
+        previewLayer.set(look, clipPlanes);
+        render();
       },
       setCubeVisible(v: boolean) {
         cube.setVisible(v);
@@ -2065,6 +2177,7 @@ export function Viewport({
         sketchPlane.dispose();
         stageListen?.();
         evalLayer.dispose();
+        previewLayer.dispose();
         cube.dispose();
         triad.dispose();
         labels.remove();
@@ -2170,6 +2283,26 @@ export function Viewport({
   useEffect(() => {
     api.current?.setFilter(filter);
   }, [filter]);
+
+  // A feature session (Phase P wave 2): its preview over the part, and a field's chip lit up.
+  useEffect(() => {
+    api.current?.setPreview(preview);
+  }, [preview]);
+  useEffect(() => {
+    api.current?.preview(peekList ?? null);
+  }, [peekList]);
+  const pickHintRef = useRef(pickHint);
+  pickHintRef.current = pickHint;
+  const pickReachRef = useRef(pickReach);
+  pickReachRef.current = pickReach;
+  const sketchPickRef = useRef(sketchPick);
+  sketchPickRef.current = sketchPick;
+  const sketchHintRef = useRef(sketchHint);
+  sketchHintRef.current = sketchHint;
+  // No field takes sketch entities any more: no tip for one.
+  useEffect(() => {
+    if (!sketchPick) setSketchHover(null);
+  }, [sketchPick]);
 
   // The reference geometry shown: the default planes and every plane, axis and point that built, each by its
   // eye (a selected one always), sized to the part; the origin's triad by its own eye.
@@ -2680,12 +2813,21 @@ export function Viewport({
         </Popup>
       )}
       <SelectionChip selection={selection} faces={faces} edges={edges} datums={view?.datums ?? {}} />
-      {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} />}
+      {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} hint={pickHintRef.current?.(hover.target) ?? null} />}
+      {sketchHover && !hover && !box && !areaMode && (
+        <TipBox x={sketchHover.x} y={sketchHover.y} testId="sketch-pick-tip">
+          <div>
+            {sketchRefText(sketchHover.hit)}
+            {!sketchHover.hit.at && ` (${sketchHover.hit.type === "arc" ? "an arc" : `a ${sketchHover.hit.type}`})`}
+          </div>
+          {sketchHintRef.current?.(sketchHover.hit) && <div className="pick-hint">{sketchHintRef.current(sketchHover.hit)}</div>}
+        </TipBox>
+      )}
     </div>
   );
 }
 
-function PickTip({ hover, info }: { hover: Hover; info: { faces: FaceInfo[]; edges: EdgeInfo[]; datums: Record<string, Datum> } }) {
+function PickTip({ hover, info, hint }: { hover: Hover; info: { faces: FaceInfo[]; edges: EdgeInfo[]; datums: Record<string, Datum> }; hint: string | null }) {
   const t = hover.target;
   const face = t.kind === "face" ? info.faces[t.index] : undefined;
   const text =
@@ -2697,9 +2839,29 @@ function PickTip({ hover, info }: { hover: Hover; info: { faces: FaceInfo[]; edg
           ? describeFace(face)
           : describeEdge(info.edges[t.index]);
   return (
-    <div className="face-tip" style={{ left: hover.x + 14, top: hover.y + 14 }} data-testid="pick-tip">
+    <TipBox x={hover.x} y={hover.y} testId="pick-tip">
       <div>{text}</div>
+      {hint && <div className="pick-hint">{hint}</div>}
       {face && <div className="muted">area {fmt(face.area)} mm²</div>}
+    </TipBox>
+  );
+}
+
+/** A tip by the pointer, kept inside the view: near its right or bottom edge it goes to the pointer's other side (never over the panels beside it). */
+function TipBox({ x, y, testId, children }: { x: number; y: number; testId: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const host = el?.parentElement;
+    if (!el || !host) return;
+    const fitsRight = x + 14 + el.offsetWidth <= host.clientWidth - 6;
+    const fitsBelow = y + 14 + el.offsetHeight <= host.clientHeight - 6;
+    el.style.left = `${fitsRight ? x + 14 : Math.max(4, x - 14 - el.offsetWidth)}px`;
+    el.style.top = `${fitsBelow ? y + 14 : Math.max(4, y - 14 - el.offsetHeight)}px`;
+  });
+  return (
+    <div ref={ref} className="face-tip" style={{ left: x + 14, top: y + 14 }} data-testid={testId}>
+      {children}
     </div>
   );
 }
