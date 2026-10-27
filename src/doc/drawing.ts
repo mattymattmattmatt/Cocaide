@@ -186,7 +186,8 @@ export function drawingTargets(doc: Record<string, unknown>): DrawingTargets {
   return {
     nodes: new Set(isObject(doc.nodes) ? Object.keys(doc.nodes) : []),
     members,
-    holes: ids("hole"),
+    // A thread is called out as a tapped hole is (its record is a hole's).
+    holes: new Set([...ids("hole"), ...ids("thread")]),
     welds: new Set(Array.isArray(doc.welds) ? doc.welds.filter(isObject).map((w) => String(w.id)) : []),
   };
 }

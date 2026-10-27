@@ -26,6 +26,7 @@ import { ui as tablePattern } from "./tablePattern/ui";
 import { ui as curvePattern } from "./curvePattern/ui";
 import { ui as fillPattern } from "./fillPattern/ui";
 import { ui as thread } from "./thread/ui";
+import { ui as dome } from "./dome/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -50,4 +51,5 @@ export const UI_OP_LIST: UiOp[] = [
   curvePattern,
   fillPattern,
   thread,
+  dome,
 ];

@@ -35,6 +35,7 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
+import { threadBands, ThreadLayer } from "./viewport/threadLayer";
 import { PreviewLayer, type PreviewLook } from "./viewport/preview";
 import { sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
 import { entityPolylines } from "../geom/profile";
@@ -412,6 +413,9 @@ export function Viewport({
     const previewLayer = new PreviewLayer(el, { add: cssColor(el, "--preview-add", "#1f6feb"), remove: cssColor(el, "--preview-remove", "#e5484d") });
     let previewLook: PreviewLook | null = null;
     scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group, previewLayer.group);
+    // Phase P wave 3B: cosmetic threads (thread features, tapped holes) drawn as bands on their faces.
+    const threads = new ThreadLayer();
+    scene.add(threads.group);
     // Phase P wave 2A: the plane of an open sketch, drawn faintly.
     const sketchPlane = new SketchPlaneLayer({ fill: cssColor(el, "--sketch-plane", "#3a8dde"), border: cssColor(el, "--sketch-plane-border", "#2f74c0") });
     scene.add(sketchPlane.group);
@@ -1273,6 +1277,7 @@ export function Viewport({
       vertices = [];
       vertexBody = new Int16Array(0);
       visibleBox = null;
+      threads.set(v ? threadBands(v.holes ?? [], v.faces) : []);
       faceRanges = v?.mesh?.faceRanges ?? [];
       edgeRanges = v?.mesh?.edgeRanges ?? [];
       edgeSegments = v?.mesh?.edges ?? new Float32Array(0);
@@ -1954,6 +1959,10 @@ export function Viewport({
           return underAt(x, y).map((h) => ({ ...h.target, label: otherLabel(h.target, shownView?.faces ?? [], shownView?.edges ?? []) }));
         },
         /** Phase P wave 2A: the open sketch's plane as drawn, its corners (world), or null. */
+        /** Phase P wave 3B: how many cosmetic thread bands are drawn. */
+        threads() {
+          return threads.count();
+        },
         sketchPlane() {
           return sketchPlane.corners()?.map(r4) ?? null;
         },

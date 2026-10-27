@@ -20,6 +20,7 @@ import { kernel as tablePattern } from "./tablePattern/kernel";
 import { kernel as curvePattern } from "./curvePattern/kernel";
 import { kernel as fillPattern } from "./fillPattern/kernel";
 import { kernel as thread } from "./thread/kernel";
+import { kernel as dome } from "./dome/kernel";
 
 export const KERNEL_DEFS = [
   scale,
@@ -39,4 +40,5 @@ export const KERNEL_DEFS = [
   curvePattern,
   fillPattern,
   thread,
+  dome,
 ];

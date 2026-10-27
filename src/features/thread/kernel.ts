@@ -79,6 +79,7 @@ export const kernel: KernelOp<ThreadFeature> = {
       class: internal ? THREAD_CLASS : EXTERNAL_CLASS,
       depth: roundTo(length, 6),
       ...(internal ? {} : { external: true }),
+      ...(f.modelled ? { modelled: true } : {}),
     };
     const record: HoleRecord = {
       feature: f.id,
