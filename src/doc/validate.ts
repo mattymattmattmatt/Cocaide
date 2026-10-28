@@ -73,6 +73,7 @@ import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
 import { aKinds, CSYS_OP, CSYS_PARTS, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
 import { isSketchAxis } from "./sketch";
 import { pointNames } from "../geom/curves";
+import { MAX_TEXT, missingGlyphs, TEXT_ALIGNS, TEXT_FONTS, type TextAlign, type TextFont } from "../geom/text/text";
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition, type CsysPart } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
@@ -444,6 +445,7 @@ const ENTITY_FIELDS: Record<SketchEntity["type"], string[]> = {
   point: ["at"],
   ellipse: ["center", "major", "minor", "startAngle", "endAngle"],
   spline: ["points", "closed", "startTangent", "endTangent"],
+  text: ["at", "text", "height", "font", "angle", "align", "bold", "italic"],
 };
 
 /** The point names of each type, for the messages; an entity's own come from pointNames (an arc of an ellipse has ends, a spline one per point). */
@@ -456,6 +458,7 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   point: ["at"],
   ellipse: ["center", "major", "minorEnd", "start", "end"],
   spline: ["p0", "p1", "… (one per point)"],
+  text: ["at"],
 };
 
 /** The most points a spline may have. */
@@ -740,6 +743,31 @@ function validateEntity(
       }
       break;
     }
+    case "text": {
+      const at = c.vec2(e, "at", label);
+      const height = c.num(e, "height", label, { positive: true });
+      // "=expr" text is an expression, resolved to a number by now: the text shows its value.
+      const text = typeof e.text === "number" && Number.isFinite(e.text) ? String(Math.round(e.text * 1e6) / 1e6) : e.text;
+      if (typeof text !== "string" || !text.trim()) c.fail(`${label}.text`, `must be the text to write, not empty (got ${describe(e.text)})`);
+      else if (text.length > MAX_TEXT) c.fail(`${label}.text`, `has ${text.length} characters; at most ${MAX_TEXT}`);
+      else {
+        const missing = missingGlyphs(text, { bold: e.bold === true });
+        if (missing.length) c.fail(`${label}.text`, `the font has no ${missing.map((m) => JSON.stringify(m)).join(", ")}: leave ${missing.length === 1 ? "it" : "them"} out`);
+      }
+      if (e.font !== undefined && !TEXT_FONTS.includes(e.font as TextFont)) c.fail(`${label}.font`, `must be ${TEXT_FONTS.map((f) => `"${f}"`).join(", ")} (got ${describe(e.font)})`);
+      if (e.align !== undefined && !TEXT_ALIGNS.includes(e.align as TextAlign)) c.fail(`${label}.align`, `must be "left", "center" or "right" (got ${describe(e.align)})`);
+      const angle = e.angle === undefined ? undefined : c.num(e, "angle", label, {});
+      for (const key of ["bold", "italic"] as const) if (e[key] !== undefined && typeof e[key] !== "boolean") c.fail(`${label}.${key}`, `must be true or false (got ${describe(e[key])})`);
+      if (at && height !== undefined && typeof text === "string" && text.trim()) {
+        entity = { ...base, type, at, text, height };
+        if (e.font !== undefined) entity.font = e.font as TextFont;
+        if (angle !== undefined && angle !== 0) entity.angle = angle;
+        if (e.align !== undefined && e.align !== "left") entity.align = e.align as TextAlign;
+        if (e.bold === true) entity.bold = true;
+        if (e.italic === true) entity.italic = true;
+      }
+      break;
+    }
   }
   return c.errors.length === before ? entity : null;
 }
@@ -915,7 +943,8 @@ function validateConstraint(
         if (value === undefined || !point || !line || c.errors.length > before) return null;
         return { type: "distance", point, line, value, ...(k.doubled === true ? { doubled: true } : {}), ...cond, ...dim };
       }
-      const allowed: SketchEntity["type"][] = k.type === "distance" ? ["line", "slot"] : ["line", "rect", "slot"];
+      // A text's distance (or distanceY) is its height.
+      const allowed: SketchEntity["type"][] = k.type === "distance" ? ["line", "slot", "text"] : k.type === "distanceY" ? ["line", "rect", "slot", "text"] : ["line", "rect", "slot"];
       const entity = k.entity !== undefined ? entityRef("entity", k.entity, allowed) : undefined;
       const points = k.points !== undefined ? pointPair(k.points) : undefined;
       if (entity && condition) c.fail(label, "condition is for a circle or arc by its centre, not a line's length");

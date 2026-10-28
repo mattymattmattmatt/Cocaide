@@ -8,6 +8,7 @@ import type { SketchEntity, Vec2 } from "../doc/types";
 import { closestOnEllipse, closestOnSpline, ellipseGeom, ellipsePoint, ellipseSpan, splineOf } from "./curves";
 import { bezierArea, bezierLength, reverseSpline, sampleBezier, SplineError, type SplineCurve } from "./spline";
 import { add2, angleOf, cross2, dist2, dot2, len2, polar, scale2, sub2, wrapAngle } from "./vec";
+import { layoutText } from "./text/text";
 
 /** Positional tolerance in document units (mm). */
 export const TOL = 1e-6;
@@ -78,6 +79,13 @@ export function buildProfile(entities: SketchEntity[]): ProfileResult {
           const s = splineSeg(e);
           if (e.closed) loops.push(makeLoop([s]));
           else open.push(s);
+          break;
+        }
+        case "text": {
+          // Each letter's contours are closed loops of their own; nesting finds the holes in them.
+          if (!e.text.trim()) throw new ProfileError(`text "${e.id}" is empty`);
+          if (!(e.height > 0)) throw new ProfileError(`text "${e.id}" has no height`);
+          for (const loop of layoutText(e).loops) loops.push(makeLoop(loop));
           break;
         }
       }
@@ -658,6 +666,12 @@ export function entityPolylines(e: SketchEntity, maxAngleStep = Math.PI / 32): V
       case "spline":
         segs = [splineSeg(e)];
         break;
+      case "text":
+        // Each letter's contours, closed.
+        return layoutText(e).loops.map((loop) => {
+          const pts = loop.flatMap((s, i) => (i === 0 ? sampleSeg(s, maxAngleStep) : sampleSeg(s, maxAngleStep).slice(1)));
+          return pts;
+        });
     }
     return segs.map((s) => sampleSeg(s, maxAngleStep));
   } catch {

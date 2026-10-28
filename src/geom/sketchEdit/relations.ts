@@ -46,6 +46,7 @@ export function pointNames(e: SketchEntity): string[] {
     case "slot":
       return ["center1", "center2"];
     case "point":
+    case "text":
       return ["at"];
     case "ellipse":
     case "spline":
@@ -216,7 +217,7 @@ export function freshIds(entities: { id: string }[]): (prefix: string) => string
 }
 
 /** The id prefix for each entity type. */
-export const PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p", ellipse: "el", spline: "sp" };
+export const PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p", ellipse: "el", spline: "sp", text: "t" };
 
 /** The entities with one replaced (by id), or several. */
 export function replaced(entities: SketchEntity[], ...next: SketchEntity[]): SketchEntity[] {

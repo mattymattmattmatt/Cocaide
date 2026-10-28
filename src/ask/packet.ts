@@ -13,6 +13,7 @@ import { DEFAULT_BODY, seedIds, type Constraint, type DatumRef, type MemberFeatu
 import { isObject, memberAtNode, validateDocument } from "../doc/validate";
 import { measureConstraint } from "../geom/constraints";
 import { buildProfile } from "../geom/profile";
+import { textCorners } from "../geom/text/text";
 import { sketchDof } from "../geom/solver";
 import { dist2 } from "../geom/vec";
 import type { Vec2 } from "../doc/types";
@@ -738,5 +739,17 @@ function entityMeasurements(e: SketchEntity): Record<string, unknown> {
       } catch (err) {
         return { points: e.points.length, problem: (err as Error).message };
       }
+    case "text": {
+      // What it says, how big, and how much area its letters have (what an engraving takes out per mm of depth).
+      const p = buildProfile([{ ...e, construction: false }]);
+      const c = textCorners(e);
+      return {
+        text: e.text,
+        height: e.height,
+        at: [round6(e.at[0]), round6(e.at[1])],
+        width: round6(Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1])),
+        ...(p.ok ? { letterArea: round6(p.area), loops: p.regions.reduce((n, r) => n + 1 + r.holes.length, 0) } : { problem: p.error }),
+      };
+    }
   }
 }

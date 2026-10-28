@@ -214,6 +214,7 @@ export function pointNames(e: SketchEntity): string[] {
     case "slot":
       return ["center1", "center2"];
     case "point":
+    case "text":
       return ["at"];
     case "ellipse":
       return isEllipticalArc(e) ? ["center", "major", "minorEnd", "start", "end"] : ["center", "major", "minorEnd"];

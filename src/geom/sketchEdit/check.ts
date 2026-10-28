@@ -204,6 +204,7 @@ function anchor(e: SketchEntity): Vec2 {
     case "slot":
       return e.center1;
     case "point":
+    case "text":
       return e.at;
     case "ellipse":
       return e.major;

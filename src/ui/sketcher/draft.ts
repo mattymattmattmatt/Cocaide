@@ -8,6 +8,7 @@ import { arcLength, measureConstraint, point as pointOf } from "../../geom/const
 import { angleOf, dist2, sub2, wrapAngle } from "../../geom/vec";
 import { closestOnEllipse, closestOnSpline, ellipseGeom, entityPoint, pointNames, splineOf } from "../../geom/curves";
 import { distanceToSeg, ellipseSeg, splineSeg } from "../../geom/profile";
+import { textCorners } from "../../geom/text/text";
 import type { Namer } from "./names";
 
 /** A pick: an entity (a model edge's stand-in "@e12" or a sketch axis "X" too), a point ref, or a model face (Convert Entities picks faces). */
@@ -43,6 +44,7 @@ export function handlesOf(e: SketchEntity): Handle[] {
     case "slot":
       return [h("center1", e.center1), h("center2", e.center2)];
     case "point":
+    case "text":
       return [h("at", e.at)];
     case "ellipse":
     case "spline":
@@ -82,6 +84,15 @@ export function distanceTo(e: SketchEntity, p: Vec2): number {
     }
     case "point":
       return dist2(p, e.at);
+    case "text": {
+      // Anywhere on its box (letters are small and thin to hit): 0 inside it, else the way to its edge.
+      const c = textCorners(e);
+      const inside = c.every((a, i) => {
+        const b = c[(i + 1) % 4];
+        return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -1e-9;
+      });
+      return inside ? 0 : Math.min(...c.map((a, i) => segDist(p, a, c[(i + 1) % 4])));
+    }
     case "ellipse":
       try {
         return distanceToSeg(ellipseSeg(e), p);
@@ -809,8 +820,10 @@ export function entityFromClicks(type: SketchEntity["type"], id: string, pts: Ve
     }
     case "spline":
       return pts.length >= 2 ? { id, type, points: pts, ...extra } : null;
+    case "text":
+      return a ? { id, type, at: a, text: "Text", height: 5, ...extra } : null;
   }
 }
 
 /** How many clicks each entity takes when placed on its own (the drawing tools are in tools/). */
-export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1, ellipse: 3, spline: 2 };
+export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1, ellipse: 3, spline: 2, text: 1 };

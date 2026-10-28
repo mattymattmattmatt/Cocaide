@@ -8,6 +8,7 @@ import { isDriven, withAxes } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
 import { ellipseGeom, ellipsePoint, ellipseSpan, entityPoint, isEllipticalArc, pointNames, splineOf } from "../../geom/curves";
+import { textCorners } from "../../geom/text/text";
 import { splinePoint } from "../../geom/spline";
 import type { IconName } from "../icons";
 
@@ -234,7 +235,7 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         // One dimension for the whole offset: across its first pair, from the base to the offset.
         const base = k.entities[0];
         const o = byId.get(k.offsets[0]);
-        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot" || o.type === "ellipse" || o.type === "spline") return;
+        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot" || o.type === "ellipse" || o.type === "spline" || o.type === "text") return;
         let p: Vec2 | null = null;
         let q: Vec2 | null = null;
         if (o.type === "line") {
@@ -508,6 +509,11 @@ function anchorOf(e: SketchEntity): Vec2 {
       return [(e.center1[0] + e.center2[0]) / 2, (e.center1[1] + e.center2[1]) / 2 + e.width / 2];
     case "point":
       return e.at;
+    case "text": {
+      // Above its box's top left corner.
+      const c = textCorners(e);
+      return c[3];
+    }
     case "ellipse": {
       // An arc's middle; a whole ellipse's rim down to the right, as a circle's.
       const { start, sweep } = ellipseSpan(e);

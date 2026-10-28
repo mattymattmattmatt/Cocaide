@@ -18,6 +18,7 @@
 import type { ArcEntity, Constraint, EllipseEntity, LineEntity, SketchEntity, SplineEntity, Vec2 } from "../doc/types";
 import { ENTITY_PREFIX, isConstruction } from "../doc/sketch";
 import { ellipseGeom, ellipseSpan, splineOf } from "../geom/curves";
+import { entityPolylines } from "../geom/profile";
 import { interpolate } from "../geom/spline";
 import { skippedText, type DxfDrawing, type DxfEntity, type DxfLayer, type DxfRead } from "./dxf";
 import { boundsOf, ellipsePoint, explodePolyline, joinContours, nurbsPoint, nurbsRange, sampleSpline, translateAll } from "./dxfGeom";
@@ -65,6 +66,9 @@ export function sketchEntityToDxf(e: SketchEntity, layer: string): DxfEntity[] {
     }
     case "point":
       return [{ type: "point", at: e.at, layer: layer === "CONSTRUCTION" ? layer : "POINTS" }];
+    case "text":
+      // Its letters' outlines, as closed polylines (a cutter follows them).
+      return entityPolylines(e, Math.PI / 64).map((points) => ({ type: "polyline" as const, points: points.slice(0, -1), closed: true, layer }));
     case "ellipse": {
       const g = ellipseGeom(e);
       const span = ellipseSpan(e);

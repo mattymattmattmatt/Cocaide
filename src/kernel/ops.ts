@@ -85,7 +85,8 @@ export function curveEdge(oc: OC, s: Scope, frame: Frame, seg: EllipseSeg | Spli
     return { mk, reversed: seg.sweep < 0 };
   }
   const c = seg.curve;
-  if (!c.closed) {
+  // A spline through points; an exact one (a glyph's curves) is built from its pieces as they are, below.
+  if (!c.closed && !c.exact) {
     const n = c.points.length;
     const pts = s.track(new oc.NCollection_Array1_gp_Pnt(1, n));
     c.points.forEach((p, i) => pts.SetValue(i + 1, p3(p)));

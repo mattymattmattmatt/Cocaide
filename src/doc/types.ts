@@ -577,7 +577,29 @@ export interface SplineEntity extends EntityBase {
   endTangent?: number;
 }
 
-export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity | EllipseEntity | SplineEntity;
+/**
+ * Text (Phase P): its letters' outlines are profile loops (an extrude
+ * embosses it, a cut engraves it; a letter's holes, O, A, B, are holes).
+ * `at` is where its first line's baseline starts (`align` "left", the
+ * default), or the baseline's middle ("center") or end ("right"); `height`
+ * is its capital letters' height, mm; `angle` turns it about `at`, degrees
+ * counter-clockwise from the sketch's x axis. Lines are split by "\n". The
+ * font is the bundled sans serif ("sans", OFL); `bold` and `italic` as named.
+ * Its point ref is `<id>.at`; a distance dimension on the entity is its height.
+ */
+export interface TextEntity extends EntityBase {
+  type: "text";
+  at: Vec2;
+  text: string;
+  height: number;
+  font?: "sans";
+  angle?: number;
+  align?: "left" | "center" | "right";
+  bold?: boolean;
+  italic?: boolean;
+}
+
+export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity | EllipseEntity | SplineEntity | TextEntity;
 export type SketchEntityType = SketchEntity["type"];
 
 /** "entityId.point", e.g. "l1.end", "a2.center", "s1.center2", "p1.at", or "origin" for the sketch origin. */

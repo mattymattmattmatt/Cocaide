@@ -94,6 +94,9 @@ export function fieldsOf(e: SketchEntity): [string, 1 | 2][] {
       return [["center1", 2], ["center2", 2], ["width", 1]];
     case "point":
       return [["at", 2]];
+    case "text":
+      // Its anchor and its height (a distance dimension on it); its angle and words are its own.
+      return [["at", 2], ["height", 1]];
     case "ellipse":
       return isEllipticalArc(e) ? [["center", 2], ["major", 2], ["minor", 1], ["startAngle", 1], ["endAngle", 1]] : [["center", 2], ["major", 2], ["minor", 1]];
     case "spline": {
@@ -299,6 +302,13 @@ function equations(l: Layout, constraints: Constraint[]): { fns: Fn[]; owners: n
           break;
         }
         const target = k.entity ? entityById(l, k.entity) : null;
+        if (target?.type === "text") {
+          // A text's height.
+          const idx = l.at.get(`${k.entity}.height`);
+          if (idx !== undefined) push(i, (x) => x[idx] - k.value);
+          else push(i, () => target.height - k.value);
+          break;
+        }
         if (target?.type === "rect") {
           const idx = l.at.get(`${k.entity}.${k.type === "distanceX" ? "w" : "h"}`)!;
           push(i, (x) => x[idx] - k.value);
