@@ -1761,3 +1761,10 @@ svg.icon { flex: none; display: block; }
 .feature-list .feature-row { overflow: hidden; }
 .feature-list .feature-row .feature-id { min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 0.2 auto; }
 .feature-list .feature-row .feature-body { flex: 0 4 auto; }
+/* Phase P wave 3B: the sketch text box. */
+.sketch-tool-strip.text-strip .text-words { width: 16em; font: inherit; padding: 2px 6px; }
+.sketch-tool-strip.text-strip .text-number { width: 4.5em; font: inherit; padding: 2px 4px; margin: 0 3px; }
+.sketch-tool-strip.text-strip button[aria-pressed="true"] { background: var(--accent-soft, rgba(31, 111, 235, 0.15)); border-color: var(--accent, #1f6feb); }
+.sketch-tool-strip.text-strip .strip-problem { color: var(--danger, #c0392b); }
+.prop-panel textarea.table-paste, textarea.table-paste { width: 100%; font: 12px/1.4 ui-monospace, monospace; box-sizing: border-box; }
+.field-hint.warning { color: var(--warning, #b35c00); }

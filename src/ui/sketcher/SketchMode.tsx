@@ -27,6 +27,7 @@ import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "../ContextMenu";
+import { TextPanel } from "./TextPanel";
 import { Flyout, IconTool, OptionControls, ToolStack, ToolStrip } from "./DrawTools";
 import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from "./tools/memory";
 import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
@@ -163,6 +164,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   const [construction, setConstruction] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [selection, setSelection] = useState<SketchItem[]>([]);
+  /** Text the Text tool just placed: its box opens with the words selected. */
+  const [freshText, setFreshText] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [weldment, setWeldment] = useState(!!session.profile);
   const [showRelations, setShowRelations] = useState(true);
@@ -409,6 +412,12 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       if (r.ok) {
         if (typeof lifted !== "string") setMessage(null);
         commit({ entities: r.entities, constraints });
+        // New text: selected, its box open with the words ready to type over.
+        const placedText = made.find((e) => e.type === "text");
+        if (placedText) {
+          setSelection([{ kind: "entity", id: placedText.id }]);
+          setFreshText(placedText.id);
+        }
         return;
       }
       error = r.error;
@@ -1211,6 +1220,33 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             </span>
           </div>
         )}
+        {(() => {
+          // One text selected: its box (what it says, height, style, alignment, angle).
+          const only = selection.length === 1 && selection[0].kind === "entity" ? entities.find((e) => e.id === (selection[0] as { id: string }).id) : undefined;
+          if (only?.type !== "text" || only.ref) return null;
+          const heightFixed = draft.constraints.some((k) => (k.type === "distance" || k.type === "distanceY") && "entity" in k && k.entity === only.id && !("driven" in k && k.driven));
+          return (
+            <TextPanel
+              text={only}
+              fresh={freshText === only.id}
+              heightFixed={heightFixed}
+              onClose={() => {
+                setFreshText(null);
+                setSelection([]);
+              }}
+              onChange={(next) => {
+                setFreshText(null);
+                const r = solveSketch(
+                  draft.entities.map((e) => (e.id === next.id ? next : e)),
+                  draft.constraints,
+                );
+                if (!r.ok) return setMessage(r.error);
+                setMessage(null);
+                commit({ entities: r.entities, constraints: draft.constraints });
+              }}
+            />
+          );
+        })()}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {modify && (
           <ModifyBox

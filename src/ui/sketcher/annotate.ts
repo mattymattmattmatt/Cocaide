@@ -161,6 +161,18 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         }
         let p: Vec2 | null = null;
         let q: Vec2 | null = null;
+        if (e?.type === "text") {
+          // Its height: up the left side of its box, from the baseline to the capitals' top.
+          const a = ((e.angle ?? 0) * Math.PI) / 180;
+          const along: Vec2 = [Math.cos(a), Math.sin(a)];
+          const up: Vec2 = [-along[1], along[0]];
+          // The box's left end on the baseline (the corner's offset along the baseline from the anchor).
+          const c = textCorners(e);
+          const x0 = (c[0][0] - e.at[0]) * along[0] + (c[0][1] - e.at[1]) * along[1];
+          const from: Vec2 = [e.at[0] + along[0] * x0, e.at[1] + along[1] * x0];
+          aligned(index, text, from, [from[0] + up[0] * e.height, from[1] + up[1] * e.height], [-along[0], -along[1]]);
+          return;
+        }
         if (e?.type === "line") [p, q] = [e.start, e.end];
         else if (e?.type === "slot") [p, q] = [e.center1, e.center2];
         else if (k.points) [p, q] = [at(k.points[0]), at(k.points[1])];

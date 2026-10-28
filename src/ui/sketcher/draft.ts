@@ -211,6 +211,12 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
         { label: "Length", icon: "smartDimension", value: round6(dist2(e.start, e.end)), make: (v) => ({ type: "distance", entity: e.id, value: v }), testId: "c-length" },
       );
     }
+    if (e.type === "text") {
+      out.push(
+        { label: "Anchor on origin", icon: "coincident", make: () => ({ type: "coincident", points: [`${e.id}.at`, "origin"] }), testId: "c-anchor-origin" },
+        { label: "Text height", icon: "smartDimension", value: round6(e.height), make: (v) => ({ type: "distance", entity: e.id, value: v }), testId: "c-text-height" },
+      );
+    }
     if (e.type === "rect") {
       out.push(
         { label: "Centre on origin", icon: "coincident", make: () => ({ type: "coincident", points: [`${e.id}.center`, "origin"] }), testId: "c-center-origin" },
@@ -452,6 +458,7 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
       return [...valued.slice(0, 1), ...extra];
     }
     if (e?.type === "circle") return valued.filter((s) => s.testId === "c-diameter" || s.testId === "c-radius");
+    if (e?.type === "text") return valued.filter((s) => s.testId === "c-text-height");
     if (e?.type === "arc") return [...valued.filter((s) => s.testId === "c-radius" || s.testId === "c-diameter"), arcLengthOffer(e)];
     if (e?.type === "ellipse") {
       // Its radii: the one whose axis was clicked nearer first.

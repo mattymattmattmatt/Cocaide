@@ -13,6 +13,7 @@ import { tools as slots } from "./slots";
 import { tools as polygon } from "./polygon";
 import { tools as point } from "./point";
 import { tools as curves } from "./curves";
+import { tools as text } from "./text";
 
 const LISTS: SketchToolDef[][] = [
   lines,
@@ -23,6 +24,7 @@ const LISTS: SketchToolDef[][] = [
   polygon,
   point,
   curves,
+  text,
 ];
 
 export const SKETCH_TOOLS: SketchToolDef[] = LISTS.flat();
