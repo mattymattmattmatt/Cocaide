@@ -28,6 +28,7 @@ import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "../ContextMenu";
 import { TextPanel } from "./TextPanel";
+import { addSections } from "./section";
 import { Flyout, IconTool, OptionControls, ToolStack, ToolStrip } from "./DrawTools";
 import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from "./tools/memory";
 import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
@@ -495,6 +496,16 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
    * outline, into the sketch as references (profile geometry unless
    * `construction`) joined where they meet. They follow the model.
    */
+  /** Intersection curves: every piece where the model's faces cross the sketch plane, as references (profile geometry unless `construction`). */
+  const intersect = (construction: boolean) => {
+    const r = addSections(model.sections ?? [], draft.entities, construction);
+    if (typeof r === "string") return setMessage(r);
+    if (setConstraints(draft.constraints, r.entities)) {
+      setSelection(r.entities.slice(-r.added).map((e) => ({ kind: "entity" as const, id: e.id })));
+      setToolState("select");
+      setMessage(`${r.added} intersection curve${r.added === 1 ? "" : "s"} added: they follow the faces they cut; delete any you don't want`);
+    }
+  };
   const convert = (items: SketchItem[], construction: boolean) => {
     const edges = items.flatMap((i) => (i.kind === "entity" && isModelId(i.id) ? [i.id] : []));
     const faces = items.flatMap((i) => (i.kind === "face" ? [i.index] : []));
@@ -659,6 +670,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     "sketch.construction": () => toggleConstruction(editTool && editPicks.entities.length ? editPicks.entities.map((id) => ({ kind: "entity" as const, id })) : selection),
     "sketch.explode": () => explodeItems(),
     "sketch.check": () => setShowCheck((v) => !v),
+    "sketch.intersection": () => intersect(false),
     "sketch.insertDxf": () => onInsertDxf?.(),
     "sketch.exportDxf": () => onExportDxf?.(draft.entities),
     "sketch.fullyDefine": () => openFullyDefine(),
@@ -816,6 +828,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           ...tools,
           "sep",
           { label: "Fully Define Sketch…", icon: "fullyDefine", onClick: openFullyDefine, testId: "ctx-fully-define" },
+          { label: "Intersection curve", icon: "intersectionCurve", disabled: !(model.sections ?? []).some((p) => p.entity), shortcut: keyFor("sketch.intersection", prefs) ?? undefined, onClick: () => intersect(false), testId: "ctx-intersection-curve" },
           ...(onInsertDxf ? [{ label: "Insert DXF…", icon: "dxfInsert", onClick: onInsertDxf, testId: "ctx-insert-dxf" } as MenuEntry] : []),
           ...(onExportDxf ? [{ label: "Export DXF", icon: "dxfExport", onClick: () => onExportDxf(draft.entities), testId: "ctx-export-dxf" } as MenuEntry] : []),
           { label: showRelations ? "Hide relations" : "Show relations", icon: showRelations ? "eyeOff" : "eye", onClick: () => setShowRelations((v) => !v), testId: "ctx-relations" },
@@ -1216,6 +1229,12 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               </button>
               <button disabled={!convertible(selection)} onClick={() => convert(selection, true)} data-testid="convert-construction" title="As construction geometry: for relations and dimensions only">
                 As construction
+              </button>
+              <button disabled={!(model.sections ?? []).some((p) => p.entity)} onClick={() => intersect(false)} data-testid="intersection-curve" title="Intersection curve: where the model's faces cut the sketch plane, as lines, arcs, circles and splines that follow the model">
+                Intersection curve
+              </button>
+              <button disabled={!(model.sections ?? []).some((p) => p.entity)} onClick={() => intersect(true)} data-testid="intersection-construction" title="Intersection curve as construction geometry">
+                (construction)
               </button>
             </span>
           </div>

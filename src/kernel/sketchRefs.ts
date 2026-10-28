@@ -17,6 +17,7 @@ import { solveSketch } from "../geom/solver";
 import { len3, sub3 } from "../geom/vec";
 import { describePart, type DescribedPart } from "./bodies";
 import { resolveDatum, sketchSource, type DatumContext } from "./datum";
+import { sectionEntity } from "./sectionRef";
 import { boundingBoxOf } from "./measure";
 import { scoped } from "./oc";
 import { OpError } from "./ops";
@@ -85,6 +86,8 @@ export function projectReferences(ctx: DatumContext, f: SketchFeature, frame: Fr
     });
 
     function project(e: SketchEntity, ref: DatumRef, path: string, name: string): SketchEntity | string {
+      // An intersection curve: the face cut by the sketch plane again (src/kernel/sectionRef.ts).
+      if ("face" in ref && ref.section) return sectionEntity(ctx, e, { face: ref.face, section: ref.section }, frame, path, name);
       if ("sketch" in ref) {
         // Another sketch's entity, as that sketch was solved: projected as a model edge would be.
         if (e.type === "point") return withPoint(e, projectPoint(resolveDatum(ctx, ref, "point", path).at, frame), name);
@@ -127,6 +130,6 @@ function refWhat(ref: DatumRef): string {
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of a model edge` : "a model edge";
   if ("sketch" in ref) return sketchRefText(ref);
   if ("datum" in ref) return ref.datum;
-  if ("face" in ref) return "a round face's axis";
+  if ("face" in ref) return ref.section ? "where a face cuts the sketch plane" : "a round face's axis";
   return "a point";
 }

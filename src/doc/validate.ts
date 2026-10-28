@@ -469,6 +469,7 @@ const REF_KINDS: Partial<Record<SketchEntity["type"], string>> = {
   line: 'a straight edge ({ "edge": <selector> }), an axis ({ "datum": "Z" } or an axis feature) or another sketch\'s line ({ "sketch": <id>, "entity": <id> })',
   circle: 'a whole circular edge ({ "edge": <selector> }) or another sketch\'s circle',
   arc: 'part of a circular edge ({ "edge": <selector> }) or another sketch\'s arc',
+  spline: 'a piece of the curve where a face cuts the sketch plane ({ "face": <selector>, "section": [x, y] }, an intersection curve)',
   point:
     'a point of an edge ({ "edge": <selector>, "at": "start" | "end" | "mid" | "center" }), a point of another sketch ({ "sketch": <id>, "entity": <id>, "at"? }), a point feature or { "datum": "Origin" }',
 };
@@ -484,6 +485,21 @@ function referenceOf(v: unknown, type: SketchEntity["type"], path: string, c: Ch
     return undefined;
   }
   const before = c.errors.length;
+  // An intersection curve: the piece nearest `section` of where the face cuts the sketch plane.
+  if (isObject(v) && "face" in v && "section" in v) {
+    c.keys(v, path, ["face", "section"]);
+    if (!["line", "circle", "arc", "spline"].includes(type)) {
+      c.fail(path, `a ${type} can't be an intersection curve: lines, circles, arcs and splines can`);
+      return undefined;
+    }
+    const face = validateFaceSelector(v.face, `${path}.face`, c);
+    const section = c.vec2(v, "section", path);
+    return face && section && c.errors.length === before ? { face, section } : undefined;
+  }
+  if (type === "spline") {
+    c.fail(path, `a spline references ${takes}`);
+    return undefined;
+  }
   const ref = validateDatumRef(v, path, c, opts.earlier);
   if (!ref || c.errors.length > before) return undefined;
   const refuse = (what: string) => {

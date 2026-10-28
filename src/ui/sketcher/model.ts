@@ -29,6 +29,7 @@ import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
 import { selectEdges } from "../../kernel/selectors";
 import type { EdgeInfo, FaceInfo } from "../../kernel/topology";
 import type { MeshData } from "../../kernel/mesh";
+import { sectionPieces, type SectionPiece } from "./section";
 
 /** What stands for model edge `index` inside the sketcher. */
 export const modelId = (index: number) => `@e${index}`;
@@ -95,6 +96,8 @@ export interface ModelView {
   others: ModelEdge[];
   /** The round faces' axes (each with `axisOf`): hovered on their faces in a turned view, referenced by { face } (its axis). */
   axes: ModelEdge[];
+  /** Where the model's faces cross the sketch plane, each piece an intersection curve to add (Phase P wave 3B). */
+  sections?: SectionPiece[];
   /** The part's own descriptions, for selectors that find these edges again on rebuild. */
   source: { edges: EdgeInfo[]; faces: FaceInfo[] };
   frame: Frame;
@@ -173,7 +176,7 @@ export function modelView(view: { mesh: MeshData | null; edges: EdgeInfo[]; face
       inPlane: !!f.point && Math.abs(height(f.point)) < ON_PLANE,
     });
   });
-  return { edges, faces, others, axes: faceAxes(view.faces, mesh, frame), source: { edges: view.edges, faces: view.faces }, frame };
+  return { edges, faces, others, axes: faceAxes(view.faces, mesh, frame), sections: sectionPieces(view, frame), source: { edges: view.edges, faces: view.faces }, frame };
 }
 
 /** An axis is drawn this far each way at least, mm (as the rebuild draws a reference to one: src/kernel/sketchRefs.ts). */

@@ -419,7 +419,8 @@ export interface DatumPlane {
  */
 export type DatumRef =
   | { datum: string; part?: CsysPart }
-  | { face: FaceSelector }
+  /** As a sketch entity's ref, with `section`: the piece of the curve where the face cuts the sketch plane nearest that point (an intersection curve). */
+  | { face: FaceSelector; section?: Vec2 }
   | { edge: EdgeSelector; at?: EdgePoint }
   | { point: Vec3 }
   | SketchEntityRef;
