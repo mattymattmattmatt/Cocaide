@@ -105,7 +105,7 @@ describe("text in the document", () => {
         { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [0, 0], w: 120, h: 40 }] },
         { id: "e1", op: "extrude", sketch: "s1", distance: 5 },
         { id: "s2", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 5] }, entities: [{ ...text("COCAIDE 2026", { align: "center", at: [0, -5] }) }] },
-        op === "cut" ? { id: "c1", op: "cut", sketch: "s2", distance: 1 } : { id: "e2", op: "extrude", sketch: "s2", distance: 1.5 },
+        op === "cut" ? { id: "c1", op: "cut", sketch: "s2", distance: 1, direction: [0, 0, -1] } : { id: "e2", op: "extrude", sketch: "s2", distance: 1.5 },
       ],
     });
     const area = (() => {
