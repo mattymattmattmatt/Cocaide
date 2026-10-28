@@ -102,7 +102,8 @@ test("a sketch on a face of the bracket follows the face when the extrude gets d
   await sketchClick(page, -10, 0);
   await page.getByTestId("finish-sketch").click();
   const doc = (await savedDocument(page)) as Doc;
-  expect(doc.features.find((f) => f.id === "sketch_2")?.plane).toEqual({ type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest" } } });
+  // Phase P: a picked face also names the feature that made it, and where it was (to find it again if it moves).
+  expect(doc.features.find((f) => f.id === "sketch_2")?.plane).toMatchObject({ type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest", createdBy: "ext_1", hint: { centroid: [expect.any(Number), expect.any(Number), 6] } } } });
   await page.getByTestId("tool-extrude").click();
   await commit(page, "prop-distance", "10");
   await expect(boundingBox(page)).toHaveText("80 × 40 × 16 mm");
@@ -115,7 +116,7 @@ test("a sketch on a face of the bracket follows the face when the extrude gets d
   await page.getByTestId("feature-sketch_2").locator(".feature-row").dblclick();
   await page.getByTestId("finish-sketch").click();
   const after = (await savedDocument(page)) as Doc;
-  expect(after.features.find((f) => f.id === "sketch_2")?.plane).toEqual({ type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest" } } });
+  expect(after.features.find((f) => f.id === "sketch_2")?.plane).toMatchObject({ type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest", createdBy: "ext_1" } } });
 });
 
 test("an axis from the hole's wall; a point at its rim's centre", async ({ page }) => {
@@ -173,5 +174,5 @@ test("right-click entries act on what was right-clicked; a type that needs a fac
   await page.getByTestId("prop-mode").selectOption("cylinder");
   await expect(page.getByTestId("prop-datum-where")).toHaveText(/^through 30, 0, -?[\d.]+ · along [+-]Z$/);
   const doc = (await savedDocument(page)) as Doc;
-  expect(doc.features.find((f) => f.id === "axis_1")).toEqual({ id: "axis_1", op: "axis", mode: "cylinder", refs: [{ face: { type: "cylindrical", radius: 3.3, pick: "largest" } }] });
+  expect(doc.features.find((f) => f.id === "axis_1")).toMatchObject({ id: "axis_1", op: "axis", mode: "cylinder", refs: [{ face: { type: "cylindrical", radius: 3.3, pick: "largest", createdBy: "hole_1" } }] });
 });
