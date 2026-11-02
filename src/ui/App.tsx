@@ -97,6 +97,22 @@ import { mergePatch, neededText, sessionLabel } from "./model/session";
 import { DEFAULT_EDGE_OPTIONS, type EdgeOptions } from "./props/pickFields";
 import type { PickRouter, SessionLink } from "./props/pickHost";
 import type { PreviewLook } from "./viewport/preview";
+// Phase P wave 3A: a forgiving history.
+import { diagnose, type FixKind, type Problem } from "./diagnose/diagnose";
+import { ProblemBadge, WhatsWrong } from "./diagnose/WhatsWrong";
+import { HistoryList } from "./diagnose/HistoryList";
+import { NameParameter, ParametersManager } from "./params/ParametersManager";
+import { suggestName } from "./params/usage";
+import { ValueMenuContext, type ValueField } from "./fields";
+import type { TreeRequest } from "./FeatureTree";
+import { copyFeatures, pasteFeatures, type Clip } from "../doc/clipboard";
+import { foldersOf, nextFolderId } from "../doc/tree";
+import { replaceSelectorPatch, writeSelectorPatch } from "../doc/heal";
+import { selectEdges, selectFaces } from "../kernel/selectors";
+import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
+import type { EdgeSelector, FaceSelector } from "../doc/types";
+import { rawParameters } from "../doc/parameters";
+import { clickedCentre } from "../features/hole/wizard";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -572,8 +588,8 @@ export function App() {
       true,
     );
   };
-  /** Edit feature: a session on it (another open session is asked about first). */
-  const editFeature = (id: string) => {
+  /** Edit feature: a session on it (another open session is asked about first); `active`: the selection field to start in. */
+  const editFeature = (id: string, active?: string) => {
     if (sessionRef.current?.id === id) return;
     sessionApi.finishFirst(`edit ${id}`, () => {
       // Below the rollback bar a feature isn't built, so there is nothing to preview: its Properties change it, a step at a time, as before.
@@ -584,7 +600,7 @@ export function App() {
         return;
       }
       sessionStartView.current = shownView.current ?? view;
-      if (sessionApi.openEdit(id)) setNotice(null);
+      if (sessionApi.openEdit(id, active ? { active } : {})) setNotice(null);
     });
   };
 
@@ -1568,6 +1584,9 @@ export function App() {
         ...(op === "sketch" ? [{ label: "Export DXF", icon: "dxfExport", hint: "The sketch in its own plane, mm: profile, construction and points on their layers", onClick: () => files.exportSketchById(id), testId: "ctx-export-dxf" } as MenuEntry] : []),
         { label: suppressed ? "Unsuppress" : "Suppress", icon: suppressed ? "eye" : "suppress", onClick: () => run({ type: "suppressFeature", id, suppressed: !suppressed }), testId: "ctx-suppress" },
         { label: "Rename…", icon: "note", onClick: () => renameFeature(id), testId: "ctx-rename" },
+        { label: f.note ? "Edit note…" : "Add note…", icon: "note", hint: "A short comment, kept in the document and shown in the tree's tooltip", onClick: () => requestTree("note", id), testId: "ctx-note" },
+        "sep",
+        ...treeItems(id),
         ...(op !== "sketch" ? [{ label: "Show dimensions", icon: "dimension", onClick: () => showDimensions(id), testId: "ctx-show-dimensions" } as MenuEntry] : []),
         "sep",
         { label: "Roll back to here", icon: "rollback", hint: "The rollback bar goes just above this feature: it and those after it are not built; new features go in there", onClick: () => rollTo(features.findIndex((g) => g.id === id)), testId: "ctx-rollback-here" },
@@ -1619,6 +1638,8 @@ export function App() {
         items = [
           ...toolsFor({ kind: "face", index: target.index }),
           "sep",
+          ...madeByItems(f?.createdBy, f?.modifiedBy),
+          "sep",
           ...(clicked ? smartEntries(clicked) : []),
           "sep",
           selectOther,
@@ -1628,9 +1649,11 @@ export function App() {
         ];
         break;
       }
-      case "edge":
-        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", ...(clicked ? smartEntries(clicked) : []), "sep", selectOther, viewCmd("view.fit", "Zoom to fit", "fit")];
+      case "edge": {
+        const e = view?.edges[target.index];
+        items = [...toolsFor({ kind: "edge", index: target.index }), "sep", ...madeByItems(e?.createdBy, e?.modifiedBy), "sep", ...(clicked ? smartEntries(clicked) : []), "sep", selectOther, viewCmd("view.fit", "Zoom to fit", "fit")];
         break;
+      }
       case "part":
         title = "Part";
         items = [
@@ -1704,6 +1727,279 @@ export function App() {
         { label: "Roll to end", icon: "rollback", disabled: rolledCount === 0, onClick: rollEnd, testId: "ctx-rollback-end" },
       ],
     });
+
+  // ------------------------------------------------------------ Phase P wave 3A: a forgiving history
+  // What's wrong (every error and warning with one-click fixes), the smarter tree (folders, copy and paste, notes,
+  // inline rename, a feature's faces lit up on hover, Show in tree), the parameters manager, the undo history list.
+  const [whatsWrongOpen, setWhatsWrongOpen] = useState(false);
+  /** The What's wrong row shown (its feature lit in the tree, its ghost in the view). */
+  const [shownProblem, setShownProblem] = useState<string | null>(null);
+  const [treeRequest, setTreeRequest] = useState<TreeRequest | null>(null);
+  /** The features picked in the tree (Ctrl- and Shift-clicks): a new folder takes them. */
+  const [treePicked, setTreePicked] = useState<string[]>([]);
+  /** What Ctrl+C copied in the tree: it stays until the next copy. */
+  const clip = useRef<Clip | null>(null);
+  const [hoverFeature, setHoverFeature] = useState<string | null>(null);
+  const [pmOpen, setPmOpen] = useState(false);
+  const [nameParam, setNameParam] = useState<{ x: number; y: number; field: ValueField; suggested: string } | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /** A re-pick in progress: the feature and where its reference was (the ring stays while its session is open). */
+  const [repick, setRepick] = useState<{ feature: string; at: Vec3; label: string } | null>(null);
+  /** A request to the tree (rename in place, a note, show a feature). */
+  const requestTree = (kind: TreeRequest["kind"], id: string) => setTreeRequest((r) => ({ kind, id, n: (r?.n ?? 0) + 1 }));
+  const treeItems = (id: string): MenuEntry[] => {
+    const i = features.findIndex((g) => g.id === id);
+    const many = treePicked.length > 1 && treePicked.includes(id) ? treePicked : [id];
+    return [
+      { label: "Move up", icon: "up", disabled: i <= 0, onClick: () => run({ type: "reorderFeature", id, index: i - 1 }), testId: "ctx-move-up" },
+      { label: "Move down", icon: "down", disabled: i >= features.length - 1, onClick: () => run({ type: "reorderFeature", id, index: i + 1 }), testId: "ctx-move-down" },
+      { label: "Move to end", icon: "moveEnd", disabled: i >= features.length - 1, hint: "To the end of the history, if nothing after it uses it", onClick: () => run({ type: "reorderFeature", id, index: features.length - 1, folder: null }), testId: "ctx-move-end" },
+      "sep",
+      { label: many.length > 1 ? `Copy ${many.length} features` : "Copy", icon: "copy", shortcut: "Ctrl+C", onClick: () => copyTree(many), testId: "ctx-copy" },
+      { label: "Paste", icon: "paste", shortcut: "Ctrl+V", disabled: !clip.current, hint: "Onto the face selected in the view (a hole, cut or boss goes on it), else where it was copied from", onClick: () => pasteTree(), testId: "ctx-paste" },
+      { label: "Duplicate", icon: "duplicate", onClick: () => duplicateFeature(id), testId: "ctx-duplicate" },
+      { label: many.length > 1 ? `New folder from ${many.length} features` : "New folder", icon: "folderPlus", hint: "Group the picked features (Ctrl- or Shift-click them in the tree; they must be next to each other)", onClick: () => newFolder(many), testId: "ctx-new-folder" },
+      ...(op_(id) !== "sketch" ? [{ label: "Select its faces", icon: "select", disabled: !view?.faces.some((x) => x.createdBy === id), onClick: () => selectFacesOf(id), testId: "ctx-select-faces-of" } as MenuEntry] : []),
+    ];
+  };
+  const op_ = (id: string) => String(features.find((g) => g.id === id)?.op);
+  /** The faces a feature made, selected in the view. */
+  const selectFacesOf = (id: string) => {
+    if (!view) return;
+    const faces = view.faces.filter((x) => x.createdBy === id).map((x) => x.index);
+    if (!faces.length) return setNotice({ kind: "info", text: `${id} made no faces of the part as it is now (later features may have removed them).` });
+    setSelection({ faces, edges: [] });
+    setNotice({ kind: "info", text: `${faces.length} face${faces.length === 1 ? "" : "s"} made by ${id} selected.` });
+  };
+  /** The face's or edge's maker, its entries: Show in tree, Select the faces it made. */
+  const madeByItems = (made: string | undefined, changed: string[] | undefined): MenuEntry[] =>
+    made && features.some((g) => g.id === made)
+      ? [
+          { heading: `Made by ${made}${changed?.length ? `, changed by ${changed.join(", ")}` : ""}` },
+          {
+            label: `Show ${made} in tree`,
+            icon: OP_ICON[op_(made)] ?? "sketch",
+            onClick: () => {
+              setSelectedFeature(made);
+              requestTree("reveal", made);
+            },
+            testId: "ctx-show-in-tree",
+          },
+          { label: `Select the faces ${made} made`, icon: "select", onClick: () => selectFacesOf(made), testId: "ctx-select-faces-of" },
+        ]
+      : [];
+  const copyTree = (ids: string[]) => {
+    if (!doc) return;
+    const c = copyFeatures(doc, ids);
+    if (typeof c === "string") return setNotice({ kind: "error", text: c });
+    clip.current = c;
+    const more = c.features.length - c.picked.length;
+    setNotice({ kind: "info", text: `Copied ${c.picked.join(", ")}${more ? ` (with ${c.features.filter((f) => !c.picked.includes(String(f.id))).map((f) => f.id).join(", ")})` : ""}. Select a face and press Ctrl+V to put it there, or Ctrl+V to put a copy where it was.` });
+  };
+  const pasteTree = (opts: { index?: number; here?: boolean } = {}) => {
+    if (!doc) return;
+    const c = clip.current;
+    if (!c) return setNotice({ kind: "info", text: "Nothing copied yet: select features in the tree and press Ctrl+C." });
+    let onto: { face: FaceSelector } | undefined;
+    if (!opts.here && selection.faces.length === 1 && view) {
+      const s = faceSelectorFor(view.faces, selection.faces[0]);
+      if (!s.ok) return setNotice({ kind: "error", text: `Can't paste onto that face: ${s.error}` });
+      if (s.selector.type !== "planar") return setNotice({ kind: "error", text: "Paste onto a flat face: a hole or a sketch stands on a plane." });
+      onto = { face: s.selector };
+    }
+    const p = pasteFeatures(doc, c, onto);
+    // A hole pasted onto a face goes where the face was clicked (its other centres keep their spacing to the first).
+    const clickedAt = selection.point;
+    const face = onto && view ? view.faces[selection.faces[0]] : undefined;
+    if (onto && clickedAt && face) {
+      const at = clickedCentre(face, clickedAt, undefined);
+      if (typeof at !== "string")
+        for (const f of p.features) {
+          if (f.op !== "hole") continue;
+          if (Array.isArray(f.center)) f.center = at;
+          else if (Array.isArray(f.centers) && Array.isArray(f.centers[0])) {
+            const [x0, y0] = f.centers[0] as number[];
+            f.centers = (f.centers as number[][]).map(([x, y]) => [Math.round((at[0] + x - x0) * 1e3) / 1e3, Math.round((at[1] + y - y0) * 1e3) / 1e3]);
+          }
+        }
+    }
+    const problem = treeDispatch({ type: "insertFeatures", features: p.features, ...(opts.index !== undefined ? { index: opts.index } : {}) });
+    if (problem) {
+      if (problem !== FINISH_FIRST) setNotice({ kind: "error", text: problem });
+      return;
+    }
+    const last = String(p.features[p.features.length - 1].id);
+    setSelectedFeature(last);
+    requestTree("reveal", last);
+    setNotice({ kind: "info", text: `Pasted ${p.features.map((f) => f.id).join(", ")}${onto ? " onto the selected face" : ""}.${p.notes.length ? ` ${p.notes.join("; ")}.` : ""}` });
+  };
+  const duplicateFeature = (id: string) => {
+    if (!doc) return;
+    const c = copyFeatures(doc, [id]);
+    if (typeof c === "string") return setNotice({ kind: "error", text: c });
+    clip.current = c;
+    pasteTree({ index: features.findIndex((g) => g.id === id) + 1, here: true });
+  };
+  const newFolder = (ids: string[]) => {
+    if (!doc) return;
+    const order = features.map((g) => String(g.id));
+    const list = [...ids].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    const id = nextFolderId(doc);
+    const n = foldersOf(doc).length + 1;
+    const problem = run({ type: "setFolder", id, folder: { name: `Folder ${n}`, features: list } });
+    if (!problem) requestTree("renameFolder", id);
+  };
+  /** Right-click on a folder's head. */
+  const folderMenu = (id: string, x: number, y: number) => {
+    const f = foldersOf(doc).find((g) => g.id === id);
+    if (!f) return;
+    const members = features.filter((g) => f.features.includes(String(g.id)));
+    const allOff = members.every((g) => g.suppressed === true);
+    setMenu({
+      x,
+      y,
+      title: `Folder ${f.name}`,
+      items: [
+        { label: "Rename…", icon: "note", onClick: () => requestTree("renameFolder", id), testId: "ctx-folder-rename" },
+        { label: allOff ? "Unsuppress its features" : "Suppress its features", icon: allOff ? "eye" : "suppress", onClick: () => run({ type: "suppressFolder", id, suppressed: !allOff }), testId: "ctx-folder-suppress" },
+        { label: "Copy its features", icon: "copy", onClick: () => copyTree(f.features), testId: "ctx-folder-copy" },
+        "sep",
+        { label: "Remove the folder (keep its features)", icon: "trash", onClick: () => run({ type: "setFolder", id, folder: null }), testId: "ctx-folder-remove" },
+      ],
+    });
+  };
+
+  /** Every error and warning, with its fixes; the row shown (its ghost in the view). */
+  const problems = useMemo(() => diagnose(doc, ask.previewDoc ? null : view), [doc, view, ask.previewDoc]);
+  const showProblem = (p: Problem) => {
+    setShownProblem(p.key);
+    if (p.feature) {
+      setSelectedFeature(p.feature);
+      requestTree("reveal", p.feature);
+    }
+  };
+  const fixProblem = (p: Problem, fix: FixKind) => {
+    const id = p.feature;
+    if (!id || !doc) return;
+    const raw = features.find((g) => g.id === id);
+    switch (fix) {
+      case "edit":
+        return editFeature(id);
+      case "suppress":
+        return void treeDispatch({ type: "suppressFeature", id, suppressed: true });
+      case "rollback":
+        return rollTo(features.findIndex((g) => g.id === id));
+      case "delete": {
+        const problem = treeDispatch({ type: "deleteFeature", id });
+        if (problem && problem !== FINISH_FIRST) setNotice({ kind: "error", text: problem });
+        return;
+      }
+      case "accept": {
+        if (!raw || !p.heal?.healed) return;
+        const patch = replaceSelectorPatch(raw, p.heal.selector, p.heal.healed);
+        if (!patch) return setNotice({ kind: "error", text: `Could not find that reference in ${id} any more: Re-pick it.` });
+        if (!treeDispatch({ type: "updateFeature", id, patch })) setNotice({ kind: "info", text: `${id}: the reference is written for where it is now.` });
+        return;
+      }
+      case "repick": {
+        if (p.ghost) setRepick({ feature: id, at: p.ghost, label: `${p.ref?.kind === "edge" ? "The edge" : "The face"} was here` });
+        setShownProblem(p.key);
+        editFeature(id, p.ref?.key);
+        setNotice({ kind: "info", text: `Re-pick: click the ${p.ref?.kind ?? "face or edge"} ${id} should use (the red ring shows where it was), then OK.` });
+        return;
+      }
+      case "robust":
+        return void makeRobust(p);
+    }
+  };
+  /** Writes a fragile reference again from what it means now: by maker, with a hint. */
+  const makeRobust = async (p: Problem) => {
+    const id = p.feature!;
+    const raw = features.find((g) => g.id === id);
+    if (!raw || !p.ref || !doc) return;
+    try {
+      const before = await kernel.rebuildBefore(doc, id);
+      let value: unknown;
+      if (p.ref.kind === "face") {
+        const m = selectFaces(before.faces, p.ref.selector as unknown as FaceSelector).matches;
+        if (!m.length) return setNotice({ kind: "error", text: `${id}: ${p.ref.path} matches no face now: Re-pick it.` });
+        const made = m.map((f) => faceSelectorFor(before.faces, f.index));
+        const bad = made.find((s) => !s.ok);
+        if (bad && !bad.ok) return setNotice({ kind: "error", text: `${id}: ${bad.error}` });
+        value = made.length === 1 ? (made[0] as { selector: FaceSelector }).selector : made.map((s) => (s as { selector: FaceSelector }).selector);
+      } else {
+        const r = selectEdges(before.edges, before.faces, p.ref.selector as unknown as EdgeSelector);
+        if (r.error || !r.matches.length) return setNotice({ kind: "error", text: `${id}: ${p.ref.path} matches no edge now: Re-pick it.` });
+        const made = r.matches.map((e) => edgeSelectorFor(before.edges, before.faces, e.index));
+        const bad = made.find((s) => !s.ok);
+        if (bad && !bad.ok) return setNotice({ kind: "error", text: `${id}: ${bad.error}` });
+        value = made.length === 1 ? (made[0] as { selector: EdgeSelector }).selector : made.map((s) => (s as { selector: EdgeSelector }).selector);
+      }
+      const problem = treeDispatch({ type: "updateFeature", id, patch: writeSelectorPatch(raw, p.ref.path, value) });
+      if (!problem) setNotice({ kind: "info", text: `${id}: ${p.ref.path} now names its ${p.ref.kind} by the feature that made it and where it is, so it survives edits upstream.` });
+      else if (problem !== FINISH_FIRST) setNotice({ kind: "error", text: problem });
+    } catch (e) {
+      setNotice({ kind: "error", text: `Could not make it robust: ${(e as Error).message}` });
+    }
+  };
+  // A re-pick ends with its session: the ring goes.
+  useEffect(() => {
+    if (!session) setRepick(null);
+  }, [session]);
+  /** The ring where a broken reference was: while it is re-picked, or its row is shown in What's wrong. */
+  const ghosts = useMemo(() => {
+    if (repick && session?.id === repick.feature) return [{ at: repick.at, label: repick.label }];
+    const p = whatsWrongOpen ? problems.find((x) => x.key === shownProblem) : undefined;
+    return p?.ghost ? [{ at: p.ghost, label: p.severity === "fragile" ? "It is found by position here" : `${p.ref?.kind === "edge" ? "The edge" : "The face"} was here` }] : [];
+  }, [repick, session, whatsWrongOpen, problems, shownProblem]);
+  const shownOverlay = useMemo<EvalOverlay | null>(() => (ghosts.length ? { ...(overlay ?? { lines: [], points: [] }), ghosts } : overlay), [overlay, ghosts]);
+  /** A feature's row hovered in the tree: the faces it made light up in the view. */
+  const hoverPeek = useMemo<PickTarget[] | null>(() => {
+    if (!hoverFeature || !view || session) return null;
+    const list = view.faces.filter((x) => x.createdBy === hoverFeature).map((x): PickTarget => ({ kind: "face", index: x.index, point: x.centroid }));
+    return list.length ? list : null;
+  }, [hoverFeature, view, session]);
+  /** A session's pointer tip, with whose face or edge is under the pointer (on the part before the feature). */
+  const withMaker = (hint: string | null, t: PickTarget): string | null => {
+    if (!hint || !pickView) return hint;
+    const made = t.kind === "face" ? pickView.faces[t.index]?.createdBy : t.kind === "edge" ? pickView.edges[t.index]?.createdBy : undefined;
+    return made ? `${hint} (the ${t.kind} ${made} made)` : hint;
+  };
+  /** A number field right-clicked: make a parameter of its value, or link it to one. */
+  const valueMenu = useCallback(
+    (x: number, y: number, field: ValueField) => {
+      const params = rawParameters(doc);
+      const names = Object.keys(params);
+      setMenu({
+        x,
+        y,
+        title: field.label ? `${field.label}: ${String(field.value)}` : String(field.value),
+        items: [
+          {
+            label: "Create parameter from this value",
+            icon: "parameters",
+            hint: "A named parameter with this value; the field reads it (=name), so one change drives every field that uses it",
+            onClick: () => setNameParam({ x, y, field, suggested: suggestName(field.label, [...names, ...Object.keys(documentParameters(doc))]) }),
+            testId: "ctx-create-parameter",
+          },
+          ...(names.length ? [{ heading: "Link to parameter" } as MenuEntry] : []),
+          ...names.map((n): MenuEntry => ({ label: `=${n}`, icon: "link", hint: `${String(params[n])}`, onClick: () => field.commit(`=${n}`), testId: `ctx-link-parameter-${n}` })),
+          "sep",
+          { label: "Parameters manager…", icon: "parameters", onClick: () => setPmOpen(true), testId: "ctx-parameters-manager" },
+        ],
+      });
+    },
+    [doc],
+  );
+  const createParameter = (name: string | null) => {
+    const req = nameParam;
+    setNameParam(null);
+    if (!req || !name) return;
+    const value = req.field.value;
+    if (run({ type: "setParameter", name, value })) return;
+    req.field.commit(`=${name}`);
+    setNotice({ kind: "info", text: `Parameter ${name} = ${String(value)}: the field reads =${name}. Right-click another field: Link to parameter, to drive it too.` });
+  };
 
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
   /** The tab Settings opens on: the assistant's when an ask needs it set up, else Units. */
@@ -1903,6 +2199,13 @@ export function App() {
       entry("rollback.previous", "History", rollPrevious, { disabled: bar === 0 ? "The bar is at the top" : undefined }),
       entry("rollback.next", "History", rollNext, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
       entry("rollback.end", "History", rollEnd, { disabled: rolledCount === 0 ? "The bar is at the end" : undefined }),
+      entry("history.whatsWrong", "History", () => setWhatsWrongOpen(true)),
+      entry("history.list", "History", () => setHistoryOpen(true)),
+      entry("params.manager", "General", () => setPmOpen(true)),
+      entry("tree.copy", "History", () => copyTree(treePicked.length ? treePicked : selectedFeature ? [selectedFeature] : []), { disabled: selectedFeature ? undefined : "Select a feature in the tree first" }),
+      entry("tree.paste", "History", () => pasteTree(), { disabled: clip.current ? undefined : "Copy a feature first" }),
+      entry("tree.duplicate", "History", () => selectedFeature && duplicateFeature(selectedFeature), { disabled: selectedFeature ? undefined : "Select a feature in the tree first" }),
+      entry("tree.newFolder", "History", () => newFolder(treePicked.length ? treePicked : selectedFeature ? [selectedFeature] : []), { disabled: selectedFeature ? undefined : "Select features in the tree first" }),
       entry("undo", "General", d.undo, { disabled: d.canUndo ? undefined : "Nothing to undo" }),
       entry("redo", "General", d.redo, { disabled: d.canRedo ? undefined : "Nothing to redo" }),
       entry("save", "General", () => saveRef.current()),
@@ -1931,6 +2234,7 @@ export function App() {
 
   return (
     <ParametersContext.Provider value={params}>
+      <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
       <div
         className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}`}
         onDragOver={(e) => {
@@ -2032,6 +2336,10 @@ export function App() {
           <div className="units" title="Units: millimetres (metric). Lengths in mm, angles in degrees, mass in kg." data-testid="units">
             mm
           </div>
+          {view && !sketch && mode === "model" && <ProblemBadge problems={problems} open={whatsWrongOpen} onClick={() => setWhatsWrongOpen((o) => !o)} />}
+          <button className="icon-only history-open" aria-label="Undo history" aria-pressed={historyOpen} title="Undo history: every step, by name; click one to go back to it" onClick={() => setHistoryOpen((o) => !o)} data-testid="history-open">
+            <Icon name="history" />
+          </button>
           <div
             className={`status ${(view && !view.ok && status !== "No solid yet") || kernelState.phase === "failed" ? "bad" : ""}`}
             data-testid="status"
@@ -2172,9 +2480,15 @@ export function App() {
               onRollback={sketch ? undefined : rollTo}
               onRollbackMenu={sketch ? undefined : rollbackMenu}
               // A double-click opens the feature with OK and Cancel (Edit feature); its dimensions are on its right-click menu.
-              onShowDimensions={sketch ? undefined : editFeature}
+              onShowDimensions={sketch ? undefined : (id) => editFeature(id)}
+              onHover={setHoverFeature}
+              onPicked={setTreePicked}
+              onCopy={sketch ? undefined : copyTree}
+              onPaste={sketch ? undefined : () => pasteTree()}
+              onFolderMenu={sketch ? undefined : folderMenu}
+              request={treeRequest}
             />
-            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} />
+            <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} onManage={sketch ? undefined : () => setPmOpen(true)} />
             <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
             <BodiesPanel
               measurements={view?.measurements ?? null}
@@ -2211,12 +2525,13 @@ export function App() {
                   fitToken={fitToken}
                   selection={(!ask.previewDoc && sessionSelection) || selection}
                   preview={ask.previewDoc ? null : previewLook}
-                  pickHint={session ? (t) => pickRouter.current?.hint(t) ?? null : null}
+                  // What a click would do, and whose face or edge it is ("the face fillet_2 made").
+                  pickHint={session ? (t) => withMaker(pickRouter.current?.hint(t) ?? null, t) : null}
                   pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
                   // A reference field active: another sketch's entity clicked in the view goes into it ({ sketch, entity, at? }).
                   sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : null}
                   sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : null}
-                  peek={peek}
+                  peek={peek ?? hoverPeek}
                   onPick={onPick}
                   onContext={onContext}
                   underlay={underlay}
@@ -2234,7 +2549,7 @@ export function App() {
                   onSection={sectionCtl.setSection}
                   onSectionToggle={sectionCtl.toggleShown}
                   onSectionPanel={revealSection}
-                  overlay={overlay}
+                  overlay={shownOverlay}
                   dims={dims}
                   onDimension={(dim, x, y) => setValueBox({ x, y, dim })}
                   handles={handles}
@@ -2480,6 +2795,45 @@ export function App() {
           />
         )}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+        {whatsWrongOpen && !sketch && mode === "model" && (
+          <WhatsWrong
+            problems={problems}
+            shown={shownProblem}
+            onShow={showProblem}
+            onFix={fixProblem}
+            onClose={() => {
+              setWhatsWrongOpen(false);
+              setShownProblem(null);
+            }}
+          />
+        )}
+        {pmOpen && doc && (
+          <ParametersManager
+            doc={doc}
+            dispatch={d.dispatch}
+            onError={(text) => setNotice({ kind: "error", text })}
+            onGoTo={(id) => {
+              setPmOpen(false);
+              setSelectedFeature(id);
+              setRightTab("properties");
+              requestTree("reveal", id);
+            }}
+            onClose={() => setPmOpen(false)}
+          />
+        )}
+        {nameParam && <NameParameter x={nameParam.x} y={nameParam.y} suggested={nameParam.suggested} value={nameParam.field.value} onDone={createParameter} />}
+        {historyOpen && (
+          <HistoryList
+            past={d.steps.past}
+            future={d.steps.future}
+            busy={!!session}
+            onGo={(n) => {
+              d.goTo(n);
+              setHistoryOpen(false);
+            }}
+            onClose={() => setHistoryOpen(false)}
+          />
+        )}
         {session && sessionApi.guard && (
           <div className="session-guard" role="alertdialog" aria-label={`${sessionLabel(session)} is open`} data-testid="session-guard">
             <p data-testid="session-guard-text">{sessionApi.guardText}</p>
@@ -2554,6 +2908,7 @@ export function App() {
           />
         )}
       </div>
+      </ValueMenuContext.Provider>
     </ParametersContext.Provider>
   );
 }

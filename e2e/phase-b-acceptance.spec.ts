@@ -101,7 +101,8 @@ test("a human makes the bracket with no JSON editing", async ({ page }) => {
     {
       id: "hole_1",
       op: "hole",
-      face: { type: "planar", normal: [0, 0, 1], pick: "largest" },
+      // Phase P: a face picked in the view also names the feature that made it (and keeps a hint of where it was).
+      face: expect.objectContaining({ type: "planar", normal: [0, 0, 1], pick: "largest", createdBy: "extrude_1" }),
       center: [30, 0],
       diameter: 6.6,
       depth: "through",
@@ -163,12 +164,15 @@ test("a bad selector shows the error, not a crash", async ({ page }) => {
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click();
   await commit(page, "prop-diameter", "5");
+  // Phase P: the rim the fillet was picked on is found again (it moved in, made by the same hole), with a warning.
+  await expect(page.getByTestId("whats-wrong-badge")).toHaveText("1 warning");
+  await expect(page.getByTestId("status")).toHaveText(/^Rebuilt/);
+  // With the hole suppressed there is no rim like it left: the fillet fails and says so.
+  await page.getByLabel("Suppress hole_1").click();
   await expect(page.getByTestId("status")).toHaveText(/^1 error/);
-  await expect(page.getByTestId("feature-fillet_1")).toContainText(
-    "edges: selector matched 0 edges (wanted circle edges radius 3.3 on the planar face normal +Z)",
-  );
+  await expect(page.getByTestId("feature-fillet_1")).toContainText("edges: the edge it was picked on is gone or moved; no edge like it is left: re-pick it");
   // The rest of the part still rebuilds and shows.
-  await expect(page.getByTestId("holes")).toHaveText("1 × Ø5");
+  await expect(page.getByTestId("volume")).toBeVisible();
   await expect(page.getByRole("button", { name: "Export STEP" })).toBeEnabled();
 
   // Export is refused while the rebuild has errors.

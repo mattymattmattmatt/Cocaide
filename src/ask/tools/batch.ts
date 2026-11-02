@@ -20,6 +20,8 @@ export const COMMAND_TOOLS = [
   "deleteFeature",
   "reorderFeature",
   "suppressFeature",
+  "setFolder",
+  "suppressFolder",
   "setParameter",
   "deleteParameter",
   "renameParameter",
@@ -63,7 +65,11 @@ export function toolCommand(name: string, a: Raw): Command | string {
     case "deleteFeature":
       return { type: "deleteFeature", id: str("id") };
     case "reorderFeature":
-      return { type: "reorderFeature", id: str("id"), index: a.index as number };
+      return { type: "reorderFeature", id: str("id"), index: a.index as number, ...(a.folder === null || typeof a.folder === "string" ? { folder: a.folder } : {}) };
+    case "setFolder":
+      return { type: "setFolder", id: str("id"), folder: a.folder === null ? null : obj("folder") ?? {} };
+    case "suppressFolder":
+      return { type: "suppressFolder", id: str("id"), suppressed: a.suppressed !== false };
     case "setParameter":
       return { type: "setParameter", name: str("name"), value: a.value as number | string };
     case "deleteParameter":

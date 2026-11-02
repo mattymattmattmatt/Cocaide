@@ -16,6 +16,7 @@
 //   "weld:<id>"     change or remove that weld in the weld table ("+" adds one)
 //   "drawing"       anything in the drawing (never the part's features), and the part's properties its title block shows
 //   "properties"    the part's properties (part number, description, revision, author, finish, custom)
+//   "folder:<id>"   that folder of the tree (rename it, change what is in it; "+" adds one)
 //   "view:<id>"     that view, the annotations in it, and new annotations in it
 //   "annotation:<id>" that annotation, in the view it is in
 //   "*"             anything (the whole part)
@@ -67,6 +68,21 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
         // It rewrites the references to its entities ({ sketch, entity }) too.
         allowed &&= doc.features.filter((f) => isObject(f) && f.id !== cmd.id && sketchRefIds(featureDatumRefs(f, defOf(f.op)?.datumRefs)).includes(cmd.id)).every((f) => has(String((f as Record<string, unknown>).id)));
       }
+      break;
+    }
+    case "insertFeatures":
+      what = `insertFeatures ${cmd.features.map((f) => `"${String((f as { id?: unknown }).id)}"`).join(", ")}`;
+      allowed = cmd.features.every((f) => has("+") || references(f as Record<string, unknown>).some(has) || onlyBodies(doc, f as Record<string, unknown>, scope));
+      break;
+    case "setFolder":
+      // A folder groups features in the tree; it changes nothing that is built.
+      what = `setFolder "${cmd.id}"`;
+      allowed = has("+") || has(`folder:${cmd.id}`);
+      break;
+    case "suppressFolder": {
+      what = `suppressFolder "${cmd.id}"`;
+      const f = Array.isArray(doc.folders) ? (doc.folders as { id?: unknown; features?: unknown }[]).find((x) => x.id === cmd.id) : undefined;
+      allowed = Array.isArray(f?.features) && (f.features as string[]).every(has);
       break;
     }
     case "deleteFeature":

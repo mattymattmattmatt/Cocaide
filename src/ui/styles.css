@@ -1761,3 +1761,106 @@ svg.icon { flex: none; display: block; }
 .feature-list .feature-row { overflow: hidden; }
 .feature-list .feature-row .feature-id { min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 0.2 auto; }
 .feature-list .feature-row .feature-body { flex: 0 4 auto; }
+
+/* ===================================================== Phase P wave 3A: a forgiving history */
+:root {
+  --warn: #b35c00;
+  --warn-bg: #fff4e0;
+  --ghost: #e03131;
+  --folder: #8a6d1f;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --warn: #f0a44b; --warn-bg: #3a2a12; --folder: #d6b75c; }
+}
+/* The top bar's badge: What's wrong. */
+.problem-badge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.problem-badge.errors { color: #fff; background: var(--bad); border-color: var(--bad); }
+.problem-badge.warnings { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+.problem-badge.clean { color: var(--ok); }
+.problem-badge[aria-pressed="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.topbar .history-open { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+/* What's wrong: a panel under the top bar, on the right. */
+.whats-wrong, .history-list { position: fixed; top: 58px; right: 14px; z-index: 55; width: min(520px, calc(100vw - 28px)); max-height: calc(100vh - 120px); overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); }
+.whats-wrong > header, .history-list > header { position: sticky; top: 0; display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.whats-wrong h2, .history-list h2 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.whats-wrong header .icon-only, .history-list header .icon-only { margin-left: auto; border: 0; background: none; cursor: pointer; color: var(--muted); }
+.whats-wrong-clean { padding: 14px; margin: 0; }
+.problem-list { list-style: none; margin: 0; padding: 6px; }
+.problem { border-radius: 8px; padding: 6px 8px; border: 1px solid transparent; }
+.problem + .problem { margin-top: 4px; }
+.problem.shown { border-color: var(--accent); background: var(--info-bg); }
+.problem-main { display: grid; grid-template-columns: auto auto 1fr; gap: 2px 8px; align-items: start; width: 100%; text-align: left; border: 0; background: none; color: var(--text); cursor: pointer; padding: 0; font: inherit; font-size: 12.5px; }
+.problem-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; }
+.problem-icon.error { color: #fff; background: var(--bad); }
+.problem-icon.warning { color: var(--warn); background: var(--warn-bg); }
+.problem-icon.fragile { color: var(--muted); background: var(--panel-2); }
+.problem-feature { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-weight: 600; padding-top: 3px; }
+.problem-message { padding-top: 3px; line-height: 1.35; }
+.problem-ref { grid-column: 3; font-family: var(--mono); }
+.problem-fixes { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0 30px; }
+.problem-fixes button { height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; font-size: 12px; }
+.problem-fixes button.primary-ish { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.problem-fixes button:hover { background: var(--panel-2); }
+.eval-label.ghost-label { background: var(--ghost); color: #fff; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+/* The history list. */
+.history-list { width: min(320px, calc(100vw - 28px)); }
+.history-list ol { list-style: none; margin: 0; padding: 6px; }
+.history-list li button { width: 100%; text-align: left; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: var(--text); cursor: pointer; font-size: 12.5px; display: flex; gap: 6px; }
+.history-list li button:hover:not(:disabled) { background: var(--panel-2); }
+.history-list li.current button { font-weight: 600; background: var(--selected-row); }
+.history-list li.undone button { color: var(--muted); font-style: italic; }
+.history-list .history-now { margin-left: auto; font-size: 11px; color: var(--accent); }
+.history-list p { padding: 0 12px; }
+/* The tree: the filter, folders, states, the drop line and its reason, notes, inline rename. */
+.tree-filter { display: flex; align-items: center; gap: 6px; margin: 2px 4px 6px; padding: 0 8px; height: 28px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); }
+.tree-filter input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font-size: 12px; outline: none; }
+.feature-list li.folder-row > .feature-row-wrap { font-weight: 600; }
+.feature-list .folder-caret { width: 18px; height: 22px; display: grid; place-items: center; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0; }
+.feature-list .feature-icon.folder-icon { color: var(--folder); }
+.feature-list li.folder-row.suppressed .folder-name { opacity: 0.45; text-decoration: line-through; }
+.feature-list li.in-folder > .feature-row-wrap { margin-left: 16px; }
+.feature-list li.in-folder > .feature-error, .feature-list li.in-folder > .drop-reason { margin-left: 30px; }
+.feature-icon.warned { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.feature-list li.picked > .feature-row-wrap { background: color-mix(in srgb, var(--selected-row) 60%, transparent); border-radius: 6px; }
+.feature-list li.flash > .feature-row-wrap { animation: tree-flash 1.5s ease-out; border-radius: 6px; }
+@keyframes tree-flash { 0%, 40% { background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { background: transparent; } }
+.feature-list li.drop-before > .feature-row-wrap { box-shadow: inset 0 2px 0 var(--accent); }
+.feature-list li.drop-after > .feature-row-wrap { box-shadow: inset 0 -2px 0 var(--accent); }
+.feature-list li.drop-into > .feature-row-wrap { box-shadow: inset 0 0 0 2px var(--accent); border-radius: 6px; }
+.feature-list li.drop-refused > .feature-row-wrap { box-shadow: inset 0 2px 0 var(--bad); }
+.feature-list li.drop-after.drop-refused > .feature-row-wrap { box-shadow: inset 0 -2px 0 var(--bad); }
+.feature-list li.drop-into.drop-refused > .feature-row-wrap { box-shadow: inset 0 0 0 2px var(--bad); }
+.drop-reason { margin: 2px 4px 2px 26px; padding: 3px 8px; border-radius: 6px; background: var(--bad-bg); color: var(--bad); font-size: 11.5px; }
+.feature-note-mark { color: var(--muted); display: inline-flex; }
+.feature-note-edit { margin: 2px 4px 4px 26px; }
+.feature-note-edit textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; border: 1px solid var(--accent); border-radius: 6px; padding: 4px 6px; background: var(--panel); color: var(--text); resize: vertical; }
+.feature-row.renaming { display: flex; align-items: center; gap: 6px; }
+.feature-row.renaming input { flex: 1; min-width: 0; height: 22px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--accent); border-radius: 5px; padding: 0 5px; background: var(--panel); color: var(--text); }
+/* The parameters manager. */
+.modal.params-manager { width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 80px); display: flex; flex-direction: column; gap: 10px; }
+.params-manager > header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.params-manager > header h2 { display: flex; align-items: center; gap: 6px; }
+.params-manager > header input[type="search"] { margin-left: auto; width: 240px; }
+.params-manager > header .icon-only { border: 0; background: none; cursor: pointer; color: var(--muted); }
+.pm-table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.pm-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pm-table th { position: sticky; top: 0; background: var(--panel-2); text-align: left; font-weight: 600; padding: 6px 8px; }
+.pm-table td { padding: 4px 8px; border-top: 1px solid var(--border); vertical-align: middle; }
+.pm-table tr.unused td { background: color-mix(in srgb, var(--warn-bg) 55%, transparent); }
+.pm-table tr.dimension .pm-name { color: var(--muted); }
+.pm-table .pm-name { font-family: var(--mono); white-space: nowrap; }
+.pm-table .pm-expr input { width: 150px; }
+.pm-table .pm-value { font-family: var(--mono); }
+.pm-table .chip { display: inline-block; margin: 1px 3px 1px 0; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel); color: var(--accent); font-family: var(--mono); font-size: 11.5px; cursor: pointer; }
+.pm-table .chip.muted { color: var(--muted); cursor: default; }
+.pm-unused { color: var(--warn); font-weight: 600; font-size: 11.5px; }
+.pm-actions { white-space: nowrap; }
+.pm-actions .icon-only { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 2px; }
+.pm-actions .icon-only:disabled { opacity: 0.3; cursor: default; }
+.name-parameter { position: fixed; z-index: 70; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.18); }
+.name-parameter input { height: 26px; font-family: var(--mono); border: 1px solid var(--border); border-radius: 5px; padding: 0 6px; background: var(--panel); color: var(--text); }
+.modal.params-manager .link-button { height: auto; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.modal.params-manager .pm-name .link-button { font-family: var(--mono); }
+.modal.params-manager th .link-button { font-weight: 600; }
+.modal.params-manager .param-add input:first-child { flex: 0 0 200px; }
+.modal.params-manager .param-add input:nth-child(2) { flex: 1; }

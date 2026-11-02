@@ -21,6 +21,8 @@ interface Props {
   dispatch(cmd: Command): string | null;
   onError(text: string): void;
   onAsk?(target: AskTarget, x: number, y: number): void;
+  /** Opens the parameters manager (every parameter and named dimension, where each is used). */
+  onManage?(): void;
 }
 
 const MARK_TITLE = {
@@ -29,7 +31,7 @@ const MARK_TITLE = {
   scale: "The photo's known dimension: the scale every estimate is measured from. Set it on the photo.",
 };
 
-export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
+export function ParametersPanel({ doc, dispatch, onError, onAsk, onManage }: Props) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -73,7 +75,19 @@ export function ParametersPanel({ doc, dispatch, onError, onAsk }: Props) {
   };
 
   return (
-    <Section title="Parameters" className="parameters" testId="parameters" count={Object.keys(params).length}>
+    <Section
+      title="Parameters"
+      className="parameters"
+      testId="parameters"
+      count={Object.keys(params).length}
+      aside={
+        onManage ? (
+          <button className="icon-only" aria-label="Parameters manager" title="Parameters manager: every parameter and named dimension, its value, where it is used" onClick={onManage} data-testid="param-manager-open">
+            <Icon name="parameters" size={14} />
+          </button>
+        ) : undefined
+      }
+    >
       {Object.keys(params).length === 0 && <p className="muted small">Name a number here, then type =name in any number field.</p>}
       <ul>
         {Object.entries(params).map(([p, v]) => {

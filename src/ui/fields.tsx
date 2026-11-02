@@ -11,6 +11,16 @@ export const ParametersContext = createContext<Parameters>({});
 /** A number field's value: a number, or an expression over parameters ("=plate_t * 2"). */
 export type NumberValue = number | string;
 
+/** A number field right-clicked: what it holds, and how to set it (Create parameter from this value, Link to parameter…). */
+export interface ValueField {
+  value: NumberValue;
+  label?: string;
+  commit(v: NumberValue): void;
+}
+
+/** The app's right-click menu for number fields (Phase P parameters manager); none: the browser's own. */
+export const ValueMenuContext = createContext<((x: number, y: number, field: ValueField) => void) | null>(null);
+
 /**
  * A labelled field. `unit` follows the value: "mm" for lengths, "°" for angles.
  * `block` for a field of several controls (a list with buttons, checkboxes):
@@ -49,6 +59,7 @@ export function NumberInput({
   ariaLabel?: string;
 }) {
   const params = useContext(ParametersContext);
+  const valueMenu = useContext(ValueMenuContext);
   const [draft, setDraft] = useState(String(value));
   const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
@@ -84,6 +95,11 @@ export function NumberInput({
         title={problem ?? (isExpression(value) ? "An expression over the document parameters" : undefined)}
         data-testid={testId}
         onChange={(e) => setDraft(e.target.value)}
+        onContextMenu={(e) => {
+          if (!valueMenu) return;
+          e.preventDefault();
+          valueMenu(e.clientX, e.clientY, { value, label: ariaLabel, commit: onCommit });
+        }}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") {

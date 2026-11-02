@@ -6,6 +6,7 @@
 
 import type { TopoDS_Edge, TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
 import { type OC, type Scope } from "./oc";
+import { labelActive } from "./provenance";
 import { countSubShapes, describeEdges, describeFaces, listEdges, type EdgeInfo, type FaceInfo } from "./topology";
 
 export type Bodies = Map<string, TopoDS_Shape>;
@@ -65,6 +66,8 @@ export function describePart(oc: OC, s: Scope, bodies: Bodies, withEdges = true)
   const { edges, infos: edgeInfos } = withEdges ? describeEdges(oc, s, shape, faces) : { edges: [], infos: [] };
   const ranges = bodyRanges(oc, s, bodies);
   labelBodies({ faces: faceInfos, edges: edgeInfos }, ranges);
+  // While a rebuild runs, each face and edge knows the feature that made it (selectors' createdBy reads it).
+  labelActive({ faces: faceInfos, edges: edgeInfos });
   return { shape, faces, faceInfos, edges, edgeInfos, ranges };
 }
 

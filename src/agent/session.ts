@@ -77,6 +77,8 @@ export const EDIT_TOOLS = [
   "deleteFeature",
   "reorderFeature",
   "suppressFeature",
+  "setFolder",
+  "suppressFolder",
   "setParameter",
   "deleteParameter",
   "renameBody",
@@ -285,7 +287,11 @@ export class AgentSession {
       case "deleteFeature":
         return this.edit({ type: "deleteFeature", id: String(a.id) });
       case "reorderFeature":
-        return this.edit({ type: "reorderFeature", id: String(a.id), index: a.index as number });
+        return this.edit({ type: "reorderFeature", id: String(a.id), index: a.index as number, ...(a.folder === null || typeof a.folder === "string" ? { folder: a.folder } : {}) });
+      case "setFolder":
+        return this.edit({ type: "setFolder", id: String(a.id), folder: a.folder === null ? null : isObject(a.folder) ? (a.folder as { name?: string; features?: string[] }) : {} });
+      case "suppressFolder":
+        return this.edit({ type: "suppressFolder", id: String(a.id), suppressed: a.suppressed !== false });
       case "suppressFeature":
         return this.edit({ type: "suppressFeature", id: String(a.id), suppressed: a.suppressed !== false });
       case "setParameter":

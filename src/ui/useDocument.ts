@@ -30,6 +30,7 @@ import {
   undo as undoHistory,
   undoLabel,
   undoOutOf,
+  labels,
   HISTORY_CHARS,
 } from "../doc/history";
 
@@ -90,6 +91,10 @@ export interface DocumentState {
   rollback(): void;
   /** Renames the open session (its feature was renamed). */
   relabel(label: string): void;
+  /** The names of the undo steps, oldest first, and of the redo steps, next first (the history list). */
+  steps: { past: string[]; future: string[] };
+  /** Back (negative) or forward (positive) that many steps at once: a click in the history list. Not in a session. */
+  goTo(steps: number): void;
 }
 
 /** A command, as the name of its undo step: "Add fillet_2", "Delete hole_1", "Edit extrude_1". */
@@ -108,6 +113,18 @@ export function commandLabel(cmd: Command): string {
       return `Suppress ${id}`;
     case "reorderFeature":
       return `Move ${id}`;
+    case "insertFeatures": {
+      const list = (cmd as { features: { id?: unknown }[] }).features.map((f) => String(f.id));
+      return `Paste ${list.length > 2 ? `${list[0]} and ${list.length - 1} more` : list.join(" and ")}`;
+    }
+    case "setFolder":
+      return (cmd as { folder: unknown }).folder === null ? `Remove folder ${id}` : `Folder ${id}`;
+    case "suppressFolder":
+      return `${(cmd as { suppressed: boolean }).suppressed ? "Suppress" : "Unsuppress"} folder ${id}`;
+    case "renameParameter":
+      return `Rename parameter ${(cmd as { from: string }).from} to ${(cmd as { to: string }).to}`;
+    case "setParameter":
+      return `Set parameter ${(cmd as { name: string }).name}`;
     case "setRollback":
       return "Move the rollback bar";
     default: {
@@ -268,6 +285,18 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     rerender();
   }, []);
 
+  const goTo = useCallback(
+    (n: number) => {
+      commitTyping();
+      let h = history.current;
+      if (h.tx) return;
+      for (let k = 0; k < Math.abs(n); k++) h = n < 0 ? undoHistory(h) : redoHistory(h);
+      history.current = h;
+      show(h.present);
+    },
+    [commitTyping],
+  );
+
   const h = history.current;
   const typedSinceCommit = text !== h.present && parsed.ok;
   return {
@@ -293,6 +322,8 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     commit,
     rollback,
     relabel,
+    steps: labels(h),
+    goTo,
   };
 }
 

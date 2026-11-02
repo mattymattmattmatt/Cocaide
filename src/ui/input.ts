@@ -190,6 +190,14 @@ export const COMMANDS: CommandDef[] = [
   { id: "select.loop", label: "Select the loop the selected edge is in", group: "Model tools", key: null },
   { id: "select.faceEdges", label: "Select every edge of the selected faces", group: "Model tools", key: null },
   { id: "select.tangentFaces", label: "Select the faces tangent to the selected faces", group: "Model tools", key: null },
+  // Phase P wave 3A: a forgiving history.
+  { id: "history.whatsWrong", label: "What's wrong: every error and warning, with fixes", group: "General", key: null },
+  { id: "history.list", label: "Undo history: go back to a step", group: "General", key: null },
+  { id: "params.manager", label: "Parameters manager", group: "General", key: null },
+  { id: "tree.copy", label: "Copy the selected features", group: "Model tools", key: null },
+  { id: "tree.paste", label: "Paste features (onto the selected face)", group: "Model tools", key: null },
+  { id: "tree.duplicate", label: "Duplicate the selected feature", group: "Model tools", key: null },
+  { id: "tree.newFolder", label: "New folder from the selected features", group: "Model tools", key: null },
 ];
 
 export interface InputPrefs {
