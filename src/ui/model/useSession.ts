@@ -47,7 +47,8 @@ export interface SessionApi {
   /** A tool's new feature still waiting for picks (command-first); `complete` settles its numbers once they are there. */
   openDraft(feature: Raw, opts?: { tool?: string; active?: string; complete?: (f: Raw) => Raw }): boolean;
   /** Edit feature: a session on a feature in the document. */
-  openEdit(id: string): boolean;
+  /** `active`: the selection field to make active first (What's wrong's Re-pick: the broken reference's field). */
+  openEdit(id: string, opts?: { active?: string }): boolean;
   /** OK: keeps it as one undo step. `force`: even with its error. False when it can't yet (and says why). */
   ok(force?: boolean): boolean;
   /** Cancel: the part as it was. */
@@ -116,10 +117,10 @@ export function useFeatureSession(deps: SessionDeps): SessionApi {
     return start({ id, originalId: id, kind: "create", op: String(feature.op), tool: opts.tool, previous: live.current.deps.selectedFeature, pending: feature, active: opts.active, complete: opts.complete });
   };
 
-  const openEdit = (id: string) => {
+  const openEdit = (id: string, opts: { active?: string } = {}) => {
     const f = live.current.deps.d.doc?.features.find((g) => g.id === id);
     if (!f) return false;
-    return start({ id, originalId: id, kind: "edit", op: String(f.op), previous: id });
+    return start({ id, originalId: id, kind: "edit", op: String(f.op), previous: id, ...(opts.active ? { active: opts.active } : {}) });
   };
 
   const close = () => {

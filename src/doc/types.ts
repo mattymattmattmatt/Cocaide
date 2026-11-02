@@ -381,6 +381,8 @@ export interface FeatureBase {
   id: string;
   /** A suppressed feature is kept in the document but skipped by the rebuild. */
   suppressed?: boolean;
+  /** A short comment about the feature (shown in the tree's tooltip); never read by the rebuild. */
+  note?: string;
 }
 
 // ---------------------------------------------------------------- sketch
@@ -1170,7 +1172,30 @@ export const COMBINE_OPERATIONS = ["add", "subtract", "common"] as const;
 export type Pick = "largest" | "smallest" | "all";
 export const PICKS: readonly Pick[] = ["largest", "smallest", "all"];
 
-export interface PlanarFaceSelector {
+/**
+ * Where a selector's face or edge was when the selector was made (picked in
+ * the view): what the rebuild uses to find it again when the selector stops
+ * matching after an upstream edit ("an edge moved - re-found it"). Optional:
+ * selectors without it simply fail as before.
+ */
+export interface SelectorHint {
+  /** The face's area centroid, or the edge's centre. */
+  centroid: Vec3;
+  /** A planar face's outward normal, or a straight edge's direction. */
+  normal?: Vec3;
+  /** Area of the face, or length of the edge. */
+  size?: number;
+}
+
+/** Fields every face and edge selector may carry (Phase P provenance). */
+export interface SelectorProvenance {
+  /** Optional: only faces (edges) the feature with this id made (the rebuild records who made each). */
+  createdBy?: string;
+  /** Optional: where it was when picked, to find it again when it moves (see SelectorHint). */
+  hint?: SelectorHint;
+}
+
+export interface PlanarFaceSelector extends SelectorProvenance {
   type: "planar";
   /** Outward face normal. */
   normal: Vec3;
@@ -1191,7 +1216,7 @@ export interface PlanarFaceSelector {
   body?: string;
 }
 
-export interface CylindricalFaceSelector {
+export interface CylindricalFaceSelector extends SelectorProvenance {
   type: "cylindrical";
   radius?: number;
   /** Optional axis direction; matched in either sense. */
@@ -1217,7 +1242,7 @@ export const EDGE_PICKS: readonly EdgePick[] = ["all", "longest", "shortest"];
  * `radius` - a circular edge of this radius; `length` - this length;
  * `near` - of the matches, the one whose centre is nearest this point.
  */
-export interface EdgeSelector {
+export interface EdgeSelector extends SelectorProvenance {
   type: "edge";
   kind?: "line" | "circle" | "other";
   onFace?: FaceSelector;

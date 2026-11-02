@@ -54,8 +54,17 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { id: z.string() },
   },
   reorderFeature: {
-    description: "Move a feature to another position in the build order. Refused if a feature would come before something it uses.",
-    input: { id: z.string(), index: z.number().int() },
+    description:
+      "Move a feature to another position in the build order. Refused (saying why) if a feature would come before something it uses: its sketch, a feature whose faces or edges its selectors name by createdBy, a sketch whose dimensions it reads. folder: the tree folder it goes in (null: none); left out, it joins a folder it lands inside.",
+    input: { id: z.string(), index: z.number().int(), folder: z.string().nullable().optional() },
+  },
+  setFolder: {
+    description: 'Add, rename or regroup a folder of the feature tree ({ "name", "features": [ids next to each other in the history] }), or remove it (folder: null; its features stay). Folders change nothing that is built.',
+    input: { id: z.string(), folder: obj.nullable().describe('{ "name"?: text, "features"?: [feature ids] } or null') },
+  },
+  suppressFolder: {
+    description: "Suppress (or unsuppress) every feature of a tree folder, as one step.",
+    input: { id: z.string(), suppressed: z.boolean() },
   },
   suppressFeature: {
     description: "Suppress a feature (kept in the document, skipped by the rebuild), or unsuppress it.",

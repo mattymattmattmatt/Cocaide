@@ -30,6 +30,11 @@ import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { drillHoles, holeSites, type PointSketch } from "./hole";
 import { patternInstances } from "./pattern";
 import { getOC, type OC, type Scope, scoped } from "./oc";
+import { Provenance, snapshot, withProvenance } from "./provenance";
+import { listenForHealing, listenForMatches, type HealEvent } from "./selectors";
+import { edgeSelectorFor, faceSelectorFor } from "./synthesize";
+import type { EdgeInfo, FaceInfo } from "./topology";
+import type { EdgeSelector, FaceSelector } from "../doc/types";
 import {
   combineBodies,
   commonWith,
@@ -60,6 +65,26 @@ export interface FeatureStatus {
   suppressed?: boolean;
   /** Same text as the matching entry in `errors`. */
   error?: string;
+  /** It built, but something needs a look: a reference re-found after it moved ("fillet_2: an edge moved — re-found it (check)"). */
+  warnings?: string[];
+  /** The references it re-found, with the selector written for where each is now (Accept writes it). */
+  heals?: HealNote[];
+}
+
+/** A face or edge selector that stopped matching and was found again from its hint (src/kernel/selectors.ts). */
+export interface HealNote {
+  kind: "face" | "edge";
+  /** The selector as the document has it (expressions worked out). */
+  selector: FaceSelector | EdgeSelector;
+  /** A selector for the face or edge where it is now, with a fresh hint: what "Accept" writes in its place. */
+  healed?: FaceSelector | EdgeSelector;
+  /** Where it was when it was picked, and where it was found. */
+  was: Vec3;
+  now: Vec3;
+  /** What the selector matched by itself (0, or several). */
+  matched: number;
+  /** The same text as the feature's warning. */
+  message: string;
 }
 
 /** Sketch geometry in world space, for display. */
@@ -100,6 +125,14 @@ export interface RebuildResult {
   faceOrigins?: (string | null)[];
   /** The reference geometry the plane, axis and point features made, by feature id, in order. */
   datums: Record<string, Datum>;
+  /** Every warning of the features (the same text as their FeatureStatus.warnings), in order. */
+  warnings: string[];
+  /** By feature id: the features whose faces or edges its selectors matched (its parents through the part's geometry), in history order. */
+  uses: Record<string, string[]>;
+  /** Which feature made each face and edge (src/kernel/provenance.ts). */
+  provenance: Provenance;
+  /** Gives faces and edges described from `solid` (in place) the feature that made each and those that changed it. */
+  label(topo: { faces: FaceInfo[]; edges: EdgeInfo[] }): void;
   dispose(): void;
 }
 
@@ -125,11 +158,17 @@ export interface HoleRecord {
 }
 
 export interface RebuildOptions {
-  /** Record which feature first made each face (costs a face scan per feature). */
+  /** Also list, in `faceOrigins`, the feature that made each face (provenance is always recorded; this only writes the list). */
   provenance?: boolean;
 }
 
 export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions = {}): RebuildResult {
+  // Who made each face and edge, recorded as the features commit; the part's descriptions carry it while the rebuild runs.
+  const trace = new Provenance();
+  return withProvenance(trace, () => rebuildTraced(input, oc, opts, trace));
+}
+
+function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Provenance): RebuildResult {
   const v = validateDocument(input);
   const errors = [...v.headerErrors];
   const features: FeatureStatus[] = [];
@@ -139,14 +178,19 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   /** Reference geometry made by plane, axis and point features, by id. */
   const datums = new Map<string, Datum>();
 
-  /** Face signature -> the feature that first made a face like it. */
-  const origins = new Map<string, string>();
-
+  /** Whose faces and edges each feature picked, by feature. */
+  const usesBy = new Map<string, string[]>();
   const result = (): RebuildResult => {
     const solid = bodies.size === 0 ? null : bodies.size === 1 ? [...bodies.values()][0] : scoped((s) => copyOut(compound(oc, s, [...bodies.values()])));
     const ranges = scoped((s) => bodyRanges(oc, s, bodies));
     const faceOrigins =
-      opts.provenance && solid ? scoped((s) => describeFaces(oc, s, solid).infos.map((f) => origins.get(faceSignature(f)) ?? null)) : undefined;
+      opts.provenance && solid
+        ? scoped((s) => {
+            const faces = describeFaces(oc, s, solid).infos;
+            trace.label({ faces, edges: [] });
+            return faces.map((f) => f.createdBy ?? null);
+          })
+        : undefined;
     return {
       ok: errors.length === 0 && solid !== null,
       solid,
@@ -159,6 +203,10 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       name: v.name || "untitled",
       ...(faceOrigins ? { faceOrigins } : {}),
       datums: Object.fromEntries(datums),
+      warnings: features.flatMap((f) => f.warnings ?? []),
+      uses: Object.fromEntries(usesBy),
+      provenance: trace,
+      label: (topo) => trace.label(topo),
       dispose: () => {
         for (const b of bodies.values()) b.delete();
         if (bodies.size > 1) solid?.delete();
@@ -295,16 +343,8 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
       bodies.get(name)?.delete();
       bodies.delete(name);
     }
-    if (opts.provenance) {
-      scoped((s) => {
-        const shape = partShape(oc, s, bodies);
-        if (!shape) return;
-        for (const f of describeFaces(oc, s, shape).infos) {
-          const sig = faceSignature(f);
-          if (!origins.has(sig)) origins.set(sig, current);
-        }
-      });
-    }
+    // Who made each face and edge now: carried on from before this feature, or made by it.
+    scoped((s) => trace.record(current, snapshot(oc, s, partShape(oc, s, bodies))));
   };
   let current = "";
 
@@ -378,7 +418,35 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
   /** A plane as a frame: written out, or resolved by reference on the part as it is now. */
   const planeOf = (spec: PlaneSpec, path = "plane"): Frame => planeSpecFrame(ctx, spec, path);
 
+  /** The references the feature running now re-found from their hints (selectors.ts tells): its warnings. */
+  let heals: HealNote[] = [];
+  const heard = (h: HealEvent) => {
+    if (heals.some((x) => JSON.stringify(x.selector) === JSON.stringify(h.selector))) return;
+    const healed = h.kind === "face" ? faceSelectorFor(h.faces, h.index) : edgeSelectorFor(h.edges, h.faces, h.index);
+    const what = h.kind === "face" ? "a face" : "an edge";
+    heals.push({
+      kind: h.kind,
+      selector: h.selector,
+      ...(healed.ok ? { healed: healed.selector } : {}),
+      was: h.selector.hint!.centroid,
+      now: h.healing.found.centroid.map(r6) as Vec3,
+      matched: h.healing.matched,
+      message: `${current}: ${what} moved — re-found it (check)`,
+    });
+  };
+  /** Whose faces and edges the feature running now picked. */
+  let uses = new Set<string>();
+  const usesOf = () => {
+    uses.delete(current);
+    const order = v.features.map((f) => f.id);
+    if (uses.size) usesBy.set(current, [...uses].sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+    return {};
+  };
+  listenForMatches((makers) => makers.forEach((m) => m && uses.add(m)), () =>
+  listenForHealing(heard, () => {
   for (const vf of v.features) {
+    heals = [];
+    uses = new Set();
     const raw = vf.feature;
     const op = vf.op;
     if (!raw) {
@@ -676,7 +744,7 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
           runKernelOp(ctx, raw);
       }
       if (facesBefore) madeFaces.set(raw.id, new Set([...signatures()].filter((sig) => !facesBefore.has(sig))));
-      features.push({ id: raw.id, op, ok: true });
+      features.push({ id: raw.id, op, ok: true, ...(heals.length ? { warnings: heals.map((h) => h.message), heals } : {}), ...usesOf() });
     } catch (e) {
       const messages = e instanceof OpError ? e.message.split("\n") : [`kernel error: ${kernelMessage(oc, e)}`];
       const prefixed = messages.map((m) => `${raw.id}: ${m}`);
@@ -687,9 +755,11 @@ export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions =
         tools.delete(raw.id);
       }
       errors.push(...prefixed);
-      features.push({ id: raw.id, op, ok: false, error: prefixed.join("\n") });
+      features.push({ id: raw.id, op, ok: false, error: prefixed.join("\n"), ...usesOf() });
     }
   }
+  }));
+
   for (const t of tools.values()) t.tool.delete();
   // Each joint checks its own work: the members it shaped must not overlap.
   for (const id of checks) {

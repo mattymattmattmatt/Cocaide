@@ -189,7 +189,7 @@ describe("a feature session's transaction", () => {
     expect(commandLabel({ type: "addFeature", feature: { id: "hole_2" } })).toBe("Add hole_2");
     expect(commandLabel({ type: "deleteFeature", id: "hole_2" })).toBe("Delete hole_2");
     expect(commandLabel({ type: "updateFeature", id: "ext_1", patch: {} })).toBe("Edit ext_1");
-    expect(commandLabel({ type: "setParameter", name: "t", value: 2 })).toBe("Set parameter");
+    expect(commandLabel({ type: "setParameter", name: "t", value: 2 })).toBe("Set parameter t");
     let h = createHistory(start);
     h = dispatch(h, { type: "updateFeature", id: "ext_1", patch: { distance: 9 } }).h;
     expect(undoLabel(h)).toBe("Edit ext_1");

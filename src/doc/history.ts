@@ -48,8 +48,8 @@ export function createHistory(present: string): History {
   return { past: [], present, future: [] };
 }
 
-/** The labels of the past and the future, as long as they are ("" where none was given). */
-function labels(h: History): { past: string[]; future: string[] } {
+/** The labels of the past and the future, as long as they are ("" where none was given): the history list shows them. */
+export function labels(h: History): { past: string[]; future: string[] } {
   const pad = (list: string[] | undefined, n: number) => Array.from({ length: n }, (_, i) => list?.[i] ?? "");
   return { past: pad(h.pastLabels, h.past.length), future: pad(h.futureLabels, h.future.length) };
 }

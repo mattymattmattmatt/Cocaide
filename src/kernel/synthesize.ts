@@ -6,14 +6,53 @@
 // along the normal), but "the face at offset 6" does not.
 //
 // Pure: works on FaceInfo / EdgeInfo, so it runs on either side of the worker.
+//
+// Provenance (Phase P): when the faces and edges know which feature made them
+// (FaceInfo.createdBy, recorded by the rebuild), each candidate is also tried
+// "made by" that feature, which can single out a face the plain query cannot
+// ("the largest face facing +Z that extrude_1 made", unmoved by a bigger boss
+// added later), and the selector keeps createdBy. A selector for one face or
+// edge also keeps a hint, where it was when picked, so the rebuild can find it
+// again when an upstream edit moves it (src/kernel/selectors.ts).
 
-import type { EdgeSelector, FaceSelector, Vec3 } from "../doc/types";
-import { rankLevels, selectEdges, selectFaces } from "./selectors";
+import type { EdgeSelector, FaceSelector, SelectorHint, Vec3 } from "../doc/types";
+import { rankLevels, selectEdgesStrictly as selectEdges, selectFacesStrictly as selectFaces } from "./selectors";
 import type { EdgeInfo, FaceInfo } from "./topology";
 
 export type Synthesis<T> = { ok: true; selector: T } | { ok: false; error: string };
 
-export function faceSelectorFor(faces: FaceInfo[], index: number): Synthesis<FaceSelector> {
+/** Options of the synthesis. */
+export interface SynthOptions {
+  /** Keep a hint of where the face or edge is (default true; a face nested in an edge selector goes without). Only for faces and edges whose maker the rebuild recorded (the app's views): plain descriptions give the plain selectors they always did. */
+  hint?: boolean;
+}
+
+/** Where a face is, for its selector's hint. */
+export function faceHint(f: FaceInfo): SelectorHint {
+  return { centroid: clean3(f.centroid), ...(f.normal ? { normal: clean(f.normal) } : {}), size: cleanSize(f.area) };
+}
+
+/** Where an edge is, for its selector's hint. */
+export function edgeHint(e: EdgeInfo): SelectorHint {
+  const d = e.direction ?? e.axis;
+  return { centroid: clean3(e.centroid), ...(d ? { normal: clean(d) } : {}), size: cleanSize(e.length) };
+}
+
+/** The candidates in order, each also tried as made by `createdBy` (when the face or edge knows its maker). */
+function withMaker<T extends object>(candidates: T[], createdBy: string | undefined): T[] {
+  if (!createdBy) return candidates;
+  return candidates.flatMap((c) => [c, { ...c, createdBy }]);
+}
+
+/** The selector that worked, finished: createdBy kept (more robust), the hint added. */
+function finish<T extends { createdBy?: string; hint?: SelectorHint }>(sel: T, createdBy: string | undefined, hint: SelectorHint | null): T {
+  const out = { ...sel };
+  if (createdBy) out.createdBy = createdBy;
+  if (hint) out.hint = hint;
+  return out;
+}
+
+export function faceSelectorFor(faces: FaceInfo[], index: number, opts: SynthOptions = {}): Synthesis<FaceSelector> {
   const f = faces[index];
   if (!f) return { ok: false, error: `no face ${index}` };
   const candidates: FaceSelector[] = [];
@@ -47,9 +86,9 @@ export function faceSelectorFor(faces: FaceInfo[], index: number): Synthesis<Fac
     return { ok: false, error: `a ${f.type === "other" ? "freeform" : f.type} face cannot be selected yet; pick a flat or cylindrical face` };
   }
   // In a part of several bodies the selector names the face's body: it keeps meaning this face when other bodies change.
-  for (const c of f.body ? candidates.map((x) => ({ ...x, body: f.body })) : candidates) {
+  for (const c of withMaker(f.body ? candidates.map((x) => ({ ...x, body: f.body })) : candidates, f.createdBy)) {
     const r = selectFaces(faces, c);
-    if (!r.tie && r.matches.length === 1 && r.matches[0].index === index) return { ok: true, selector: c };
+    if (!r.tie && r.matches.length === 1 && r.matches[0].index === index) return { ok: true, selector: finish(c, f.createdBy, opts.hint === false || !f.createdBy ? null : faceHint(f)) };
   }
   return { ok: false, error: "no selector picks out this face alone (another face matches it exactly)" };
 }
@@ -72,14 +111,15 @@ export function facesSelectorFor(faces: FaceInfo[], indices: number[]): Synthesi
   return { ok: true, selector: out };
 }
 
-export function edgeSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], index: number): Synthesis<EdgeSelector> {
+export function edgeSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], index: number, opts: SynthOptions = {}): Synthesis<EdgeSelector> {
   const e = edges[index];
   if (!e) return { ok: false, error: `no edge ${index}` };
   if (e.seam) return { ok: false, error: "that is a seam on a curved face, not a real edge" };
-  const faceSels = e.faces.map((fi) => faceSelectorFor(faces, fi)).filter((s): s is { ok: true; selector: FaceSelector } => s.ok).map((s) => s.selector);
+  const nested = (fi: number) => faceSelectorFor(faces, fi, { hint: false });
+  const faceSels = e.faces.map(nested).filter((s): s is { ok: true; selector: FaceSelector } => s.ok).map((s) => s.selector);
   const candidates: EdgeSelector[] = [];
   const planarFaces = e.faces.filter((fi) => faces[fi]?.type === "plane");
-  const onPlanar = planarFaces.map((fi) => faceSelectorFor(faces, fi)).filter((s) => s.ok).map((s) => (s as { selector: FaceSelector }).selector);
+  const onPlanar = planarFaces.map(nested).filter((s) => s.ok).map((s) => (s as { selector: FaceSelector }).selector);
 
   if (e.kind === "circle") {
     const radius = cleanScalar(e.radius!);
@@ -102,9 +142,9 @@ export function edgeSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], index: num
   if (e.kind === "circle") candidates.push({ type: "edge", kind: "circle", radius: cleanScalar(e.radius!), near, pick: "all" });
   if (e.kind === "line") candidates.push({ type: "edge", kind: "line", direction: clean(e.direction!), near, pick: "all" });
   candidates.push({ type: "edge", near, pick: "all" });
-  for (const c of e.body ? candidates.map((x) => ({ ...x, body: e.body })) : candidates) {
+  for (const c of withMaker(e.body ? candidates.map((x) => ({ ...x, body: e.body })) : candidates, e.createdBy)) {
     const r = selectEdges(edges, faces, c);
-    if (!r.error && !r.tie && r.matches.length === 1 && r.matches[0].index === index) return { ok: true, selector: c };
+    if (!r.error && !r.tie && r.matches.length === 1 && r.matches[0].index === index) return { ok: true, selector: finish(c, e.createdBy, opts.hint === false || !e.createdBy ? null : edgeHint(e)) };
   }
   return { ok: false, error: "no selector picks out this edge alone" };
 }
@@ -131,7 +171,7 @@ export function edgesSelectorFor(edges: EdgeInfo[], faces: FaceInfo[], indices: 
   // Shared face.
   const shared = picked[0].faces.filter((fi) => picked.every((e) => e.faces.includes(fi)));
   for (const fi of shared) {
-    const fs = faceSelectorFor(faces, fi);
+    const fs = faceSelectorFor(faces, fi, { hint: false });
     if (!fs.ok) continue;
     group.push({ type: "edge", onFace: fs.selector, pick: "all" });
     if (kind && kind !== "other") group.push({ type: "edge", kind, onFace: fs.selector, pick: "all" });
@@ -189,7 +229,13 @@ function clean(v: Vec3): Vec3 {
   return v.map((x) => cleanScalar(x / l)) as Vec3;
 }
 
+/** A size (area, length) to 6 significant places: a hint needs no more. */
+function cleanSize(x: number): number {
+  return Number(x.toPrecision(6));
+}
+
 function cleanScalar(x: number): number {
+
   const r = Math.round(x * 1e9) / 1e9;
   return Object.is(r, -0) ? 0 : r;
 }

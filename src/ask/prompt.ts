@@ -249,6 +249,22 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     input_schema: obj({ id: { type: "string" } }, ["id"]),
   },
   {
+    name: "reorderFeature",
+    description:
+      "Move a feature to index in the history. Refused (saying why) when it would come before what it uses: its sketch, a feature whose faces or edges its selectors name by createdBy, a sketch whose dimensions it reads. folder: the tree folder it goes in (null: none); left out, it joins a folder it lands inside.",
+    input_schema: obj({ id: { type: "string" }, index: { type: "integer" }, folder: { type: ["string", "null"] } }, ["id", "index"]),
+  },
+  {
+    name: "setFolder",
+    description: 'Add, rename or regroup a folder of the feature tree ({ "name", "features": [ids next to each other in the history] }), or remove it (folder: null; its features stay). Folders change nothing that is built.',
+    input_schema: obj({ id: { type: "string" }, folder: { ...any, description: '{ "name"?: text, "features"?: [feature ids] } or null' } }, ["id", "folder"]),
+  },
+  {
+    name: "suppressFolder",
+    description: "Suppress (or unsuppress) every feature of a tree folder, as one step.",
+    input_schema: obj({ id: { type: "string" }, suppressed: { type: "boolean" } }, ["id", "suppressed"]),
+  },
+  {
     name: "setParameter",
     description: 'Set a document parameter: a number, or an "=expression" over other parameters and sketch dimensions ("=sketch_1.width / 2"). A cycle is refused.',
     input_schema: obj({ name: { type: "string" }, value: { type: ["number", "string"] } }, ["name", "value"]),

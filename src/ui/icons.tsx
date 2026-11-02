@@ -819,6 +819,19 @@ const ICONS = {
       <circle cx="17.7" cy="12.3" r="1.3" fill="currentColor" />
     </>
   ),
+  // Phase P wave 3A: the history tree, What's wrong, the parameters manager
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  folderPlus: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M12 10v6 M9 13h6" />,
+  paste: <path d="M9 4h6v3H9z M8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2 M9 12h6 M9 16h4" />,
+  duplicate: <path d="M8 8h12v12H8z M4 16V5a1 1 0 0 1 1-1h11 M14 11v6 M11 14h6" />,
+  history: <path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5 M4 4v4.5h4.5 M12 8v4l3 2" />,
+  warning: <path d="M12 4 2.5 20h19z M12 10v4 M12 17h.01" strokeWidth={2} />,
+  parameters: <path d="M4 18c3 0 3-12 6-12 M5 11h5 M13 9l6 8 M19 9l-6 8" />,
+  link: <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />,
+  moveEnd: <path d="M12 4v12 M7 11l5 5 5-5 M5 20h14" />,
+  robust: <path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z M9 12l2 2 4-4" />,
+  repick: <path d="M5 5l6 14 2-6 6-2z M17 17l3 3" />,
+  chevronRight: <path d="m9 6 6 6-6 6" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;

@@ -41,6 +41,8 @@ export interface RebuildView {
   datums: Record<string, Datum>;
   /** The holes and threads that built (a thread's record, a tapped hole's): the view draws their cosmetic threads. */
   holes?: HoleRecord[];
+  /** By feature id: whose faces and edges its selectors matched (the tree's parents and children through the part's geometry). */
+  uses?: Record<string, string[]>;
 }
 
 /**

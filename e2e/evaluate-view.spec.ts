@@ -271,9 +271,12 @@ test("selection filter, hover highlight in the tree, and the command palette run
   await page.getByTestId("filter-edges").click();
 
   // Hovering the extrude: its sketch is a parent; hovering the sketch, the extrude is its child.
+  // (Phase P: the hole drills the extrude's top face, so it is a child of the extrude too.)
   await page.getByTestId("feature-ext_1").hover();
   await expect(page.getByTestId("feature-sketch_1")).toHaveAttribute("data-relation", "parent");
-  await expect(page.getByTestId("feature-hole_1")).not.toHaveAttribute("data-relation", /./);
+  await expect(page.getByTestId("feature-hole_1")).toHaveAttribute("data-relation", "child");
+  await page.getByTestId("feature-hole_1").hover();
+  await expect(page.getByTestId("feature-sketch_1")).not.toHaveAttribute("data-relation", /./);
   await page.getByTestId("feature-sketch_1").hover();
   await expect(page.getByTestId("feature-ext_1")).toHaveAttribute("data-relation", "child");
   await shot(page, "tree-relations");

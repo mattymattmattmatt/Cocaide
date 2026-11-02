@@ -85,6 +85,20 @@ describe("dome", () => {
   });
 });
 
+describe("provenance of the new features' faces", () => {
+  it("labels a dome's face and a fill pattern's hole walls with the feature that made them", () => {
+    const doc = rod({ id: "d", op: "dome", face: TOP, height: 6 });
+    const r = rebuild(doc, oc);
+    try {
+      const faces = scoped((s) => describeFaces(oc, s, r.solid!).infos);
+      r.label({ faces, edges: [] });
+      expect(faces.filter((f) => f.createdBy === "d").length).toBeGreaterThan(0);
+    } finally {
+      r.dispose();
+    }
+  });
+});
+
 describe("cosmetic thread bands", () => {
   it("draws one on a thread's face and on a tapped hole's, none on a modelled thread", () => {
     const doc = rod(
