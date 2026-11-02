@@ -11,7 +11,6 @@ export const tools: SketchToolDef[] = [
     name: "point",
     label: "Point",
     icon: "point",
-    flyout: { id: "point", label: "Point" },
     title: "Point: click where it goes. A sketch point never makes a profile; holes and patterns can use it",
     clicks: 1,
     prompts: ["Click where the point goes"],

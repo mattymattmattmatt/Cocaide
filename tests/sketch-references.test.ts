@@ -215,7 +215,7 @@ describe("reference entities in the document", () => {
 
   it("but not where a sketch entity is needed, nor both at once; and no entity may be called X or Y", () => {
     const c1 = { id: "c1", type: "circle", center: [10, 5], radius: 2 };
-    expect(bad([c1], [{ type: "distance", entity: "X", value: 3 }])[0]).toMatch(/entity "X" is the sketch's X axis; this constraint needs line or slot of the sketch/);
+    expect(bad([c1], [{ type: "distance", entity: "X", value: 3 }])[0]).toMatch(/entity "X" is the sketch's X axis; this constraint needs line or slot or text of the sketch/);
     expect(bad([c1], [{ type: "horizontal", entity: "Y" }])[0]).toMatch(/entity "Y" is the sketch's Y axis/);
     expect(bad([c1], [{ type: "equal", entities: ["X", "Y"] }])[0]).toMatch(/is the sketch's X axis/);
     expect(bad([c1], [{ type: "perpendicular", entities: ["X", "Y"] }])[0]).toMatch(/relates the sketch's two axes to each other/);

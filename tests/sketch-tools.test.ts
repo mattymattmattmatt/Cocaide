@@ -574,7 +574,7 @@ describe("the registry", () => {
       "Slot: slot slot-center",
       "polygon",
       "point",
-      "Curve: spline ellipse ellipse-arc",
+      "Curve: spline ellipse ellipse-arc text",
     ]);
   });
 

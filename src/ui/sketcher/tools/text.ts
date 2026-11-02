@@ -16,7 +16,7 @@ export const tools: SketchToolDef[] = [
     label: "Text",
     icon: "sketchText",
     title: "Text: click where its baseline starts, then type it (Enter). Extrude it to emboss, cut it to engrave",
-    flyout: { id: "point", label: "Point" },
+    flyout: { id: "curve", label: "Curve" },
     clicks: 1,
     prompts: ["Click where the text's baseline starts"],
     options: [{ kind: "number", key: "height", label: "Height", title: "The capital letters' height", default: 5, min: 0.1, max: 10000, step: 1, unit: "mm" }],
