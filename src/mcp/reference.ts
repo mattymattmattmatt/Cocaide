@@ -84,6 +84,13 @@ Entities (2D, in the sketch frame; "construction": true keeps one out of the pro
       natural ends unless "startTangent" / "endTangent" (degrees from the sketch x axis, the way it runs) set them;
       a "tangent" relation to a line, arc or circle at an end does that for you. Joined end to end with lines and arcs
       (coincident ends) it is part of a profile like any other curve.)
+  { "id": "t1", "type": "text", "at": [0, 0], "text": "COCAIDE", "height": 8 }
+      (text: its letters' outlines are profile loops, holes in letters (O, A, B) are holes: extrude it to emboss, cut it
+      to engrave; volume = letter area x depth (the sketch packet's measurements give "letterArea"). "at" is where the
+      first line's baseline starts ("align": "left", default), or its middle ("center") or end ("right"); "height" is
+      the capital letters' height, mm; "angle" degrees about "at"; "bold", "italic"; "\n" starts a new line; "font"
+      "sans" (the bundled open-licence sans serif). Point ref "t1.at"; { "type": "distance", "entity": "t1", "value": 8 }
+      dimensions its height. "text": "=plate_t" writes a parameter's value.)
 Closed loops become the profile; a loop inside another is a hole in it.
 rect and slot are single entities kept for older documents: they can't be trimmed or partly dimensioned. Build new
 outlines from lines and arcs with relations, as the app's tools do:
@@ -176,6 +183,11 @@ change the plate's width, and the circle (and the hole cut from it) moves with t
   circle: "ref": { "edge": <selector of a whole circular edge> }  - its plane must face the sketch
   arc:    "ref": { "edge": <selector of a part-circle edge> }
   point:  "ref": { "edge": <selector>, "at": "start" | "end" | "mid" | "center" }, { "datum": "Origin" }, a point feature
+An intersection curve: where a face of the model cuts the sketch plane, as a line, circle, arc or spline entity with
+"ref": { "face": <face selector>, "section": [x, y] } (the piece of that cut nearest [x, y] in the sketch); the rebuild
+cuts the face again, so it follows the model; profile geometry with "construction": false. A flat face cuts as a line,
+a cylinder square to the plane as a circle or arc, along it as lines; anything else as a spline (its points spread
+along the cut).
 Another (earlier) sketch's entity is referenced the same way, by { "sketch": <its id>, "entity": <its entity id> }: it is
 projected from that sketch as the rebuild solved it, so this sketch follows that one when it changes.
   line:   "ref": { "sketch": "sk_base", "entity": "l2" }  - a line of it (or a circle or arc of it seen edge-on)
@@ -403,6 +415,9 @@ Wherever a plane, an axis or a point is needed by reference (a sketch's or a mir
                                            (normal -Y), Right = YZ (normal +X)
   { "datum": "Origin" }                    the origin, a point;  { "datum": "X" | "Y" | "Z" }  the axes through it
   { "datum": "<id>" }                      an earlier plane, axis or point feature
+  { "datum": "<cs id>", "part": "XY" | "YZ" | "ZX" | "X" | "Y" | "Z" | "origin" }
+                                           a coordinate system's plane, axis or origin (op "coordinateSystem"); without
+                                           "part" its XY plane, Z axis or origin, whichever is needed
   { "face": <face selector> }              a planar face is a plane (outward normal); a cylindrical face is its axis
   { "edge": <edge selector>, "at": "start" | "end" | "mid" | "center" (optional) }
                                            a straight edge is an axis (start to end), a circular edge its axis (or its
