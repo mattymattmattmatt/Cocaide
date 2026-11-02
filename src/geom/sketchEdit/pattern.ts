@@ -67,6 +67,8 @@ function moved(e: SketchEntity, f: Move, id: string): SketchEntity {
       return { id, type: "arc", center: f(e.center), start: f(e.start), end: f(e.end), ...(e.clockwise ? { clockwise: true } : {}), ...base };
     case "point":
       return { id, type: "point", at: f(e.at), ...base };
+    case "text":
+      return { ...e, id, at: f(e.at), ...base };
     case "rect":
       return { id, type: "rect", center: f(e.center), w: e.w, h: e.h, ...base };
     case "slot":

@@ -27,6 +27,8 @@ import { keyFor, keyHint, pointer, useCommands, useInputPrefs } from "../input";
 import { Popup, ToolButton } from "../tools";
 import { Icon, type IconName } from "../icons";
 import { askEntry, ContextMenu, type ContextMenuState, type MenuEntry } from "../ContextMenu";
+import { TextPanel } from "./TextPanel";
+import { addSections } from "./section";
 import { Flyout, IconTool, OptionControls, ToolStack, ToolStrip } from "./DrawTools";
 import { flyoutChoice, loadMemory, remember, saveMemory, type ToolMemory } from "./tools/memory";
 import { optionValues, SKETCH_TOOLS, toolbarEntries, toolByName, type Placement } from "./tools/run";
@@ -163,6 +165,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   const [construction, setConstruction] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [selection, setSelection] = useState<SketchItem[]>([]);
+  /** Text the Text tool just placed: its box opens with the words selected. */
+  const [freshText, setFreshText] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [weldment, setWeldment] = useState(!!session.profile);
   const [showRelations, setShowRelations] = useState(true);
@@ -409,6 +413,12 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       if (r.ok) {
         if (typeof lifted !== "string") setMessage(null);
         commit({ entities: r.entities, constraints });
+        // New text: selected, its box open with the words ready to type over.
+        const placedText = made.find((e) => e.type === "text");
+        if (placedText) {
+          setSelection([{ kind: "entity", id: placedText.id }]);
+          setFreshText(placedText.id);
+        }
         return;
       }
       error = r.error;
@@ -486,6 +496,16 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
    * outline, into the sketch as references (profile geometry unless
    * `construction`) joined where they meet. They follow the model.
    */
+  /** Intersection curves: every piece where the model's faces cross the sketch plane, as references (profile geometry unless `construction`). */
+  const intersect = (construction: boolean) => {
+    const r = addSections(model.sections ?? [], draft.entities, construction);
+    if (typeof r === "string") return setMessage(r);
+    if (setConstraints(draft.constraints, r.entities)) {
+      setSelection(r.entities.slice(-r.added).map((e) => ({ kind: "entity" as const, id: e.id })));
+      setToolState("select");
+      setMessage(`${r.added} intersection curve${r.added === 1 ? "" : "s"} added: they follow the faces they cut; delete any you don't want`);
+    }
+  };
   const convert = (items: SketchItem[], construction: boolean) => {
     const edges = items.flatMap((i) => (i.kind === "entity" && isModelId(i.id) ? [i.id] : []));
     const faces = items.flatMap((i) => (i.kind === "face" ? [i.index] : []));
@@ -650,6 +670,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     "sketch.construction": () => toggleConstruction(editTool && editPicks.entities.length ? editPicks.entities.map((id) => ({ kind: "entity" as const, id })) : selection),
     "sketch.explode": () => explodeItems(),
     "sketch.check": () => setShowCheck((v) => !v),
+    "sketch.intersection": () => intersect(false),
     "sketch.insertDxf": () => onInsertDxf?.(),
     "sketch.exportDxf": () => onExportDxf?.(draft.entities),
     "sketch.fullyDefine": () => openFullyDefine(),
@@ -807,6 +828,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           ...tools,
           "sep",
           { label: "Fully Define Sketch…", icon: "fullyDefine", onClick: openFullyDefine, testId: "ctx-fully-define" },
+          { label: "Intersection curve", icon: "intersectionCurve", disabled: !(model.sections ?? []).some((p) => p.entity), shortcut: keyFor("sketch.intersection", prefs) ?? undefined, onClick: () => intersect(false), testId: "ctx-intersection-curve" },
           ...(onInsertDxf ? [{ label: "Insert DXF…", icon: "dxfInsert", onClick: onInsertDxf, testId: "ctx-insert-dxf" } as MenuEntry] : []),
           ...(onExportDxf ? [{ label: "Export DXF", icon: "dxfExport", onClick: () => onExportDxf(draft.entities), testId: "ctx-export-dxf" } as MenuEntry] : []),
           { label: showRelations ? "Hide relations" : "Show relations", icon: showRelations ? "eyeOff" : "eye", onClick: () => setShowRelations((v) => !v), testId: "ctx-relations" },
@@ -1208,9 +1230,42 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
               <button disabled={!convertible(selection)} onClick={() => convert(selection, true)} data-testid="convert-construction" title="As construction geometry: for relations and dimensions only">
                 As construction
               </button>
+              <button disabled={!(model.sections ?? []).some((p) => p.entity)} onClick={() => intersect(false)} data-testid="intersection-curve" title="Intersection curve: where the model's faces cut the sketch plane, as lines, arcs, circles and splines that follow the model">
+                Intersection curve
+              </button>
+              <button disabled={!(model.sections ?? []).some((p) => p.entity)} onClick={() => intersect(true)} data-testid="intersection-construction" title="Intersection curve as construction geometry">
+                (construction)
+              </button>
             </span>
           </div>
         )}
+        {(() => {
+          // One text selected: its box (what it says, height, style, alignment, angle).
+          const only = selection.length === 1 && selection[0].kind === "entity" ? entities.find((e) => e.id === (selection[0] as { id: string }).id) : undefined;
+          if (only?.type !== "text" || only.ref) return null;
+          const heightFixed = draft.constraints.some((k) => (k.type === "distance" || k.type === "distanceY") && "entity" in k && k.entity === only.id && !("driven" in k && k.driven));
+          return (
+            <TextPanel
+              text={only}
+              fresh={freshText === only.id}
+              heightFixed={heightFixed}
+              onClose={() => {
+                setFreshText(null);
+                setSelection([]);
+              }}
+              onChange={(next) => {
+                setFreshText(null);
+                const r = solveSketch(
+                  draft.entities.map((e) => (e.id === next.id ? next : e)),
+                  draft.constraints,
+                );
+                if (!r.ok) return setMessage(r.error);
+                setMessage(null);
+                commit({ entities: r.entities, constraints: draft.constraints });
+              }}
+            />
+          );
+        })()}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {modify && (
           <ModifyBox
@@ -1844,7 +1899,7 @@ const TOOL_TITLE: Partial<Record<Tool, string>> = {
 };
 
 /** What each entity type is called in a menu title. */
-const RELATION_NOUN: Record<SketchEntity["type"], string> = { line: "Line", circle: "Circle", arc: "Arc", rect: "Rectangle", slot: "Slot", point: "Point", ellipse: "Ellipse", spline: "Spline" };
+const RELATION_NOUN: Record<SketchEntity["type"], string> = { line: "Line", circle: "Circle", arc: "Arc", rect: "Rectangle", slot: "Slot", point: "Point", ellipse: "Ellipse", spline: "Spline", text: "Text" };
 
 function round(x: number): number {
   return Math.round(x * 1000) / 1000;

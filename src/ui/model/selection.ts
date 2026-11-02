@@ -164,6 +164,7 @@ export function describeDatum(id: string, datums: Readonly<Record<string, Datum>
   if (!d) return id;
   if (d.kind === "plane") return `${id} · plane · normal ${formatDirection(d.normal)}`;
   if (d.kind === "axis") return `${id} · axis · ${formatDirection(d.direction)}`;
+  if (d.kind === "frame") return `${id} · coordinate system · at ${d.origin.map(fmt).join(", ")}`;
   return `${id} · point · ${d.at.map(fmt).join(", ")}`;
 }
 
@@ -184,7 +185,7 @@ export function selectionText(sel: Selection, faces: FaceInfo[], edges: EdgeInfo
     return describeDatum(ds[0], datums);
   }
   const count = (n: number, one: string, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` : "");
-  const kinds = { plane: 0, axis: 0, point: 0 };
+  const kinds = { plane: 0, axis: 0, point: 0, frame: 0 };
   for (const id of ds) kinds[datumKindOf(id, datums) ?? "plane"]++;
   return [
     count(nf, "face"),
@@ -193,6 +194,7 @@ export function selectionText(sel: Selection, faces: FaceInfo[], edges: EdgeInfo
     count(kinds.plane, "plane"),
     count(kinds.axis, "axis", "axes"),
     count(kinds.point, "point"),
+    count(kinds.frame, "coordinate system", "coordinate systems"),
   ]
     .filter(Boolean)
     .join(" + ");

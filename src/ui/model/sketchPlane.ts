@@ -8,7 +8,7 @@
 // Pure: Vitest covers it in node.
 
 import type { DatumRef, PlaneSpec, Vec3 } from "../../doc/types";
-import { DEFAULT_DATUMS, facePlane, isRefPlane, refPlaneFrame, xDirProblem, type Datum, type PlaneDatum } from "../../features/datum";
+import { csysPart, DEFAULT_DATUMS, facePlane, isRefPlane, refPlaneFrame, xDirProblem, type Datum, type PlaneDatum } from "../../features/datum";
 import { planeFrame, type Frame } from "../../geom/frame";
 import { formatDirection } from "../../geom/vec";
 import { describeWanted, selectFaces, selectionError } from "../../kernel/selectors";
@@ -21,6 +21,11 @@ export function planeOfRef(ref: DatumRef, view: Pick<RebuildView, "faces" | "dat
   if ("datum" in ref) {
     const d: Datum | undefined = Object.hasOwn(DEFAULT_DATUMS, ref.datum) ? DEFAULT_DATUMS[ref.datum] : view && Object.hasOwn(view.datums ?? {}, ref.datum) ? view.datums[ref.datum] : undefined;
     if (!d) return `${ref.datum} has not built: fix it (or wait for the rebuild), then sketch on it`;
+    // A coordinate system: the plane it names (its XY plane without a part).
+    if (d.kind === "frame") {
+      const part = csysPart(d, ref.part, "plane");
+      return part.kind === "plane" ? part : `${ref.datum}'s ${ref.part} is ${part.kind === "axis" ? "an axis" : "a point"}, not a plane: pick XY, YZ or ZX`;
+    }
     return d.kind === "plane" ? d : `${ref.datum} is ${d.kind === "axis" ? "an axis" : "a point"}, not a plane: pick a plane or a flat face`;
   }
   if ("face" in ref) {
@@ -73,6 +78,6 @@ export function planeChoices(before: Raw[]): { id: string; label: string }[] {
     { id: "Top", label: "Top plane (XY)" },
     { id: "Front", label: "Front plane (XZ)" },
     { id: "Right", label: "Right plane (YZ)" },
-    ...before.filter((g) => g.op === "plane").map((g) => ({ id: String(g.id), label: String(g.id) })),
+    ...before.filter((g) => g.op === "plane" || g.op === "coordinateSystem").map((g) => ({ id: String(g.id), label: g.op === "plane" ? String(g.id) : `${String(g.id)} (XY)` })),
   ];
 }

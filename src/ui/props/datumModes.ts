@@ -6,7 +6,7 @@
 // user is still choosing. Pure: Vitest covers it in node.
 
 import type { DatumRef } from "../../doc/types";
-import { DATUM_OPS, DEFAULT_DATUMS, refForm, type Datum, type DatumKind, type ModeSpec, type RefSlot } from "../../features/datum";
+import { CSYS_OP, csysPartKind, DATUM_OPS, DEFAULT_DATUMS, refForm, type Datum, type DatumKind, type ModeSpec, type RefSlot } from "../../features/datum";
 import { formatDirection } from "../../geom/vec";
 import { fmt, type Selection } from "../model/selection";
 import type { RebuildView } from "../../worker/protocol";
@@ -26,6 +26,7 @@ export function kindsOfRef(ref: DatumRef, before: Raw[]): DatumKind[] {
     const d = Object.hasOwn(DEFAULT_DATUMS, ref.datum) ? DEFAULT_DATUMS[ref.datum] : undefined;
     if (d) return [d.kind];
     const op = String(before.find((g) => g.id === ref.datum)?.op);
+    if (op === CSYS_OP) return ref.part ? [csysPartKind(ref.part)] : ["plane", "axis", "point"];
     return Object.hasOwn(DATUM_OPS, op) ? [DATUM_OPS[op]] : [];
   }
   if ("face" in ref) return ["plane", "axis"];
@@ -143,5 +144,6 @@ export function datumText(d: Datum | undefined): string {
   const at = (v: readonly number[]) => v.map(fmt).join(", ");
   if (d.kind === "plane") return `through ${at(d.origin)} · normal ${formatDirection(d.normal)}`;
   if (d.kind === "axis") return `through ${at(d.origin)} · along ${formatDirection(d.direction)}`;
+  if (d.kind === "frame") return `at ${at(d.origin)} · X ${formatDirection(d.x)} · Y ${formatDirection(d.y)} · Z ${formatDirection(d.z)}`;
   return `at ${at(d.at)}`;
 }

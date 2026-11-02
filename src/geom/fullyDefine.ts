@@ -48,6 +48,7 @@ function pointsOf(e: SketchEntity): [string, Vec2][] {
     case "slot":
       return [p("center1", e.center1), p("center2", e.center2)];
     case "point":
+    case "text":
       return [p("at", e.at)];
     case "ellipse":
     case "spline":

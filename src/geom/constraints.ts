@@ -65,6 +65,10 @@ function evaluate(k: Constraint, byId: Map<string, SketchEntity>): Evaluation {
       }
       const target = k.entity ?? `${k.points![0]} ${k.points![1]}`;
       const label = `${k.type} ${target} = ${fmt(k.value)}`;
+      if (k.entity && get(k.entity).type === "text") {
+        const t = get(k.entity) as Extract<SketchEntity, { type: "text" }>;
+        return { label: `height of text ${k.entity} = ${fmt(k.value)}`, actual: t.height, expected: k.value };
+      }
       const [p, q] = k.entity ? entitySpan(get(k.entity)) : k.points!.map(pt);
       if (k.entity && get(k.entity).type === "rect") {
         const r = get(k.entity) as Extract<SketchEntity, { type: "rect" }>;

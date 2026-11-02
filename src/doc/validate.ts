@@ -71,10 +71,11 @@ import {
 import { validateDrawing } from "./drawing";
 import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
-import { aKinds, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
+import { aKinds, CSYS_OP, CSYS_PARTS, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
 import { isSketchAxis } from "./sketch";
 import { pointNames } from "../geom/curves";
-import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition } from "./types";
+import { MAX_TEXT, missingGlyphs, TEXT_ALIGNS, TEXT_FONTS, type TextAlign, type TextFont } from "../geom/text/text";
+import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition, type CsysPart } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 import { folderGap } from "./tree";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
@@ -451,7 +452,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       feature = validateSplit(raw, c, earlier);
       break;
     case "move":
-      feature = validateMove(raw, c);
+      feature = validateMove(raw, c, earlier);
       break;
     case "deleteBody":
       feature = validateDeleteBody(raw, c);
@@ -483,6 +484,7 @@ const ENTITY_FIELDS: Record<SketchEntity["type"], string[]> = {
   point: ["at"],
   ellipse: ["center", "major", "minor", "startAngle", "endAngle"],
   spline: ["points", "closed", "startTangent", "endTangent"],
+  text: ["at", "text", "height", "font", "angle", "align", "bold", "italic"],
 };
 
 /** The point names of each type, for the messages; an entity's own come from pointNames (an arc of an ellipse has ends, a spline one per point). */
@@ -495,6 +497,7 @@ const POINT_NAMES: Record<SketchEntity["type"], string[]> = {
   point: ["at"],
   ellipse: ["center", "major", "minorEnd", "start", "end"],
   spline: ["p0", "p1", "… (one per point)"],
+  text: ["at"],
 };
 
 /** The most points a spline may have. */
@@ -505,6 +508,7 @@ const REF_KINDS: Partial<Record<SketchEntity["type"], string>> = {
   line: 'a straight edge ({ "edge": <selector> }), an axis ({ "datum": "Z" } or an axis feature) or another sketch\'s line ({ "sketch": <id>, "entity": <id> })',
   circle: 'a whole circular edge ({ "edge": <selector> }) or another sketch\'s circle',
   arc: 'part of a circular edge ({ "edge": <selector> }) or another sketch\'s arc',
+  spline: 'a piece of the curve where a face cuts the sketch plane ({ "face": <selector>, "section": [x, y] }, an intersection curve)',
   point:
     'a point of an edge ({ "edge": <selector>, "at": "start" | "end" | "mid" | "center" }), a point of another sketch ({ "sketch": <id>, "entity": <id>, "at"? }), a point feature or { "datum": "Origin" }',
 };
@@ -520,6 +524,21 @@ function referenceOf(v: unknown, type: SketchEntity["type"], path: string, c: Ch
     return undefined;
   }
   const before = c.errors.length;
+  // An intersection curve: the piece nearest `section` of where the face cuts the sketch plane.
+  if (isObject(v) && "face" in v && "section" in v) {
+    c.keys(v, path, ["face", "section"]);
+    if (!["line", "circle", "arc", "spline"].includes(type)) {
+      c.fail(path, `a ${type} can't be an intersection curve: lines, circles, arcs and splines can`);
+      return undefined;
+    }
+    const face = validateFaceSelector(v.face, `${path}.face`, c);
+    const section = c.vec2(v, "section", path);
+    return face && section && c.errors.length === before ? { face, section } : undefined;
+  }
+  if (type === "spline") {
+    c.fail(path, `a spline references ${takes}`);
+    return undefined;
+  }
   const ref = validateDatumRef(v, path, c, opts.earlier);
   if (!ref || c.errors.length > before) return undefined;
   const refuse = (what: string) => {
@@ -779,6 +798,31 @@ function validateEntity(
       }
       break;
     }
+    case "text": {
+      const at = c.vec2(e, "at", label);
+      const height = c.num(e, "height", label, { positive: true });
+      // "=expr" text is an expression, resolved to a number by now: the text shows its value.
+      const text = typeof e.text === "number" && Number.isFinite(e.text) ? String(Math.round(e.text * 1e6) / 1e6) : e.text;
+      if (typeof text !== "string" || !text.trim()) c.fail(`${label}.text`, `must be the text to write, not empty (got ${describe(e.text)})`);
+      else if (text.length > MAX_TEXT) c.fail(`${label}.text`, `has ${text.length} characters; at most ${MAX_TEXT}`);
+      else {
+        const missing = missingGlyphs(text, { bold: e.bold === true });
+        if (missing.length) c.fail(`${label}.text`, `the font has no ${missing.map((m) => JSON.stringify(m)).join(", ")}: leave ${missing.length === 1 ? "it" : "them"} out`);
+      }
+      if (e.font !== undefined && !TEXT_FONTS.includes(e.font as TextFont)) c.fail(`${label}.font`, `must be ${TEXT_FONTS.map((f) => `"${f}"`).join(", ")} (got ${describe(e.font)})`);
+      if (e.align !== undefined && !TEXT_ALIGNS.includes(e.align as TextAlign)) c.fail(`${label}.align`, `must be "left", "center" or "right" (got ${describe(e.align)})`);
+      const angle = e.angle === undefined ? undefined : c.num(e, "angle", label, {});
+      for (const key of ["bold", "italic"] as const) if (e[key] !== undefined && typeof e[key] !== "boolean") c.fail(`${label}.${key}`, `must be true or false (got ${describe(e[key])})`);
+      if (at && height !== undefined && typeof text === "string" && text.trim()) {
+        entity = { ...base, type, at, text, height };
+        if (e.font !== undefined) entity.font = e.font as TextFont;
+        if (angle !== undefined && angle !== 0) entity.angle = angle;
+        if (e.align !== undefined && e.align !== "left") entity.align = e.align as TextAlign;
+        if (e.bold === true) entity.bold = true;
+        if (e.italic === true) entity.italic = true;
+      }
+      break;
+    }
   }
   return c.errors.length === before ? entity : null;
 }
@@ -954,7 +998,8 @@ function validateConstraint(
         if (value === undefined || !point || !line || c.errors.length > before) return null;
         return { type: "distance", point, line, value, ...(k.doubled === true ? { doubled: true } : {}), ...cond, ...dim };
       }
-      const allowed: SketchEntity["type"][] = k.type === "distance" ? ["line", "slot"] : ["line", "rect", "slot"];
+      // A text's distance (or distanceY) is its height.
+      const allowed: SketchEntity["type"][] = k.type === "distance" ? ["line", "slot", "text"] : k.type === "distanceY" ? ["line", "rect", "slot", "text"] : ["line", "rect", "slot"];
       const entity = k.entity !== undefined ? entityRef("entity", k.entity, allowed) : undefined;
       const points = k.points !== undefined ? pointPair(k.points) : undefined;
       if (entity && condition) c.fail(label, "condition is for a circle or arc by its centre, not a line's length");
@@ -2150,7 +2195,8 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
   let ref: DatumRef | null = null;
   switch (forms[0]) {
     case "datum": {
-      c.keys(v, path, ["datum"]);
+      // "part" (a coordinate system's plane, axis or origin) is checked on its own below.
+      c.keys(v, path, v.part !== undefined ? ["datum", "part"] : ["datum"]);
       const id = v.datum;
       if (typeof id !== "string" || id === "") {
         c.fail(`${path}.datum`, `must name a default (${RESERVED_DATUMS.join(", ")}) or an earlier plane, axis or point (got ${describe(id)})`);
@@ -2158,8 +2204,12 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
         c.fail(`${path}.datum`, `"${id}" is not a feature before this one (the defaults are ${RESERVED_DATUMS.join(", ")})`);
       } else if (!defaultDatum(id) && !Object.hasOwn(DATUM_OPS, earlier.get(id)!)) {
         c.fail(`${path}.datum`, `"${id}" is ${article(earlier.get(id)!)}, not a plane, axis or point`);
+      } else if (v.part !== undefined && earlier.get(id) !== CSYS_OP) {
+        c.fail(`${path}.part`, `only a coordinate system has parts; "${id}" is ${defaultDatum(id) ? "a default" : article(earlier.get(id)!)}: remove "part"`);
+      } else if (v.part !== undefined && !CSYS_PARTS.includes(v.part as CsysPart)) {
+        c.fail(`${path}.part`, `must be one of ${CSYS_PARTS.map((p) => `"${p}"`).join(", ")} (got ${describe(v.part)})`);
       } else {
-        ref = { datum: id };
+        ref = v.part !== undefined ? { datum: id, part: v.part as CsysPart } : { datum: id };
       }
       break;
     }
@@ -2233,7 +2283,7 @@ const EDGE_POINTS: readonly EdgePoint[] = ["start", "end", "mid", "center"];
 
 /** A reference as the messages name it: "Top", "plane_1", "a face", "the start of an edge", "[1, 2, 3]". */
 function refName(ref: DatumRef): string {
-  if ("datum" in ref) return ref.datum;
+  if ("datum" in ref) return ref.part ? `${ref.datum}'s ${ref.part === "origin" ? "origin" : ref.part}` : ref.datum;
   if ("face" in ref) return "a face";
   if ("edge" in ref) return ref.at ? `the ${ref.at === "mid" ? "middle" : ref.at} of an edge` : "an edge";
   if ("sketch" in ref) return sketchRefText(ref);
@@ -2345,8 +2395,12 @@ function validateSplit(raw: Record<string, unknown>, c: Checker, earlier: Map<st
   return { id: raw.id as string, op: "split", body, plane, ...(newBody ? { newBody } : {}) };
 }
 
-function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | null {
-  c.keys(raw, "", ["id", "op", "bodies", "translate", "rotate", "copy", "newBody"]);
+function validateMove(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): MoveFeature | null {
+  c.keys(raw, "", ["id", "op", "bodies", "translate", "rotate", "fromSystem", "toSystem", "copy", "newBody"]);
+  // From one coordinate system (or plane) to another: both, or neither.
+  const fromSystem = raw.fromSystem === undefined ? undefined : validateDatumRef(raw.fromSystem, "fromSystem", c, earlier, "plane");
+  const toSystem = raw.toSystem === undefined ? undefined : validateDatumRef(raw.toSystem, "toSystem", c, earlier, "plane");
+  if ((raw.fromSystem === undefined) !== (raw.toSystem === undefined)) c.fail(raw.fromSystem === undefined ? "fromSystem" : "toSystem", 'goes with "fromSystem" and "toSystem" both: the bodies move from the one to the other');
   const bodies = bodyList(raw.bodies, "bodies", c);
   const translate = raw.translate === undefined ? undefined : c.vec3(raw, "translate", "");
   let rotate: MoveFeature["rotate"];
@@ -2366,7 +2420,7 @@ function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | n
       if (axis && angle !== undefined) rotate = { axis, angle };
     }
   }
-  if (raw.translate === undefined && raw.rotate === undefined) c.fail("", 'needs "translate", "rotate" or both');
+  if (raw.translate === undefined && raw.rotate === undefined && raw.fromSystem === undefined) c.fail("", 'needs "translate", "rotate", or "fromSystem" and "toSystem"');
   if (raw.copy !== undefined && typeof raw.copy !== "boolean") c.fail("copy", `must be true or false (got ${describe(raw.copy)})`);
   const newBody = optionalNewBody(raw, c);
   if (newBody !== undefined && raw.copy !== true) c.fail("newBody", "names a copy: it goes with \"copy\": true");
@@ -2378,6 +2432,7 @@ function validateMove(raw: Record<string, unknown>, c: Checker): MoveFeature | n
     bodies,
     ...(translate ? { translate } : {}),
     ...(rotate ? { rotate } : {}),
+    ...(fromSystem && toSystem ? { fromSystem, toSystem } : {}),
     ...(raw.copy === true ? { copy: true } : {}),
     ...(newBody ? { newBody } : {}),
   };

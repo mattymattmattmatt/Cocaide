@@ -764,6 +764,61 @@ const ICONS = {
       <path d="M8.5 11l3.5-2 3.5 2" style={dash} />
     </>
   ),
+  coordinateSystem: <path d="M6 18V5 M6 18h13 M6 18l-3.5 3.5 M4 7.5 6 5l2 2.5 M16.5 16l2.5 2-2.5 2" />,
+  fillPattern: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" {...face} fillOpacity={0.12} />
+      <circle cx="8" cy="8" r="1.6" />
+      <circle cx="16" cy="8" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="8" cy="16" r="1.6" />
+      <circle cx="16" cy="16" r="1.6" />
+    </>
+  ),
+  curvePattern: (
+    <>
+      <path d="M3 19c4-9 12-13 18-14" style={dash} />
+      <circle cx="5" cy="15.5" r="1.8" />
+      <circle cx="11" cy="9.5" r="1.8" />
+      <circle cx="18" cy="6" r="1.8" />
+    </>
+  ),
+  tablePattern: (
+    <>
+      <path d="M3 4h8v16H3z M3 9h8 M3 14h8 M7 4v16" />
+      <circle cx="15" cy="7" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+      <circle cx="15.5" cy="17" r="1.6" />
+    </>
+  ),
+  thread: <path d="M7 3v18 M17 3v18 M7 5l10 2 M7 9l10 2 M7 13l10 2 M7 17l10 2" />,
+  cosmeticThread: (
+    <>
+      <path d="M7 3v18 M17 3v18" />
+      <path d="M9 5v14 M15 5v14" style={dash} />
+    </>
+  ),
+  dome: (
+    <>
+      <path d="M3 18h18v3H3z" {...face} fillOpacity={0.14} />
+      <path d="M3 18h18v3H3z M4 18a8 8 0 0 1 16 0" />
+    </>
+  ),
+  sketchText: <path d="M5 5h14 M12 5v14 M9 19h6" />,
+  engrave: (
+    <>
+      <path d="M3 9h18v10H3z" {...face} fillOpacity={0.12} />
+      <path d="M3 9h18v10H3z M8 12h8 M12 12v5" />
+    </>
+  ),
+  intersectionCurve: (
+    <>
+      <path d="M4 15c3-8 13-8 16 0" />
+      <path d="M2 11l20 2" style={dash} />
+      <circle cx="6.3" cy="11.2" r="1.3" fill="currentColor" />
+      <circle cx="17.7" cy="12.3" r="1.3" fill="currentColor" />
+    </>
+  ),
   // Phase P wave 3A: the history tree, What's wrong, the parameters manager
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   folderPlus: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M12 10v6 M9 13h6" />,

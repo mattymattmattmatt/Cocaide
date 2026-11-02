@@ -8,7 +8,7 @@
 // sketcher draws, hits and snaps to other sketches' entities with it.
 
 import type { EdgePoint, SketchEntity, Vec2, Vec3 } from "../doc/types";
-import type { Datum, DatumKind } from "../features/datum";
+import type { DatumKind, RefDatum } from "../features/datum";
 import { arcSweep } from "./constraints";
 import { to2D, to3D, type Frame } from "./frame";
 import type { EdgeGeometry } from "./projection";
@@ -87,7 +87,7 @@ export function sketchEntityPoint2(e: SketchEntity, at: EdgePoint | undefined): 
  * centre where a point is needed; a point a point. With `at`, that point.
  * A string says why not ("a line is an axis, but a point is needed here ...").
  */
-export function sketchEntityDatum(e: SketchEntity, frame: Frame, at: EdgePoint | undefined, want: DatumKind | "any"): Datum | string {
+export function sketchEntityDatum(e: SketchEntity, frame: Frame, at: EdgePoint | undefined, want: DatumKind | "any"): RefDatum | string {
   if (at !== undefined || e.type === "point") {
     const p = sketchEntityPoint2(e, at);
     return typeof p === "string" ? p : { kind: "point", at: to3D(frame, p) };

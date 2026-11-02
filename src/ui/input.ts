@@ -190,6 +190,15 @@ export const COMMANDS: CommandDef[] = [
   { id: "select.loop", label: "Select the loop the selected edge is in", group: "Model tools", key: null },
   { id: "select.faceEdges", label: "Select every edge of the selected faces", group: "Model tools", key: null },
   { id: "select.tangentFaces", label: "Select the faces tangent to the selected faces", group: "Model tools", key: null },
+  // Phase P wave 3B: modelling features.
+  { id: "tool.fillPattern", label: "Fill pattern", group: "Model tools", key: null },
+  { id: "tool.curvePattern", label: "Curve-driven pattern", group: "Model tools", key: null },
+  { id: "tool.tablePattern", label: "Table-driven pattern", group: "Model tools", key: null },
+  { id: "tool.thread", label: "Thread", group: "Model tools", key: null },
+  { id: "tool.coordinateSystem", label: "Coordinate system", group: "Model tools", key: null },
+  { id: "tool.dome", label: "Dome", group: "Model tools", key: null },
+  { id: "sketch.text", label: "Text", group: "Sketch", key: null },
+  { id: "sketch.intersection", label: "Intersection curve (where the model's faces cut the sketch plane)", group: "Sketch", key: null },
   // Phase P wave 3A: a forgiving history.
   { id: "history.whatsWrong", label: "What's wrong: every error and warning, with fixes", group: "General", key: null },
   { id: "history.list", label: "Undo history: go back to a step", group: "General", key: null },

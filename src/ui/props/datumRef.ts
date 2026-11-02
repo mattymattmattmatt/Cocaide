@@ -5,8 +5,8 @@
 // view (a face, an edge, a vertex, a plane) into a reference that follows it
 // through rebuilds (a selector or an id, never an index). Pure.
 
-import type { DatumRef, EdgeSelector, FaceSelector, Vec3 } from "../../doc/types";
-import { DATUM_OPS, DEFAULT_DATUMS, sketchRefText, type DatumKind } from "../../features/datum";
+import type { CsysPart, DatumRef, EdgeSelector, FaceSelector, Vec3 } from "../../doc/types";
+import { CSYS_OP, CSYS_PARTS, csysPartKind, DATUM_OPS, DEFAULT_DATUMS, sketchRefText, type DatumKind } from "../../features/datum";
 import { formatDirection } from "../../geom/vec";
 import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
 import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
@@ -52,12 +52,38 @@ export function kindsText(kinds: DatumKind[]): string {
 /** The kind a reference feature makes, by its op. */
 const opKind = (op: unknown): DatumKind | undefined => (typeof op === "string" && Object.hasOwn(DATUM_OPS, op) ? DATUM_OPS[op] : undefined);
 
-/** What a datumRef field offers: the defaults of the kinds it takes, then the reference features before this one. */
+/** What a datumRef field offers: the defaults of the kinds it takes, then the reference features before this one (a coordinate system's planes, axes and origin). */
 export function datumChoices(before: Raw[], accepts: DatumKind[]): DatumChoice[] {
-  const features = before
-    .filter((g) => opKind(g.op) && accepts.includes(opKind(g.op)!))
-    .map((g): DatumChoice => ({ id: String(g.id), kind: opKind(g.op)!, label: `${String(g.id)} (${opKind(g.op)})` }));
+  const features = before.flatMap((g): DatumChoice[] => {
+    const id = String(g.id);
+    if (g.op === CSYS_OP) {
+      return CSYS_PARTS.filter((part) => accepts.includes(csysPartKind(part))).map((part) => ({
+        id: part === "XY" ? id : csysChoiceId(id, part),
+        kind: csysPartKind(part),
+        label: `${id} ${part === "origin" ? "origin" : `${part} ${csysPartKind(part)}`}`,
+      }));
+    }
+    const kind = opKind(g.op);
+    return kind && accepts.includes(kind) ? [{ id, kind, label: `${id} (${kind})` }] : [];
+  });
   return [...DEFAULT_CHOICES.filter((d) => accepts.includes(d.kind)), ...features];
+}
+
+/** A coordinate system's part as a choice's id ("cs1::YZ"); the XY plane is the coordinate system's own id. */
+export function csysChoiceId(id: string, part: CsysPart): string {
+  return `${id}::${part}`;
+}
+
+/** The reference a choice's id stands for: { datum } or, for "cs1::YZ", { datum: "cs1", part: "YZ" }. */
+export function choiceRef(id: string): DatumRef {
+  const at = id.lastIndexOf("::");
+  if (at > 0 && CSYS_PARTS.includes(id.slice(at + 2) as CsysPart)) return { datum: id.slice(0, at), part: id.slice(at + 2) as CsysPart };
+  return { datum: id };
+}
+
+/** The choice's id of a { datum } reference. */
+export function refChoiceId(ref: { datum: string; part?: CsysPart }): string {
+  return ref.part && ref.part !== "XY" ? csysChoiceId(ref.datum, ref.part) : ref.datum;
 }
 
 /** Is it a { datum } reference (a default or a reference feature), rather than picked geometry? */
@@ -75,6 +101,8 @@ export function describeRef(ref: unknown, before: Raw[] = []): string {
     const d = DEFAULT_CHOICES.find((x) => x.id === r.datum);
     if (d) return `${d.label}: ${DEFAULT_DETAIL[d.id]}`;
     const g = before.find((x) => x.id === r.datum);
+    const part = (ref as { part?: CsysPart }).part;
+    if (g?.op === CSYS_OP) return part ? `${r.datum} ${part === "origin" ? "origin" : `${part} ${csysPartKind(part)}`}: part of a coordinate system` : `${r.datum}: a coordinate system (its XY plane, Z axis or origin, as needed)`;
     return g && opKind(g.op) ? `${r.datum}: a reference ${opKind(g.op)}` : `${r.datum}: no reference plane, axis or point of that id before this feature`;
   }
   if (r.face) return describeWanted(r.face, 1).replace(/^1 /, "the ");
@@ -111,7 +139,8 @@ function pickedKinds(view: RebuildView, sel: Selection, before: Raw[]): { what: 
   if (nv === 1) return { what: "A vertex", kinds: ["point"] };
   const id = sel.datums![0];
   const kind = datumKindOf(id, view.datums) ?? opKind(before.find((g) => g.id === id)?.op);
-  return { what: DEFAULT_DATUM_LABEL[id] ?? id, kinds: kind ? [kind] : [] };
+  // A coordinate system can be any of its parts.
+  return { what: DEFAULT_DATUM_LABEL[id] ?? id, kinds: kind === "frame" ? ["plane", "axis", "point"] : kind ? [kind] : [] };
 }
 
 export type RefSynthesis = { ok: true; ref: DatumRef } | { ok: false; error: string };

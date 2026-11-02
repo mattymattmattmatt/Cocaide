@@ -97,7 +97,7 @@ export function helixEdge(oc: OC, s: Scope, frame: AxisFrame, radius: number, pi
 }
 
 /** How an edge is travelled: point and unit tangent at a fraction 0..1 of its parameter range, in its own orientation. */
-function traveller(oc: OC, s: Scope, edge: TopoDS_Edge) {
+export function traveller(oc: OC, s: Scope, edge: TopoDS_Edge) {
   const curve = s.track(new oc.BRepAdaptor_Curve(edge));
   const u0 = curve.FirstParameter();
   const u1 = curve.LastParameter();
@@ -115,7 +115,7 @@ function traveller(oc: OC, s: Scope, edge: TopoDS_Edge) {
   };
 }
 
-function edgeLength(oc: OC, s: Scope, edge: TopoDS_Edge): number {
+export function edgeLength(oc: OC, s: Scope, edge: TopoDS_Edge): number {
   const props = s.track(new oc.GProp_GProps());
   oc.BRepGProp.LinearProperties(edge, props, false, false);
   return props.Mass();

@@ -203,7 +203,7 @@ describe("the tools' rules", () => {
     expect(bad({ id: "m", op: "mirror", plane: { type: "datum", normal: [0, 0, 0], origin: [0, 0, 0] }, bodies: ["base"] })).toEqual(["m: plane.normal: must not be the zero vector"]);
     expect(bad({ id: "s", op: "split", body: "plinth", plane: YZ })).toEqual(['s: body: no body "plinth" before this feature (bodies so far: base, upright)']);
     expect(bad({ id: "s", op: "split", body: "base", plane: YZ, newBody: "upright" })).toEqual(['s: newBody: would make body "upright", which is already a body']);
-    expect(bad({ id: "mv", op: "move", bodies: ["upright"] })).toEqual(['mv: needs "translate", "rotate" or both']);
+    expect(bad({ id: "mv", op: "move", bodies: ["upright"] })).toEqual(['mv: needs "translate", "rotate", or "fromSystem" and "toSystem"']);
     expect(bad({ id: "mv", op: "move", bodies: ["upright"], translate: [0, 1, 0], newBody: "x" })).toEqual(['mv: newBody: names a copy: it goes with "copy": true']);
     expect(bad({ id: "d", op: "deleteBody", bodies: ["base", "upright"] })).toEqual(["d: bodies: would delete every body: nothing of the part would be left"]);
     expect(bad({ id: "d", op: "deleteBody", keep: ["base", "upright"] })).toEqual(["d: keep: keeps every body: there is nothing to delete"]);

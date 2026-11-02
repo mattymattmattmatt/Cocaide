@@ -79,7 +79,11 @@ function itemsOf(sel: Selection, view: RebuildView | null, kindOf: (id: string) 
 /** What a datum id is: a default one, a plane/axis/point feature of the document, or one the rebuild made. */
 export function datumKinds(features: Raw[], view: RebuildView | null): (id: string) => DatumKind | undefined {
   const ops: Record<string, DatumKind> = { plane: "plane", axis: "axis", point: "point" };
-  return (id) => datumKindOf(id, view?.datums ?? {}) ?? ops[String(features.find((f) => f.id === id)?.op)];
+  // A coordinate system is its XY plane when nothing else says (a reference to one names its part).
+  return (id) => {
+    const k = datumKindOf(id, view?.datums ?? {});
+    return k === "frame" ? "plane" : (k ?? ops[String(features.find((f) => f.id === id)?.op)]);
+  };
 }
 
 const is = (item: Item, ...what: Item["what"][]) => what.includes(item.what);

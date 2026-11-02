@@ -56,6 +56,17 @@ function transformed(e: SketchEntity, f: (p: Vec2) => Vec2, k: number, id: strin
       return { ...e, id, center: f(e.center), start: f(e.start), end: f(e.end) };
     case "point":
       return { ...e, id, at: f(e.at) };
+    case "text": {
+      // Moved, turned with the move (its baseline's direction mapped too) and scaled.
+      const a = ((e.angle ?? 0) * Math.PI) / 180;
+      const at = f(e.at);
+      const tip = f([e.at[0] + Math.cos(a), e.at[1] + Math.sin(a)]);
+      const angle = Math.round(((Math.atan2(tip[1] - at[1], tip[0] - at[0]) * 180) / Math.PI) * 1e9) / 1e9;
+      const out = { ...e, id, at, height: e.height * k };
+      if (Math.abs(angle) > 1e-9) out.angle = angle;
+      else delete out.angle;
+      return out;
+    }
     case "rect":
       return { ...e, id, center: f(e.center), w: e.w * k, h: e.h * k };
     case "slot":

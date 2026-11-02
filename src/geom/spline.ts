@@ -27,6 +27,11 @@ export interface SplineCurve {
   derivs: Vec2[];
   /** One Bezier per piece: points.length - 1 pieces, or points.length when closed. */
   spans: Bezier[];
+  /**
+   * The spans are the curve as given (a glyph's outline), not a spline
+   * through the points: the kernel builds it from them as they are.
+   */
+  exact?: boolean;
 }
 
 /** Interpolating spline problems are told to the user: fewer than two points, or two in the same place. */
@@ -198,6 +203,7 @@ export function reverseSpline(s: SplineCurve): SplineCurve {
     knots: s.knots.map((k) => total - k).reverse(),
     derivs: s.derivs.map(([x, y]) => [-x, -y] as Vec2).reverse(),
     spans: s.spans.map(reverseBezier).reverse(),
+    ...(s.exact ? { exact: true } : {}),
   };
 }
 

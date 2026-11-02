@@ -462,7 +462,7 @@ export async function facePlane(doc: RawDocument, kernel: KernelPort, input: unk
 export async function listDatums(doc: RawDocument, kernel: KernelPort): Promise<Outcome> {
   const check = await kernel.check(doc);
   const out = (d: Datum) =>
-    d.kind === "plane" ? { kind: "plane", origin: r3v(d.origin), normal: r3v(d.normal), xDir: r3v(d.xDir) } : d.kind === "axis" ? { kind: "axis", origin: r3v(d.origin), direction: r3v(d.direction) } : { kind: "point", at: r3v(d.at) };
+    d.kind === "plane" ? { kind: "plane", origin: r3v(d.origin), normal: r3v(d.normal), xDir: r3v(d.xDir) } : d.kind === "axis" ? { kind: "axis", origin: r3v(d.origin), direction: r3v(d.direction) } : d.kind === "frame" ? { kind: "coordinateSystem", origin: r3v(d.origin), x: r3v(d.x), y: r3v(d.y), z: r3v(d.z) } : { kind: "point", at: r3v(d.at) };
   return {
     ok: true,
     defaults: Object.fromEntries(Object.entries(DEFAULT_DATUMS).map(([k, d]) => [k, out(d)])),

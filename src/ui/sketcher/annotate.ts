@@ -8,6 +8,7 @@ import { isDriven, withAxes } from "../../geom/axes";
 import { point as pointOf } from "../../geom/constraints";
 import { angleOf, dist2, sub2 } from "../../geom/vec";
 import { ellipseGeom, ellipsePoint, ellipseSpan, entityPoint, isEllipticalArc, pointNames, splineOf } from "../../geom/curves";
+import { textCorners } from "../../geom/text/text";
 import { splinePoint } from "../../geom/spline";
 import type { IconName } from "../icons";
 
@@ -160,6 +161,18 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         }
         let p: Vec2 | null = null;
         let q: Vec2 | null = null;
+        if (e?.type === "text") {
+          // Its height: up the left side of its box, from the baseline to the capitals' top.
+          const a = ((e.angle ?? 0) * Math.PI) / 180;
+          const along: Vec2 = [Math.cos(a), Math.sin(a)];
+          const up: Vec2 = [-along[1], along[0]];
+          // The box's left end on the baseline (the corner's offset along the baseline from the anchor).
+          const c = textCorners(e);
+          const x0 = (c[0][0] - e.at[0]) * along[0] + (c[0][1] - e.at[1]) * along[1];
+          const from: Vec2 = [e.at[0] + along[0] * x0, e.at[1] + along[1] * x0];
+          aligned(index, text, from, [from[0] + up[0] * e.height, from[1] + up[1] * e.height], [-along[0], -along[1]]);
+          return;
+        }
         if (e?.type === "line") [p, q] = [e.start, e.end];
         else if (e?.type === "slot") [p, q] = [e.center1, e.center2];
         else if (k.points) [p, q] = [at(k.points[0]), at(k.points[1])];
@@ -234,7 +247,7 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         // One dimension for the whole offset: across its first pair, from the base to the offset.
         const base = k.entities[0];
         const o = byId.get(k.offsets[0]);
-        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot" || o.type === "ellipse" || o.type === "spline") return;
+        if (!o || o.type === "point" || o.type === "rect" || o.type === "slot" || o.type === "ellipse" || o.type === "spline" || o.type === "text") return;
         let p: Vec2 | null = null;
         let q: Vec2 | null = null;
         if (o.type === "line") {
@@ -508,6 +521,11 @@ function anchorOf(e: SketchEntity): Vec2 {
       return [(e.center1[0] + e.center2[0]) / 2, (e.center1[1] + e.center2[1]) / 2 + e.width / 2];
     case "point":
       return e.at;
+    case "text": {
+      // Above its box's top left corner.
+      const c = textCorners(e);
+      return c[3];
+    }
     case "ellipse": {
       // An arc's middle; a whole ellipse's rim down to the right, as a circle's.
       const { start, sweep } = ellipseSpan(e);

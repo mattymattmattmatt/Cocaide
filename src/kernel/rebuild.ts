@@ -21,7 +21,7 @@ import { buildProfile, entityPolylines } from "../geom/profile";
 import { frameEnds, type FrameMember } from "../weldment/joints";
 import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
 import { memberCut } from "./cutlist";
-import { planeSpecFrame } from "./datum";
+import { planeSpecFrame, resolveDatum } from "./datum";
 import { solvedSketch } from "./sketchRefs";
 import { byBody, treatBody, treatments } from "./edgeTreat";
 import { cutMissed, extrudeTool } from "./extrude";
@@ -702,7 +702,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
         case "move": {
           const listed = raw.bodies.map((n) => [n, need(n)] as const);
           scoped((s) => {
-            const steps = moveTrsfs(oc, s, raw);
+            const steps = moveTrsfs(oc, s, raw, (ref, path) => resolveDatum(ctx, ref, "plane", path));
             const changed = new Map<string, TopoDS_Shape>();
             const copies = new Map<string, string>();
             for (const [name, body] of listed) {

@@ -59,7 +59,7 @@ export function rawConstraintEntities(k: unknown): string[] {
   }
 }
 
-export const ENTITY_PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p", ellipse: "el", spline: "sp" };
+export const ENTITY_PREFIX: Record<SketchEntity["type"], string> = { line: "l", circle: "c", arc: "a", rect: "r", slot: "s", point: "p", ellipse: "el", spline: "sp", text: "t" };
 
 /** The first free entity id with the type's prefix: l1, l2, ... */
 export function nextEntityId(entities: { id?: unknown }[], prefix: string): string {

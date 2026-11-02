@@ -15,6 +15,12 @@ import { def as loft } from "./loft/doc";
 import { def as rib } from "./rib/doc";
 import { def as sketchPattern } from "./sketchPattern/doc";
 import { def as importOp } from "./import/doc";
+import { def as coordinateSystem } from "./coordinateSystem/doc";
+import { def as tablePattern } from "./tablePattern/doc";
+import { def as curvePattern } from "./curvePattern/doc";
+import { def as fillPattern } from "./fillPattern/doc";
+import { def as thread } from "./thread/doc";
+import { def as dome } from "./dome/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -29,4 +35,10 @@ export const DOC_DEFS = [
   rib,
   sketchPattern,
   importOp,
+  coordinateSystem,
+  tablePattern,
+  curvePattern,
+  fillPattern,
+  thread,
+  dome,
 ];

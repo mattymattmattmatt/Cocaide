@@ -8,6 +8,7 @@ import type { SketchEntity, Vec2 } from "../doc/types";
 import { closestOnEllipse, closestOnSpline, ellipseGeom, ellipsePoint, ellipseSpan, splineOf } from "./curves";
 import { bezierArea, bezierLength, reverseSpline, sampleBezier, SplineError, type SplineCurve } from "./spline";
 import { add2, angleOf, cross2, dist2, dot2, len2, polar, scale2, sub2, wrapAngle } from "./vec";
+import { layoutText } from "./text/text";
 
 /** Positional tolerance in document units (mm). */
 export const TOL = 1e-6;
@@ -78,6 +79,13 @@ export function buildProfile(entities: SketchEntity[]): ProfileResult {
           const s = splineSeg(e);
           if (e.closed) loops.push(makeLoop([s]));
           else open.push(s);
+          break;
+        }
+        case "text": {
+          // Each letter's contours are closed loops of their own; nesting finds the holes in them.
+          if (!e.text.trim()) throw new ProfileError(`text "${e.id}" is empty`);
+          if (!(e.height > 0)) throw new ProfileError(`text "${e.id}" has no height`);
+          for (const loop of layoutText(e).loops) loops.push(makeLoop(loop));
           break;
         }
       }
@@ -253,13 +261,24 @@ function checkIntersections(loops: Loop[]): void {
   // A spline may loop over itself.
   for (const { seg } of all) {
     if (seg.kind !== "spline") continue;
-    const hit = selfHits(segPolyline(seg), seg.curve.closed);
+    const hit = selfHits(segPolyline(seg), seg.curve.closed || dist2(seg.a, seg.b) <= TOL);
     if (hit.length) throw new ProfileError(`"${seg.entity}" crosses itself at ${fmtPt(hit[0])}; profiles must not cross or touch (move its points so it doesn't loop)`);
   }
+  // Each segment's box (from its fine polyline, a hair wider): pieces whose boxes are apart can't meet (text has hundreds).
+  const boxes = all.map(({ seg }) => {
+    const pts = segPolyline(seg);
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const pad = 10 * TOL + (seg.kind === "arc" || seg.kind === "ellipse" ? 0.01 * Math.max(...xs) - 0.01 * Math.min(...xs) + 0.01 * Math.max(...ys) - 0.01 * Math.min(...ys) : 0);
+    return [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad];
+  });
   for (let i = 0; i < all.length; i++) {
     for (let j = i + 1; j < all.length; j++) {
       const A = all[i];
       const B = all[j];
+      const bi = boxes[i];
+      const bj = boxes[j];
+      if (bi[0] > bj[2] || bj[0] > bi[2] || bi[1] > bj[3] || bj[1] > bi[3]) continue;
       const hit = intersect(A.seg, B.seg);
       if (hit === "overlap") {
         throw new ProfileError(`"${A.seg.entity}" and "${B.seg.entity}" overlap`);
@@ -411,6 +430,17 @@ function onEllipseArc(s: EllipseSeg, p: Vec2): boolean {
 /** A fine polyline along a segment (ends exact), for intersections and winding numbers. */
 export function segPolyline(s: Seg): Vec2[] {
   if (s.kind === "line") return [s.a, s.b];
+  // Segments are not changed once made: a curve's polyline is worked out once.
+  const known = polylines.get(s);
+  if (known) return known;
+  const out = curvePolyline(s);
+  polylines.set(s, out);
+  return out;
+}
+
+const polylines = new WeakMap<Seg, Vec2[]>();
+
+function curvePolyline(s: Exclude<Seg, { kind: "line" }>): Vec2[] {
   if (s.kind === "spline") {
     const out: Vec2[] = [];
     s.curve.spans.forEach((b, i) => {
@@ -479,8 +509,17 @@ function onArc(s: ArcSeg, p: Vec2): boolean {
 // --------------------------------------------------------------- nesting
 
 function nest(loops: Loop[]): Region[] {
+  // A loop can hold a point only inside its box (text has many loops side by side).
+  const boxes = loops.map((loop) => {
+    const pts = loop.segs.flatMap(segPolyline);
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const r = loop.segs.reduce((m, s) => Math.max(m, s.kind === "arc" ? s.r : s.kind === "ellipse" ? Math.max(s.rx, s.ry) : 0), 0);
+    return [Math.min(...xs) - r, Math.min(...ys) - r, Math.max(...xs) + r, Math.max(...ys) + r];
+  });
+  const inBox = (j: number, p: Vec2) => p[0] >= boxes[j][0] && p[0] <= boxes[j][2] && p[1] >= boxes[j][1] && p[1] <= boxes[j][3];
   const containers = loops.map((loop, i) =>
-    loops.map((_, j) => j).filter((j) => j !== i && windingNumber(loops[j], loop.segs[0].a) !== 0),
+    loops.map((_, j) => j).filter((j) => j !== i && inBox(j, loop.segs[0].a) && windingNumber(loops[j], loop.segs[0].a) !== 0),
   );
   const depth = containers.map((c) => c.length);
   const regions: Region[] = [];
@@ -658,6 +697,12 @@ export function entityPolylines(e: SketchEntity, maxAngleStep = Math.PI / 32): V
       case "spline":
         segs = [splineSeg(e)];
         break;
+      case "text":
+        // Each letter's contours, closed.
+        return layoutText(e).loops.map((loop) => {
+          const pts = loop.flatMap((s, i) => (i === 0 ? sampleSeg(s, maxAngleStep) : sampleSeg(s, maxAngleStep).slice(1)));
+          return pts;
+        });
     }
     return segs.map((s) => sampleSeg(s, maxAngleStep));
   } catch {

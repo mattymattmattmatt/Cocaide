@@ -4,6 +4,7 @@
 import type { KernelMethod } from "../ask/kernel";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
 import type { BodyRange } from "../kernel/bodies";
+import type { HoleRecord } from "../kernel/rebuild";
 import type { Datum } from "../features/datum";
 import type { Closest, MassProperties, MeasureRef } from "../kernel/evaluate";
 
@@ -38,6 +39,8 @@ export interface RebuildView {
   bodies: BodyRange[];
   /** The plane, axis and point features that built, by id, in order: where each is now (the viewport draws and picks them). */
   datums: Record<string, Datum>;
+  /** The holes and threads that built (a thread's record, a tapped hole's): the view draws their cosmetic threads. */
+  holes?: HoleRecord[];
   /** By feature id: whose faces and edges its selectors matched (the tree's parents and children through the part's geometry). */
   uses?: Record<string, string[]>;
 }

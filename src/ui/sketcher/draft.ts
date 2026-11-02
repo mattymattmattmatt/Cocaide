@@ -8,6 +8,7 @@ import { arcLength, measureConstraint, point as pointOf } from "../../geom/const
 import { angleOf, dist2, sub2, wrapAngle } from "../../geom/vec";
 import { closestOnEllipse, closestOnSpline, ellipseGeom, entityPoint, pointNames, splineOf } from "../../geom/curves";
 import { distanceToSeg, ellipseSeg, splineSeg } from "../../geom/profile";
+import { textCorners } from "../../geom/text/text";
 import type { Namer } from "./names";
 
 /** A pick: an entity (a model edge's stand-in "@e12" or a sketch axis "X" too), a point ref, or a model face (Convert Entities picks faces). */
@@ -43,6 +44,7 @@ export function handlesOf(e: SketchEntity): Handle[] {
     case "slot":
       return [h("center1", e.center1), h("center2", e.center2)];
     case "point":
+    case "text":
       return [h("at", e.at)];
     case "ellipse":
     case "spline":
@@ -82,6 +84,15 @@ export function distanceTo(e: SketchEntity, p: Vec2): number {
     }
     case "point":
       return dist2(p, e.at);
+    case "text": {
+      // Anywhere on its box (letters are small and thin to hit): 0 inside it, else the way to its edge.
+      const c = textCorners(e);
+      const inside = c.every((a, i) => {
+        const b = c[(i + 1) % 4];
+        return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= -1e-9;
+      });
+      return inside ? 0 : Math.min(...c.map((a, i) => segDist(p, a, c[(i + 1) % 4])));
+    }
     case "ellipse":
       try {
         return distanceToSeg(ellipseSeg(e), p);
@@ -198,6 +209,12 @@ export function suggestions(entities: SketchEntity[], itemsIn: SketchItem[]): Su
         { label: "Vertical", icon: "vertical", make: () => ({ type: "vertical", entity: e.id }), testId: "c-vertical" },
         fix({ entity: e.id }),
         { label: "Length", icon: "smartDimension", value: round6(dist2(e.start, e.end)), make: (v) => ({ type: "distance", entity: e.id, value: v }), testId: "c-length" },
+      );
+    }
+    if (e.type === "text") {
+      out.push(
+        { label: "Anchor on origin", icon: "coincident", make: () => ({ type: "coincident", points: [`${e.id}.at`, "origin"] }), testId: "c-anchor-origin" },
+        { label: "Text height", icon: "smartDimension", value: round6(e.height), make: (v) => ({ type: "distance", entity: e.id, value: v }), testId: "c-text-height" },
       );
     }
     if (e.type === "rect") {
@@ -441,6 +458,7 @@ export function smartDimension(entities: SketchEntity[], picksIn: SketchItem[], 
       return [...valued.slice(0, 1), ...extra];
     }
     if (e?.type === "circle") return valued.filter((s) => s.testId === "c-diameter" || s.testId === "c-radius");
+    if (e?.type === "text") return valued.filter((s) => s.testId === "c-text-height");
     if (e?.type === "arc") return [...valued.filter((s) => s.testId === "c-radius" || s.testId === "c-diameter"), arcLengthOffer(e)];
     if (e?.type === "ellipse") {
       // Its radii: the one whose axis was clicked nearer first.
@@ -809,8 +827,10 @@ export function entityFromClicks(type: SketchEntity["type"], id: string, pts: Ve
     }
     case "spline":
       return pts.length >= 2 ? { id, type, points: pts, ...extra } : null;
+    case "text":
+      return a ? { id, type, at: a, text: "Text", height: 5, ...extra } : null;
   }
 }
 
 /** How many clicks each entity takes when placed on its own (the drawing tools are in tools/). */
-export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1, ellipse: 3, spline: 2 };
+export const CLICKS: Record<SketchEntity["type"], number> = { line: 2, rect: 2, circle: 2, arc: 3, slot: 3, point: 1, ellipse: 3, spline: 2, text: 1 };

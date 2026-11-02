@@ -6,6 +6,7 @@
 import type { TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
 import type {
   CombineFeature,
+  DatumRef,
   EndCapFeature,
   GussetFeature,
   MemberFeature,
@@ -84,7 +85,8 @@ export function curveEdge(oc: OC, s: Scope, frame: Frame, seg: EllipseSeg | Spli
     return { mk, reversed: seg.sweep < 0 };
   }
   const c = seg.curve;
-  if (!c.closed) {
+  // A spline through points; an exact one (a glyph's curves) is built from its pieces as they are, below.
+  if (!c.closed && !c.exact) {
     const n = c.points.length;
     const pts = s.track(new oc.NCollection_Array1_gp_Pnt(1, n));
     c.points.forEach((p, i) => pts.SetValue(i + 1, p3(p)));
@@ -521,8 +523,19 @@ export function mirrorTrsf(oc: OC, s: Scope, plane: { normal: Vec3; origin: Vec3
 }
 
 /** A move's steps, in order: the turn, then the shift. */
-export function moveTrsfs(oc: OC, s: Scope, f: MoveFeature): Trsf[] {
+export function moveTrsfs(oc: OC, s: Scope, f: MoveFeature, place?: (ref: DatumRef, path: string) => { origin: Vec3; normal: Vec3; xDir: Vec3 }): Trsf[] {
   const out: Trsf[] = [];
+  if (f.fromSystem && f.toSystem) {
+    // From one frame to the other: what is at the first's origin along its axes goes to the second's.
+    if (!place) throw new OpError("fromSystem: can't resolve coordinate systems here");
+    const ax3 = (ref: DatumRef, path: string) => {
+      const p = place(ref, path);
+      return s.track(new oc.gp_Ax3(pnt(oc, s, p.origin), dir(oc, s, normalize3(p.normal)), dir(oc, s, normalize3(p.xDir))));
+    };
+    const t = identity(oc, s);
+    t.SetDisplacement(ax3(f.fromSystem, "fromSystem"), ax3(f.toSystem, "toSystem"));
+    out.push(t);
+  }
   if (f.rotate) {
     const t = identity(oc, s);
     t.SetRotation(s.track(new oc.gp_Ax1(pnt(oc, s, f.rotate.axis.origin), dir(oc, s, normalize3(f.rotate.axis.direction)))), (f.rotate.angle * Math.PI) / 180);

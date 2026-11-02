@@ -76,6 +76,12 @@ describe("the registry", () => {
       "tool-import-step",
       "tool-export-plates",
       "tool-export-face-dxf",
+      "tool-fill-pattern",
+      "tool-curve-pattern",
+      "tool-table-pattern",
+      "tool-thread",
+      "tool-dome",
+      "tool-coordinate-system",
     ]);
   });
 
@@ -83,15 +89,15 @@ describe("the registry", () => {
     expect(ids(toolbarGroups("pinned"))).toEqual([["tool.sketch"]]);
     expect(ids(toolbarGroups("features"))).toEqual([
       ["tool.extrude", "tool.cut", "revolve: tool.revolve, tool.revolveCut", "sweep: tool.sweep, tool.sweepCut, tool.helix", "loft: tool.loft, tool.loftCut"],
-      ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft", "tool.rib"],
-      ["pattern: tool.linearPattern, tool.circularPattern, tool.sketchPattern", "tool.mirror"],
+      ["tool.hole", "tool.fillet", "tool.chamfer", "tool.shell", "tool.draft", "tool.rib", "tool.thread", "tool.dome"],
+      ["pattern: tool.linearPattern, tool.circularPattern, tool.sketchPattern, tool.fillPattern, tool.curvePattern, tool.tablePattern", "tool.mirror"],
     ]);
     expect(ids(toolbarGroups("bodies"))).toEqual([
       ["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"],
       ["tool.importStep", "tool.exportPlates", "tool.exportFaceDxf"],
     ]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
-    expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point"]]);
+    expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point", "tool.coordinateSystem"]]);
     expect(ids(toolbarGroups("evaluate"))).toEqual([["tool.measure", "tool.massProperties"], ["tool.section"]]);
   });
 
@@ -117,7 +123,7 @@ describe("the registry", () => {
   });
 
   it("offers Sketch, Hole, Shell and Draft on a face, Fillet and Chamfer on an edge", () => {
-    expect(contextTools("face").map((t) => t.id)).toEqual(["tool.sketch", "tool.hole", "tool.shell", "tool.draft"]);
+    expect(contextTools("face").map((t) => t.id)).toEqual(["tool.sketch", "tool.hole", "tool.shell", "tool.draft", "tool.thread", "tool.dome"]);
     expect(contextTools("edge").map((t) => t.id)).toEqual(["tool.fillet", "tool.chamfer"]);
     expect(contextTools("part")).toEqual([]);
   });

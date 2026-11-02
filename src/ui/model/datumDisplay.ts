@@ -26,7 +26,9 @@ export interface Box {
 export type DatumShape =
   | { kind: "plane"; id: string; isDefault: boolean; corners: [Vec3, Vec3, Vec3, Vec3]; normal: Vec3; label: Vec3 }
   | { kind: "axis"; id: string; isDefault: boolean; ends: [Vec3, Vec3]; label: Vec3 }
-  | { kind: "point"; id: string; isDefault: boolean; at: Vec3; label: Vec3 };
+  | { kind: "point"; id: string; isDefault: boolean; at: Vec3; label: Vec3 }
+  /** A coordinate system: a small triad at `at`, its arms' tips (X, Y, Z) `size` mm out. */
+  | { kind: "frame"; id: string; isDefault: boolean; at: Vec3; tips: [Vec3, Vec3, Vec3]; size: number; label: Vec3 };
 
 /** Half the side of a plane with no part to fit: a 100 mm square. */
 const EMPTY_HALF = 50;
@@ -88,8 +90,19 @@ export function datumShapes(datums: Readonly<Record<string, Datum>>, box: Box | 
       const ends = axisEnds(d, box);
       return { kind: "axis", id, isDefault, ends, label: ends[1] };
     }
+    if (d.kind === "frame") {
+      const size = triadSize(box);
+      const tips = [d.x, d.y, d.z].map((u) => add3(d.origin, scale3(normalize3(u), size))) as [Vec3, Vec3, Vec3];
+      return { kind: "frame", id, isDefault, at: d.origin, tips, size, label: add3(d.origin, scale3(normalize3(add3(add3(d.x, d.y), d.z)), size * 0.35)) };
+    }
     return { kind: "point", id, isDefault, at: d.at, label: d.at };
   });
+}
+
+/** A coordinate system's triad arm, mm: a tenth of the part's largest side (at least 4), 10 with no part. */
+export function triadSize(box: Box | null): number {
+  if (!box) return 10;
+  return Math.max(4, 0.1 * Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]));
 }
 
 // ---------------------------------------------------------------- showing and hiding

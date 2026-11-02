@@ -406,7 +406,8 @@ export interface DatumPlane {
  * - { datum: "Front" | "Top" | "Right" }: a default plane (Z up: Top = XY,
  *   normal +Z; Front = XZ, normal -Y; Right = YZ, normal +X), through the origin.
  * - { datum: "Origin" }: the origin, a point. { datum: "X" | "Y" | "Z" }: an axis through it.
- * - { datum: "<id>" }: an earlier plane, axis or point feature.
+ * - { datum: "<id>" }: an earlier plane, axis or point feature, or a coordinate
+ *   system (with `part`, one of its planes, axes or its origin: CsysPart).
  * - { face }: a planar face is a plane (its outward normal); a cylindrical or
  *   conical face is its axis.
  * - { edge }: a straight edge is an axis (start to end); a circular edge is its
@@ -419,11 +420,21 @@ export interface DatumPlane {
  *   "start", "end" or "mid" of a line or arc). It follows that sketch.
  */
 export type DatumRef =
-  | { datum: string }
-  | { face: FaceSelector }
+  | { datum: string; part?: CsysPart }
+  /** As a sketch entity's ref, with `section`: the piece of the curve where the face cuts the sketch plane nearest that point (an intersection curve). */
+  | { face: FaceSelector; section?: Vec2 }
   | { edge: EdgeSelector; at?: EdgePoint }
   | { point: Vec3 }
   | SketchEntityRef;
+/**
+ * A part of a coordinate system feature (op "coordinateSystem") used as a
+ * reference: { "datum": "cs1", "part": "XY" } is its XY plane (normal Z, x
+ * along X), "YZ" (normal X, x along Y), "ZX" (normal Y, x along Z), "X" / "Y"
+ * / "Z" its axes through its origin, "origin" its origin. Without a part, a
+ * coordinate system is its XY plane where a plane is needed, its Z axis where
+ * an axis is, its origin where a point is.
+ */
+export type CsysPart = "XY" | "YZ" | "ZX" | "X" | "Y" | "Z" | "origin";
 /** A reference to an entity of an earlier sketch (DESIGN §2.9): see DatumRef. */
 export interface SketchEntityRef {
   sketch: string;
@@ -569,7 +580,29 @@ export interface SplineEntity extends EntityBase {
   endTangent?: number;
 }
 
-export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity | EllipseEntity | SplineEntity;
+/**
+ * Text (Phase P): its letters' outlines are profile loops (an extrude
+ * embosses it, a cut engraves it; a letter's holes, O, A, B, are holes).
+ * `at` is where its first line's baseline starts (`align` "left", the
+ * default), or the baseline's middle ("center") or end ("right"); `height`
+ * is its capital letters' height, mm; `angle` turns it about `at`, degrees
+ * counter-clockwise from the sketch's x axis. Lines are split by "\n". The
+ * font is the bundled sans serif ("sans", OFL); `bold` and `italic` as named.
+ * Its point ref is `<id>.at`; a distance dimension on the entity is its height.
+ */
+export interface TextEntity extends EntityBase {
+  type: "text";
+  at: Vec2;
+  text: string;
+  height: number;
+  font?: "sans";
+  angle?: number;
+  align?: "left" | "center" | "right";
+  bold?: boolean;
+  italic?: boolean;
+}
+
+export type SketchEntity = LineEntity | CircleEntity | ArcEntity | RectEntity | SlotEntity | PointEntity | EllipseEntity | SplineEntity | TextEntity;
 export type SketchEntityType = SketchEntity["type"];
 
 /** "entityId.point", e.g. "l1.end", "a2.center", "s1.center2", "p1.at", or "origin" for the sketch origin. */
@@ -1100,6 +1133,13 @@ export interface MoveFeature extends FeatureBase {
   bodies: string[];
   translate?: Vec3;
   rotate?: { axis: { origin: Vec3; direction: Vec3 }; angle: number };
+  /**
+   * Moves the bodies from one coordinate system (or plane: its origin and
+   * axes) to another, before any rotate and translate: what sits at
+   * `fromSystem`'s origin, along its axes, goes to `toSystem`'s. Both or neither.
+   */
+  fromSystem?: DatumRef;
+  toSystem?: DatumRef;
   copy?: boolean;
   /** The copy's name, when one body is copied. */
   newBody?: string;
