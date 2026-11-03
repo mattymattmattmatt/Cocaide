@@ -251,7 +251,7 @@ describe("Hole, Fillet, Chamfer", () => {
     expect(notices).toEqual(["A hole needs a flat face.", "Click a flat face where the hole goes, then Hole.", "Click a flat face where the hole goes, then Hole."]);
   });
 
-  it("fillets (R1) and chamfers (1 mm) the picked edges, as one selector", () => {
+  it("fillets (R3) and chamfers (3 mm) the picked upright corners, as one selector", () => {
     const doc = example("bracket");
     const view = viewOf(oc, doc);
     const edges = view.edges.flatMap((e, i) => (e.kind === "line" && e.direction![2] !== 0 && Math.abs(e.direction![2]) > 0.99 ? [i] : [])).slice(0, 2);
@@ -261,8 +261,9 @@ describe("Hole, Fillet, Chamfer", () => {
     run("tool.fillet", ctx);
     run("tool.chamfer", ctx);
     expect(out.created).toEqual([
-      { id: "fillet_1", op: "fillet", edges: (s as { selector: unknown }).selector, radius: 1 },
-      { id: "chamfer_1", op: "chamfer", edges: (s as { selector: unknown }).selector, distance: 1 },
+      // A tenth of the room beside them: the 40 mm end and the 80 mm side leave 40, so 3 (of 1, 2, 3, 5).
+      { id: "fillet_1", op: "fillet", edges: (s as { selector: unknown }).selector, radius: 3 },
+      { id: "chamfer_1", op: "chamfer", edges: (s as { selector: unknown }).selector, distance: 3 },
     ]);
     const none = harness(doc, view);
     run("tool.fillet", none.ctx);
@@ -277,7 +278,8 @@ describe("Hole, Fillet, Chamfer", () => {
     expect(s.ok).toBe(true);
     const { ctx, out } = harness(doc, view, { selection: { faces: [top], edges: [] } });
     run("tool.chamfer", ctx);
-    expect(out.created).toEqual([{ id: "chamfer_1", op: "chamfer", faces: (s as { selector: unknown }).selector, distance: 1 }]);
+    // The top's edges have the 6 mm sides beside them: 0.5.
+    expect(out.created).toEqual([{ id: "chamfer_1", op: "chamfer", faces: (s as { selector: unknown }).selector, distance: 0.5 }]);
   });
 
   it("with edges and faces picked, treats both (the edges, and every edge of the faces)", () => {
@@ -289,7 +291,7 @@ describe("Hole, Fillet, Chamfer", () => {
     const edges = edgesSelectorFor(view.edges, view.faces, [edge]);
     const { ctx, out } = harness(doc, view, { selection: { faces: [top], edges: [edge] } });
     run("tool.fillet", ctx);
-    expect(out.created).toEqual([{ id: "fillet_1", op: "fillet", edges: (edges as { selector: unknown }).selector, faces: (faces as { selector: unknown }).selector, radius: 1 }]);
+    expect(out.created).toEqual([{ id: "fillet_1", op: "fillet", edges: (edges as { selector: unknown }).selector, faces: (faces as { selector: unknown }).selector, radius: 0.5 }]);
   });
 });
 

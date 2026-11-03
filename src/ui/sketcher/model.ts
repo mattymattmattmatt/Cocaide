@@ -466,6 +466,7 @@ export function renamed(k: Constraint, ids: Map<string, string>): Constraint {
   if (typeof out.point === "string") out.point = point(out.point);
   if (typeof out.entity === "string") out.entity = id(out.entity);
   if (typeof out.line === "string") out.line = id(out.line);
+  if (Array.isArray(out.lines)) out.lines = (out.lines as string[]).map(id);
   // An offset relation's bases may be points ("m1.end": a round corner's centre).
   if (Array.isArray(out.entities)) out.entities = (out.entities as string[]).map((x) => (k.type === "offset" && x.includes(".") ? point(x) : id(x)));
   return out as unknown as Constraint;
@@ -473,7 +474,7 @@ export function renamed(k: Constraint, ids: Map<string, string>): Constraint {
 
 /** Every stand-in id a constraint names. */
 export function modelIdsOf(k: Constraint): string[] {
-  const all = [...(("points" in k && k.points) || []), ...("point" in k && k.point ? [k.point] : []), ...("entity" in k && k.entity ? [k.entity] : []), ...("line" in k && k.line ? [k.line] : []), ...(("entities" in k && k.entities) || [])];
+  const all = [...(("points" in k && k.points) || []), ...("point" in k && k.point ? [k.point] : []), ...("entity" in k && k.entity ? [k.entity] : []), ...("line" in k && k.line ? [k.line] : []), ...(("lines" in k && k.lines) || []), ...(("entities" in k && k.entities) || [])];
   return [...new Set(all.map((x) => x.split(".")[0]).filter(isModelId))];
 }
 

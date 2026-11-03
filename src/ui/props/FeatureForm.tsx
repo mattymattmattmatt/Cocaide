@@ -128,10 +128,10 @@ function FieldView({ spec, p, order }: { spec: FieldSpec; p: FieldProps; order: 
   const host = usePickHost();
   const field =
     host && isPickSpec(spec)
-      ? pickFieldFor(spec, p.f, p, order, { view: host.view, before: p.before, bodies: p.bodies, edge: host.edge, chainOf: host.chainOf, passes: host.passes }, (value) => {
+      ? pickFieldFor(spec, p.f, p, order, { view: host.view, before: p.before, bodies: p.bodies, edge: host.edge, chainOf: host.chainOf, passes: host.passes }, (value, also) => {
           let patch: Record<string, unknown>;
           try {
-            patch = commitPatch(spec, value, p.f, p);
+            patch = { ...commitPatch(spec, value, p.f, p), ...also };
           } catch (e) {
             return e instanceof Error ? e.message : String(e);
           }
