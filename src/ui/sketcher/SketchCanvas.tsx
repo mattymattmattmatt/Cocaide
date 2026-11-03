@@ -23,7 +23,7 @@ import { distanceTo, handlesOf, hitEntity, hitHandle, type SketchItem, type Smar
 import { faceAt, isModelId, isSketchStandIn, modelEdge, modelEntities, type ModelEdge, type ModelFace, type ModelView } from "./model";
 import { shapeWords } from "./names";
 import { boxOf, flatMap, mapPoint, mapVector, planeBounds, planeMap, sketchWorldPoints, svgMatrix, toScreen, unmapPoint, useCameraFeed, visibleBounds, type CameraFeed, type PlaneMap } from "./planeView";
-import { boxPick, nearer, otherSketchAt, otherSketchMiss, PICK_PX, standInFor, type SceneHit, type SceneMiss } from "./scenePick";
+import { behind, boxPick, entityLength, nearer, otherSketchAt, otherSketchMiss, PICK_PX, pointWins, standInFor, type SceneHit, type SceneMiss } from "./scenePick";
 import { tangentStart } from "./tools/arcs";
 import { place, placeTyped, previewOf, snapClick, toolByName, typedClick, type Placement } from "./tools/run";
 import { readValue } from "./modify";
@@ -292,11 +292,14 @@ export function SketchCanvas(props: Props) {
     }
     const local = localOf(clientX, clientY);
     // Picking (not drawing), a round face stands for its axis.
-    const hit = standInFor(view3d.pick(clientX, clientY), model, cam, local, { faces: tool === "convert", axes: tool !== "convert" && !toolByName(tool) });
-    const other = othersShown ? otherSketchAt(model, cam, local, (o) => o.inPlane) : null;
+    const pick = view3d.pick(clientX, clientY);
+    const hit = standInFor(pick, model, cam, local, { faces: tool === "convert", axes: tool !== "convert" && !toolByName(tool) });
+    // Another sketch's entity hidden behind the part (a base sketch under it) is not under the pointer.
+    const hidden = behind(pick && pick.kind !== "datum" ? pick.point : null, cam);
+    const other = othersShown ? otherSketchAt(model, cam, local, (o) => o.inPlane, hidden) : null;
     scene.current = hit && "problem" in hit ? (other ?? hit) : nearer(hit, other);
     // Nothing to use there, but another sketch's entity it can't take: say why.
-    if (!scene.current && othersShown) scene.current = otherSketchMiss(model, cam, local);
+    if (!scene.current && othersShown) scene.current = otherSketchMiss(model, cam, local, hidden);
   };
   const sceneHit = (): SceneHit | null => (scene.current && "item" in scene.current ? scene.current : null);
 
@@ -329,16 +332,18 @@ export function SketchCanvas(props: Props) {
   const itemAt = (p: Vec2): SketchItem | null => {
     if (edgeOn) return null;
     const tol = PICK_PX * unit;
-    if (tool !== "convert") {
-      const h = hitHandle(entities, p, tol);
-      if (h) return h.constraint ? { kind: "point", ref: h.ref } : { kind: "entity", id: h.ref.split(".")[0] };
-      const e = hitEntity(entities, p, tol);
-      if (e) return { kind: "entity", id: e.id };
-      const mh = hitHandle(planeEnts, p, tol, { constraintOnly: true });
-      if (mh && mh.ref !== "origin") return { kind: "point", ref: mh.ref };
-    }
+    // A point (an end, a centre, a model vertex) wins over the entity or edge the pointer is on only right by it (pointWins).
+    const wins = (point: Vec2, on: SketchEntity | null) => pointWins(dist2(point, p) / unit, on ? { d: distanceTo(on, p) / unit, lengthPx: entityLength(on) / unit } : null, PICK_PX);
     // In-plane edges first (they come first in the stand-ins): an edge behind one projects onto the same line.
     const me = firstHit(planeEnts, p, tol);
+    if (tool !== "convert") {
+      const h = hitHandle(entities, p, tol);
+      const e = hitEntity(entities, p, tol);
+      if (h && wins(h.point, e)) return h.constraint ? { kind: "point", ref: h.ref } : { kind: "entity", id: h.ref.split(".")[0] };
+      if (e) return { kind: "entity", id: e.id };
+      const mh = hitHandle(planeEnts, p, tol, { constraintOnly: true });
+      if (mh && mh.ref !== "origin" && wins(mh.point, me)) return { kind: "point", ref: mh.ref };
+    }
     if (me) return { kind: "entity", id: me.id };
     const s = sceneHit();
     if (s) return s.item;
@@ -407,13 +412,15 @@ export function SketchCanvas(props: Props) {
       return;
     }
     if (tool !== "select") return;
-    const handle = hitHandle(entities, p, PICK_PX * unit);
+    const ent = hitEntity(entities, p, PICK_PX * unit);
+    // A point right by the pointer is dragged; the middle of a short line is the line (as itemAt has it).
+    const near = hitHandle(entities, p, PICK_PX * unit);
+    const handle = near && pointWins(dist2(near.point, p) / unit, ent ? { d: distanceTo(ent, p) / unit, lengthPx: entityLength(ent) / unit } : null, PICK_PX) ? near : null;
     if (handle && handle.ref !== "origin" && !fixedId(handle.ref.split(".")[0])) {
       const item: SketchItem = handle.constraint ? { kind: "point", ref: handle.ref } : { kind: "entity", id: handle.ref.split(".")[0] };
       gesture.current = { kind: "drag", handle: handle.ref, from: handle.point, moved: false, item, additive };
       return;
     }
-    const ent = hitEntity(entities, p, PICK_PX * unit);
     if (ent && !ent.ref && !(handle && handle.ref !== "origin")) {
       gesture.current = { kind: "drag", handle: `${ent.id}.body`, from: p, moved: false, item: { kind: "entity", id: ent.id }, additive };
       return;

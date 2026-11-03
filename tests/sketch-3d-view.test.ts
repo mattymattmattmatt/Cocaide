@@ -241,11 +241,16 @@ describe("what the pointer is on in a turned view, as the sketch's stand-in", ()
     expect(standInFor({ kind: "datum", id: "Top", point: [0, 0, 0] }, front, cam, [0, 0])).toBeNull();
   });
 
-  it("an edge the sketch can't reference (seen end-on) is a miss with the reason, for the tip", () => {
+  it("a straight edge square to the plane (seen end-on) stands for the point it projects to: the end of an edge there on the plane", () => {
     const cam = camera([1, 1, -1], [0, 0, 1]);
-    const upright = top.edges.find((e) => !e.entity)!;
-    const m = standInFor({ kind: "edge", index: upright.index, point: upright.poly3[0] }, top, cam, [0, 0]);
-    expect(m && "problem" in m && m.problem).toMatch(/square to the sketch plane/);
+    const upright = top.edges.find((e) => !e.entity && e.kind === "line")!;
+    expect(upright.problem).toMatch(/square to the sketch plane/);
+    const v = hit(standInFor({ kind: "edge", index: upright.index, point: upright.poly3[0] }, top, cam, [0, 0]));
+    expect(v.item.kind).toBe("point");
+    const owner = modelEdge(top, (v.item as { ref: string }).ref)!;
+    // The upright's top end is on the plane (the top face): an edge of the top face ends there.
+    expect(owner.inPlane).toBe(true);
+    close(v.at, [upright.poly3[0][0], upright.poly3[0][1]]);
   });
 
   it("a vertex picked by an edge square to the plane is still a point: the end of another edge there (a corner below a sketch on the top face)", () => {

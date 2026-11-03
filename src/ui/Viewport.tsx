@@ -27,6 +27,7 @@ import type { Dimension3D } from "./evaluate/dimensions3d";
 import { allows, boxOf, boxSelect, FILTER_KINDS, NO_FILTER, type Projected, type SelectFilter } from "./evaluate/filter";
 import { beginDrag, moveDrag, type HandleDrag, type HandleSpec, type HandleValue } from "./evaluate/handles";
 import { loadSpin } from "./sketcher/modify";
+import { pointWins } from "./sketcher/scenePick";
 import { activePlanes, cutsBody, offsetArrow, sectionPlane, setPlane, type SectionView } from "./evaluate/section";
 import { Icon, type IconName } from "./icons";
 import { inputPrefs, keyHint, pointer, useCommands, useInputPrefs } from "./input";
@@ -1528,6 +1529,14 @@ export function Viewport({
           if (d > VERTEX_PIXELS || (best && d >= best.d)) continue;
           if (!xray && front !== null && along(v.p) > front + slack) continue;
           best = { v, d };
+        }
+      }
+      // On an edge ending at that vertex, the vertex wins only right by it: the middle of a short edge, zoomed out, is still the edge.
+      if (best && hit?.target.kind === "edge") {
+        const info = shownView?.edges[hit.target.index];
+        const s = project(hit.target.point);
+        if (info && s && [info.start, info.end].some((q) => Math.hypot(q[0] - best!.v.p[0], q[1] - best!.v.p[1], q[2] - best!.v.p[2]) < 1e-6)) {
+          if (!pointWins(best.d, { d: Math.hypot(s.x - clientX, s.y - clientY), lengthPx: info.length / Math.max(worldPerPixel, 1e-12) }, VERTEX_PIXELS)) best = null;
         }
       }
       if (best) return { target: { kind: "vertex", edge: best.v.edge, at: best.v.at, point: best.v.p }, distance: along(best.v.p) };

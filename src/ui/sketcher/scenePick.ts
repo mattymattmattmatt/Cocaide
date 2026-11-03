@@ -20,6 +20,31 @@ import { screenDistance, toScreen, type ViewCamera } from "./planeView";
 /** Pixels from an entity that still hit it, and from a point (an end, a centre) that hit the point rather than the entity. */
 export const PICK_PX = 7;
 export const VERTEX_PX = 8;
+/** With the pointer on an edge or entity, how near (pixels) one of its points must be to win over it. */
+export const VERTEX_NEAR_PX = 5;
+
+/**
+ * Does a point `dPoint` pixels from the pointer win over the entity (or
+ * edge) the pointer is on (`on`: its distance and its length on screen,
+ * pixels)? With nothing else under the pointer, within `reach`. On an
+ * entity, only close to the point: within VERTEX_NEAR_PX, and within a
+ * quarter of the entity's length on screen (at least 2 px), so the middle of
+ * a short edge (a 6 mm plate edge with the view zoomed out) is still the edge;
+ * or when the point is as near as the entity itself (the pointer beyond its end).
+ */
+export function pointWins(dPoint: number, on: { d: number; lengthPx: number } | null, reach = VERTEX_PX): boolean {
+  if (!on) return dPoint <= reach;
+  if (dPoint <= on.d + 0.5) return dPoint <= reach;
+  return dPoint <= Math.min(VERTEX_NEAR_PX, Math.max(2, on.lengthPx / 4));
+}
+
+/** An entity's length, sketch mm (a circle's circumference; a shape of several pieces, all of them). */
+export function entityLength(e: SketchEntity): number {
+  const lines = e.type === "point" ? [] : entityPolylines(e, Math.PI / 24);
+  let total = 0;
+  for (const pl of lines) for (let i = 1; i < pl.length; i++) total += Math.hypot(pl[i][0] - pl[i - 1][0], pl[i][1] - pl[i - 1][1]);
+  return total;
+}
 
 /** Something under the pointer in the 3D view, as a stand-in of the sketch. */
 export interface SceneHit {
@@ -76,6 +101,23 @@ export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamer
   const edge = modelEdge(m, modelId(index));
   if (!edge) return null;
   if (pick.kind === "vertex") {
+    // The view gives the vertex within a few pixels of it; on an edge ending there, the edge wins but right by the vertex.
+    const along = edgeAtVertex(m, cam, local, pick.point);
+    if (along) return along;
+  }
+  if (pick.kind === "edge" && !edge.entity && edge.kind === "line") {
+    // A straight edge square to the plane projects to a point: the point of an edge ending where it meets the plane.
+    const info = m.source.edges.find((e) => e.index === edge.index);
+    const height = (p: Vec3) => (p[0] - m.frame.origin[0]) * m.frame.z[0] + (p[1] - m.frame.origin[1]) * m.frame.z[1] + (p[2] - m.frame.origin[2]) * m.frame.z[2];
+    const ends = info ? [info.start, info.end].sort((a, b) => Math.abs(height(a)) - Math.abs(height(b))) : [];
+    for (const p of ends) {
+      const owner = edgeEndingAt(m, p);
+      if (!owner) continue;
+      const e = owner.edge.entity as Extract<SketchEntity, { type: "line" | "arc" }>;
+      return { item: { kind: "point", ref: `${owner.edge.id}.${owner.at}` }, standIn: e, at: e[owner.at], px: polyDistance(local, edge.poly3, cam).d, poly3: edge.poly3, point3: p, model: true };
+    }
+  }
+  if (pick.kind === "vertex") {
     // A vertex is a point of its edge's stand-in; when that edge has none with ends (it runs square to the plane, or
     // is a tilted circle), of another edge ending there: a box's corner below a sketch on its top is still a point to use.
     const owner = edge.entity && (edge.entity.type === "line" || edge.entity.type === "arc") ? { edge, at: pick.at } : edgeEndingAt(m, pick.point);
@@ -94,13 +136,13 @@ export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamer
  * pointer on screen, within PICK_PX (VERTEX_PX for points, which win over the
  * line they end). `skip` leaves out those hit another way (drawn on the plane).
  */
-export function otherSketchAt(m: ModelView, cam: ViewCamera, local: Vec2, skip: (o: ModelEdge) => boolean = () => false): SceneHit | null {
+export function otherSketchAt(m: ModelView, cam: ViewCamera, local: Vec2, skip: (o: ModelEdge) => boolean = () => false, hidden: (p: Vec3) => boolean = () => false): SceneHit | null {
   let best: SceneHit | null = null;
   for (const o of m.others) {
     if (!o.entity || !o.source || skip(o)) continue;
     for (const p of o.source.points) {
       const d = dist(local, toScreen(cam, p.at));
-      if (d > VERTEX_PX || (best && best.item.kind === "point" && d >= best.px)) continue;
+      if (d > VERTEX_PX || (best && best.item.kind === "point" && d >= best.px) || hidden(p.at)) continue;
       // The point of the stand-in: a sketch point's stand-in is its own point ("at").
       best = { item: { kind: "point", ref: `${o.id}.${p.name}` }, standIn: o.entity, at: to2D(m.frame, p.at), px: d, poly3: o.poly3, point3: p.at, model: false };
     }
@@ -110,7 +152,33 @@ export function otherSketchAt(m: ModelView, cam: ViewCamera, local: Vec2, skip: 
     const a = o.poly3[hit.segment];
     const b = o.poly3[Math.min(hit.segment + 1, o.poly3.length - 1)];
     const point3: Vec3 = [a[0] + (b[0] - a[0]) * hit.t, a[1] + (b[1] - a[1]) * hit.t, a[2] + (b[2] - a[2]) * hit.t];
+    if (hidden(point3)) continue;
     best = { item: { kind: "entity", id: o.id }, standIn: o.entity, at: to2D(m.frame, point3), px: hit.d, poly3: o.poly3, point3, model: false };
+  }
+  return best;
+}
+
+/**
+ * The model edge the pointer is on next to vertex `v` (world), when the
+ * vertex should not win over it (pointWins): the nearest edge ending there
+ * whose stand-in can be referenced, within PICK_PX on screen. Null: the vertex.
+ */
+export function edgeAtVertex(m: ModelView, cam: ViewCamera, local: Vec2, v: Vec3): SceneHit | null {
+  const dv = dist(local, toScreen(cam, v));
+  const at = (q: Vec3) => Math.hypot(q[0] - v[0], q[1] - v[1], q[2] - v[2]) < 1e-6 * Math.max(1, Math.hypot(v[0], v[1], v[2]));
+  let best: SceneHit | null = null;
+  for (const e of m.edges) {
+    if (!e.entity || e.poly3.length < 2 || !(at(e.poly3[0]) || at(e.poly3[e.poly3.length - 1]))) continue;
+    const screen = e.poly3.map((p) => toScreen(cam, p));
+    const hit = screenDistance(local, screen);
+    if (hit.d > PICK_PX || (best && hit.d >= best.px)) continue;
+    let lengthPx = 0;
+    for (let i = 1; i < screen.length; i++) lengthPx += dist(screen[i], screen[i - 1]);
+    if (pointWins(dv, { d: hit.d, lengthPx })) continue;
+    const a = e.poly3[hit.segment];
+    const b = e.poly3[Math.min(hit.segment + 1, e.poly3.length - 1)];
+    const point3: Vec3 = [a[0] + (b[0] - a[0]) * hit.t, a[1] + (b[1] - a[1]) * hit.t, a[2] + (b[2] - a[2]) * hit.t];
+    best = { item: { kind: "entity", id: e.id }, standIn: e.entity, at: to2D(m.frame, point3), px: hit.d, poly3: e.poly3, point3, model: true };
   }
   return best;
 }
@@ -137,17 +205,33 @@ function edgeEndingAt(m: ModelView, p: Vec3): { edge: ModelEdge; at: "start" | "
  * this sketch can't reference (a rectangle, a slot, a circle seen tilted):
  * why, for the tip, so hovering it is not a silent dead end.
  */
-export function otherSketchMiss(m: ModelView, cam: ViewCamera, local: Vec2): SceneMiss | null {
+export function otherSketchMiss(m: ModelView, cam: ViewCamera, local: Vec2, hidden: (p: Vec3) => boolean = () => false): SceneMiss | null {
   let best: { miss: SceneMiss; d: number } | null = null;
   for (const o of m.others) {
     if (o.entity || !o.source || !o.poly3.length) continue;
-    const d = polyDistance(local, o.poly3, cam).d;
+    const hit = polyDistance(local, o.poly3, cam);
+    const d = hit.d;
     if (d > PICK_PX || (best && d >= best.d)) continue;
+    const a = o.poly3[hit.segment];
+    const b = o.poly3[Math.min(hit.segment + 1, o.poly3.length - 1)];
+    if (hidden([a[0] + (b[0] - a[0]) * hit.t, a[1] + (b[1] - a[1]) * hit.t, a[2] + (b[2] - a[2]) * hit.t])) continue;
     const problem = o.problem ?? `${o.source.entity.id} can't be referenced`;
     const title = problem.startsWith(`${o.source.sketch}'s`) ? problem : `Sketch ${o.source.sketch}: ${problem}`;
     best = { miss: { problem, poly3: o.poly3, title }, d };
   }
   return best?.miss ?? null;
+}
+
+/**
+ * Behind what the view's pick hit (a face or edge of the part, at `front`)?
+ * Another sketch's entity there is hidden by the part, so it is not hovered
+ * (a base sketch under the part, its outline right below the part's edges).
+ */
+export function behind(front: Vec3 | null, cam: ViewCamera): (p: Vec3) => boolean {
+  if (!front) return () => false;
+  const slack = 2 * PICK_PX * cam.wpp;
+  const f = cam.forward;
+  return (p) => (p[0] - front[0]) * f[0] + (p[1] - front[1]) * f[1] + (p[2] - front[2]) * f[2] > slack;
 }
 
 /** The nearer of two hits; a model edge within 1.5 px of another sketch's entity wins (they often lie on each other: a profile and the edges extruded from it). */
