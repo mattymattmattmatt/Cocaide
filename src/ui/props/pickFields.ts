@@ -58,7 +58,7 @@ function promptOf(spec: FieldSpec): string {
  * a kind that does not pick. `commit` sends the new value (through the
  * field's own `set` and the feature's update) and returns the refusal, if any.
  */
-export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: number, env: PickEnv, commit: (value: unknown) => string | null | void): PickField | null {
+export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: number, env: PickEnv, commit: (value: unknown, also?: Raw) => string | null | void): PickField | null {
   if (!isPickSpec(spec)) return null;
   const value = fieldValue(spec, f, c);
   const view = env.view;
@@ -78,6 +78,15 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
         toggle(t) {
           if (t.kind !== "face" || !view) return `${spec.label} takes faces: click a face`;
           const next = toggleFace(list, view.faces, t.index);
+          if (typeof next === "string" && spec.edgesKey) {
+            // A cone or freeform face: its edges go in instead (or come out, when they are all in already).
+            const own = view.edges.filter((e) => !e.seam && e.faces.includes(t.index)).map((e) => e.index);
+            const now = valueAt(f, spec.edgesKey);
+            const have = resolveEdges(now, view.edges, view.faces).indices;
+            const edges = own.length && own.every((i) => have.includes(i)) ? toggleEdges(now, view.edges, view.faces, own) : addEdges(now, view.edges, view.faces, own);
+            if (typeof edges === "string") return edges;
+            return result(commit(list.length || spec.optional ? list : null, { [spec.edgesKey]: edges }));
+          }
           return typeof next === "string" ? next : result(commit(next.length || spec.optional ? next : null));
         },
         addAll(ts) {

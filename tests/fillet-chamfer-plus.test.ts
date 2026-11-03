@@ -143,11 +143,11 @@ describe("fillet and chamfer: volumes", () => {
     ];
     const one = built(doc(...plate, { id: "f", op: "fillet", edges: { type: "edge", direction: [1, 0, 0], near: [0, -10, 3], pick: "all" }, radius: 4 }));
     expect(one.errors).toHaveLength(1);
-    expect(one.errors[0]).toMatch(/^f: edge 1 \(straight, [+-]X, length 20, at \[0, -10, 3\]\): radius 4 is too large for the 3 mm face beside it$/);
+    expect(one.errors[0]).toMatch(/^f: edge 1 \(straight, [+-]X, length 20, at \[0, -10, 3\]\): radius 4 is too large for the 3 mm face beside it: the most that fits here is radius ≈ 2\.9 mm$/);
     // Of several edges, only the ones that fail are named.
     const two = built(doc(...plate, { id: "f", op: "fillet", edges: [{ type: "edge", direction: [1, 0, 0], near: [0, -10, 3], pick: "all" }, { type: "edge", direction: [0, 0, 1], near: [10, 10, 1.5], pick: "all" }], radius: 4 }));
     expect(two.errors).toHaveLength(1);
-    expect(two.errors[0]).toMatch(/^f: edge \d of 2 \(straight, [+-]X, length 20, at \[0, -10, 3\]\): radius 4 is too large for the 3 mm face beside it$/);
+    expect(two.errors[0]).toMatch(/^f: edge \d of 2 \(straight, [+-]X, length 20, at \[0, -10, 3\]\): radius 4 is too large for the 3 mm face beside it: the most that fits here is radius ≈ 2\.9 mm$/);
   });
 
   it("a chamfer of two distances: a·b·L/2, the first distance on the face facing up, flip swaps them", () => {

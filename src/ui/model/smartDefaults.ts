@@ -10,6 +10,7 @@
 import type { Vec3 } from "../../doc/types";
 import { ISO_METRIC } from "../../features/hole/standards";
 import { cross3, dot3, len3, normalize3, sub3 } from "../../geom/vec";
+import { roomBeside } from "../../kernel/edgeRoom";
 import { normalAt, tangentAt, type PartTopology } from "./smartSelect";
 
 /** The round numbers a default is taken from, per decade: 1, 2, 3, 5. */
@@ -57,10 +58,22 @@ export function widthAcross(t: PartTopology, face: number, edge: number): number
   return Math.max(...s) - Math.min(...s);
 }
 
-/** The narrowest face beside these edges (across each edge), mm; Infinity when none is known. */
+/**
+ * The narrowest face beside these edges (across each edge), mm; Infinity when
+ * none is known. The room the face leaves beside the edge (to its nearest
+ * other edge: the thin leg of an L-shaped face, the wall of a tube), else how
+ * far it reaches across.
+ */
 export function narrowestBeside(t: PartTopology, edges: readonly number[]): number {
   let least = Infinity;
-  for (const i of edges) for (const f of t.edges[i]?.faces ?? []) least = Math.min(least, widthAcross(t, f, i));
+  for (const i of edges) {
+    const e = t.edges[i];
+    if (!e) continue;
+    for (const f of e.faces) {
+      const room = roomBeside(t.edges, f, e);
+      least = Math.min(least, Number.isFinite(room) ? room : widthAcross(t, f, i));
+    }
+  }
   return least;
 }
 

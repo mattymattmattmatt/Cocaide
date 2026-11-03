@@ -5,7 +5,7 @@
 
 import type { EdgeSelector, FaceSelector } from "../../../doc/types";
 import { selectEdges, selectFaces } from "../../../kernel/selectors";
-import { edgesSelectorFor, facesSelectorFor } from "../../../kernel/synthesize";
+import { edgesSelectorFor, faceSelectorFor, facesSelectorFor } from "../../../kernel/synthesize";
 import { edgeLimit, filletRadiusFor, suits } from "../smartDefaults";
 import { recalled } from "../toolMemory";
 import type { Raw, ToolCtx, ToolDef } from "../ToolContext";
@@ -37,13 +37,16 @@ export function edgeFeature(ctx: ToolCtx, op: "fillet" | "chamfer"): Raw | strin
     return `Click one or more edges (shift-click for more), or faces to treat all their edges, then ${op === "fillet" ? "Fillet" : "Chamfer"}.`;
   }
   const out: Raw = { id: ctx.nextId(op), op };
-  if (selection.edges.length) {
-    const s = edgesSelectorFor(view.edges, view.faces, selection.edges);
+  // A face no face selector holds (a cone, a freeform face) goes in as its edges.
+  const held = selection.faces.filter((f) => faceSelectorFor(view.faces, f).ok);
+  const edges = [...new Set([...selection.edges, ...view.edges.filter((e) => !e.seam && e.faces.some((f) => selection.faces.includes(f) && !held.includes(f))).map((e) => e.index)])];
+  if (edges.length) {
+    const s = edgesSelectorFor(view.edges, view.faces, edges);
     if (!s.ok) return s.error;
     out.edges = s.selector;
   }
-  if (selection.faces.length) {
-    const s = facesSelectorFor(view.faces, selection.faces);
+  if (held.length) {
+    const s = facesSelectorFor(view.faces, held);
     if (!s.ok) return s.error;
     out.faces = s.selector;
   }

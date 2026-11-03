@@ -4,11 +4,12 @@
 // fields.
 
 import { edgesSelectorFor } from "../../kernel/synthesize";
-import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
+import { describeEdgeSelector, describeWanted, selectFaces } from "../../kernel/selectors";
+import { edgeLimit, filletRadiusFor } from "../model/smartDefaults";
 import type { EdgeSelector, FaceSelector } from "../../doc/types";
 import { Field, NumberInput, type NumberValue } from "../fields";
 import { PickWrap } from "./FeatureForm";
-import type { PickField } from "./picking";
+import { resolveEdges, type PickField } from "./picking";
 import { pickFieldFor, type PickEnv } from "./pickFields";
 import { usePickHost, type PickHost } from "./pickHost";
 import { asList, type FieldProps, type FieldSpec, type FormContext, type Raw } from "./spec";
@@ -145,10 +146,40 @@ export function describeSet(set: Raw): string {
 export function edgeChoiceFields(prefix: string): FieldSpec[] {
   const verb = prefix === "prop-chamfer" ? "chamfer" : "fillet";
   return [
-    { kind: "edges", key: "edges", label: "Edges", optional: true, propagation: true, prompt: `Pick edges to ${verb}` },
-    { kind: "faces", key: "faces", label: "Faces", optional: true, testId: `${prefix}-faces`, hint: "Every edge of these faces", prompt: `Pick faces: every edge of each is ${verb === "fillet" ? "filleted" : "chamfered"}` },
+    { kind: "edges", key: "edges", label: "Edges", optional: true, propagation: true, prompt: `Pick edges to ${verb}`, set: (v, f, c) => sizeToSuit({ edges: v ?? null }, f, c) },
+    {
+      kind: "faces",
+      key: "faces",
+      label: "Faces",
+      optional: true,
+      testId: `${prefix}-faces`,
+      hint: "Every edge of these faces",
+      prompt: `Pick faces: every edge of each is ${verb === "fillet" ? "filleted" : "chamfered"}`,
+      edgesKey: "edges",
+      set: (v, f, c) => sizeToSuit({ faces: v ?? null }, f, c),
+    },
     { kind: "features", key: "features", label: "Edges made by", ops: SHAPE_OPS, testId: `${prefix}-features`, hint: "Every edge of the faces these features made" },
   ];
+}
+
+/**
+ * A change of a fillet's or chamfer's edges (or faces), with its radius
+ * (distance) brought down to suit the edges when it no longer does: the
+ * smart default for them (a tenth of the room beside the narrowest) when
+ * the size is over four tenths of that room, as an edge on a thin wall picked
+ * after a corner on a thick block would make it. A size that suits is kept.
+ */
+export function sizeToSuit(patch: Raw, f: Raw, c: Pick<FormContext, "view" | "resolved">): Raw {
+  const key = f.op === "chamfer" ? "distance" : "radius";
+  const size = c.resolved[key];
+  if (!c.view || typeof size !== "number" || typeof f[key] !== "number") return patch;
+  const next = { ...c.resolved, ...patch };
+  const edges = new Set(resolveEdges(next.edges, c.view.edges, c.view.faces).indices);
+  const faces = new Set(asList<FaceSelector>(next.faces).flatMap((s) => selectFaces(c.view!.faces, s).matches.map((m) => m.index)));
+  for (const e of c.view.edges) if (!e.seam && e.faces.some((i) => faces.has(i))) edges.add(e.index);
+  if (!edges.size || size <= edgeLimit(c.view, [...edges]) + 1e-9) return patch;
+  const suited = filletRadiusFor(c.view, [...edges]);
+  return suited < size ? { ...patch, [key]: suited } : patch;
 }
 
 /**
