@@ -85,7 +85,7 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
             const have = resolveEdges(now, view.edges, view.faces).indices;
             const edges = own.length && own.every((i) => have.includes(i)) ? toggleEdges(now, view.edges, view.faces, own) : addEdges(now, view.edges, view.faces, own);
             if (typeof edges === "string") return edges;
-            return result(commit(list.length || spec.optional ? list : null, { [spec.edgesKey]: edges }));
+            return result(commit(list.length ? list : null, { [spec.edgesKey]: edges }));
           }
           return typeof next === "string" ? next : result(commit(next.length || spec.optional ? next : null));
         },

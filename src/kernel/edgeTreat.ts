@@ -134,7 +134,7 @@ export function treatBody(oc: OC, s: Scope, f: FilletFeature | ChamferFeature, p
   const where = name ? ` of body "${name}"` : "";
   const smooth = new Set(list.filter((t) => smoothEdge(oc, part, t.edge)).map((t) => t.edge));
   const kept = list.filter((t) => !(smooth.has(t.edge) && t.fromFaces));
-  if (kept.length === 0) throw new OpError(`every edge of those faces${where} is where they run on smoothly into the next face: there is no corner to ${verb(f)}`);
+  if (kept.length === 0) throw new OpError(`every edge of those faces${where} runs on smoothly into the next face (rounded already): there is no corner left to ${verb(f)}`);
   const picked = kept.filter((t) => smooth.has(t.edge));
   if (picked.length) throw new OpError(smoothText(f, part, kept, picked, where));
   const items = kept.map((t) => itemOf(f, part, t));
