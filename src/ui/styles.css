@@ -442,6 +442,16 @@ button.danger { color: var(--bad); }
   height: 26px; width: 100%; min-width: 0; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border);
   background: var(--panel-2); color: var(--text); font: inherit; font-size: 12.5px;
 }
+.intent-question td { padding: 6px 0 4px; }
+.intent-question-text { display: block; font-weight: 500; font-size: 13px; line-height: 1.35; margin-bottom: 4px; white-space: normal; }
+.intent-question.blank .intent-question-text { color: var(--accent-2); }
+.intent-answer {
+  display: block; width: 100%; box-sizing: border-box; min-height: 56px; max-height: 160px; padding: 6px 8px; resize: vertical;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+  font: inherit; font-size: 14px; line-height: 1.4; overflow-y: auto;
+}
+.intent-question.blank .intent-answer { border-color: var(--accent-2); }
+.intent-question .intent-source { max-width: none; margin-top: 2px; }
 .intent-input { display: flex; align-items: center; gap: 4px; }
 .intent-input .unit { color: var(--muted); font-size: 11px; }
 .intent-source { color: var(--muted); font-size: 11.5px; max-width: 150px; }
@@ -1066,11 +1076,11 @@ svg.icon { flex: none; display: block; }
 .datum-list .feature-op { font-weight: 500; }
 .datum-list .feature-icon.datum-icon, .feature-list li .feature-icon.datum-icon { color: var(--datum); }
 /* The eye: shown on hover like the other row actions, and always while closed (so a hidden one says so). */
-.feature-list li.hidden-datum .row-actions { display: flex; }
-.feature-list li.hidden-datum .row-actions button:not(.eye) { display: none; }
-.feature-list li.hidden-datum:hover .row-actions button:not(.eye) { display: grid; }
+.feature-list li.hidden-datum .row-actions, .feature-list li.hidden-sketch .row-actions { display: flex; }
+.feature-list li.hidden-datum .row-actions button:not(.eye), .feature-list li.hidden-sketch .row-actions button:not(.eye) { display: none; }
+.feature-list li.hidden-datum:hover .row-actions button:not(.eye), .feature-list li.hidden-sketch:hover .row-actions button:not(.eye) { display: grid; }
 .row-actions button.eye.closed { color: var(--muted); opacity: 0.8; }
-.feature-list li.hidden-datum .feature-op { opacity: 0.6; }
+.feature-list li.hidden-datum .feature-op, .feature-list li.hidden-sketch .feature-op { opacity: 0.6; }
 /* ======================================================= Phase O wave 1: sketch tool registry, flyouts, sketch points */
 /* A flyout: the button runs the tool used last; the small arrow at its lower right lists them all. */
 .sketch-toolbar .flyout { display: inline-flex; flex: none; }

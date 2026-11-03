@@ -140,6 +140,27 @@ export function isReversed(direction: unknown, normal: Vec3): boolean {
   return Array.isArray(direction) && direction.length === 3 && direction.every((v, i) => typeof v === "number" && Math.abs(v + normal[i]) < 1e-9);
 }
 
+/** Does the direction point against the sketch normal (the extrusion goes behind the sketch)? None: it goes along it. */
+export function againstNormal(direction: unknown, normal: Vec3): boolean {
+  if (!Array.isArray(direction) || direction.length !== 3 || !direction.every((v) => typeof v === "number")) return false;
+  return direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2] < 0;
+}
+
+/**
+ * Reverse direction: the direction turned round. Back along the sketch normal
+ * it is no direction at all (the default), so the panel's tick box, its
+ * Direction choice and the view's Reverse arrow all read the same field.
+ */
+export function reverseDirectionPatch(direction: unknown, normal: Vec3): Raw {
+  const valid = Array.isArray(direction) && direction.length === 3 && direction.every((v) => typeof v === "number");
+  const current = (valid ? direction : normal) as Vec3;
+  const length = Math.hypot(...current) || 1;
+  const next = current.map((v) => Math.round((-v / length) * 1e6) / 1e6 + 0) as Vec3;
+  const n = Math.hypot(...normal) || 1;
+  const same = next.every((v, i) => Math.abs(v - normal[i] / n) < 1e-6);
+  return { direction: same ? null : next };
+}
+
 /** The regions of a sketch the editor lists under "Selected contours", from its (solved) entities. */
 export function sketchContours(entities: unknown): Contour[] {
   if (!Array.isArray(entities)) return [];

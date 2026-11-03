@@ -240,6 +240,35 @@ test("Smart Dimension: Shift-click a circle for its near or far side; two points
   await expect(page.getByTestId("modify-box")).toHaveCount(0);
 });
 
+test("while the Modify box is open the dimension shows where it lands, and the geometry follows the value typed", async ({ page }) => {
+  await page.getByTestId("tool-line").click();
+  await sketchClick(page, 0, 0);
+  await sketchClick(page, 30, 0);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("d");
+  // A line, then a place: the box opens, and the dimension line, its arrows and extension lines are already drawn.
+  await sketchClick(page, 15, 0);
+  await sketchClick(page, 15, -10);
+  await expect(page.getByTestId("modify-box")).toBeVisible();
+  const ghost = page.locator('[data-testid^="dim-proposed-"]');
+  await expect(ghost).toHaveCount(1);
+  await expect(ghost).toContainText("30");
+  expect(await ghost.locator("line, path").count()).toBeGreaterThanOrEqual(2);
+  // Typing moves it: the dimension reads the value, and the line's free end goes there.
+  await page.getByTestId("modify-value").fill("45");
+  await expect(ghost).toContainText("45");
+  const span = async () => (await ghost.boundingBox())!.width;
+  const wide = await span();
+  await page.getByTestId("modify-value").fill("15");
+  await expect(ghost).toContainText("15");
+  expect(await span()).toBeLessThan(wide * 0.6);
+  // Esc: nothing is added, the line is as it was.
+  await page.keyboard.press("Escape");
+  await expect(ghost).toHaveCount(0);
+  await expect(page.getByTestId("dim-0")).toHaveCount(0);
+  await expect(page.getByTestId("sketch-status")).toHaveText("Under defined · 1 DOF");
+});
+
 test("the Modify box's spin step is the one set in Settings → Units", async ({ page }) => {
   await page.getByTestId("ask-settings-open").click();
   await page.getByTestId("settings-tab-units").click();

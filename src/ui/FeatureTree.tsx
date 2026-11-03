@@ -4,7 +4,8 @@
 // (and shows it while selected), the eye shows or hides it for good, a
 // right-click offers Sketch on this plane, an offset plane, Ask AI. Plane,
 // axis and point features carry an eye too. Showing is view state, never
-// the document.
+// the document; but for sketches, whose eye (hidden once a feature uses one,
+// unless shown) is kept in the document, so it saves.
 //
 // The rollback bar sits in the list: drag it up (or press the arrow keys on
 // it) and the features below it are greyed and not built; new features go in
@@ -86,6 +87,10 @@ interface Props {
   onPickDatum?(id: string, additive: boolean): void;
   /** The eye of a default plane, the origin, or a plane, axis or point feature. */
   onToggleEye?(id: string): void;
+  /** Is the sketch's eye open (drawn in the view)? */
+  sketchShown?(id: string): boolean;
+  /** The eye of a sketch: shows or hides it. */
+  onToggleSketch?(id: string): void;
   /** Right-click on a default plane or the origin: its menu. */
   onDatumMenu?(id: string, x: number, y: number): void;
   /** Where the rollback bar is: the index of the first feature below it (the feature count: at the end). */
@@ -162,6 +167,8 @@ export function FeatureTree({
   onAsk,
   pickedDatums = [],
   datumView,
+  sketchShown,
+  onToggleSketch,
   onPickDatum,
   onToggleEye,
   onDatumMenu,
@@ -261,6 +268,24 @@ export function FeatureTree({
         aria-pressed={open}
         onClick={() => onToggleEye(id)}
         data-testid={`datum-eye-${id}`}
+      >
+        <Icon name={open ? "eye" : "eyeOff"} />
+      </button>
+    );
+  };
+
+  /** The eye of a sketch: open (drawn in the view) or closed (hidden: a feature used it, or it was hidden). */
+  const sketchEye = (id: string) => {
+    if (!sketchShown || !onToggleSketch) return null;
+    const open = sketchShown(id);
+    return (
+      <button
+        className={`eye${open ? "" : " closed"}`}
+        title={open ? `Hide ${id}` : `Show ${id}`}
+        aria-label={`${open ? "Hide" : "Show"} ${id}`}
+        aria-pressed={open}
+        onClick={() => onToggleSketch(id)}
+        data-testid={`sketch-eye-${id}`}
       >
         <Icon name={open ? "eye" : "eyeOff"} />
       </button>
@@ -466,6 +491,7 @@ export function FeatureTree({
           barAt === i ? "bar-target" : "",
           relation ? `${relation}-of-hover` : "",
           isDatum && datumView && !eyeOpen(id, datumView) ? "hidden-datum" : "",
+          f.op === "sketch" && sketchShown && !sketchShown(id) ? "hidden-sketch" : "",
         ].join(" ")}
         data-testid={`feature-${id}`}
         data-relation={relation}
@@ -561,6 +587,7 @@ export function FeatureTree({
           )}
           <span className="row-actions">
             {isDatum && eye(id, id)}
+            {f.op === "sketch" && sketchEye(id)}
             <button title={suppressed ? "Unsuppress" : "Suppress"} aria-label={`${suppressed ? "Unsuppress" : "Suppress"} ${id}`} onClick={() => run({ type: "suppressFeature", id, suppressed: !suppressed })}>
               <Icon name={suppressed ? "eye" : "suppress"} />
             </button>

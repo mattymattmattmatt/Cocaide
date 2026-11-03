@@ -92,6 +92,10 @@ describe("extrude", () => {
     // Reverse: a flip button whose patch turns the direction round.
     const flip = hs.find((h) => h.kind === "flip")!;
     expect(handlePatch(flip, doc.features[1], 0)).toEqual({ direction: [0, 0, -1] });
+    // Clicked again, it is back along the normal: no direction (the panel's Reverse direction unticked), not a custom vector.
+    const back = { ...doc.features[1], direction: [0, 0, -1] };
+    const flipBack = featureHandles(back, back, view).find((h) => h.kind === "flip")!;
+    expect(handlePatch(flipBack, back, 0)).toEqual({ direction: null });
   });
 
   it("a draft is an arc at the profile's side: straight up at 0, leaning in as it grows; the drag reads the angle", () => {
