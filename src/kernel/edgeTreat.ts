@@ -115,8 +115,8 @@ interface History {
 /** What one try gave: the treated body (and the builder, for its history), or why not. */
 type Attempt = { shape: TopoDS_Shape; maker: History } | { why: "refused" | "invalid" | "unchanged" };
 
-/** How many halvings find the largest size that works (to about a five-hundredth of the size asked for). */
-const BISECT_STEPS = 9;
+/** How many halvings find the largest size that works (to about a hundredth of the size asked for: the message gives two digits). */
+const BISECT_STEPS = 7;
 
 /**
  * One body with its edges filleted or chamfered. `name` is set in a part of
@@ -318,7 +318,7 @@ function diagnose(oc: OC, s: Scope, f: FilletFeature | ChamferFeature, part: Des
     const room = roomAt(part.edgeInfos, info);
     const biggest = Math.max(t.size, t.size2 ?? 0);
     // Bisect for the size that works on a few edges; with many, naming them is enough.
-    const scale = failing.length <= 4 ? largestScale(oc, s, f, body, [it], before) : -1;
+    const scale = failing.length <= 3 ? largestScale(oc, s, f, body, [it], before) : -1;
     const fits = scale > 0 ? sizeThatWorks(scale * biggest) : 0;
     const most = fits > 0 ? `: the most that fits here is ${word} ≈ ${fits} mm` : `; try a smaller ${word}`;
     if (Number.isFinite(room) && biggest >= room - 1e-9) return `${name(it)}: ${size} is too large for the ${roundTo(room, 4)} mm face beside it${most}`;
