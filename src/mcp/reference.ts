@@ -66,6 +66,7 @@ mm along the plane's normal), "flip": true (optional: turned over), "xDir": [1,0
   On a default plane: { "type": "ref", "ref": { "datum": "Top" } } (or "Front", "Right"), or a plane feature's id.
 A sketch whose curves make no closed profile (an open chain, a path) still builds; a feature that needs a closed
 profile (extrude, cut) then fails with the reason ("profile is open at [0, 0] (start of "l1")").
+"shown": true / false (optional, view only): show or hide the sketch; left out, a sketch a later feature uses is hidden.
 Entities (2D, in the sketch frame; "construction": true keeps one out of the profile):
   { "id": "r1", "type": "rect", "center": [0,0], "w": 80, "h": 40 }
   { "id": "c1", "type": "circle", "center": [0,0], "radius": 5 }

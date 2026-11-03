@@ -470,6 +470,12 @@ export interface SketchFeature extends FeatureBase {
   constraints?: Constraint[];
   /** Drawn as a weldment profile: saved to the section library under this name. */
   profile?: { name: string; library?: { id: string; version: number } };
+  /**
+   * Shown in the view (true) or hidden (false). Absent: a sketch a later
+   * feature uses (extrudes, cuts, revolves, sweeps…) is hidden, any other
+   * shown. View only: never read by the rebuild.
+   */
+  shown?: boolean;
 }
 
 interface EntityBase {

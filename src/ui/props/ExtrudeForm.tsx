@@ -15,10 +15,12 @@ import {
   direction2Patch,
   endOptions,
   endPatch,
+  againstNormal,
   isReversed,
   needsDepth,
   needsUpTo,
   pickedContours,
+  reverseDirectionPatch,
   sketchContours,
   startKind,
   startPatch,
@@ -134,6 +136,17 @@ export function extrudeFields(op: "extrude" | "cut"): FieldSpec[] {
       // A curved face will do for up to surface, so not the plain plane-or-point rule.
       pick: (f, c) => upToFromSelection(String(f.extent), c, "Use selected"),
       hint: "Click the face, plane or vertex in the view, then Use selected",
+    },
+    {
+      kind: "bool",
+      key: "direction",
+      label: "Reverse direction",
+      testId: "prop-reverse",
+      // Not for one that goes both ways alike: turning it round would change nothing.
+      when: (f) => !twoWay(f),
+      get: (f, c) => againstNormal(f.direction, normalOf(f, c)),
+      set: (_v, f, c) => reverseDirectionPatch(f.direction, normalOf(f, c)),
+      hint: "Go the other way from the sketch (as the Reverse arrow in the view does)",
     },
     { kind: "number", key: "offset", label: "Offset", unit: "mm", testId: "prop-offset", when: (f) => f.extent === "offsetFromFace", hint: "Short of the surface, toward the sketch; negative: past it" },
     {

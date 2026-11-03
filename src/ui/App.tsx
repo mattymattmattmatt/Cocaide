@@ -80,6 +80,7 @@ import { UI_OPS } from "../features/uiDefs";
 import { CommandManager } from "./model/CommandManager";
 import { makeToolCtx } from "./model/context";
 import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay";
+import { hiddenSketches, showSketchPatch, sketchesOf, sketchShown, usedSketches } from "./model/sketchDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
 import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
 import { carrySelection, sameSolid } from "./model/carrySelection";
@@ -1251,7 +1252,12 @@ export function App() {
   openAskRef.current = openAsk;
   /** The last thing right-clicked in the view, with where (and the face beside an edge): the smart selections start from it. */
   const rightClicked = useRef<PickTarget | null>(null);
-  const onContext = useCallback((target: PickTarget | null, x: number, y: number) => {
+  const onContext = useCallback((target: PickTarget | null, x: number, y: number, sketchHit?: string) => {
+    // A sketch drawn in the view, right-clicked: its menu (Edit, Show or Hide...), as in the tree.
+    if (sketchHit) {
+      rightClicked.current = null;
+      return contextMenuRef.current({ kind: "feature", id: sketchHit }, x, y);
+    }
     rightClicked.current = target;
     // Empty space: the menu for the whole part.
     if (!target) return contextMenuRef.current({ kind: "part" }, x, y);
@@ -1581,6 +1587,14 @@ export function App() {
           testId: "ctx-edit-feature",
         },
         ...(sketchId ? [{ label: "Edit sketch", icon: "sketch", onClick: () => editSketch(sketchId), testId: "ctx-edit-sketch" } as MenuEntry] : []),
+        // Show or hide the sketch (its own, or the one this feature is made from).
+        ...(sketchId
+          ? [
+              (sketchEye(sketchId)
+                ? { label: op === "sketch" ? "Hide" : `Hide ${sketchId}`, icon: "eyeOff", onClick: () => showSketch(sketchId, false), testId: "ctx-hide-sketch" }
+                : { label: op === "sketch" ? "Show" : `Show ${sketchId}`, icon: "eye", onClick: () => showSketch(sketchId, true), testId: "ctx-show-sketch" }) as MenuEntry,
+            ]
+          : []),
         ...(op === "sketch" ? [{ label: "Export DXF", icon: "dxfExport", hint: "The sketch in its own plane, mm: profile, construction and points on their layers", onClick: () => files.exportSketchById(id), testId: "ctx-export-dxf" } as MenuEntry] : []),
         { label: suppressed ? "Unsuppress" : "Suppress", icon: suppressed ? "eye" : "suppress", onClick: () => run({ type: "suppressFeature", id, suppressed: !suppressed }), testId: "ctx-suppress" },
         { label: "Rename…", icon: "note", onClick: () => renameFeature(id), testId: "ctx-rename" },
@@ -1737,6 +1751,17 @@ export function App() {
   const [treeRequest, setTreeRequest] = useState<TreeRequest | null>(null);
   /** The features picked in the tree (Ctrl- and Shift-clicks): a new folder takes them. */
   const [treePicked, setTreePicked] = useState<string[]>([]);
+  /** The sketches a feature uses (hidden once used, unless shown). */
+  const usedSketchIds = useMemo(() => usedSketches(features), [features]);
+  /** Drawn whatever their eye says: a sketch selected in the tree, and the sketches of the feature open in a session. */
+  const keepSketches = [selectedFeature ?? "", ...treePicked, ...sketchesOf(features.find((g) => g.id === session?.id) ?? (session?.pending as Record<string, unknown> | undefined), features)].filter(Boolean);
+  const keepKey = keepSketches.join("|");
+  /** The sketches the view does not draw (nor picks, nor offers the sketcher to reference). */
+  const hiddenSketchIds = useMemo(() => hiddenSketches(features, keepSketches), [features, keepKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Is the sketch's eye open? */
+  const sketchEye = (id: string) => sketchShown(features.find((g) => g.id === id) ?? {}, usedSketchIds);
+  /** Shows or hides a sketch: kept in the document (one undo step). */
+  const showSketch = (id: string, show: boolean) => run({ type: "updateFeature", id, patch: showSketchPatch(features, id, show) });
   /** What Ctrl+C copied in the tree: it stays until the next copy. */
   const clip = useRef<Clip | null>(null);
   const [hoverFeature, setHoverFeature] = useState<string | null>(null);
@@ -2086,8 +2111,10 @@ export function App() {
     if (!sketch) return EMPTY_MODEL;
     const frame = planeFrame(sketch.plane.normal, sketch.plane.origin, sketch.plane.xDir);
     // The other sketches it may reference are those in the part it sees (earlier ones), not itself.
-    return modelView(sketchSees, frame, { exclude: sketch.id });
-  }, [sketch, sketchSees]);
+    // A hidden sketch is not offered (show it, or select it in the tree, to reference it).
+    const seen = sketchSees?.sketches && hiddenSketchIds.size ? { ...sketchSees, sketches: sketchSees.sketches.filter((k) => !hiddenSketchIds.has(k.id)) } : sketchSees;
+    return modelView(seen, frame, { exclude: sketch.id });
+  }, [sketch, sketchSees, hiddenSketchIds]);
 
   // ------------------------------------------------------------ Phase P wave 2A: the sketch in the 3D view
   /** The view's camera for the sketch canvas (only the canvas follows it), its picking, the slots the sketcher's parts go into, the draft's entities. */
@@ -2475,6 +2502,8 @@ export function App() {
               datumView={datumView}
               onPickDatum={(id, additive) => setSelection((sel) => pickInto(sel, { kind: "datum", id, point: [0, 0, 0] }, additive))}
               onToggleEye={(id) => setDatumView(toggleEye(datumView, id))}
+              sketchShown={sketchEye}
+              onToggleSketch={(id) => showSketch(id, !sketchEye(id))}
               onDatumMenu={sketch ? undefined : datumMenu}
               rollback={bar}
               onRollback={sketch ? undefined : rollTo}
@@ -2537,6 +2566,7 @@ export function App() {
                   underlay={underlay}
                   onPhotoPoint={photoPick ? onPhotoPoint : null}
                   hiddenBodies={hiddenBodies}
+                  hiddenSketches={hiddenSketchIds}
                   nodes={shownNodes}
                   onMessage={(text) => setNotice({ kind: "info", text })}
                   commandsRef={viewCommands}

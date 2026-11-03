@@ -20,6 +20,7 @@ import {
   endPatch,
   pickedContours,
   refKind,
+  reverseDirectionPatch,
   sketchContours,
   startKind,
   startPatch,
@@ -137,6 +138,30 @@ describe("end conditions in the editor", () => {
   });
 });
 
+describe("reverse direction", () => {
+  it("turns round the sketch normal, and back to no direction at all; a custom vector turns round as it is", () => {
+    expect(reverseDirectionPatch(undefined, [0, 0, 1])).toEqual({ direction: [0, 0, -1] });
+    expect(reverseDirectionPatch([0, 0, -1], [0, 0, 1])).toEqual({ direction: null });
+    expect(reverseDirectionPatch([0, 3, 4], [0, 0, 1])).toEqual({ direction: [0, -0.6, -0.8] });
+    expect(reverseDirectionPatch([0, -0.6, -0.8], [0, 0, 1])).toEqual({ direction: [0, 0.6, 0.8] });
+  });
+
+  it("the extrude and cut panels have a Reverse direction tick box in Direction 1, read from the direction; not for a midplane", () => {
+    for (const fields of [EXTRUDE_FIELDS, CUT_FIELDS]) {
+      const box = { id: "e", op: "extrude", sketch: "sk", extent: "blind", distance: 5 };
+      const spec = fields.find((s) => fieldTestId(s) === "prop-reverse")!;
+      expect(spec).toBeTruthy();
+      expect(visibleFields(fields, box, form(box)).includes(spec)).toBe(true);
+      expect(visibleFields(fields, { ...box, extent: "midplane" }, form(box)).includes(spec)).toBe(false);
+      const on = commitPatch(spec, true, box, form(box));
+      expect(on).toEqual({ direction: [0, 0, -1] });
+      const reversed = { ...box, ...on };
+      expect(spec.get!(reversed, form(reversed))).toBe(true);
+      expect(commitPatch(spec, false, reversed, form(reversed))).toEqual({ direction: null });
+    }
+  });
+});
+
 describe("direction 2, start, thin, draft", () => {
   it("direction 2 starts blind at direction 1's depth and has its own end condition", () => {
     const f = { id: "e", op: "extrude", sketch: "sketch_1", distance: 6 };
@@ -167,7 +192,7 @@ describe("direction 2, start, thin, draft", () => {
   it("the fields shown follow the feature, the usual blocks in order", () => {
     const ids = (f: Raw) => visibleFields(EXTRUDE_FIELDS, f, form(f)).map(fieldTestId);
     const blind = ids({ id: "e", op: "extrude", sketch: "sketch_1", distance: 6 });
-    expect(blind).toEqual(["prop-sketch", "prop-_from", "prop-from", "prop-_dir1", "prop-extent", "prop-distance", "prop-direction-mode", "prop-draft", "prop-direction2", "prop-thin", "prop-regions", "prop-intersect"]);
+    expect(blind).toEqual(["prop-sketch", "prop-_from", "prop-from", "prop-_dir1", "prop-extent", "prop-distance", "prop-reverse", "prop-direction-mode", "prop-draft", "prop-direction2", "prop-thin", "prop-regions", "prop-intersect"]);
     const rich = ids({ id: "e", op: "extrude", sketch: "sketch_1", extent: "offsetFromFace", upTo: { datum: "Top" }, offset: 2, startOffset: 1, draft: { angle: 3 }, direction2: { extent: "upToVertex", upTo: { datum: "Origin" } } });
     expect(rich).toEqual(expect.arrayContaining(["prop-start-offset", "prop-up-to", "prop-offset", "prop-draft-angle", "prop-draft-outward", "prop-direction2-extent", "prop-direction2-up-to", "prop-direction2-draft"]));
     expect(rich).not.toContain("prop-distance");

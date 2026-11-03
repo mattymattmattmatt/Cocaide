@@ -3,7 +3,7 @@
 // unsure. Nothing is built until every blank is filled. A drawing's card is
 // shown beside the drawing, and building it is the user's confirmation.
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { PreparedDrawing } from "../../drawing/rasterize";
 import type { Review, Row } from "../../intent/review";
 import { PLACEMENTS } from "../../intent/constants";
@@ -74,20 +74,45 @@ export function IntentCard({ review, onBuild, drawing, views }: Props) {
       ))}
       <table className="intent-rows">
         <tbody>
-          {editable.map((r) => (
-            <tr key={r.path} className={r.blank ? "blank" : ""} data-testid={`intent-row-${r.path}`}>
-              <th>
-                {r.label}
-                {r.askFirst && (
-                  <span className="ask-first" title="Ask-first: never guessed">
-                    *
-                  </span>
-                )}
-              </th>
-              <td>{input(r, values[r.path], (v) => setValues({ ...values, [r.path]: v }))}</td>
-              <td className="intent-source">{source(r)}</td>
-            </tr>
-          ))}
+          {editable.map((r) =>
+            wordy(r) ? (
+              // A question (or a free-text answer) reads better as a line of its own over a box as wide as the card.
+              <tr key={r.path} className={`intent-question${r.blank ? " blank" : ""}`} data-testid={`intent-row-${r.path}`}>
+                <td colSpan={3}>
+                  <label className="intent-question-text" htmlFor={`intent-input-${r.path}`}>
+                    {r.label}
+                    {r.askFirst && (
+                      <span className="ask-first" title="Ask-first: never guessed">
+                        *
+                      </span>
+                    )}
+                  </label>
+                  <AnswerBox
+                    id={`intent-input-${r.path}`}
+                    label={r.label}
+                    value={values[r.path] ?? (r.value === null ? "" : String(r.value))}
+                    placeholder={r.kind === "question" ? "Your answer (Enter to build, Shift+Enter for a new line)" : "—"}
+                    onChange={(v) => setValues({ ...values, [r.path]: v })}
+                    onSubmit={() => missing.length === 0 && review.problems.length === 0 && build()}
+                  />
+                  {r.blank && r.note && <div className="intent-source why">{r.note}</div>}
+                </td>
+              </tr>
+            ) : (
+              <tr key={r.path} className={r.blank ? "blank" : ""} data-testid={`intent-row-${r.path}`}>
+                <th>
+                  {r.label}
+                  {r.askFirst && (
+                    <span className="ask-first" title="Ask-first: never guessed">
+                      *
+                    </span>
+                  )}
+                </th>
+                <td>{input(r, values[r.path], (v) => setValues({ ...values, [r.path]: v }))}</td>
+                <td className="intent-source">{source(r)}</td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
       <div className="ask-buttons">
@@ -99,6 +124,46 @@ export function IntentCard({ review, onBuild, drawing, views }: Props) {
         </span>
       </div>
     </div>
+  );
+}
+
+/** A row answered in words: a question the request left open, or free text. */
+const wordy = (r: Row) => r.kind === "question" || r.kind === "text";
+
+/** The tallest an answer box grows before it scrolls, px. */
+const ANSWER_MAX_HEIGHT = 160;
+
+/**
+ * An answer typed in words: as wide as the card, a readable size, growing
+ * with what is typed (up to ANSWER_MAX_HEIGHT, then it scrolls). Enter
+ * builds, as in the ask box; Shift+Enter starts a new line.
+ */
+function AnswerBox({ id, label, value, placeholder, onChange, onSubmit }: { id: string; label: string; value: string; placeholder: string; onChange(v: string): void; onSubmit(): void }) {
+  const box = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight + 2, ANSWER_MAX_HEIGHT)}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={box}
+      id={id}
+      className="intent-answer"
+      rows={2}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          onSubmit();
+        }
+      }}
+      data-testid={id}
+      aria-label={label}
+    />
   );
 }
 
@@ -168,7 +233,11 @@ function parse(r: Row, draft: string | undefined): Answer | undefined {
     case "question":
       return text;
     case "points": {
-      const pts = text.split(/[;\n]/).map((p) => p.trim()).filter(Boolean).map((p) => p.replace(/[()]/g, "").split(/[ ,]+/).map(Number));
+      const pts = text
+        .split(/[;\n]/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((p) => p.replace(/[()]/g, "").split(/[ ,]+/).map(Number));
       return pts.length && pts.every((p) => p.length === 2 && p.every(Number.isFinite)) ? pts.map(([x, y]) => ({ x, y })) : undefined;
     }
   }

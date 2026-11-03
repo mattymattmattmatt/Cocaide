@@ -27,6 +27,7 @@ import { intoFace } from "../model/smartSelect";
 import { widthAcross } from "../model/smartDefaults";
 import type { Raw } from "../model/ToolContext";
 import { patchAt } from "../props/spec";
+import { reverseDirectionPatch } from "../props/extrude";
 
 /** A handle's value: a number (a depth, an angle, a count), or a point on a face (a hole's centre). */
 export type HandleValue = number | Vec2;
@@ -538,7 +539,8 @@ export function featureHandles(resolved: Raw, rawFeature: Raw, view: RebuildView
       scale: 1,
       min: null,
       label: "Reverse",
-      write: () => ({ direction: d.map((c) => r6(-c)) }),
+      // The same patch as the panel's Reverse direction: back along the sketch normal, no direction at all.
+      write: () => reverseDirectionPatch(resolved.direction, anchor.normal),
     });
     return out;
   }

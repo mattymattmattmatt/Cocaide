@@ -38,7 +38,7 @@ import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
 import { threadBands, ThreadLayer } from "./viewport/threadLayer";
 import { PreviewLayer, type PreviewLook } from "./viewport/preview";
-import { sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
+import { sketchAt, sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
 import { entityPolylines } from "../geom/profile";
 import { sketchRefText } from "../features/datum";
 import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
@@ -128,13 +128,15 @@ interface Props {
   selection: Selection;
   /** A click on the part (target) or on empty space (null). `additive` when Ctrl, Shift or Cmd is held: the target goes in or out of the selection. */
   onPick(target: PickTarget | null, additive: boolean): void;
-  /** A right-click (press and release without dragging): what is under the cursor, and where. */
-  onContext?(target: PickTarget | null, clientX: number, clientY: number): void;
+  /** A right-click (press and release without dragging): what is under the cursor, and where; `sketch`: a sketch drawn in the view is under it (its menu goes first). */
+  onContext?(target: PickTarget | null, clientX: number, clientY: number, sketch?: string): void;
   underlay?: Underlay | null;
   /** While set, a click on the photo reports the pixel clicked instead of picking the part. */
   onPhotoPoint?: ((px: Vec2) => void) | null;
   /** Bodies not drawn (and not picked). */
   hiddenBodies?: ReadonlySet<string>;
+  /** Sketches not drawn (and not picked): hidden in the tree, or used by a feature and not shown. */
+  hiddenSketches?: ReadonlySet<string>;
   /** A frame's nodes (Phase J), drawn as labelled points with the sketches. */
   nodes?: FrameNode[];
   /** A short note for the user (a view command that needs a selection, say). */
@@ -237,6 +239,7 @@ interface ViewportApi {
   /** The reference geometry shown (already filtered), and the origin triad's arm length (null: hidden). */
   setDatums(shapes: DatumShape[], originSize: number | null): void;
   setHiddenBodies(hidden: ReadonlySet<string>): void;
+  setHiddenSketches(hidden: ReadonlySet<string>): void;
   setSelection(sel: Selection): void;
   setSketchesVisible(visible: boolean): void;
   setNodes(nodes: FrameNode[]): void;
@@ -304,6 +307,7 @@ export function Viewport({
   underlay = null,
   onPhotoPoint = null,
   hiddenBodies = NO_BODIES,
+  hiddenSketches = NO_BODIES,
   nodes = NO_NODES,
   onMessage,
   commandsRef,
@@ -450,6 +454,9 @@ export function Viewport({
     let vertices: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
     let hidden: ReadonlySet<string> = NO_BODIES;
+    let hiddenSketchIds: ReadonlySet<string> = NO_BODIES;
+    /** The sketches drawn: the view's, less the hidden ones. */
+    const drawnSketches = () => (shownView?.sketches ?? []).filter((k) => !hiddenSketchIds.has(k.id));
     /** Per mesh vertex: the index of its body (as in view.bodies; 0 for a part of one), or −1 in a hidden body. */
     let vertexBody: Int16Array = new Int16Array(0);
     /** The visible bodies' bounding box: what a rotation turns about while it is on screen, and what Fit frames. */
@@ -1368,7 +1375,7 @@ export function Viewport({
         model.add(hiddenLines);
         buildOutlines();
       }
-      for (const sk of v?.sketches ?? []) {
+      for (const sk of (v?.sketches ?? []).filter((k) => !hiddenSketchIds.has(k.id))) {
         for (const pl of sk.polylines) {
           const g = new THREE.BufferGeometry().setFromPoints(pl.points.map((p) => new THREE.Vector3(...p)));
           // A reference to the model is purple, as in the sketcher.
@@ -1644,7 +1651,7 @@ export function Viewport({
       renderer.domElement.style.cursor = hot ? (hot.locked ? "not-allowed" : "grab") : "";
       const rect = renderer.domElement.getBoundingClientRect();
       // A session's reference field takes other sketches' entities: one under the pointer wins, as a click on it does.
-      const sketchHit = !hot && sketchPickRef.current && overlays.visible && shownView?.sketches?.length ? sketchEntityAt(shownView.sketches, projectPx, e.clientX, e.clientY) : null;
+      const sketchHit = !hot && sketchPickRef.current && overlays.visible && shownView?.sketches?.length ? sketchEntityAt(drawnSketches(), projectPx, e.clientX, e.clientY) : null;
       const sketchKey = (h: SketchEntityHit | null) => (h ? `${h.sketch}:${h.entity}:${h.at ?? ""}` : "");
       if (sketchKey(sketchHit) !== sketchKey(sketchHot)) {
         sketchHot = sketchHit;
@@ -1732,10 +1739,14 @@ export function Viewport({
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
       // A session's reference field: another sketch's line, arc, circle or point drawn in the view, before the model under it.
       if (e.button === 0 && sketchPickRef.current && overlays.visible && shownView?.sketches?.length) {
-        const hit = sketchEntityAt(shownView.sketches, projectPx, e.clientX, e.clientY);
+        const hit = sketchEntityAt(drawnSketches(), projectPx, e.clientX, e.clientY);
         if (hit && sketchPickRef.current(hit)) return;
       }
-      if (e.button === 2) contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY);
+      if (e.button === 2) {
+        // A sketch drawn over the part is right-clicked before what is under it (as it is drawn on top).
+        const onSketch = !stageFrame && overlays.visible && shownView?.sketches?.length ? sketchAt(drawnSketches(), projectPx, e.clientX, e.clientY) : null;
+        contextRef.current?.(pickAt(e.clientX, e.clientY), e.clientX, e.clientY, onSketch ?? undefined);
+      }
       else if (e.altKey && allows(pickFilter, "face")) {
         // Alt+click: the next face behind the one picked (not while the filter leaves faces out).
         const next = nextBehind(underAt(e.clientX, e.clientY), selection);
@@ -1899,6 +1910,17 @@ export function Viewport({
           const part = (a: Vec3, b: Vec3) => a.map((c, i) => c + (b[i] - c) * 0.3) as Vec3;
           return toScreen(s.kind === "plane" ? part(s.corners[2], s.corners[3]) : s.kind === "axis" ? part(s.ends[0], s.ends[1]) : s.at);
         },
+        /** The sketches drawn now, by id (none while the Sketches toggle is off). */
+        sketches(): string[] {
+          return overlays.visible ? drawnSketches().map((k) => k.id) : [];
+        },
+        /** The middle of a sketch's first segment (client pixels), to click or right-click it. */
+        sketchPoint(id: string): [number, number] | null {
+          const pl = shownView?.sketches.find((k) => k.id === id)?.polylines[0];
+          if (!pl || pl.points.length < 2) return null;
+          const [a, b] = pl.points;
+          return toScreen([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]);
+        },
         /** A pixel of the pinned photo -> client pixels. */
         photoPoint(px: Vec2): [number, number] | null {
           if (!photo) return null;
@@ -2039,6 +2061,11 @@ export function Viewport({
       },
       setHiddenBodies(next: ReadonlySet<string>) {
         hidden = next;
+        setModel(shownView);
+      },
+      setHiddenSketches(next: ReadonlySet<string>) {
+        if (next.size === hiddenSketchIds.size && [...next].every((id) => hiddenSketchIds.has(id))) return;
+        hiddenSketchIds = next;
         setModel(shownView);
       },
       fit: (dir?: Vec3, up?: Vec3) => {
@@ -2253,6 +2280,9 @@ export function Viewport({
   useEffect(() => {
     api.current?.setHiddenBodies(hiddenBodies);
   }, [hiddenBodies]);
+  useEffect(() => {
+    api.current?.setHiddenSketches(hiddenSketches);
+  }, [hiddenSketches]);
 
   useEffect(() => {
     api.current?.setNodes(nodes);
@@ -2622,7 +2652,7 @@ export function Viewport({
         >
           <Icon name="section" />
         </button>
-        <button className="icon-only" aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} aria-label="Sketches" title="Sketches: show or hide sketch geometry and the frame's nodes" data-testid="view-sketches">
+        <button className="icon-only" aria-pressed={showSketches} onClick={() => setShowSketches((v) => !v)} aria-label="Sketches" title="Sketches: show or hide all sketches (each keeps its own eye in the tree) and the frame's nodes" data-testid="view-sketches">
           <Icon name="sketch" />
         </button>
         <button

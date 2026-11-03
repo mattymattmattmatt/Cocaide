@@ -711,6 +711,18 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
   const dof = health.dof;
   /** The constraints as shown: while a drag is live, driven dimensions read the geometry being dragged. */
   const shownConstraints = useMemo(() => (live ? measureDriven(live, draft.constraints) : draft.constraints), [live, draft.constraints]);
+  /** The Modify box's value as typed so far (null: not a value yet). */
+  const [typed, setTyped] = useState<number | null>(null);
+  useEffect(() => {
+    if (!modify) setTyped(null);
+  }, [modify]);
+  /**
+   * While the Modify box is open, the dimension as it will be: a new one drawn
+   * (faded) where it lands, with the value typed so far; the geometry solved
+   * to that value when the solver takes it (else as it is), for a new
+   * dimension and for one being changed alike.
+   */
+  const typing = useMemo(() => dimensionPreview(modify, typed, draft, lift, overDefines), [modify, typed, draft]); // eslint-disable-line react-hooks/exhaustive-deps
   const fixOver = (f: Fix) => {
     if (f.action.kind === "delete") removeConstraint(f.action.index);
     else toggleDriven(f.action.index);
@@ -1133,8 +1145,8 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         <SketchCanvas
           fitToken={fitToken}
           view3d={view3d?.canvas}
-          entities={entities}
-          constraints={shownConstraints}
+          entities={typing?.entities ?? entities}
+          constraints={typing?.constraints ?? shownConstraints}
           model={model}
           tool={tool}
           options={toolOptions}
@@ -1151,7 +1163,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
           onDrag={onDrag}
           onContext={openMenu}
           defined={health}
-          proposed={proposal?.add}
+          proposed={typing?.proposed ? [...(proposal?.add ?? []), typing.proposed] : proposal?.add}
           overDefining={health.conflicting}
           dangling={dangling}
           showRelations={showRelations}
@@ -1273,6 +1285,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             state={modify}
             constraints={draft.constraints}
             onChoose={(choice) => setModify((m) => (m && "options" in m ? { ...m, choice } : m))}
+            onPreview={setTyped}
             onClose={() => setModify(null)}
             sketch={session.id}
             params={params}
@@ -1698,6 +1711,34 @@ function Offer({ offer, onAdd }: { offer: Suggestion; onAdd(v: number, expr?: st
   );
 }
 
+/** What the sketch shows while the Modify box is open (see `typing` in SketchMode); null: nothing different. */
+function dimensionPreview(
+  modify: { options: Suggestion[]; choice: number } | { index: number } | null,
+  typed: number | null,
+  draft: { entities: SketchEntity[]; constraints: Constraint[] },
+  lift: (ks: Constraint[]) => { entities: SketchEntity[]; constraints: Constraint[] } | string,
+  overDefines: (ents: SketchEntity[], k: Constraint) => boolean,
+): { entities?: SketchEntity[]; constraints?: Constraint[]; proposed?: Constraint } | null {
+  if (!modify) return null;
+  if ("options" in modify) {
+    const o = modify.options[modify.choice];
+    if (!o) return null;
+    const lifted = lift([o.make(typed ?? o.value ?? 0)]);
+    if (typeof lifted === "string") return null;
+    const k = lifted.constraints[0];
+    const out = { entities: lifted.entities, proposed: k };
+    // The value as measured moves nothing; another one is solved, unless it would over-define (then it is drawn as typed, the geometry as it is).
+    if (typed === null || Math.abs(typed - (o.value ?? 0)) < 1e-9 || overDefines(lifted.entities, k)) return out;
+    const r = solveSketch(lifted.entities, [...draft.constraints, k]);
+    return r.ok ? { ...out, entities: r.entities } : out;
+  }
+  const k = draft.constraints[modify.index];
+  if (!k || !("value" in k) || isDriven(k) || typed === null || Math.abs(typed - k.value) < 1e-9) return null;
+  const constraints = draft.constraints.map((c, i) => (i === modify.index ? ({ ...c, value: typed } as Constraint) : c));
+  const r = solveSketch(draft.entities, constraints);
+  return r.ok ? { entities: r.entities, constraints } : { constraints };
+}
+
 /**
  * The Modify box: the dimension's value where it was placed. It
  * takes a number, a calculation worked out once ("sqrt(2)*10", "1in",
@@ -1714,6 +1755,7 @@ function ModifyBox({
   sketch,
   params,
   onChoose,
+  onPreview,
   onApply,
   onClose,
 }: {
@@ -1723,6 +1765,8 @@ function ModifyBox({
   /** The names expressions read: the document's, with this sketch's dimensions as the draft has them. */
   params: NameValues;
   onChoose(choice: number): void;
+  /** The value as typed so far, worked out (null: not a value yet, or driven): the sketch previews it. */
+  onPreview?(value: number | null): void;
   /** True when applied; else why not (shown in the box), or false. */
   onApply(change: DimensionChange): boolean | string;
   onClose(): void;
@@ -1744,6 +1788,12 @@ function ModifyBox({
     input.current?.focus();
     input.current?.select();
   }, []);
+  // What is typed, as the sketch would take it: previewed as it changes.
+  useEffect(() => {
+    if (driven) return onPreview?.(null);
+    const r = readValue(text, params, angle ? "angle" : "length");
+    onPreview?.(r.ok && r.value >= 0 ? r.value : null);
+  }, [text, driven]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Aligned, level or plumb: the value follows at once, and the field keeps the keyboard. */
   const choose = (i: number) => {
     if (!("options" in state)) return;

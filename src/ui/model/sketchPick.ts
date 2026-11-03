@@ -138,3 +138,30 @@ export function sketchRefFor(hit: SketchEntityHit, accepts: readonly DatumKind[]
 
 /** "an axis or a point". */
 const kinds = (list: readonly DatumKind[]) => list.map((k) => (k === "axis" ? "an axis" : `a ${k}`)).join(" or ");
+
+/**
+ * The sketch whose drawing (any curve or point of it, a rectangle, a spline,
+ * text alike) passes nearest the pointer, within SKETCH_PICK_PX: what a
+ * right-click in the view opens the menu of. Null: none.
+ */
+export function sketchAt(sketches: readonly { id: string; polylines: { points: Vec3[] }[]; points?: { at: Vec3 }[] }[], project: (p: Vec3) => [number, number] | null, x: number, y: number): string | null {
+  let best: { id: string; d: number } | null = null;
+  for (const s of sketches) {
+    for (const pl of s.polylines) {
+      const pts = pl.points.map(project);
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        if (!a || !b) continue;
+        const d = toSegment([x, y], a, b);
+        if (d <= SKETCH_PICK_PX && (!best || d < best.d)) best = { id: s.id, d };
+      }
+    }
+    for (const p of s.points ?? []) {
+      const q = project(p.at);
+      const d = q ? Math.hypot(q[0] - x, q[1] - y) : Infinity;
+      if (d <= SKETCH_POINT_PX && (!best || d < best.d)) best = { id: s.id, d };
+    }
+  }
+  return best?.id ?? null;
+}

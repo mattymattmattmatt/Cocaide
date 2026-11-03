@@ -133,6 +133,40 @@ test('"a plate with some holes" asks instead of guessing, then builds from the a
   await expectVolume(page, FOUR_HOLES.toLocaleString("en-US", { maximumFractionDigits: 3 }));
 });
 
+test("a question the model asks is answered in a box as wide as the card, that grows as the answer does", async ({ page }) => {
+  await page.getByTestId("new-part").click();
+  const asking = intent({ kind: "other", name: "fitting", description: "A pipe fitting.", questions: ["What pipe does it fit, and how is it fixed to the wall?"] });
+  const sent = await scriptModel(page, [[text(asking)]]);
+  await rightClickEmpty(page);
+  await page.getByTestId("ask-input").fill("a pipe fitting");
+  await page.getByTestId("ask-submit").click();
+
+  const box = page.getByTestId("intent-input-questions[0]");
+  await expect(box).toBeVisible();
+  // A real text box: multi-line, as wide as the card, a readable size, the whole question shown above it.
+  expect(await box.evaluate((el) => el.tagName)).toBe("TEXTAREA");
+  await expect(page.getByTestId("intent-row-questions[0]")).toContainText("What pipe does it fit, and how is it fixed to the wall?");
+  const card = (await page.getByTestId("intent-card").boundingBox())!;
+  const first = (await box.boundingBox())!;
+  expect(first.width).toBeGreaterThan(card.width * 0.9);
+  expect(first.height).toBeGreaterThanOrEqual(50);
+  expect(parseFloat(await box.evaluate((el) => getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(13);
+
+  // Shift+Enter is a new line; the box grows with the answer.
+  await box.click();
+  await page.keyboard.type("A 50 mm steel pipe.");
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type(`Line ${i + 2} of the answer.`);
+  }
+  await expect(box).toHaveValue(/pipe\.\nLine 2 of the answer\.\n.*\nLine 5 of the answer\.$/s);
+  expect((await box.boundingBox())!.height).toBeGreaterThan(first.height + 20);
+  // Enter builds: the answer goes back to the model.
+  await page.keyboard.press("Enter");
+  await expect.poll(() => sent.length).toBe(2);
+  expect(JSON.stringify(sent[1].body.messages)).toContain("Line 5 of the answer.");
+});
+
 test("a question about the whole part is answered without writing", async ({ page }) => {
   await page.locator("select").first().selectOption("bracket");
   await expectVolume(page, "18,994.728");

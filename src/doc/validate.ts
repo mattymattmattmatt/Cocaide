@@ -596,7 +596,8 @@ function sketchEntityOf(ref: { sketch: string; entity: string }, earlier: Readon
  * its own, so it has no model to reference.
  */
 function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: ReadonlyMap<string, string>, opts: { profile?: boolean } = {}): SketchFeature | null {
-  c.keys(raw, "", ["id", "op", "plane", "entities", "constraints", "profile"]);
+  c.keys(raw, "", ["id", "op", "plane", "entities", "constraints", "profile", "shown"]);
+  const shown = flag(raw, "shown", c);
   let mark: SketchFeature["profile"];
   if (raw.profile !== undefined) {
     if (!isObject(raw.profile)) c.fail("profile", `must be { "name": ... } (got ${describe(raw.profile)})`);
@@ -655,6 +656,7 @@ function validateSketch(raw: Record<string, unknown>, c: Checker, earlier: Reado
   const sketch: SketchFeature = { id: raw.id as string, op: "sketch", plane, entities };
   if (raw.constraints !== undefined) sketch.constraints = constraints;
   if (mark) sketch.profile = mark;
+  if (shown !== undefined) sketch.shown = shown;
   return sketch;
 }
 
