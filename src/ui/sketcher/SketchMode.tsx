@@ -894,7 +894,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         // A model edge: copy it into the sketch, as profile geometry or as construction.
         ...(fromModel
           ? [
-              { label: "Convert entities", icon: "convertEntities", onClick: () => convert(items, false), testId: "ctx-convert" } as MenuEntry,
+              { label: "Convert entities (project into sketch)", icon: "convertEntities", onClick: () => convert(items, false), testId: "ctx-convert" } as MenuEntry,
               { label: "Convert as construction", icon: "construction", onClick: () => convert(items, true), testId: "ctx-convert-construction" } as MenuEntry,
               "sep" as const,
             ]
@@ -1020,7 +1020,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
                   key="convert"
                   small
                   icon="convertEntities"
-                  label="Convert"
+                  label="Convert / Project"
                   pressed={tool === "convert"}
                   onClick={() => setTool("convert")}
                   title={`${TOOL_TITLE.convert}${keyHint("sketch.convert", prefs)}`}
@@ -1895,7 +1895,7 @@ function readError(text: string, params: NameValues, kind: ValueKind): string {
 /** Longer names for the tooltips. */
 const TOOL_TITLE: Partial<Record<Tool, string>> = {
   dimension: "Smart Dimension: click a line, circle or arc, or two points, lines or circles (the model's edges and the sketch's axes too), then where the dimension goes",
-  convert: "Convert Entities: copy model edges (or a face's outline) into the sketch, linked so they follow the model",
+  convert: "Convert Entities (project edges): copy model edges, or a face's outline, into the sketch, projected onto its plane and linked so they follow the model. Or right-click an edge",
 };
 
 /** What each entity type is called in a menu title. */
