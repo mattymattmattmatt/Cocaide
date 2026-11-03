@@ -241,11 +241,14 @@ describe("what the pointer is on in a turned view, as the sketch's stand-in", ()
     expect(standInFor({ kind: "datum", id: "Top", point: [0, 0, 0] }, front, cam, [0, 0])).toBeNull();
   });
 
-  it("a straight edge square to the plane (seen end-on) stands for the point it projects to: the end of an edge there on the plane", () => {
+  it("picking, a straight edge square to the plane (seen end-on) stands for the point it projects to: the end of an edge there on the plane", () => {
     const cam = camera([1, 1, -1], [0, 0, 1]);
     const upright = top.edges.find((e) => !e.entity && e.kind === "line")!;
     expect(upright.problem).toMatch(/square to the sketch plane/);
-    const v = hit(standInFor({ kind: "edge", index: upright.index, point: upright.poly3[0] }, top, cam, [0, 0]));
+    // Drawing, it is no snap target: a miss with the reason.
+    const miss = standInFor({ kind: "edge", index: upright.index, point: upright.poly3[0] }, top, cam, [0, 0]);
+    expect(miss && "problem" in miss).toBe(true);
+    const v = hit(standInFor({ kind: "edge", index: upright.index, point: upright.poly3[0] }, top, cam, [0, 0], { endOn: true }));
     expect(v.item.kind).toBe("point");
     const owner = modelEdge(top, (v.item as { ref: string }).ref)!;
     // The upright's top end is on the plane (the top face): an edge of the top face ends there.

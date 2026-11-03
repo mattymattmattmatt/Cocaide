@@ -293,7 +293,7 @@ export function SketchCanvas(props: Props) {
     const local = localOf(clientX, clientY);
     // Picking (not drawing), a round face stands for its axis.
     const pick = view3d.pick(clientX, clientY);
-    const hit = standInFor(pick, model, cam, local, { faces: tool === "convert", axes: tool !== "convert" && !toolByName(tool) });
+    const hit = standInFor(pick, model, cam, local, { faces: tool === "convert", axes: tool !== "convert" && !toolByName(tool), endOn: tool !== "convert" && !toolByName(tool) });
     // Another sketch's entity hidden behind the part (a base sketch under it) is not under the pointer.
     const hidden = behind(pick && pick.kind !== "datum" ? pick.point : null, cam);
     const other = othersShown ? otherSketchAt(model, cam, local, (o) => o.inPlane, hidden) : null;

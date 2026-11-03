@@ -82,7 +82,7 @@ export interface SceneMiss {
  * (PICK_PX away: an edge or another sketch's entity near the pointer wins);
  * else nothing. `local` is the pointer in the view's pixels.
  */
-export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamera, local: Vec2, opts: { faces?: boolean; axes?: boolean } = {}): SceneHit | SceneMiss | null {
+export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamera, local: Vec2, opts: { faces?: boolean; axes?: boolean; endOn?: boolean } = {}): SceneHit | SceneMiss | null {
   if (!pick || pick.kind === "datum") return null;
   if (pick.kind === "face") {
     if (opts.faces) {
@@ -105,8 +105,8 @@ export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamer
     const along = edgeAtVertex(m, cam, local, pick.point);
     if (along) return along;
   }
-  if (pick.kind === "edge" && !edge.entity && edge.kind === "line") {
-    // A straight edge square to the plane projects to a point: the point of an edge ending where it meets the plane.
+  if (opts.endOn && pick.kind === "edge" && !edge.entity && edge.kind === "line") {
+    // Picking (not drawing): a straight edge square to the plane projects to a point, the point of an edge ending where it meets the plane.
     const info = m.source.edges.find((e) => e.index === edge.index);
     const height = (p: Vec3) => (p[0] - m.frame.origin[0]) * m.frame.z[0] + (p[1] - m.frame.origin[1]) * m.frame.z[1] + (p[2] - m.frame.origin[2]) * m.frame.z[2];
     const ends = info ? [info.start, info.end].sort((a, b) => Math.abs(height(a)) - Math.abs(height(b))) : [];
