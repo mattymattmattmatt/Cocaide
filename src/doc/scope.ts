@@ -27,6 +27,7 @@
 import type { Command, RawDocument } from "./commands";
 import { nodeUsers, references } from "./commands";
 import { isObject } from "./validate";
+import { rawAnnotations } from "./drawing";
 import { seedIds } from "./types";
 import { documentParameters, parameterRefs } from "./parameters";
 import { dimensionNames } from "./dimensions";
@@ -185,6 +186,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       break;
     case "setDrawing":
     case "setSheet":
+    case "addSheet":
+    case "renameSheet":
+    case "deleteSheet":
+    case "moveSheet":
+    case "setDrawingOptions":
       what = cmd.type;
       allowed = has("drawing");
       break;
@@ -194,12 +200,13 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       allowed = has("properties") || has("drawing");
       break;
     case "setView":
-      what = `setView "${cmd.id}"`;
+    case "moveView":
+      what = `${cmd.type} "${cmd.id}"`;
       allowed = has("drawing") || has(`view:${cmd.id}`);
       break;
     case "setAnnotation": {
       what = `setAnnotation "${cmd.id}"`;
-      const drawing = isObject(doc.drawing) && Array.isArray(doc.drawing.annotations) ? doc.drawing.annotations : [];
+      const drawing = rawAnnotations(doc);
       const before = drawing.find((a) => isObject(a) && a.id === cmd.id) as Record<string, unknown> | undefined;
       const after = cmd.annotation as Record<string, unknown> | null;
       // The views it is in before and after: both must be in scope for a view-wide token.

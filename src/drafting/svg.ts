@@ -23,16 +23,23 @@ export function sheetSVG(sheet: ComposedSheet, opts: SvgOptions = {}): string {
   const y = (v: number) => n(H - v);
   const pts = (p: [number, number][]) => p.map(([a, b]) => `${n(a)},${y(b)}`).join(" ");
   const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const colour = (c: string | undefined, attr: "stroke" | "fill") => (c ? ` ${attr}="${esc(c)}"` : "");
   const prim = (p: Prim): string => {
     if (p.k === "line") {
-      const stroke = `stroke-width="${n(p.w)}"${p.dash ? ` stroke-dasharray="${p.dash.map(n).join(" ")}"` : ""}`;
-      const fill = p.fill ? `fill="currentColor"` : `fill="none"`;
+      const stroke = `stroke-width="${n(p.w)}"${p.dash ? ` stroke-dasharray="${p.dash.map(n).join(" ")}"` : ""}${colour(p.color, "stroke")}`;
+      const fill = p.fill ? `fill="${p.color ? esc(p.color) : "currentColor"}"` : `fill="none"`;
       return p.closed || p.fill ? `<polygon points="${pts(p.pts)}" ${fill} ${stroke}/>` : `<polyline points="${pts(p.pts)}" fill="none" ${stroke}/>`;
     }
-    if (p.k === "circle") return `<circle cx="${n(p.c[0])}" cy="${y(p.c[1])}" r="${n(p.r)}" stroke-width="${n(p.w)}" fill="${p.fill ? "currentColor" : "none"}"/>`;
+    if (p.k === "circle") {
+      return `<circle cx="${n(p.c[0])}" cy="${y(p.c[1])}" r="${n(p.r)}" stroke-width="${n(p.w)}"${p.dash ? ` stroke-dasharray="${p.dash.map(n).join(" ")}"` : ""}${colour(p.color, "stroke")} fill="${p.fill ? (p.color ? esc(p.color) : "currentColor") : "none"}"/>`;
+    }
+    if (p.k === "area") {
+      const d = p.loops.map((l) => `M${l.map(([a, b]) => `${n(a)} ${y(b)}`).join("L")}Z`).join("");
+      return `<path d="${d}" fill="${esc(p.fill)}" fill-rule="evenodd" stroke="${esc(p.fill)}" stroke-width="0.05"/>`;
+    }
     const anchor = p.anchor === "start" ? "" : ` text-anchor="${p.anchor}"`;
     const rot = p.angle ? ` transform="rotate(${n(-p.angle)} ${n(p.at[0])} ${y(p.at[1])})"` : "";
-    return `<text x="${n(p.at[0])}" y="${y(p.at[1])}" font-size="${n(p.size)}"${anchor}${p.bold ? ` font-weight="bold"` : ""}${rot} fill="currentColor" stroke="none">${esc(p.text)}</text>`;
+    return `<text x="${n(p.at[0])}" y="${y(p.at[1])}" font-size="${n(p.size)}"${anchor}${p.bold ? ` font-weight="bold"` : ""}${rot} fill="${p.color ? esc(p.color) : "currentColor"}" stroke="none">${esc(p.text)}</text>`;
   };
   const groups: string[] = [];
   let owner: string | undefined;

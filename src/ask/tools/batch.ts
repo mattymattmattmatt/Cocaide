@@ -32,7 +32,13 @@ export const COMMAND_TOOLS = [
   "setBodyMaterial",
   "setProperties",
   "setSheet",
+  "addSheet",
+  "renameSheet",
+  "deleteSheet",
+  "moveSheet",
+  "setDrawingOptions",
   "setView",
+  "moveView",
   "setAnnotation",
   "setDimension",
   "renameDimension",
@@ -87,11 +93,23 @@ export function toolCommand(name: string, a: Raw): Command | string {
     case "setBodyMaterial":
       return { type: "setBodyMaterial", body: str("body"), material: obj("material") };
     case "setAnnotation":
-      return { type: "setAnnotation", id: str("id"), annotation: obj("annotation") };
+      return { type: "setAnnotation", id: str("id"), annotation: obj("annotation"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "setView":
-      return { type: "setView", id: str("id"), view: obj("view") };
+      return { type: "setView", id: str("id"), view: obj("view"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
+    case "moveView":
+      return { type: "moveView", id: str("id"), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as [number, number] | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "setSheet":
-      return obj("patch") ? { type: "setSheet", patch: obj("patch")! } : "setSheet: patch must be an object";
+      return obj("patch") ? { type: "setSheet", patch: obj("patch")!, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) } : "setSheet: patch must be an object";
+    case "addSheet":
+      return { type: "addSheet", ...(typeof a.id === "string" ? { id: a.id } : {}), ...(obj("sheet") ? { sheet: obj("sheet")! } : {}), ...(typeof a.index === "number" ? { index: a.index } : {}) };
+    case "renameSheet":
+      return { type: "renameSheet", id: str("id"), name: str("name") };
+    case "deleteSheet":
+      return { type: "deleteSheet", id: str("id") };
+    case "moveSheet":
+      return { type: "moveSheet", id: str("id"), index: a.index as number };
+    case "setDrawingOptions":
+      return obj("patch") ? { type: "setDrawingOptions", patch: obj("patch")! } : "setDrawingOptions: patch must be an object (standard, units, generalTolerance, properties, revisions)";
     case "setProperties":
       return obj("patch") ? { type: "setProperties", patch: obj("patch")! } : "setProperties: patch must be an object of part properties";
     case "setDimension":

@@ -187,28 +187,54 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { body: z.string(), file: z.string().optional().describe("File name; default <part>-<body>.cocaide.json") },
   },
   newDrawing: {
-    description: "Make the part's drawing, planned by code: an A3 sheet with front, top, right and iso views, the overall size dimensioned, every hole called out, a balloon per cut list item, the cut list and weld tables and the title block. Replaces a drawing the part has.",
+    description:
+      "Make the part's drawing, planned by code: an A3 ISO sheet with a front view, top and right views projected from it (a section through hidden insides instead of the right view, a detail of small crowded features), an iso, the overall size dimensioned, every hole called out, centre marks and lines, a balloon per cut list item, the cut list and weld tables, the title block and general tolerance. Replaces a drawing the part has.",
     input: { date: z.string().optional().describe("The title block's date, e.g. 2026-10-08") },
   },
   setSheet: {
-    description: 'Change the drawing\'s sheet: { "size": "A4".."A0", "scale": "1:10" (null: what fits), "projection": "third" | "first", "title", "number", "revision", "drawnBy", "date" }. Merged in; null removes a field.',
+    description:
+      'Change a sheet (default the first): its format { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic", title-block fields "title", "subtitle", "number", "revision", "drawnBy", "date", "checkedBy", "checkedDate", "approvedBy", "approvedDate", "company", "material", "finish", "mass" (text; may link $PRP:"name") }, "scale": "1:10" (null: what fits), "projection": "third" | "first", "name". Format fields may be given flat. Merged in; null removes a field.',
+    input: { patch: obj, sheet: z.string().optional() },
+  },
+  addSheet: {
+    description: "Add a sheet (after the others, or at index): it takes its format, projection and title block from the sheet before it unless given in sheet.",
+    input: { id: z.string().optional(), sheet: obj.optional(), index: z.number().int().optional() },
+  },
+  renameSheet: { description: "Rename a sheet's tab (\"\" for the default name).", input: { id: z.string(), name: z.string() } },
+  deleteSheet: { description: "Delete a sheet with its views and annotations (never the last one).", input: { id: z.string() } },
+  moveSheet: { description: "Move a sheet to place index (0 = first).", input: { id: z.string(), index: z.number().int() } },
+  setDrawingOptions: {
+    description:
+      'The drawing\'s settings: { "standard": "ISO" | "ASME", "units": "mm" | "in", "generalTolerance": "ISO 2768-mK" (or a tolerance block "X.X ±0.5, X.XX ±0.1, ANG ±0.5°"), "properties": { name: text } (title-block links $PRP:"name"), "revisions": [{ rev, description, date, by, approved, zone }] }. Merged in; null removes one; properties and revisions are replaced whole.',
     input: { patch: obj },
   },
   setView: {
-    description: 'Add or replace a view by id: { "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso", "at"?: [x, y], "scale"?: "1:20", "hidden"?: true }; or remove it (view: null) with its annotations.',
-    input: { id: z.string(), view: obj.nullable() },
+    description:
+      'Add or replace a view by id, or remove it (view: null) with its annotations and the views made from it. Kinds (see cocaide://reference drawing): model { look: "front".."iso" | "dimetric" | "trimetric" } or { orientation: { eye, up } }; projected { parent, direction: "left" | "right" | "up" | "down" | "upLeft" ... }; section { parent, line: [[x, y], ...] on the parent, half?, aligned?, flip?, depth?, showBehind?, hatch? }; detail { parent, circle: { at, r } or profile, scale?, style? }; auxiliary { parent, edge: "<parent>:e<edge>" }. Any view: at, scale, display ("visible" | "hidden" | "removed" | "shaded" | "shadedEdges"), tangent, threads, breaks, crop, brokenOut, bodies, showLabel, showScale. A new section, detail or auxiliary view gets the next free label.',
+    input: { id: z.string(), view: obj.nullable(), sheet: z.string().optional() },
+  },
+  moveView: {
+    description: "Move a view: to at [x, y] on its sheet (null: back to its automatic place; a projected view stays lined up with its parent), and/or to another sheet with its annotations.",
+    input: { id: z.string(), at: z.array(z.number()).length(2).nullable().optional(), sheet: z.string().optional() },
   },
   setAnnotation: {
-    description: "Add or replace an annotation by id, or remove it (annotation: null): a dimension, hole callout, balloon, weld symbol, table or note (see cocaide://reference). What it reads is measured on the rebuild; the result says what it reads.",
-    input: { id: z.string(), annotation: obj.nullable() },
+    description:
+      "Add or replace an annotation by id, or remove it (annotation: null): a dimension, hole callout, balloon, weld symbol, table, note, centerMark { view, at: GeoRef } or centerline { view, between: [GeoRef, GeoRef] } (see cocaide://reference). It goes on its view's sheet. What it reads is measured on the rebuild; the result says what it reads.",
+    input: { id: z.string(), annotation: obj.nullable(), sheet: z.string().optional() },
   },
   drawing: {
-    description: "The drawing as composed: the sheet's size, scale and projection, each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.",
+    description: "The drawing as composed: every sheet's size, template, scale and projection, each view's kind, scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.",
+    readOnly: true,
+  },
+  geoRefs: {
+    description:
+      'What a view offers to attach annotations to, as GeoRefs: each edge ("<view>:e<edge>", a line with its true length, an arc or circle with its radius, a curve), each end of one ("<view>:v<edge>.0" / ".1"), each circle\'s centre ("<view>:c<edge>"), with the feature that made it and where it is on the sheet. Edge keys follow the model, so they survive rebuilds.',
+    input: { view: z.string() },
     readOnly: true,
   },
   exportDrawing: {
-    description: "Write the drawing's sheet as a vector PDF (Helvetica text) or an SVG to the output folder.",
-    input: { format: z.enum(["pdf", "svg"]), file: z.string().optional().describe("File name; default <document name>-drawing.<format>") },
+    description: "Write the drawing to the output folder: a vector PDF (every sheet a page, the font embedded; one sheet with sheet), or one sheet (the first unless named) as SVG or DXF (R2000, a layer per kind of line).",
+    input: { format: z.enum(["pdf", "svg", "dxf"]), file: z.string().optional().describe("File name; default <document name>-drawing.<format>"), sheet: z.string().optional() },
   },
   undo: { description: "Step back to the previous revision." },
   redo: { description: "Step forward again after undo." },

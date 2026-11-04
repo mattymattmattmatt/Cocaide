@@ -3,10 +3,10 @@
 // LocalKernel directly. Both run the same code (LocalKernel).
 
 import { geometryKey } from "../doc/drawing";
-import type { SketchEntity, ViewLook } from "../doc/types";
+import type { SketchEntity } from "../doc/types";
 import type { Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel";
-import { projectViews, type ProjectedView } from "../kernel/project";
+import { projectDrawingViews, specKey, type KeyCache, type ProjectedView, type ViewSpec } from "../kernel/drawingViews";
 import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
 import { rebuild, type HoleRecord, type RebuildResult } from "../kernel/rebuild";
 import { inspectQuery, type InspectQuery, type InspectResult } from "../kernel/agentQueries";
@@ -60,8 +60,12 @@ export interface KernelPort {
   topology(doc: unknown): Promise<PartTopology | null>;
   select(doc: unknown, selector: unknown): Promise<SelectResult>;
   screenshot(doc: unknown, opts: ShotOptions): Promise<Shot>;
-  /** The part projected for a drawing's views. Null when nothing built. */
-  project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null>;
+  /**
+   * The part projected for a drawing's views (src/kernel/drawingViews.ts ViewSpec: a look, or a frame from a
+   * parent, a section, broken-out sections, bodies, shading). A view made from another comes after it. Each
+   * view is kept per rebuild: the same spec again is not projected again. Null when nothing built.
+   */
+  project(doc: unknown, views: ViewSpec[]): Promise<DrawingGeometry | null>;
   /** The AI tools' other questions: closest points, sketch frames, mass (src/kernel/agentQueries.ts). */
   inspect(doc: unknown, query: InspectQuery): Promise<InspectResult>;
   /** Flat outlines for DXF: a planar face's, or every flat plate's (src/kernel/flat.ts). */
@@ -78,8 +82,10 @@ export { measurementSummary, newFailures };
 /** The port, served in-process from an OCCT instance. Keeps the last rebuild. */
 export class LocalKernel implements KernelPort {
   private last: { key: string; provenance: boolean; result: RebuildResult } | null = null;
-  /** The last rebuild's views, by look: a sheet edit doesn't project the part again. */
-  private looks = new Map<ViewLook, ProjectedView>();
+  /** The last rebuild's views, by spec (and their parents'): a sheet edit doesn't project the part again. */
+  private projections = new Map<string, ProjectedView>();
+  /** The last rebuild's bodies' keyed edges. */
+  private keys: KeyCache = new Map();
 
   constructor(private readonly oc: () => OC) {}
 
@@ -87,7 +93,8 @@ export class LocalKernel implements KernelPort {
   reset() {
     this.last?.result.dispose();
     this.last = null;
-    this.looks.clear();
+    this.projections.clear();
+    this.keys = new Map();
   }
 
   /** The rebuild of the document, kept until the next one (the worker shares it). */
@@ -133,12 +140,25 @@ export class LocalKernel implements KernelPort {
       : { ok: true, kind: "edges", indices: picked.edges.map((e) => e.index), edges: picked.edges };
   }
 
-  async project(doc: unknown, views: { id: string; look: ViewLook }[]): Promise<DrawingGeometry | null> {
+  async project(doc: unknown, views: ViewSpec[]): Promise<DrawingGeometry | null> {
     const r = this.built(doc);
     if (!r.solid) return null;
-    const fresh = views.filter((v) => !this.looks.has(v.look));
-    for (const p of projectViews(this.oc(), r.bodies, [...new Map(fresh.map((v) => [v.look, v])).values()])) this.looks.set(p.look, p);
-    return { views: views.map((v) => ({ ...this.looks.get(v.look)!, id: v.id })), holes: r.holes };
+    // A view's key is its spec and its parent's key: a view from a parent is projected again when the parent changes.
+    const keyOf = new Map<string, string>();
+    for (const v of views) {
+      const parent = v.frame && "parent" in v.frame ? keyOf.get(v.frame.parent) : undefined;
+      keyOf.set(v.id, `${specKey(v)}|${parent ?? ""}`);
+    }
+    const known = new Map<string, ProjectedView>();
+    for (const v of views) {
+      const hit = this.projections.get(keyOf.get(v.id)!);
+      if (hit) known.set(v.id, { ...hit, id: v.id });
+    }
+    const out = projectDrawingViews(this.oc(), { bodies: r.bodies, label: (topo) => r.label(topo) }, views, this.keys, known);
+    // Keep the newest few hundred; a long session of edits doesn't grow it without end.
+    for (const pv of out) this.projections.set(keyOf.get(pv.id)!, pv);
+    while (this.projections.size > 200) this.projections.delete(this.projections.keys().next().value!);
+    return { views: out, holes: r.holes };
   }
 
   async inspect(doc: unknown, query: InspectQuery): Promise<InspectResult> {

@@ -16,13 +16,17 @@ import { exportRefusal } from "../doc/photo";
 import type { DrawingGeometry } from "../ask/kernel";
 import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { geometryKey } from "../doc/drawing";
-import type { Constraint, SketchEntity, Vec3, ViewLook } from "../doc/types";
+import type { Constraint, SketchEntity, Vec2, Vec3 } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
-import { composeSheet } from "../drafting/compose";
-import { sheetPDF } from "../drafting/pdf";
+import { composeDrawing, type ComposedSheet } from "../drafting/compose";
+import { sheetDXF } from "../drafting/dxf";
+import { listGeoRefs } from "../drafting/georef";
+import { drawingPDF, type FontFile } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing } from "../drafting/plan";
+import { viewSpecs } from "../drafting/specs";
 import { sheetSVG } from "../drafting/svg";
-import { projectViews } from "../kernel/project";
+import { projectDrawingViews, type ViewSpec } from "../kernel/drawingViews";
+import { deflateSync } from "node:zlib";
 import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
 import { heapBytes, loadOC, rebuild, RECYCLE_HEAP_BYTES, recycleOC, tessellate, type OC, type RebuildResult } from "../kernel";
@@ -88,7 +92,13 @@ export const EDIT_TOOLS = [
   "setBodyMaterial",
   "newDrawing",
   "setSheet",
+  "addSheet",
+  "renameSheet",
+  "deleteSheet",
+  "moveSheet",
+  "setDrawingOptions",
   "setView",
+  "moveView",
   "setAnnotation",
   "setDimension",
   "renameDimension",
@@ -118,6 +128,7 @@ export const READ_TOOLS = [
   "exportSTL",
   "screenshot",
   "drawing",
+  "geoRefs",
   "exportDrawing",
   "saveBody",
   "partSummary",
@@ -324,15 +335,29 @@ export class AgentSession {
         return this.edit({ type: "setDrawing", drawing });
       }
       case "setSheet":
-        return this.edit({ type: "setSheet", patch: isObject(a.patch) ? a.patch : {} });
+        return this.edit({ type: "setSheet", patch: isObject(a.patch) ? a.patch : {}, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
+      case "addSheet":
+        return this.edit({ type: "addSheet", ...(typeof a.id === "string" ? { id: a.id } : {}), ...(isObject(a.sheet) ? { sheet: a.sheet } : {}), ...(typeof a.index === "number" ? { index: a.index } : {}) });
+      case "renameSheet":
+        return this.edit({ type: "renameSheet", id: String(a.id), name: String(a.name ?? "") });
+      case "deleteSheet":
+        return this.edit({ type: "deleteSheet", id: String(a.id) });
+      case "moveSheet":
+        return this.edit({ type: "moveSheet", id: String(a.id), index: Number(a.index) });
+      case "setDrawingOptions":
+        return isObject(a.patch) ? this.edit({ type: "setDrawingOptions", patch: a.patch }) : this.fail("setDrawingOptions: patch must be an object (standard, units, generalTolerance, properties, revisions)");
       case "setView":
-        return this.edit({ type: "setView", id: String(a.id), view: isObject(a.view) ? a.view : null });
+        return this.edit({ type: "setView", id: String(a.id), view: isObject(a.view) ? a.view : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
+      case "moveView":
+        return this.edit({ type: "moveView", id: String(a.id), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as Vec2 | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "setAnnotation":
-        return this.edit({ type: "setAnnotation", id: String(a.id), annotation: isObject(a.annotation) ? a.annotation : null });
+        return this.edit({ type: "setAnnotation", id: String(a.id), annotation: isObject(a.annotation) ? a.annotation : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "drawing":
         return this.drawing();
+      case "geoRefs":
+        return this.geoRefs(String(a.view ?? ""));
       case "exportDrawing":
-        return this.exportDrawing(a.format, a.file);
+        return this.exportDrawing(a.format, a.file, a.sheet);
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), value: a.value as number | string });
       case "renameDimension":
@@ -721,27 +746,29 @@ export class AgentSession {
   // ------------------------------------------------------------ drawing
 
   /** The part projected for these views, with where its holes were drilled. */
-  private geometry(views: { id: string; look: ViewLook }[]): DrawingGeometry {
-    return { views: projectViews(this.oc, this.built.bodies, views), holes: this.built.holes };
+  private geometry(views: ViewSpec[]): DrawingGeometry {
+    return { views: projectDrawingViews(this.oc, { bodies: this.built.bodies, label: (topo) => this.built.label(topo) }, views), holes: this.built.holes };
   }
 
   private composed() {
     const v = validateDocument(this.doc);
     if (!v.drawing) return null;
-    const geometry = this.built.solid ? this.geometry(v.drawing.views.map((x) => ({ id: x.id, look: x.look }))) : null;
-    const sheet = composeSheet(this.doc, { measurements: this.built.measurements, geometry });
-    return sheet ? { sheet, geometry, drawingErrors: v.drawingErrors } : { sheet: null, geometry, drawingErrors: v.drawingErrors };
+    const geometry = this.built.solid ? this.geometry(viewSpecs(v.drawing)) : null;
+    const c = composeDrawing(this.doc, { measurements: this.built.measurements, geometry });
+    return { sheets: c?.sheets ?? [], sheet: c?.sheets[0] ?? null, geometry, drawingErrors: v.drawingErrors };
   }
 
   /** After a drawing edit: what the annotation it set reads, and the checks that fail. */
   private drawingStatus(cmd: Command): Record<string, unknown> {
     const c = this.composed();
     if (!c?.sheet) return {};
-    const id = cmd.type === "setAnnotation" || cmd.type === "setView" ? cmd.id : null;
-    const a = id ? c.sheet.annotations.find((x) => x.id === id) : undefined;
-    const failing = drawingChecks(c.sheet, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok);
+    const id = cmd.type === "setAnnotation" || cmd.type === "setView" || cmd.type === "moveView" ? cmd.id : null;
+    const a = id ? c.sheets.flatMap((x) => x.annotations).find((x) => x.id === id) : undefined;
+    const problems = id ? c.sheets.flatMap((x) => x.problems).filter((p) => p.startsWith(`${id}:`)) : [];
+    const failing = drawingChecks(c.sheets, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok);
     return {
       ...(a ? { annotation: { id: a.id, type: a.type, ...(a.problem ? { problem: a.problem } : { reads: a.text }) } } : {}),
+      ...(problems.length && !a ? { problems } : {}),
       ...(failing.length ? { failingChecks: failing.map((x) => `${x.label}: ${x.actual}`) } : {}),
     };
   }
@@ -750,31 +777,68 @@ export class AgentSession {
     const c = this.composed();
     if (!c) return this.fail("drawing: the part has no drawing (newDrawing makes one)");
     if (!c.sheet) return this.fail(`drawing: the drawing is not valid: ${c.drawingErrors.join("; ")}`);
-    const { sheet, geometry } = c;
+    const { sheets, geometry } = c;
+    const sheetOf = (sheet: ComposedSheet) => ({
+      id: sheet.id,
+      name: sheet.name,
+      size: sheet.size,
+      template: sheet.template,
+      scale: sheet.scaleText,
+      projection: sheet.projection,
+      views: sheet.views.map((v) => ({ id: v.id, kind: v.kind, look: v.look, ...(v.parent ? { parent: v.parent } : {}), ...(v.label ? { label: v.label } : {}), scale: v.scaleText, centre: v.centre.map((x) => Math.round(x * 10) / 10), placed: !v.auto })),
+      annotations: sheet.annotations.map((a) => ({ id: a.id, type: a.type, ...(a.view ? { view: a.view } : {}), ...(a.problem ? { problem: a.problem } : { reads: a.text }) })),
+      ...(sheet.problems.length ? { problems: sheet.problems } : {}),
+    });
+    const first = sheetOf(sheets[0]);
     return {
       result: {
         ok: true,
         revision: this.revision,
-        sheet: { size: sheet.size, scale: sheet.scaleText, projection: sheet.projection },
-        views: sheet.views.map((v) => ({ id: v.id, look: v.look, scale: v.scaleText, centre: v.centre.map((x) => Math.round(x * 10) / 10), placed: !v.auto })),
-        annotations: sheet.annotations.map((a) => ({ id: a.id, type: a.type, ...(a.view ? { view: a.view } : {}), ...(a.problem ? { problem: a.problem } : { reads: a.text }) })),
-        checks: drawingChecks(sheet, this.doc, this.built.measurements, geometry),
+        // The first sheet as before; every sheet in `sheets`.
+        sheet: { size: first.size, scale: first.scale, projection: first.projection },
+        views: first.views,
+        annotations: first.annotations,
+        sheets: sheets.map(sheetOf),
+        checks: drawingChecks(sheets, this.doc, this.built.measurements, geometry),
       },
     };
   }
 
-  private exportDrawing(format: unknown, file: unknown): CallResult {
-    if (format !== "pdf" && format !== "svg") return this.fail('exportDrawing: format must be "pdf" or "svg"');
+  /** What a view offers to attach annotations to: its edges, their ends and circle centres, as GeoRefs. */
+  private geoRefs(view: string): CallResult {
+    const c = this.composed();
+    if (!c?.sheet) return this.fail("geoRefs: the part has no drawing (newDrawing makes one)");
+    if (!c.sheets.some((s) => s.views.some((v) => v.id === view))) return this.fail(`geoRefs: no view "${view}" (views: ${c.sheets.flatMap((s) => s.views.map((v) => v.id)).join(", ")})`);
+    const r1 = (x: number) => Math.round(x * 10) / 10 + 0;
+    const refs = listGeoRefs(c.sheets, view).map((g) => ({ ...g, at: [r1(g.at[0]), r1(g.at[1])], ...(g.length !== undefined ? { length: round6(g.length) } : {}), ...(g.radius !== undefined ? { radius: round6(g.radius) } : {}) }));
+    return { result: { ok: true, view, revision: this.revision, geoRefs: refs } };
+  }
+
+  private exportDrawing(format: unknown, file: unknown, sheetId?: unknown): CallResult {
+    if (format !== "pdf" && format !== "svg" && format !== "dxf") return this.fail('exportDrawing: format must be "pdf", "svg" or "dxf"');
     const c = this.composed();
     if (!c?.sheet) return this.fail(c ? `exportDrawing: the drawing is not valid: ${c.drawingErrors.join("; ")}` : "exportDrawing: the part has no drawing (newDrawing makes one)");
     const ext = `.${format}`;
     const name = typeof file === "string" && file.trim() ? basename(file.trim()) : `${safeName(this.built.name)}-drawing${ext}`;
     const path = join(this.outDir, name.endsWith(ext) ? name : `${name}${ext}`);
-    const bytes = format === "pdf" ? sheetPDF(c.sheet, { title: validateDocument(this.doc).drawing?.sheet.title ?? this.built.name }) : new TextEncoder().encode(sheetSVG(c.sheet));
+    // A PDF has every sheet, a page each; an SVG or a DXF one sheet (the first unless named).
+    const sheet = typeof sheetId === "string" ? c.sheets.find((x) => x.id === sheetId) : c.sheet;
+    if (!sheet) return this.fail(`exportDrawing: no sheet "${String(sheetId)}" (sheets: ${c.sheets.map((x) => x.id).join(", ")})`);
+    const title = this.drawingTitle();
+    const bytes =
+      format === "pdf"
+        ? drawingPDF(typeof sheetId === "string" ? [sheet] : c.sheets, { title, ...(sheetFonts() ? { fonts: sheetFonts()! } : {}) })
+        : new TextEncoder().encode(format === "svg" ? sheetSVG(sheet) : sheetDXF(sheet));
     mkdirSync(this.outDir, { recursive: true });
     writeFileSync(path, bytes);
-    const failing = drawingChecks(c.sheet, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok).map((x) => `${x.label}: ${x.actual}`);
-    return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision, ...(failing.length ? { failingChecks: failing } : {}) } };
+    const failing = drawingChecks(c.sheets, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok).map((x) => `${x.label}: ${x.actual}`);
+    return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision, ...(format === "pdf" ? { pages: typeof sheetId === "string" ? 1 : c.sheets.length } : {}), ...(failing.length ? { failingChecks: failing } : {}) } };
+  }
+
+  /** The drawing's title for a PDF: the first sheet's title, else the part's name. */
+  private drawingTitle(): string {
+    const d = validateDocument(this.doc).drawing;
+    return d?.sheets[0]?.format.title ?? this.built.name;
   }
 
   /** A STEP file from disk into the part: an import feature, its solids bodies (relative paths from the document's folder). */
@@ -879,4 +943,20 @@ function safeName(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "part";
 }
 
+let fonts: { regular: FontFile; bold: FontFile } | null | undefined;
 
+/** Liberation Sans, from the app's public folder, to embed in PDFs (null when it isn't there). */
+function sheetFonts(): { regular: FontFile; bold: FontFile } | null {
+  if (fonts !== undefined) return fonts;
+  try {
+    const dir = new URL("../../public/fonts/", import.meta.url);
+    const read = (f: string): FontFile => {
+      const data = new Uint8Array(readFileSync(new URL(f, dir)));
+      return { data, deflated: new Uint8Array(deflateSync(data)) };
+    };
+    fonts = { regular: read("LiberationSans-Regular.ttf"), bold: read("LiberationSans-Bold.ttf") };
+  } catch {
+    fonts = null;
+  }
+  return fonts;
+}

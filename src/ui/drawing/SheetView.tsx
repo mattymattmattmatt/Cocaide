@@ -8,6 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Vec2 } from "../../doc/types";
 import type { ComposedSheet } from "../../drafting/compose";
 import type { Box } from "../../drafting/sheet";
+import type { FontFile } from "../../drafting/pdf";
 import { sheetSVG } from "../../drafting/svg";
 import { wheelZoom } from "../input";
 
@@ -154,4 +155,95 @@ export function SheetView({ sheet, selected, failed, onSelect, onContext, onMove
 
 function round1(x: number): number {
   return Math.round(x * 10) / 10 + 0;
+}
+
+/** The drawing's sheets as tabs over the sheet: pick one, add one, double-click a tab to rename it. */
+export function SheetTabs({ sheets, active, onPick, onAdd, onRename }: { sheets: ComposedSheet[]; active: string; onPick(id: string): void; onAdd(): void; onRename(id: string, name: string): void }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  return (
+    <div className="sheet-tabs" role="tablist" aria-label="Sheets" data-testid="sheet-tabs">
+      {sheets.map((s) =>
+        editing === s.id ? (
+          <input
+            key={s.id}
+            className="sheet-tab-edit"
+            defaultValue={s.name}
+            autoFocus
+            aria-label="Sheet name"
+            data-testid={`sheet-tab-name-${s.id}`}
+            onBlur={(e) => {
+              setEditing(null);
+              if (e.target.value.trim() !== s.name) onRename(s.id, e.target.value.trim());
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setEditing(null);
+            }}
+          />
+        ) : (
+          <button
+            key={s.id}
+            role="tab"
+            aria-selected={s.id === active}
+            className={`sheet-tab${s.id === active ? " active" : ""}`}
+            onClick={() => onPick(s.id)}
+            onDoubleClick={() => setEditing(s.id)}
+            title={`${s.name}: ${s.size}, ${s.scaleText}, ${s.views.length} view${s.views.length === 1 ? "" : "s"} (double-click to rename)`}
+            data-testid={`sheet-tab-${s.id}`}
+          >
+            {s.name}
+          </button>
+        ),
+      )}
+      <button className="sheet-tab add" onClick={onAdd} title="Add a sheet" aria-label="Add a sheet" data-testid="sheet-add">
+        +
+      </button>
+    </div>
+  );
+}
+
+let fonts: Promise<{ regular: FontFile; bold: FontFile } | null> | null = null;
+
+/** Liberation Sans regular and bold, fetched once and deflated, for PDFs that carry their font. Null when they can't be had. */
+export function pdfFonts(): Promise<{ regular: FontFile; bold: FontFile } | null> {
+  if (!fonts) {
+    const one = async (file: string): Promise<FontFile> => {
+      const r = await fetch(`${import.meta.env.BASE_URL}fonts/${file}`);
+      if (!r.ok) throw new Error(`${file}: ${r.status}`);
+      const data = new Uint8Array(await r.arrayBuffer());
+      const deflated = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
+      return { data, deflated };
+    };
+    fonts = Promise.all([one("LiberationSans-Regular.ttf"), one("LiberationSans-Bold.ttf")]).then(
+      ([regular, bold]) => ({ regular, bold }),
+      () => null,
+    );
+  }
+  return fonts;
+}
+
+/** The sheet as a PNG at 200 dpi (at most 8000 pixels across), drawn from its SVG. */
+export async function sheetPNG(sheet: ComposedSheet, dpi = 200): Promise<Uint8Array> {
+  const k = Math.min(dpi / 25.4, 8000 / Math.max(sheet.width, sheet.height));
+  const w = Math.round(sheet.width * k);
+  const h = Math.round(sheet.height * k);
+  const svg = sheetSVG(sheet).replace(/width="[^"]*mm" height="[^"]*mm"/, `width="${w}" height="${h}"`);
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, "image/png"));
+    if (!blob) throw new Error("the browser could not make the picture");
+    return new Uint8Array(await blob.arrayBuffer());
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
