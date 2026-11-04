@@ -1881,3 +1881,79 @@ svg.icon { flex: none; display: block; }
 .modal.params-manager th .link-button { font-weight: 600; }
 .modal.params-manager .param-add input:first-child { flex: 0 0 200px; }
 .modal.params-manager .param-add input:nth-child(2) { flex: 1; }
+
+/* Phase Q: the cut list workspace, a drawer along the bottom so the part stays in view above it. */
+.cut-table tbody tr.selected td { background: var(--selected-row); }
+.cut-table .cut-desc { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cut-table .cut-ends { white-space: nowrap; }
+.cut-foot { margin: 0; }
+.weld-fields.weld-more { grid-template-columns: 100px 70px 1fr; }
+.weld-fields.weld-more select { margin-top: 15px; }
+.cut-drawer {
+  position: fixed; left: 8px; right: 8px; bottom: 8px; height: min(46vh, 520px); z-index: 50;
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 -6px 28px rgb(0 0 0 / 0.18); font-size: 12px; overflow: hidden;
+}
+.cut-drawer-head { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.cut-drawer-head h2 { margin: 0; font-size: 14px; }
+.cut-tabs { display: flex; gap: 2px; background: var(--bg); border-radius: 7px; padding: 2px; }
+.cut-tabs button { border: 0; background: none; padding: 4px 12px; border-radius: 5px; cursor: pointer; color: var(--muted); font-size: 12px; }
+.cut-tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.cut-summary { display: flex; gap: 16px; margin: 0 0 0 auto; }
+.cut-summary div { display: flex; flex-direction: column; align-items: flex-end; }
+.cut-summary dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.cut-summary dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cut-tool { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.cut-tool:hover { border-color: var(--accent); }
+.cut-tool:disabled { opacity: 0.45; cursor: default; }
+.cut-close { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 4px; border-radius: 5px; }
+.cut-close:hover { background: var(--bg); color: var(--text); }
+.cut-drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 10px; }
+.cut-items, .cut-nesting, .cut-plates { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.cut-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cut-toolbar .sep, .nest-settings .sep, .nest-bar-head .sep { flex: 1; }
+.cut-toolbar input, .cut-toolbar select { height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font-size: 12px; }
+.cut-filter { width: 240px; }
+.cut-add-prop { display: inline-flex; gap: 4px; }
+.cut-add-prop input { width: 170px; }
+.cut-add-prop button { height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 3px; }
+.cut-add-prop button:disabled { opacity: 0.45; cursor: default; }
+.cut-columns { position: relative; }
+.cut-columns summary { list-style: none; height: 26px; line-height: 24px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.cut-columns summary::-webkit-details-marker { display: none; }
+.cut-columns-menu { position: absolute; top: 30px; left: 0; z-index: 5; display: grid; grid-template-columns: repeat(2, minmax(140px, 1fr)); gap: 2px 12px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.15); }
+.cut-columns-menu label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.cut-grid-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 7px; max-height: calc(min(46vh, 520px) - 150px); }
+.cut-grid { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.cut-grid th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); text-align: left; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0; white-space: nowrap; }
+.cut-grid th button { all: unset; display: block; padding: 5px 8px; cursor: pointer; }
+.cut-grid th.num button { text-align: right; }
+.cut-grid th button:hover { color: var(--text); }
+.cut-grid th:not(:has(button)) { padding: 5px 8px; }
+.sort-mark { margin-left: 4px; font-size: 9px; color: var(--accent); }
+.cut-grid td { padding: 3px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.cut-grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cut-grid td.item { font-weight: 600; }
+.cut-grid td.edit { padding: 1px 2px; min-width: 110px; }
+.cut-grid tbody tr { cursor: pointer; }
+.cut-grid tbody tr:hover td { background: var(--panel-2); }
+.cut-grid tbody tr.selected td { background: var(--selected-row); }
+.cut-grid tfoot td { position: sticky; bottom: 0; background: var(--panel-2); font-weight: 600; border-top: 1.5px solid var(--text); border-bottom: 0; }
+.cut-edit { width: 100%; min-width: 90px; height: 22px; padding: 0 6px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text); font: inherit; }
+.cut-edit:hover { border-color: var(--border); background: var(--panel); }
+.cut-edit:focus { outline: none; border-color: var(--accent); background: var(--panel); }
+.cut-edit::placeholder { color: var(--muted); opacity: 0.8; }
+.kind-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; background: var(--accent); }
+.kind-dot.plate { background: var(--accent-2); }
+.kind-dot.body { background: var(--muted); }
+.cut-totals { display: flex; flex-wrap: wrap; gap: 6px; }
+.cut-totals .chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; background: var(--panel-2); font-variant-numeric: tabular-nums; }
+.nest-settings { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.nest-settings label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
+.nest-settings .cut-edit { width: 120px; border-color: var(--border); background: var(--panel); height: 26px; }
+.nest-buy { border: 1px solid var(--border); border-radius: 7px; }
+.nest-size h3 { margin: 10px 0 4px; font-size: 13px; }
+.nest-bar { margin: 2px 0 8px; }
+.nest-bar-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 2px; font-variant-numeric: tabular-nums; }
+.nest-bar-svg svg { display: block; max-width: 1000px; }
+@media (prefers-color-scheme: dark) { .nest-bar-svg svg { filter: invert(0.9) hue-rotate(180deg); } }

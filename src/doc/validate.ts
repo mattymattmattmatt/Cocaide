@@ -22,6 +22,7 @@ import {
   SOURCE_KEYS,
   WELD_KEYS,
   WELD_TYPES,
+  WELD_SIDES,
   type ChamferFeature,
   type CircularPatternFeature,
   type CombineFeature,
@@ -69,6 +70,7 @@ import {
   type FilletSet,
 } from "./types";
 import { validateDrawing } from "./drawing";
+import { checkCutList, type CutListSettings } from "./cutListSettings";
 import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
 import { aKinds, CSYS_OP, CSYS_PARTS, DATUM_OPS, datumSelectors, defaultDatum, featureDatumRefs, possibleKinds, RESERVED_DATUMS, SKETCH_REF_POINTS, sketchRefKinds, sketchRefText, type DatumKind } from "../features/datum";
@@ -118,6 +120,8 @@ export interface ValidationResult {
   folderErrors?: string[];
   /** The part's properties (part number, description ...); empty when it has none or they are wrong. */
   properties: PartProperties;
+  /** The cut list's settings and text (Phase Q); empty when it has none or they are wrong. */
+  cutList?: CutListSettings;
 }
 
 /** What a feature may refer to: the part's profiles and nodes, and the members before it. */
@@ -163,7 +167,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -347,6 +351,11 @@ export function validateDocument(input: unknown): ValidationResult {
     const welds = new Checker("document");
     result.welds = checkWelds(input.welds, result.bodies, welds);
     result.headerErrors.push(...welds.errors);
+  }
+  if (input.cutList !== undefined) {
+    const cut = checkCutList(input.cutList);
+    result.cutList = cut.value;
+    result.headerErrors.push(...cut.errors);
   }
   if (input.drawing !== undefined) {
     const drawing = new Checker("document");
@@ -2130,6 +2139,9 @@ function checkWelds(input: unknown, bodies: string[], c: Checker): Weld[] {
     c.num(w, "length", at, { positive: true });
     if (w.allRound !== undefined && typeof w.allRound !== "boolean") c.fail(`${at}.allRound`, `must be true or false (got ${describe(w.allRound)})`);
     if (w.note !== undefined && typeof w.note !== "string") c.fail(`${at}.note`, `must be a string (got ${describe(w.note)})`);
+    if (w.process !== undefined && (typeof w.process !== "string" || !w.process.trim() || w.process.length > 60)) c.fail(`${at}.process`, `must be the process as text, 1 to 60 characters, like "135 MAG" (got ${describe(w.process)})`);
+    if (w.side !== undefined && !WELD_SIDES.includes(w.side as never)) c.fail(`${at}.side`, `must be ${WELD_SIDES.map((t) => `"${t}"`).join(", ")} (got ${describe(w.side)})`);
+    if (w.count !== undefined && (typeof w.count !== "number" || !Number.isInteger(w.count) || w.count < 1 || w.count > 999)) c.fail(`${at}.count`, `must be a whole number from 1 to 999 (got ${describe(w.count)})`);
     if (c.errors.length === before) out.push(w as unknown as Weld);
   });
   return out;

@@ -31,7 +31,11 @@ import { encodePNG } from "../render/png";
 import { VIEWS, type Camera } from "../render/raster";
 import { encodeSTL } from "../render/stl";
 import { exportPartSTEP } from "../kernel/stepPart";
-import { exportBase, partProperties } from "../doc/properties";
+import { csvHeaderRows, exportBase, partProperties } from "../doc/properties";
+import { cutListOf } from "../weldment/items";
+import { nestCutList } from "../weldment/nesting";
+import { DEFAULT_CUT_COLUMNS } from "../weldment/columns";
+import { cutListCsvV2, cutListXlsx, cuttingPlanHtml } from "../weldment/exports";
 import { flatQuery } from "../kernel/flat";
 import { writeDxf } from "../io/dxf";
 import { sketchToDxf } from "../io/dxfSketch";
@@ -106,6 +110,7 @@ export const EDIT_TOOLS = [
   "fullyDefine",
   "holes",
   "setProperties",
+  "setCutList",
   "importStep",
 ] as const;
 export const READ_TOOLS = [
@@ -130,6 +135,8 @@ export const READ_TOOLS = [
   "reference",
   "plan",
   "exportDxf",
+  "cutList",
+  "exportCutList",
 ] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
@@ -314,6 +321,12 @@ export class AgentSession {
         return this.saveBody(String(a.body), a.file);
       case "setProperties":
         return isObject(a.patch) ? this.edit({ type: "setProperties", patch: a.patch }) : this.fail("setProperties: patch must be an object of part properties");
+      case "setCutList":
+        return isObject(a.patch) ? this.edit({ type: "setCutList", patch: a.patch }) : this.fail("setCutList: patch must be an object of cut list settings");
+      case "cutList":
+        return this.cutList();
+      case "exportCutList":
+        return this.exportCutList(a);
       case "importStep":
         return this.importStep(a);
       case "exportDxf":
@@ -654,6 +667,63 @@ export class AgentSession {
     const solid = this.built.solid;
     if (!solid) return `${tool}: there is no solid yet`;
     return selectOn(this.oc, solid, selector, tool, this.built.bodies);
+  }
+
+  /** The cut list v2 (items with their end cuts, plates, typed text), the totals and the nesting: what a workshop gets. */
+  private cutList(): CallResult {
+    const m = this.built.measurements;
+    if (!m) return this.fail("cutList: there is no solid yet");
+    const list = cutListOf(this.doc, m);
+    const nesting = nestCutList(list, validateDocument(this.doc).parameters.stock_length);
+    return {
+      result: {
+        ok: true,
+        revision: this.revision,
+        items: list.items.map((i) => ({
+          item: i.item,
+          kind: i.kind,
+          quantity: i.quantity,
+          description: i.description,
+          size: i.designation,
+          material: [i.material, i.grade].filter(Boolean).join(" "),
+          length: i.length,
+          ...(i.cuts ? { ends: i.endsText } : {}),
+          ...(i.thickness !== undefined && i.kind === "plate" ? { plate: { thickness: i.thickness, width: i.width, length: i.length, areaMm2: round6(i.plateArea ?? 0) } } : {}),
+          kgEach: round6(i.massEach),
+          paintM2: round6(i.areaTotal / 1e6),
+          ...(i.finish ? { finish: i.finish } : {}),
+          ...(i.notes ? { notes: i.notes } : {}),
+          ...(i.weldPrep ? { weldPrep: i.weldPrep } : {}),
+          ...(i.group ? { group: i.group } : {}),
+          ...(Object.keys(i.properties).length ? { properties: i.properties } : {}),
+          members: i.members,
+        })),
+        totals: { pieces: list.totals.quantity, kg: round6(list.totals.massKg), paintM2: round6(list.totals.paintArea), byProfile: list.totals.byProfile, plates: list.totals.plates },
+        nesting: nesting.map((r) => ({ size: r.designation, options: r.options, buy: r.buy, wastePct: r.wastePct, bars: r.bars.map((b) => ({ stock: b.stock, pieces: b.pieces.map((p) => `#${p.item} ${p.length}`), offcut: b.offcut, kept: b.kept })), ...(r.tooLong.length ? { tooLong: r.tooLong } : {}) })),
+      },
+    };
+  }
+
+  /** The cut list to a file: CSV (the standard columns or `columns`), XLSX (cut list, stock, cutting plan, plates, welds) or the printable cutting plan (HTML). */
+  private exportCutList(a: Record<string, unknown>): CallResult {
+    const m = this.built.measurements;
+    if (!m) return this.fail("exportCutList: there is no solid yet");
+    const format = a.format === "xlsx" || a.format === "plan" ? a.format : "csv";
+    const list = cutListOf(this.doc, m);
+    const v = validateDocument(this.doc);
+    const nesting = nestCutList(list, v.parameters.stock_length);
+    const columns = Array.isArray(a.columns) && a.columns.every((c) => typeof c === "string") ? (a.columns as string[]) : DEFAULT_CUT_COLUMNS;
+    const header = csvHeaderRows(this.doc, this.built.name);
+    const ext = format === "xlsx" ? ".xlsx" : format === "plan" ? ".html" : ".csv";
+    const name = typeof a.file === "string" && a.file.trim() ? basename(a.file.trim()) : `${exportBase(this.doc, this.built.name)}-${format === "plan" ? "cutting-plan" : "cut-list"}${ext}`;
+    const path = join(this.outDir, name.endsWith(ext) ? name : `${name}${ext}`);
+    const bytes =
+      format === "xlsx"
+        ? cutListXlsx(list, nesting, v.welds, columns, { header, title: `${this.built.name} cut list` })
+        : new TextEncoder().encode(format === "plan" ? cuttingPlanHtml(list, nesting, { header, title: `${this.built.name}: cutting plan` }) : cutListCsvV2(list, columns, { header }));
+    mkdirSync(this.outDir, { recursive: true });
+    writeFileSync(path, bytes);
+    return { result: { ok: true, file: path, bytes: bytes.length, items: list.items.length, revision: this.revision } };
   }
 
   private exportFile(tool: "exportSTEP" | "exportSTL", file: unknown): CallResult {

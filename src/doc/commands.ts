@@ -16,6 +16,7 @@ import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
 import { annotationTargetProblem, drawingTargets, rawDrawing, renameInDrawing } from "./drawing";
+import { checkCutList, mergeCutList } from "./cutListSettings";
 import {
   BODY_NAME,
   DEFAULT_BODY,
@@ -123,6 +124,12 @@ export type Command =
    * null or "" removes a field; "custom" replaces the custom properties whole (a name with null or "" goes).
    */
   | { type: "setProperties"; patch: Record<string, unknown> }
+  /**
+   * Changes the cut list's settings and text (Phase Q, src/doc/cutListSettings.ts): tolerance, stock
+   * (merged one level), items (item numbers and item text, replaced whole), members (text by member id or
+   * body name, merged; null removes one). null removes a field; an empty result removes `cutList`.
+   */
+  | { type: "setCutList"; patch: Record<string, unknown> }
   /**
    * Moves the rollback bar to just above feature `before` (it and the features after it are not built in the
    * view, and new features go in there), or to the end (null). See src/doc/rollback.ts.
@@ -496,6 +503,20 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       else delete doc.properties;
       break;
     }
+    case "setCutList": {
+      if (!isObject(cmd.patch)) return { ok: false, error: `setCutList: patch must be an object of cut list settings: tolerance, stock, items, members (got ${JSON.stringify(cmd.patch)})` };
+      let next: Record<string, unknown>;
+      try {
+        next = mergeCutList(isObject(doc.cutList) ? doc.cutList : {}, cmd.patch);
+      } catch (e) {
+        return { ok: false, error: `setCutList: ${(e as Error).message}` };
+      }
+      const checked = checkCutList(next);
+      if (checked.errors.length) return { ok: false, error: `setCutList: ${checked.errors.map((e) => e.replace(/^document: /, "")).join("; ")}` };
+      if (Object.keys(next).length) doc.cutList = next;
+      else delete doc.cutList;
+      break;
+    }
     case "setDrawing": {
       if (cmd.drawing === null) {
         if (doc.drawing === undefined) return { ok: false, error: "setDrawing: the part has no drawing" };
@@ -757,6 +778,15 @@ function renameBodyRefs(doc: RawDocument, renamed: Map<string, string>): void {
     doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => renamed.get(String(b)) ?? b) } : w));
   }
   if (isObject(doc.bodyMaterials)) doc.bodyMaterials = Object.fromEntries(Object.entries(doc.bodyMaterials).map(([k, v]) => [renamed.get(k) ?? k, v]));
+  // The cut list's kept item numbers and text name bodies (plates, copies of members) too; a member feature's id stays.
+  if (isObject(doc.cutList)) {
+    const cut = { ...doc.cutList };
+    const memberIds = new Set(doc.features.filter((f) => f.op === "member").map((f) => String(f.id)));
+    const to = (m: string) => (memberIds.has(m) ? m : (renamed.get(m) ?? m));
+    if (Array.isArray(cut.items)) cut.items = cut.items.map((e) => (isObject(e) && Array.isArray(e.members) ? { ...e, members: e.members.map((m) => to(String(m))) } : e));
+    if (isObject(cut.members)) cut.members = Object.fromEntries(Object.entries(cut.members).map(([k, v]) => [to(k), v]));
+    doc.cutList = cut;
+  }
 }
 
 /** What the first of these annotations points at that the part doesn't have, if anything. */
