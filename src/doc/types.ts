@@ -296,6 +296,10 @@ export interface DrawingView {
   edge?: GeoRef;
   /** The view's centre on the sheet. Without it, the view is placed with the others (a projected view stays lined up with its parent). */
   at?: Vec2;
+  /** projected, section: alignment broken — placed on its own, not lined up with its parent (wave Q2B). */
+  free?: boolean;
+  /** Its place is kept: the sheet editor doesn't drag it (wave Q2B). */
+  locked?: boolean;
   /** Its own scale; else the sheet's (a detail: twice its parent's). */
   scale?: string;
   /** Default "removed". */
@@ -336,6 +340,8 @@ export const VIEW_KEYS = [
   "style",
   "edge",
   "at",
+  "free",
+  "locked",
   "scale",
   "display",
   "tangent",

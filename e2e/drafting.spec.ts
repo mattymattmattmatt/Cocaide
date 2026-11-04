@@ -78,13 +78,16 @@ test("the checks fail when a balloon is deleted and when a view is dragged onto 
   await expect.poll(() => checks(page)).toContain("✓ Every cut list item has a balloon: 3 of 3");
 
   // Drag the iso view onto the title block (the top view, projected from the front, would only slide up and down its line).
+  // Alt held: exactly where it is dropped (without it the view keeps clear of the title block).
   const [x, y] = await centreOf(page, "iso");
   const [tx, ty] = await centreOf(page, "titleBlock");
   await page.mouse.move(x, y);
+  await page.keyboard.down("Alt");
   await page.mouse.down();
   await page.mouse.move((x + tx) / 2, (y + ty) / 2, { steps: 5 });
   await page.mouse.move(tx, ty, { steps: 5 });
   await page.mouse.up();
+  await page.keyboard.up("Alt");
   await expect.poll(async () => (await checks(page)).find((c) => c.startsWith("✗ Nothing overlaps"))).toContain("view iso overlaps the title block");
   // Only the view that was moved: the others stay placed and clear of it.
   const overlap = (await checks(page)).find((c) => c.startsWith("✗ Nothing overlaps"))!;
@@ -161,7 +164,9 @@ test("Export PDF opens in poppler with the sheet's text; Export SVG is the sheet
   const text = execFileSync("pdftotext", ["-layout", pdfPath, "-"], { encoding: "utf8" });
   for (const word of ["table-frame", "1200", "900", "600", "CUT LIST", "SHS 40x40x3", "45° / 45°", "23.98 kg"]) expect(text).toContain(word);
 
-  const [svg] = await Promise.all([page.waitForEvent("download"), page.getByTestId("drawing-export-svg").click()]);
+  await page.getByTestId("drawing-export").click();
+  await page.getByTestId("export-format-svg").click();
+  const [svg] = await Promise.all([page.waitForEvent("download"), page.getByTestId("export-go").click()]);
   expect(svg.suggestedFilename()).toBe("table-frame-drawing.svg");
   const file = readFileSync(await svg.path(), "utf8");
   expect(file).toMatch(/^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" width="420mm" height="297mm"/);

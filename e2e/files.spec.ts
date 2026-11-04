@@ -142,8 +142,9 @@ test("part properties: set on the Document tab, shown in a new drawing's title b
   await page.getByTestId("drawing-new-empty").click();
   await expect
     .poll(() => page.getByTestId("sheet").locator('g[data-id="titleBlock"] text').allTextContents())
-    .toEqual(expect.arrayContaining(["PART NO.", "BR-1001", "DESCRIPTION", "Base bracket, 6 mm plate", "REV", "B", "DRAWN", "J. Smith", "FINISH", "Hot-dip galvanised", "bracket"]));
-  await page.getByTestId("sheet").locator('g[data-id="titleBlock"]').first().screenshot({ path: `${SHOTS}/title-block.png` });
+    .toEqual(expect.arrayContaining(["TITLE", "Base bracket, 6 mm plate", "DRAWING NO.", "BR-1001", "REV", "B", "DRAWN", "J. Smith", "FINISH", "Hot-dip galvanised"]));
+  // The sheet re-renders as the drawing settles; retry the shot until the block holds still.
+  await expect(async () => { await page.getByTestId("sheet").locator('g[data-id="titleBlock"]').first().screenshot({ path: `${SHOTS}/title-block.png`, timeout: 3000 }); }).toPass({ timeout: 20000 });
 });
 
 test("DXF out: a sketch from the tree and a flat face from its right-click, parsed and measured", async ({ page }) => {

@@ -384,6 +384,7 @@ tangent "visible" | "phantom" | "removed", threads (cosmetic, default true), bre
 (view mm; dimensions still read true), crop (closed outline), brokenOut [{ profile, depth }], bodies [names], showLabel, showScale):
   { "id": "front", "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso" | "dimetric" | "trimetric" }  or "orientation": { "eye": [x, y, z], "up"?: [..] }
   { "id": "top", "kind": "projected", "parent": "front", "direction": "up" | "down" | "left" | "right" | "upLeft" ... }  lined up with its parent
+    (a projected or section view with "free": true is placed on its own, its alignment broken; any view with "locked": true keeps its place in the editor)
   { "id": "A", "kind": "section", "parent": "top", "line": [[x, y], [x, y], ...] (on the parent, view mm; offset lines turn at right angles),
     "half"?, "aligned"? (three points), "flip"?, "depth"?, "showBehind"?, "hatch"?: { "pattern", "angle", "spacing" }, "label"? }
     the viewer stands left of the line's first segment (flip: right); hatch by each body's material, each body its own angle

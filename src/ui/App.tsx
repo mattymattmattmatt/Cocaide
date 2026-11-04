@@ -7,14 +7,11 @@ import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
 import type { DrawingGeometry } from "../ask/kernel";
 import { featureKind, isDrawingTarget, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
-import { allAnnotations, allViews, findAnnotation, findView, geometryKey, nextSheetId } from "../doc/drawing";
+import { allAnnotations, allViews, geometryKey } from "../doc/drawing";
 import { drawingChecks } from "../drafting/checks";
 import { composeDrawing } from "../drafting/compose";
-import { sheetDXF } from "../drafting/dxf";
-import { drawingPDF } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing, visibleLength } from "../drafting/plan";
 import { viewSpecs } from "../drafting/specs";
-import { sheetSVG } from "../drafting/svg";
 import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { apply, nextId, sketchEntityUsers, type Command, type RawDocument } from "../doc/commands";
 import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format";
@@ -43,7 +40,7 @@ import { addFramePath } from "../weldment/frame";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
-import { exportBase, safeFileName } from "../doc/properties";
+import { exportBase } from "../doc/properties";
 import { PartProperties } from "./files/PartProperties";
 import { OPEN_ACCEPT, useFiles } from "./files/useFiles";
 import { FeatureTree, OP_ICON } from "./FeatureTree";
@@ -60,8 +57,9 @@ import { CameraFeed, sketchPlaneSection, sketchWorldPoints } from "./sketcher/pl
 import { useViewPrefs } from "./viewport/viewPrefs";
 import { EMPTY_MODEL, modelView } from "./sketcher/model";
 import { commandLabel, useDocument } from "./useDocument";
-import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
-import { SheetTabs, SheetView, pdfFonts, sheetPNG, type SheetTarget } from "./drawing/SheetView";
+import { nextDrawingId } from "./drawing/DrawingPanels";
+import { exportSheets, type ExportOptions } from "./drawing/Dialogs";
+import { DrawingCommandBar, DrawingMain, useDrawingWorkspace } from "./drawing/Workspace";
 import { Icon, type IconName } from "./icons";
 import { COMMANDS, keyFor, keyHint, pointer, useCommands, useInputPrefs } from "./input";
 import type { Closest, MassProperties } from "../kernel/evaluate";
@@ -201,7 +199,6 @@ export function App() {
   const [mode, setMode] = useState<"model" | "drawing">("model");
   /** The views projected for the drawing, for the geometry and view directions in `key`. */
   const [geometry, setGeometry] = useState<{ key: string; g: DrawingGeometry | null } | null>(null);
-  const [drawingSel, setDrawingSel] = useState<string | null>(null);
   /** The sheet shown in the drawing (its id); the first when unset or gone. */
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
   // Evaluate and view (Phase O wave 5): the panels over the view, the section, the selection filter.
@@ -529,7 +526,6 @@ export function App() {
   );
   const sheet = useMemo(() => composed?.sheets.find((x) => x.id === activeSheet) ?? composed?.sheets[0] ?? null, [composed, activeSheet]);
   const drawingChecksNow = useMemo(() => (composed && shown ? drawingChecks(composed.sheets, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [composed, shown, view, geometry]);
-  const failedIds = useMemo(() => (sheet ? sheet.annotations.filter((a) => a.problem).map((a) => a.id) : []), [sheet]);
 
   // Keep the working document across reloads.
   useEffect(() => {
@@ -1131,7 +1127,6 @@ export function App() {
       const g = await kernel.port.project(doc, DEFAULT_VIEWS);
       const drawing = planDrawing(doc, view.measurements, g, { date: new Date().toISOString().slice(0, 10) });
       if (run({ type: "setDrawing", drawing }) === null) {
-        setDrawingSel(null);
         setActiveSheet(null);
         setNotice({ kind: "info", text: `New drawing: ${drawing.sheets[0].format.size}, ${allViews(drawing).length} views, ${allAnnotations(drawing).length} annotations.${docDrawing ? " Ctrl+Z puts the old one back." : ""}` });
       }
@@ -1164,44 +1159,44 @@ export function App() {
     else setNotice({ kind: "info", text: `Ballooned ${missing.length} item${missing.length === 1 ? "" : "s"} in ${viewId}.` });
   };
 
-  /** PDF: every sheet, a page each, the font embedded. SVG, DXF, PNG: the sheet shown. */
-  const exportDrawing = async (kind: "pdf" | "svg" | "dxf" | "png") => {
+  /** PDF: every sheet (or the one shown), a page each, the font embedded. SVG, DXF, PNG: the sheet shown. */
+  const exportDrawing = async (kind: "pdf" | "svg" | "dxf" | "png", opts: ExportOptions = {}) => {
     if (!sheet || !composed) return setNotice({ kind: "error", text: "There is no drawing to export." });
-    const many = composed.sheets.length > 1 && kind !== "pdf";
-    const name = `${exportBase(doc, view?.name ?? "part")}-drawing${many ? `-${safeFileName(sheet.name)}` : ""}.${kind}`;
+    let name: string;
     try {
-      if (kind === "pdf") download(name, drawingPDF(composed.sheets, { title: docDrawing?.sheets[0]?.format.title ?? view?.name ?? "drawing", ...(await pdfFonts().then((f) => (f ? { fonts: f } : {}))) }), "application/pdf");
-      else if (kind === "svg") download(name, sheetSVG(sheet), "image/svg+xml");
-      else if (kind === "dxf") download(name, sheetDXF(sheet), "application/dxf");
-      else download(name, await sheetPNG(sheet), "image/png");
+      name = await exportSheets(kind, composed.sheets, sheet, opts, { base: exportBase(doc, view?.name ?? "part"), title: docDrawing?.sheets[0]?.format.title ?? view?.name ?? "drawing" }, download);
     } catch (e) {
       return setNotice({ kind: "error", text: `Could not export: ${(e as Error).message}` });
     }
+    const pages = kind === "pdf" && opts.sheets !== "current" ? composed.sheets.length : 1;
     const failing = drawingChecksNow.filter((c) => !c.ok).length;
-    setNotice({ kind: "info", text: `Exported ${name}${kind === "pdf" && composed.sheets.length > 1 ? ` (${composed.sheets.length} pages)` : ""}.${failing ? ` ${failing} drawing check${failing === 1 ? "" : "s"} fail${failing === 1 ? "s" : ""}: see Checks.` : ""}` });
+    setNotice({ kind: "info", text: `Exported ${name}${pages > 1 ? ` (${pages} pages)` : ""}.${failing ? ` ${failing} drawing check${failing === 1 ? "" : "s"} fail${failing === 1 ? "s" : ""}: see Checks.` : ""}` });
   };
 
-  const moveView = (id: string, at: Vec2) => {
-    if (!docDrawing || !findView(docDrawing, id)) return;
-    run({ type: "moveView", id, at });
-  };
-
-  const moveAnnotation = (id: string, delta: Vec2) => {
-    const a = docDrawing ? findAnnotation(docDrawing, id) : undefined;
-    const placed = sheet?.annotations.find((x) => x.id === id)?.at;
-    if (!a || !placed) return;
-    const moved: Vec2 = [placed[0] + delta[0], placed[1] + delta[1]];
-    const cv = "view" in a ? sheet?.views.find((v) => v.id === a.view) : undefined;
-    // Balloons, callouts and weld symbols are held relative to their view, so they move with it.
-    const at: Vec2 = cv ? [moved[0] - cv.centre[0], moved[1] - cv.centre[1]] : moved;
-    const { id: _id, ...rest } = a;
-    run({ type: "setAnnotation", id, annotation: { ...rest, at: at.map((x) => Math.round(x * 10) / 10 + 0) } });
-  };
-
-  const sheetContext = (t: SheetTarget | null, x: number, y: number) => {
-    if (t) setDrawingSel(t.id);
-    contextMenuRef.current(t ? (t.kind === "view" ? { kind: "view", id: t.id } : { kind: "annotation", id: t.id }) : { kind: "drawing" }, x, y);
-  };
+  // The drawing workspace (Phase Q wave Q2B): its toolbar, tree, sheet and panel share one state.
+  const drawingWs = useDrawingWorkspace({
+    doc,
+    drawing: docDrawing,
+    sheets: composed?.sheets ?? [],
+    sheet,
+    activeSheet,
+    setActiveSheet,
+    checks: drawingChecksNow,
+    measurements: view?.measurements ?? null,
+    d,
+    batch,
+    notice: (text, kind = "info") => setNotice({ kind, text }),
+    ready: kernelState.phase === "ready",
+    previewing: !!ask.previewDoc,
+    project: (specs) => kernel.port.project(doc ?? {}, specs),
+    newDrawing: () => void newDrawing(),
+    balloonAll,
+    openAsk: (target, x, y) => openAskRef.current(target, x, y),
+    exportDrawing: (kind, opts) => void exportDrawing(kind, opts),
+    docName: typeof doc?.name === "string" ? doc.name : null,
+    bodies: view?.bodies.map((b) => b.name) ?? [],
+    active: mode === "drawing" && !sketch,
+  });
 
   // ------------------------------------------------------------ right-click ask
 
@@ -2389,27 +2384,7 @@ export function App() {
           </div>
         </header>
 
-        {!sketch && mode === "drawing" && (
-          <div className="toolbar" role="toolbar" aria-label="Drawing">
-            <ToolButton icon="undo" label="Undo" onClick={d.undo} disabled={!d.canUndo} title={`Undo${keyHint("undo", prefs)}`} testId="undo" />
-            <ToolButton icon="redo" label="Redo" onClick={d.redo} disabled={!d.canRedo} title={`Redo${keyHint("redo", prefs)}`} testId="redo" />
-            <span className="sep" />
-            <ToolButton
-              icon="drawing"
-              label="New drawing"
-              onClick={() => void newDrawing()}
-              disabled={kernelState.phase !== "ready"}
-              title="Plan the sheet from the part: views, overall size, holes, balloons, tables"
-              testId="drawing-new"
-            />
-            <ToolButton icon="balloon" label="Balloon all" onClick={balloonAll} disabled={!sheet || sheet.cutList.length === 0} title="A balloon for every cut list item that has none" testId="drawing-balloon-all" />
-            <span className="sep" />
-            <ToolButton icon="export" label="Export PDF" onClick={() => void exportDrawing("pdf")} disabled={!sheet} title="Download every sheet as a vector PDF, a page each, to print or send" testId="drawing-export-pdf" />
-            <ToolButton icon="export" label="Export SVG" onClick={() => void exportDrawing("svg")} disabled={!sheet} title="Download this sheet as an SVG drawing" testId="drawing-export-svg" />
-            <ToolButton icon="dxfExport" label="Export DXF" onClick={() => void exportDrawing("dxf")} disabled={!sheet} title="Download this sheet as a DXF (R2000, a layer per kind of line)" testId="drawing-export-dxf" />
-            <ToolButton icon="export" label="Export PNG" onClick={() => void exportDrawing("png")} disabled={!sheet} title="Download this sheet as a picture (200 dpi)" testId="drawing-export-png" />
-          </div>
-        )}
+        {!sketch && mode === "drawing" && <DrawingCommandBar ws={drawingWs} undoLabel={d.undoLabel} redoLabel={d.redoLabel} />}
         {!sketch && mode === "model" && (
           <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
@@ -2425,87 +2400,18 @@ export function App() {
 
         <main className={`workspace${leftHidden ? " no-left" : ""}`}>
           {mode === "drawing" && !sketch ? (
-            <>
-              <aside className="side left">
-                {doc && docDrawing ? (
-                  <DrawingTree
-                    doc={doc}
-                    drawing={docDrawing}
-                    sheetId={sheet?.id ?? docDrawing.sheets[0].id}
-                    sheet={sheet}
-                    selected={drawingSel}
-                    dispatch={d.dispatch}
-                    onError={(text) => setNotice({ kind: "error", text })}
-                    onSelect={(t) => setDrawingSel(t?.id ?? null)}
-                    onAsk={sheetContext}
-                  />
-                ) : (
-                  <section className="panel muted">
-                    <p>This part has no drawing yet.</p>
-                  </section>
-                )}
-              </aside>
-              <section className="center sheet-center">
-                {composed && docDrawing && sheet && (
-                  <SheetTabs
-                    sheets={composed.sheets}
-                    active={sheet.id}
-                    onPick={(id) => {
-                      setActiveSheet(id);
-                      setDrawingSel(null);
-                    }}
-                    onAdd={() => {
-                      const id = nextSheetId(docDrawing);
-                      if (run({ type: "addSheet", id }) === null) setActiveSheet(id);
-                    }}
-                    onRename={(id, name) => run({ type: "renameSheet", id, name })}
-                  />
-                )}
-                {sheet ? (
-                  <SheetView
-                    sheet={sheet}
-                    selected={drawingSel}
-                    failed={failedIds}
-                    onSelect={(t) => setDrawingSel(t?.id ?? null)}
-                    onContext={sheetContext}
-                    onMoveView={moveView}
-                    onMoveAnnotation={moveAnnotation}
-                  />
-                ) : (
-                  <div className="sheet-empty" data-testid="sheet-empty">
-                    <p>Views of the part, dimensioned and ballooned from the rebuild, with its cut list and title block.</p>
-                    <button className="primary" onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} data-testid="drawing-new-empty">
-                      New drawing
-                    </button>
-                  </div>
-                )}
-                {ask.previewDoc && (
-                  <div className="preview-banner" data-testid="preview-banner">
-                    Previewing the proposal
-                  </div>
-                )}
-              </section>
-              <aside className="side right">
-                {doc && docDrawing ? (
-                  <DrawingSide
-                    doc={doc}
-                    drawing={docDrawing}
-                    sheetId={sheet?.id ?? docDrawing.sheets[0].id}
-                    onSheetGone={() => setActiveSheet(null)}
-                    sheet={sheet}
-                    checks={drawingChecksNow}
-                    selected={drawingSel}
-                    dispatch={d.dispatch}
-                    onError={(text) => setNotice({ kind: "error", text })}
-                    onSelect={(t) => setDrawingSel(t?.id ?? null)}
-                  />
-                ) : (
-                  <section className="panel">
-                    <DrawingHelp />
-                  </section>
-                )}
-              </aside>
-            </>
+            <DrawingMain
+              ws={drawingWs}
+              help={<DrawingHelp />}
+              empty={
+                <div className="sheet-empty" data-testid="sheet-empty">
+                  <p>Views of the part, dimensioned and ballooned from the rebuild, with its cut list and title block.</p>
+                  <button className="primary" onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} data-testid="drawing-new-empty">
+                    New drawing
+                  </button>
+                </div>
+              }
+            />
           ) : (
           <>
           <aside className="side left">

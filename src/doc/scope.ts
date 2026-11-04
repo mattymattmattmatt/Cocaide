@@ -20,6 +20,7 @@
 //   "folder:<id>"   that folder of the tree (rename it, change what is in it; "+" adds one)
 //   "view:<id>"     that view, the annotations in it, and new annotations in it
 //   "annotation:<id>" that annotation, in the view it is in
+//   "table:<id>"    that table on its sheet (its columns, sort, place; never the part)
 //   "*"             anything (the whole part)
 // A parameter change is also allowed when every feature that uses the
 // parameter is in scope, and so is a node move when every feature that names
@@ -207,7 +208,7 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       break;
     case "setTable":
       what = `setTable "${cmd.id}"`;
-      allowed = has("drawing") || has("cutList");
+      allowed = has("drawing") || has("cutList") || has(`table:${cmd.id}`);
       break;
     case "setView":
     case "moveView":
