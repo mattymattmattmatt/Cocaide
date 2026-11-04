@@ -48,12 +48,16 @@ export type AskTarget =
   | { kind: "body"; name: string }
   /** Empty space: the whole part, the weakest scope (spec 6). Never applied without the user accepting. */
   | { kind: "part" }
-  /** A view on the drawing's sheet (Phase L): the view and the annotations in it. */
-  | { kind: "view"; id: string }
+  /** A view on the drawing's sheet (Phase L): the view and the annotations in it. `selection`: what else was selected on the sheet (wave Q2B). */
+  | { kind: "view"; id: string; selection?: string[] }
   /** One annotation on the sheet. */
-  | { kind: "annotation"; id: string }
+  | { kind: "annotation"; id: string; selection?: string[] }
+  /** One table on a sheet (wave Q2B): that table alone. */
+  | { kind: "table"; id: string; selection?: string[] }
+  /** A sheet (its tab, its title block; wave Q2B): the drawing, that sheet first. */
+  | { kind: "sheet"; id: string; selection?: string[] }
   /** Empty paper: the whole drawing, never the part's features. */
-  | { kind: "drawing" };
+  | { kind: "drawing"; selection?: string[] };
 
 export type PacketKind =
   | "feature"
@@ -70,11 +74,13 @@ export type PacketKind =
   | "part"
   | "view"
   | "annotation"
+  | "table"
+  | "sheet"
   | "drawing";
 
 /** Targets on the drawing's sheet: their asks edit the drawing alone. */
-export function isDrawingTarget(t: AskTarget): t is Extract<AskTarget, { kind: "view" | "annotation" | "drawing" }> {
-  return t.kind === "view" || t.kind === "annotation" || t.kind === "drawing";
+export function isDrawingTarget(t: AskTarget): t is Extract<AskTarget, { kind: "view" | "annotation" | "table" | "sheet" | "drawing" }> {
+  return t.kind === "view" || t.kind === "annotation" || t.kind === "table" || t.kind === "sheet" || t.kind === "drawing";
 }
 
 /** What a feature row is asked about as: a sketch, a member or a joint get their own actions and packet. */
@@ -125,6 +131,9 @@ export function scopeFor(doc: RawDocument, target: AskTarget): string[] {
       return [`view:${target.id}`];
     case "annotation":
       return [`annotation:${target.id}`];
+    case "table":
+      return [`table:${target.id}`];
+    case "sheet":
     case "drawing":
       return ["drawing"];
   }
@@ -164,6 +173,7 @@ export function describeScope(scope: string[]): string {
       if (t.startsWith("weld:")) return `weld ${t.slice(5)}`;
       if (t.startsWith("view:")) return `view ${t.slice(5)} and its annotations`;
       if (t.startsWith("annotation:")) return `annotation ${t.slice(11)}`;
+      if (t.startsWith("table:")) return `table ${t.slice(6)}`;
       if (t === "drawing") return "the drawing";
       const [sketch, part] = t.split("/");
       if (part === "*") return `the geometry of ${sketch}`;
@@ -205,6 +215,10 @@ export function targetLabel(doc: RawDocument, target: AskTarget, topo?: PartTopo
       const a = rawAnnotations(doc).find((x) => x.id === target.id);
       return a ? `${String(a.type)} ${target.id}` : target.id;
     }
+    case "table":
+      return `table ${target.id}`;
+    case "sheet":
+      return `sheet ${target.id}`;
     case "drawing":
       return "the drawing";
   }

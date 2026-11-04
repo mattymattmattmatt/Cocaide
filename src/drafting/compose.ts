@@ -525,7 +525,7 @@ class Composer {
   /** The direction (on the sheet) a view sits from its parent when it is lined up with it, or null when it is placed on its own. */
   private attachDir(view: DrawingView): Vec2 | null {
     const kind = viewKind(view);
-    if (!view.parent || !this.here.has(view.parent)) return null;
+    if (!view.parent || !this.here.has(view.parent) || view.free) return null;
     if (kind === "projected") {
       const d = DIRECTION_VECTORS[view.direction ?? "right"];
       return d[0] !== 0 && d[1] !== 0 ? null : d;

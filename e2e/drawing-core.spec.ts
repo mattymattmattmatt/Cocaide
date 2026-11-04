@@ -39,18 +39,31 @@ test("sheets, a section and a detail, and the PDF and DXF of them", async ({ pag
   await page.getByTestId("sheet-tab-name-sheet2").fill("Details");
   await page.getByTestId("sheet-tab-name-sheet2").press("Enter");
   await expect(page.getByTestId("sheet-tab-sheet2")).toHaveText("Details");
-  await page.getByTestId("drawing-new-look").selectOption("front");
-  await page.getByTestId("drawing-add-view").click();
+  // (wave Q2B: views are added by the View Layout tools on the sheet)
+  await page.getByTestId("tool-view-model").click();
+  await page.getByTestId("orient-front").click();
+  const sheetBox = (await page.getByTestId("sheet").boundingBox())!;
+  await page.mouse.click(sheetBox.x + sheetBox.width * 0.35, sheetBox.y + sheetBox.height * 0.35);
+  await page.getByTestId("session-ok").click();
   // The new view's id is free across the drawing (sheet 1 has a "front").
   await expect(page.getByTestId("drawing-item-front_1")).toBeVisible();
   await expect(group(page, "front_1")).toBeAttached();
-  await page.getByTestId("drawing-new-kind").selectOption("section");
-  await page.getByTestId("drawing-new-cut").selectOption("vertical");
-  await page.getByTestId("drawing-add-view").click();
+  await page.getByTestId("drawing-item-front_1").click();
+  await page.getByTestId("tool-view-section").click();
+  await page.getByTestId("section-quick-vertical").click();
+  await page.getByTestId("session-ok").click();
   await expect(page.getByTestId("drawing-item-section_1")).toContainText("section B-B of front_1");
   await page.getByTestId("drawing-item-front_1").click();
-  await page.getByTestId("drawing-new-kind").selectOption("detail");
-  await page.getByTestId("drawing-add-view").click();
+  await page.getByTestId("tool-view-detail").click();
+  // The detail's circle round the view's top right corner, then placed.
+  const corner = await page.evaluate(() => (window as unknown as { __cocaideSheet: { view(id: string): { box: { max: [number, number] } } } }).__cocaideSheet.view("front_1")!.box.max);
+  const px = (x: number, y: number) => page.evaluate(([x, y]) => (window as unknown as { __cocaideSheet: { toScreen(x: number, y: number): [number, number] } }).__cocaideSheet.toScreen(x, y), [x, y]);
+  for (const [x, y] of [corner, [corner[0] + 8, corner[1]], [corner[0] + 60, corner[1] - 40]]) {
+    const [cx, cy] = await px(x, y);
+    await page.mouse.move(cx, cy, { steps: 2 });
+    await page.mouse.click(cx, cy);
+  }
+  await page.getByTestId("session-ok").click();
   await expect(page.getByTestId("drawing-item-detail_1")).toContainText("detail C of front_1");
   await expect(page.getByTestId("sheet").locator("text", { hasText: "B–B" })).toHaveCount(1);
   await expect(page.getByTestId("sheet").locator("text", { hasText: /^C \(\d+ : \d\)$/ })).toHaveCount(1);
@@ -80,7 +93,9 @@ test("sheets, a section and a detail, and the PDF and DXF of them", async ({ pag
 
   // The DXF of the sheet shown: a layer per kind of line.
   download = page.waitForEvent("download");
-  await page.getByTestId("drawing-export-dxf").click();
+  await page.getByTestId("drawing-export").click();
+  await page.getByTestId("export-format-dxf").click();
+  await page.getByTestId("export-go").click();
   const dxf = readFileSync(await (await download).path(), "utf8");
   for (const layer of ["VISIBLE", "HATCH", "SECTION", "BORDER", "TITLE"]) expect(dxf).toContain(`\n${layer}\r\n`);
   expect(dxf).toContain("AC1015");

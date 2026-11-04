@@ -20,7 +20,7 @@ import { round6 } from "../kernel/inspect";
 import type { CheckResult, DrawingGeometry, KernelPort } from "./kernel";
 import type { AskTarget, Packet } from "./packet";
 
-type DrawingTarget = Extract<AskTarget, { kind: "view" | "annotation" | "drawing" }>;
+type DrawingTarget = Extract<AskTarget, { kind: "view" | "annotation" | "table" | "sheet" | "drawing" }>;
 
 const r1 = (x: number) => Math.round(x * 10) / 10 + 0;
 const at = (p: Vec2): Vec2 => [r1(p[0]), r1(p[1])];
@@ -34,19 +34,19 @@ export interface DrawingState {
 }
 
 /** The drawing composed as the app shows it, for a packet or a check. `holding`: the sheet with this view or annotation. */
-export async function composeFor(doc: RawDocument, kernel: KernelPort, check: CheckResult, holding?: string): Promise<DrawingState | null> {
+export async function composeFor(doc: RawDocument, kernel: KernelPort, check: CheckResult, holding?: string, sheetId?: string): Promise<DrawingState | null> {
   const drawing = validateDocument(doc).drawing;
   if (!drawing) return null;
   const geometry = await kernel.project(doc, viewSpecs(drawing));
   const composed = composeDrawing(doc, { measurements: check.measurements, geometry });
   if (!composed || !composed.sheets.length) return null;
-  const id = holding ? sheetHolding(drawing, holding)?.id : undefined;
+  const id = sheetId ?? (holding ? sheetHolding(drawing, holding)?.id : undefined);
   const sheet = composed.sheets.find((x) => x.id === id) ?? composed.sheets[0];
   return { drawing, sheet, sheets: composed.sheets, geometry };
 }
 
 export async function drawingPacket(doc: RawDocument, target: DrawingTarget, kernel: KernelPort, check: CheckResult, label: string, writeScope: string[]): Promise<Packet> {
-  const state = await composeFor(doc, kernel, check, target.kind === "drawing" ? undefined : target.id);
+  const state = await composeFor(doc, kernel, check, target.kind === "drawing" ? undefined : target.kind === "sheet" ? undefined : target.id, target.kind === "sheet" ? target.id : undefined);
   if (!state) throw new Error("the part has no drawing: make one first (New drawing)");
   const { drawing, sheet, sheets, geometry } = state;
   const checks = drawingChecks(sheets, doc, check.measurements, geometry);
@@ -71,11 +71,33 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
   const sheetBrief = { ...brief(sheet), ...(sheets.length > 1 ? { otherSheets: sheets.filter((x) => x !== sheet).map(brief) } : {}), ...(drawing.standard ? { standard: drawing.standard } : {}), ...(drawing.generalTolerance ? { generalTolerance: drawing.generalTolerance } : {}) };
   // The part's properties: the title block shows them where the sheet sets nothing of its own (setProperties changes them).
   const properties = partProperties(doc);
-  const base = { units: "mm" as const, writeScope, checks, error: sheet.problems.length ? sheet.problems.join("; ") : null, ...(Object.keys(properties).length ? { properties } : {}) };
+  // What else the user had selected on the sheet: each with what it is (wave Q2B).
+  const selected = (target.selection ?? []).flatMap((sid): Record<string, unknown>[] => {
+    const v = findView(drawing, sid);
+    if (v) return [{ id: sid, is: "view", kind: v.kind ?? "model" }];
+    const a = findAnnotation(drawing, sid);
+    if (a) return [{ ...reads(a), is: "annotation" }];
+    const t = drawing.sheets.flatMap((x) => x.tables ?? []).find((x) => x.id === sid);
+    return t ? [{ id: sid, is: "table", kind: t.kind }] : [];
+  });
+  const base = { units: "mm" as const, writeScope, checks, error: sheet.problems.length ? sheet.problems.join("; ") : null, ...(Object.keys(properties).length ? { properties } : {}), ...(selected.length ? { selection: selected } : {}) };
 
-  if (target.kind === "drawing") {
+  if (target.kind === "table") {
+    const t = drawing.sheets.flatMap((x) => x.tables ?? []).find((x) => x.id === target.id);
+    if (!t) throw new Error(`no table "${target.id}" in the drawing`);
+    const box = sheets.flatMap((x) => x.blocks).find((b) => b.id === t.id)?.box;
     return {
-      target: { kind: "drawing", label },
+      target: { kind: "table", id: t.id, label },
+      ...base,
+      table: { ...t, ...(box ? { onSheet: { min: at(box.min), max: at(box.max) } } : {}), problems: sheet.problems.filter((p) => p.startsWith(`${t.id}:`)) },
+      parent: { sheet: sheetBrief },
+      children: [],
+      measurements,
+    };
+  }
+  if (target.kind === "drawing" || target.kind === "sheet") {
+    return {
+      target: { kind: target.kind, ...(target.kind === "sheet" ? { id: target.id } : {}), label },
       ...base,
       drawing: { ...sheetBrief, annotations: allAnnotations(drawing).map(reads) },
       parent: null,
