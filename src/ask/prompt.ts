@@ -227,6 +227,13 @@ const SET_PROPERTIES: Anthropic.Tool = {
   input_schema: obj({ patch: any }, ["patch"]),
 };
 
+/** The cut list's text and nesting settings (Phase Q): a feature ask and a sheet ask (its cut list table shows them) may both set them. */
+const SET_CUT_LIST: Anthropic.Tool = {
+  name: "setCutList",
+  description: "Change the cut list's text and nesting settings (merged): { \"itemText\": [{ \"item\": 1, \"members\": [\"rail_front\", \"rail_back\"], \"description\"?, \"finish\"?, \"notes\"?, \"weldPrep\"?, \"group\"?, \"properties\"?: { \"Supplier\": \"Steel & Co\" } }] } sets text on cut list items (members from the cut list; the kept item sharing them keeps its number; \"\" or null removes a field); \"members\": { \"<member id or body>\": { ...text } } sets one member's own text (alike members with different text become separate items); \"stock\": { \"lengths\": [6000, 6100], \"kerf\": 3, \"trim\": 0, \"minOffcut\": 300, \"profiles\": { \"SHS 40x40x3\": { \"lengths\": [8000] } } } for nesting; \"tolerance\": mm within which lengths are one item (0.5). null removes a field.",
+  input_schema: obj({ patch: any }, ["patch"]),
+};
+
 const FEATURE_TOOLS: Anthropic.Tool[] = [
   {
     name: "updateFeature",
@@ -295,6 +302,7 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     input_schema: obj({ id: { type: "string" }, weld: { type: ["object", "null"] } }, ["id", "weld"]),
   },
   SET_PROPERTIES,
+  SET_CUT_LIST,
 ];
 
 const SKETCH_TOOLS: Anthropic.Tool[] = [
@@ -404,7 +412,7 @@ export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; d
   if (mode === "explain") return wide?.part || !drawingTarget ? read : READ_TOOLS.filter((t) => t.name === "escalate");
   if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
   // The whole sheet (its title block among it) may change the part's properties; a view or an annotation may not.
-  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...(kind === "drawing" ? [SET_PROPERTIES] : [])];
+  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...(kind === "drawing" ? [SET_PROPERTIES, SET_CUT_LIST] : [])];
   return [...read, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS];
 }
 

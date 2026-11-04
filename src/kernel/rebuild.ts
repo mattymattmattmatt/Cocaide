@@ -21,11 +21,14 @@ import { buildProfile, entityPolylines } from "../geom/profile";
 import { frameEnds, type FrameMember } from "../weldment/joints";
 import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
 import { memberCut } from "./cutlist";
+import { plateOf } from "./flat";
+import { sectionSymmetry } from "../weldment/endCuts";
+import { dot3 } from "../geom/vec";
 import { planeSpecFrame, resolveDatum } from "./datum";
 import { solvedSketch } from "./sketchRefs";
 import { byBody, treatBody, treatments } from "./edgeTreat";
 import { cutMissed, extrudeTool } from "./extrude";
-import { interference, measure, volumeOf, type Measurements } from "./measure";
+import { interference, measure, volumeOf, type Measurements, type SectionSymmetry } from "./measure";
 import { countSubShapes, describeFaces, faceSignature } from "./topology";
 import { drillHoles, holeSites, type PointSketch } from "./hole";
 import { patternInstances } from "./pattern";
@@ -245,7 +248,22 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
         perimeters: [r6(cut.perimeters[0]), r6(cut.perimeters[1])],
         ends: [cut.ends[0].map(r6) as Vec3, cut.ends[1].map(r6) as Vec3],
         massKg: body.massKg,
+        normals: [cut.normals[0].map(r6) as Vec3, cut.normals[1].map(r6) as Vec3],
+        ...(mb.x && mb.y ? { axes: { x: mb.x.map(r6) as Vec3, y: mb.y.map(r6) as Vec3 } } : {}),
+        ...(mb.symmetry ? { symmetry: mb.symmetry } : {}),
+        endFaces: cut.endFaces,
+        copes: cut.copes,
+        ...(body.area !== undefined ? { area: body.area } : {}),
       });
+    }
+    // A weldment's other bodies: flat plates (end caps, gussets, base plates) with their size for the cut list.
+    if (memberBodies.size) {
+      for (const b of m.bodies) {
+        const shape = bodies.get(b.name);
+        if (memberBodies.has(b.name) || !shape) continue;
+        const plate = plateOf(oc, s, shape);
+        if (typeof plate !== "string") b.plate = { thickness: plate.thickness, size: plate.size, area: plate.area, holes: plate.holes, cutLength: plate.cutLength };
+      }
     }
     return m;
   }
@@ -261,7 +279,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
   /** A copy of a member body, its line carried by the same transforms. */
   const copyMember = (s: Scope, from: string, to: string, steps: ReturnType<typeof mirrorTrsf>[], id = to) => {
     const mb = memberBodies.get(from);
-    if (mb) memberBodies.set(to, { ...mb, id, ...transformLine(oc, s, mb.from, mb.dir, steps) });
+    if (mb) memberBodies.set(to, { ...mb, id, ...carryLine(oc, s, mb, steps) });
   };
   /** Where each hole feature drilled. */
   const drilled: HoleRecord[] = [];
@@ -596,7 +614,17 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
           if (!def) throw new OpError(`no profile "${raw.profile}" in the part`);
           const name = raw.newBody ?? raw.id;
           if (bodies.has(name)) throw new OpError(`a body "${name}" already exists; a member is a body of its own`);
-          const line: MemberLine = { id: raw.id, profile: raw.profile, designation: raw.size, from: raw.from, dir: frame.get(raw.id)!.placed.dir };
+          const placed = frame.get(raw.id)!.placed;
+          const line: MemberLine = {
+            id: raw.id,
+            profile: raw.profile,
+            designation: raw.size,
+            from: raw.from,
+            dir: placed.dir,
+            x: placed.frame.x,
+            y: placed.frame.y,
+            symmetry: sectionSymmetry(placed.outline.map((o) => [dot3(o, placed.frame.x), dot3(o, placed.frame.y)])),
+          };
           scoped((s) => {
             const tool = memberTool(oc, s, raw, def, shapes.ends.get(raw.id));
             commit(new Map([[name, tool]]));
@@ -795,7 +823,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
         if (bodies.has(name) || changed.has(name)) throw new OpError(`${inst.label}: a body "${name}" already exists`);
         changed.set(name, fuseInto(oc, s, null, copy, what));
         // A copy of a member is a member, along its line as it was made (the body may have moved or been combined since).
-        if (seed.member) memberBodies.set(name, { ...seed.member, id: name, ...transformLine(oc, s, seed.member.from, seed.member.dir, [inst.trsf]) });
+        if (seed.member) memberBodies.set(name, { ...seed.member, id: name, ...carryLine(oc, s, seed.member, [inst.trsf]) });
       } else if (seed.kind === "fuse") {
         const name = seed.into!;
         try {
@@ -839,6 +867,17 @@ export interface MemberLine {
   designation: string;
   from: Vec3;
   dir: Vec3;
+  /** Phase Q: the profile's axes (x across, y up the section) and its symmetry, for the cut list's end-cut orientation. */
+  x?: Vec3;
+  y?: Vec3;
+  symmetry?: SectionSymmetry;
+}
+
+/** A member's line carried by transforms: its point, direction and the profile's axes. */
+function carryLine(oc: OC, s: Scope, mb: MemberLine, steps: ReturnType<typeof mirrorTrsf>[]): Pick<MemberLine, "from" | "dir" | "x" | "y"> {
+  const line = transformLine(oc, s, mb.from, mb.dir, steps);
+  if (!mb.x || !mb.y) return line;
+  return { ...line, x: transformLine(oc, s, mb.from, mb.x, steps).dir, y: transformLine(oc, s, mb.from, mb.y, steps).dir };
 }
 
 /**

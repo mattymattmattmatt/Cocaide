@@ -204,7 +204,7 @@ function samplePoints(at: (t: number) => Vec2, t0: number, t1: number, tol: numb
  * times the distance between them, nothing beyond them, and thinner than it
  * is wide (else it is a bar or a tube on end).
  */
-function plateOf(oc: OC, s: Scope, body: TopoDS_Shape): Omit<FlatPlate, "bodies"> | string {
+export function plateOf(oc: OC, s: Scope, body: TopoDS_Shape): Omit<FlatPlate, "bodies"> | string {
   const faces = listFaces(oc, s, body);
   const infos = faces.map((f, i) => faceInfo(oc, s, f, i));
   const volume = volumeOf(oc, s, body);

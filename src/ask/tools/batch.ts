@@ -31,6 +31,7 @@ export const COMMAND_TOOLS = [
   "setWeld",
   "setBodyMaterial",
   "setProperties",
+  "setCutList",
   "setSheet",
   "addSheet",
   "renameSheet",
@@ -112,6 +113,8 @@ export function toolCommand(name: string, a: Raw): Command | string {
       return obj("patch") ? { type: "setDrawingOptions", patch: obj("patch")! } : "setDrawingOptions: patch must be an object (standard, units, generalTolerance, properties, revisions)";
     case "setProperties":
       return obj("patch") ? { type: "setProperties", patch: obj("patch")! } : "setProperties: patch must be an object of part properties";
+    case "setCutList":
+      return obj("patch") ? { type: "setCutList", patch: obj("patch")! } : "setCutList: patch must be an object of cut list settings";
     case "setDimension":
       return { type: "setDimension", sketch: str("sketch"), ...which, value: a.value as number | string };
     case "renameDimension":

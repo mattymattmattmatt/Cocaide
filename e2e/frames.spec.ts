@@ -77,14 +77,12 @@ test("a table frame from nodes, mitred at the top, measured into a cut list, the
   expect(doc.features.find((f) => f.id === "AB")).toEqual({ id: "AB", op: "member", profile: "SHS", size: "SHS 40x40x3", from: "A", to: "B", align: [-1, 1] });
   expect(doc.features.find((f) => f.id === "corner_A")).toEqual({ id: "corner_A", op: "joint", node: "A", type: "mitre", members: ["DA", "AB"] });
 
-  // The CSV is the same list.
+  // The CSV is the same list (Phase Q: the cut list v2's columns, the end cuts with their orientation).
   const download = page.waitForEvent("download");
   await page.getByTestId("cut-list-csv").click();
-  const csv = readFileSync(await (await download).path(), "utf8");
-  expect(csv.split("\r\n").slice(0, 2)).toEqual([
-    "Item,Profile,Size,Length (mm),End 1 (deg),End 2 (deg),Qty,kg each,kg total,Members",
-    "1,SHS,SHS 40x40x3,1200.0,45.0,45.0,2,4.043,8.086,AB CD",
-  ]);
+  const csv = readFileSync(await (await download).path(), "utf8").split("\r\n");
+  expect(csv[0]).toBe("Item,Qty,Description,Size,Material,Length (mm),Angle 1,Angle 2,Orientation,kg each,kg total,Paint area (m²),Finish,Notes");
+  expect(csv[1]).toMatch(/^1,2,SHS 40x40x3,SHS 40x40x3,[^,]*,1200\.0,45°,45°,"same plane, trapezoid",4\.04,8\.09,/);
 
   // Switch every member to SHS 50×50×3, as one change: the outside stays 1200 × 600 × 900, the legs get shorter.
   await page.getByTestId("cut-row").first().click();

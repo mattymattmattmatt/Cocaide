@@ -723,6 +723,8 @@ function items(doc: RawDocument): Map<string, string> {
   const out = new Map(doc.features.map((f) => [String(f.id), JSON.stringify(f)]));
   // The part's properties (setProperties), as one item.
   if (doc.properties !== undefined) out.set("properties", JSON.stringify(doc.properties));
+  // The cut list's text and settings (setCutList), as one item.
+  if (doc.cutList !== undefined) out.set("cutList", JSON.stringify(doc.cutList));
   const d = rawDrawing(doc);
   if (d) {
     out.set("drawing:options", JSON.stringify(drawingOptions(d)));
@@ -758,6 +760,10 @@ export function diffDocs(base: RawDocument, doc: RawDocument): Change[] {
   // The part's properties: "part properties partNumber: — → BR-1001".
   if (JSON.stringify(base.properties ?? {}) !== JSON.stringify(doc.properties ?? {})) {
     out.push({ id: "properties", what: "part", kind: "changed", fields: leafDiff((base.properties ?? {}) as Record<string, unknown>, (doc.properties ?? {}) as Record<string, unknown>, "") });
+  }
+  // The cut list's text and stock settings: "cut list stock.kerf: 3 → 2".
+  if (JSON.stringify(base.cutList ?? {}) !== JSON.stringify(doc.cutList ?? {})) {
+    out.push({ id: "cutList", what: "cut list", kind: "changed", fields: leafDiff((base.cutList ?? {}) as Record<string, unknown>, (doc.cutList ?? {}) as Record<string, unknown>, "") });
   }
   // The drawing: its options, its sheets, and each view and annotation.
   const db = rawDrawing(base);

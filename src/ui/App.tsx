@@ -2786,7 +2786,12 @@ export function App() {
                       setSelectedFeature(id);
                       setRightTab("properties");
                     }}
-                    onDownload={(name, text) => download(name, text, "text/csv")}
+                    onSelectBodies={(names) => {
+                      // Phase Q: a cut list row picks its bodies in the view (every face of each).
+                      const faces = (view?.bodies ?? []).filter((b) => names.includes(b.name)).flatMap((b) => Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i));
+                      setSelection({ faces, edges: [] });
+                    }}
+                    onDownload={(name, data, type) => download(name, data, type)}
                     fileBase={exportBase(doc, view?.name ?? "part")}
                     onExportPlates={() => runTool("tool.exportPlates")}
                   />
