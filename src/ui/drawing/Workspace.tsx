@@ -246,7 +246,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     const views = new Set(ids.filter((id) => p.drawing!.sheets.some((s) => s.views.some((v) => v.id === id))));
     const tables = new Set(ids.filter((id) => p.drawing!.sheets.some((s) => (s.tables ?? []).some((t) => t.id === id))));
     const anns = ids.filter((id) => !views.has(id) && !tables.has(id));
-    const goneWithViews = new Set(p.drawing.sheets.flatMap((s) => s.annotations.filter((a) => "view" in a && views.has(a.view)).map((a) => a.id)));
+    const goneWithViews = new Set(p.drawing.sheets.flatMap((s) => s.annotations.filter((a) => "view" in a && !!a.view && views.has(a.view)).map((a) => a.id)));
     const cmds: Command[] = [
       ...anns.filter((id) => !goneWithViews.has(id)).map((id): Command => ({ type: "setAnnotation", id, annotation: null })),
       ...[...tables].map((id): Command => ({ type: "setTable", id, table: null })),

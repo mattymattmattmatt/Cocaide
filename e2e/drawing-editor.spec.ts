@@ -138,28 +138,29 @@ test("a detail by drawing its circle; a projected view slides along its line and
   expect(d.circle!.r).toBeCloseTo(9 / top.scale, 1);
   expect(d.scale).toBe("5:1");
 
-  // The right view is projected from the front: dragging it up is refused, dragging it right slides it.
-  const right = await viewOf(page, "right");
+  // Section A-A (the front) is lined up under the top view (New drawing leaves out the plate's bare right view):
+  // dragging it across is refused, dragging it down slides it.
+  const right = await viewOf(page, "front");
   const [rx, ry] = await at(page, right.centre[0], right.centre[1]);
   await page.mouse.move(rx, ry);
   await page.mouse.down();
-  await page.mouse.move(rx, ry - 30, { steps: 4 });
-  await page.mouse.move(rx, ry - 70, { steps: 4 });
+  await page.mouse.move(rx + 30, ry, { steps: 4 });
+  await page.mouse.move(rx + 70, ry, { steps: 4 });
   await page.mouse.up();
-  await expect(page.getByTestId("notice")).toContainText("right stays lined up with front");
-  expect((await viewOf(page, "right")).centre).toEqual(right.centre);
+  await expect(page.getByTestId("notice")).toContainText("front stays lined up with top");
+  expect((await viewOf(page, "front")).centre).toEqual(right.centre);
   await page.mouse.move(rx, ry);
   await page.mouse.down();
-  await page.mouse.move(rx + 20, ry - 4, { steps: 4 });
-  await page.mouse.move(rx + 50, ry - 9, { steps: 4 });
+  await page.mouse.move(rx + 4, ry + 20, { steps: 4 });
+  await page.mouse.move(rx + 9, ry + 50, { steps: 4 });
   await page.mouse.up();
-  await expect.poll(async () => (await viewOf(page, "right")).centre[0]).toBeGreaterThan(right.centre[0] + 5);
-  const moved = await viewOf(page, "right");
-  expect(moved.centre[1]).toBeCloseTo(right.centre[1], 6);
+  await expect.poll(async () => (await viewOf(page, "front")).centre[1]).toBeLessThan(right.centre[1] - 5);
+  const moved = await viewOf(page, "front");
+  expect(moved.centre[0]).toBeCloseTo(right.centre[0], 6);
   // Break alignment from its menu: now it goes anywhere.
-  await page.getByTestId("drawing-item-right").click({ button: "right" });
+  await page.getByTestId("drawing-item-front").click({ button: "right" });
   await page.getByTestId("ctx-view-unalign").click();
-  await expect(page.getByTestId("drawing-item-right")).toContainText("free");
+  await expect(page.getByTestId("drawing-item-front")).toContainText("free");
   await page.screenshot({ path: "test-results/drawing-editor-detail.png" });
 });
 

@@ -233,7 +233,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
   /** What moves with a view: the views lined up with it, and every annotation of each. */
   const movingWith = (id: string): string[] => {
     const views = [id, ...followers(id, sheetDoc.views, sheetDoc.projection)];
-    const anns = sheetDoc.annotations.filter((a) => "view" in a && views.includes(a.view)).map((a) => a.id);
+    const anns = sheetDoc.annotations.filter((a) => "view" in a && !!a.view && views.includes(a.view)).map((a) => a.id);
     return [...views, ...anns];
   };
 
