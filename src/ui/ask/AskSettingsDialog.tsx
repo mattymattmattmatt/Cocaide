@@ -9,7 +9,8 @@ import { bindKey, COMMAND_GROUPS, COMMANDS, keyFor, keyOf, resetInputPrefs, setI
 import { logText, readLog } from "./log";
 import { loadSpin, saveSpin } from "../sketcher/modify";
 import { MAX_ROTATE_SPEED, MIN_ROTATE_SPEED, resetViewPrefs, setViewPrefs, useViewPrefs } from "../viewport/viewPrefs";
-import { HAS_PROXY, type AskSettings } from "./settings";
+import { HAS_PROXY, type AskSettings, type Provider } from "./settings";
+import { OllamaSettingsPanel } from "./OllamaSettings";
 
 export type SettingsTab = "units" | "mouse" | "keyboard" | "assistant";
 const TABS: [SettingsTab, string][] = [
@@ -60,8 +61,8 @@ export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "a
             <>
               <p className="muted small">
                 Right-click anything (a feature, face, edge, sketch entity, failed rebuild) and choose Ask AI… to ask about it or change it. The ask sends what
-                you right-clicked to the model, with an outline of the part when it may change the whole part. Every change is a proposal you accept or
-                discard. Modelling and STEP export work without any of this.
+                you right-clicked to the model, with an outline of the part when it may change the whole part. Every change is a proposal you accept or discard.
+                Modelling and STEP export work without any of this.
               </p>
               <label className="field">
                 <span className="field-label">May change</span>
@@ -71,41 +72,53 @@ export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "a
                 </select>
               </label>
               <label className="field">
-                <span className="field-label">Model</span>
-                <select value={s.model} onChange={(e) => setS({ ...s, model: e.target.value })} data-testid="ask-model">
-                  {MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
+                <span className="field-label">AI provider</span>
+                <select value={s.provider} onChange={(e) => setS({ ...s, provider: e.target.value as Provider })} data-testid="ask-provider">
+                  <option value="anthropic">Anthropic Claude</option>
+                  <option value="ollama">Ollama (local)</option>
                 </select>
               </label>
-              {effort && (
-                <label className="field">
-                  <span className="field-label">Effort</span>
-                  <select value={s.effort} onChange={(e) => setS({ ...s, effort: e.target.value as Effort })}>
-                    <option value="low">Low (fastest)</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
-                </label>
+              {s.provider === "ollama" && <OllamaSettingsPanel value={s.ollama} onChange={(ollama) => setS({ ...s, ollama })} />}
+              {s.provider !== "ollama" && (
+                <>
+                  <label className="field">
+                    <span className="field-label">Model</span>
+                    <select value={s.model} onChange={(e) => setS({ ...s, model: e.target.value })} data-testid="ask-model">
+                      {MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {effort && (
+                    <label className="field">
+                      <span className="field-label">Effort</span>
+                      <select value={s.effort} onChange={(e) => setS({ ...s, effort: e.target.value as Effort })}>
+                        <option value="low">Low (fastest)</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                      </select>
+                    </label>
+                  )}
+                  <label className="field">
+                    <span className="field-label">API key</span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder={HAS_PROXY ? "Not needed: the dev server adds it" : "sk-ant-…"}
+                      value={s.apiKey}
+                      onChange={(e) => setS({ ...s, apiKey: e.target.value })}
+                      data-testid="ask-api-key"
+                    />
+                  </label>
+                  <p className="muted small">
+                    {HAS_PROXY
+                      ? "The dev server holds ANTHROPIC_API_KEY and forwards asks to the Anthropic API, so this page never sees a key. A key typed here is used instead."
+                      : "The key is kept in this browser only and sent only to api.anthropic.com. To keep it out of the page, start the dev server with ANTHROPIC_API_KEY set instead."}
+                  </p>
+                </>
               )}
-              <label className="field">
-                <span className="field-label">API key</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  placeholder={HAS_PROXY ? "Not needed: the dev server adds it" : "sk-ant-…"}
-                  value={s.apiKey}
-                  onChange={(e) => setS({ ...s, apiKey: e.target.value })}
-                  data-testid="ask-api-key"
-                />
-              </label>
-              <p className="muted small">
-                {HAS_PROXY
-                  ? "The dev server holds ANTHROPIC_API_KEY and forwards asks to the Anthropic API, so this page never sees a key. A key typed here is used instead."
-                  : "The key is kept in this browser only and sent only to api.anthropic.com. To keep it out of the page, start the dev server with ANTHROPIC_API_KEY set instead."}
-              </p>
             </>
           )}
         </div>
@@ -249,7 +262,12 @@ function MouseTab() {
         </select>
       </div>
       <label className="check settings-check">
-        <input type="checkbox" checked={prefs.reverseWheel} onChange={(e) => setInputPrefs({ ...prefs, reverseWheel: e.target.checked })} data-testid="settings-reverse-wheel" />
+        <input
+          type="checkbox"
+          checked={prefs.reverseWheel}
+          onChange={(e) => setInputPrefs({ ...prefs, reverseWheel: e.target.checked })}
+          data-testid="settings-reverse-wheel"
+        />
         Reverse the wheel's zoom direction
       </label>
       <div className="field">
@@ -271,19 +289,37 @@ function MouseTab() {
         </span>
       </div>
       <label className="check settings-check" title="Rotating turns about the vertical (Z) and tips up and down, never rolling the part over: like a turntable">
-        <input type="checkbox" checked={view.turntable} onChange={(e) => setViewPrefs({ ...view, turntable: e.target.checked })} data-testid="settings-turntable" />
+        <input
+          type="checkbox"
+          checked={view.turntable}
+          onChange={(e) => setViewPrefs({ ...view, turntable: e.target.checked })}
+          data-testid="settings-turntable"
+        />
         Keep Z up while rotating
       </label>
-      <label className="check settings-check" title="Standard views, Fit, the view cube, named views and Previous view glide over a quarter of a second (never with the system's reduce motion)">
+      <label
+        className="check settings-check"
+        title="Standard views, Fit, the view cube, named views and Previous view glide over a quarter of a second (never with the system's reduce motion)"
+      >
         <input type="checkbox" checked={view.animate} onChange={(e) => setViewPrefs({ ...view, animate: e.target.checked })} data-testid="settings-animate" />
         Animate view changes
       </label>
       <label className="check settings-check" title="Opening a sketch (a new one, or one you edit) turns the view square onto its plane, its x to the right">
-        <input type="checkbox" checked={view.sketchFace} onChange={(e) => setViewPrefs({ ...view, sketchFace: e.target.checked })} data-testid="settings-sketch-face" />
+        <input
+          type="checkbox"
+          checked={view.sketchFace}
+          onChange={(e) => setViewPrefs({ ...view, sketchFace: e.target.checked })}
+          data-testid="settings-sketch-face"
+        />
         Turn to face the sketch when it opens
       </label>
       <label className="check settings-check" title="Finishing or cancelling a sketch turns the view back to where it was before the sketch opened">
-        <input type="checkbox" checked={view.sketchReturn} onChange={(e) => setViewPrefs({ ...view, sketchReturn: e.target.checked })} data-testid="settings-sketch-return" />
+        <input
+          type="checkbox"
+          checked={view.sketchReturn}
+          onChange={(e) => setViewPrefs({ ...view, sketchReturn: e.target.checked })}
+          data-testid="settings-sketch-return"
+        />
         Return to the previous view after a sketch
       </label>
       <table className="settings-table" data-testid="mouse-table">
@@ -330,8 +366,8 @@ function KeyboardTab() {
   return (
     <>
       <p className="muted small">
-        Click a key to change it, then press the new one. Backspace clears it, Escape keeps it. The defaults are the standard CAD ones; Ctrl+N, Ctrl+T and Ctrl+W belong
-        to the browser.
+        Click a key to change it, then press the new one. Backspace clears it, Escape keeps it. The defaults are the standard CAD ones; Ctrl+N, Ctrl+T and
+        Ctrl+W belong to the browser.
       </p>
       {note && (
         <p className="small settings-note" role="status" data-testid="keys-note">

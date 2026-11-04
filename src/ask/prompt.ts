@@ -2,7 +2,7 @@
 // the prompt; this file is the fixed part around it.
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { coreReference } from "../mcp/sections";
+import { coreReference, opIndex, referenceSection, sectionIndex } from "../mcp/sections";
 import { anthropicTool } from "./tools/specs";
 import type { AskTarget, Packet, PacketKind } from "./packet";
 
@@ -184,6 +184,48 @@ Rules:
 
 Document reference (the core; the reference tool gives the rest):
 ${coreReference()}`;
+
+/**
+ * The same agent for a model with a small context (a local model at 8-32k tokens): the same rules, tools and
+ * semantics, in fewer words, with less of the reference inline (the document and sketch basics, selectors,
+ * strategy and each op's first example; the rest is a reference call away). About half the size of SYSTEM.
+ */
+export const SYSTEM_COMPACT = `You are the agent inside Cocaide, a parametric CAD program (units: mm, degrees). The user right-clicked one thing in their part and typed a request. The context packet describes it: target, parent, children, measurements, the selector of a picked face or edge, the error if it failed, and writeScope. With writeScope ["*"] the packet's "part" lists every feature and you may change anything; otherwise only the packet is in context.
+
+Do the smallest thing that does what was asked: answer (no edit), change one field, add or change features inside writeScope, or call escalate with the reason when it cannot be done inside writeScope.
+
+Rules:
+- Work only through the tools. Every edit is rebuilt and kept only if nothing newly fails; a failed edit returns the error: read it, fix the call, or stop and say why. Never repeat a call that failed without changing it.
+- writeScope is enforced: "*" anything; a feature id: that feature, or a new feature using it; "<sketch>/*" that sketch's entities and constraints; "param:<name>"; "body:<name>"; "+" one new feature (from a face or edge it must use that face or edge, through the packet's selection).
+- Your edits are a proposal the user accepts or discards. Do not ask for confirmation; make the proposal.
+- Look before you write: listFaces / listEdges give a ready selector for every face and edge (never guess one), facePlane a face's frame, getSketch a sketch, measureBetween distances, partSummary the whole part. reference("<op>") gives an op's full section: read it before you first use an op.
+- Related edits go in one batch call (a sketch, its extrude, its holes): all are kept or none. sketchProfile draws a fully defined sketch; holes lays out bolt circles and grids. Any edit tool not offered directly runs as a batch step: { "tool": "<name>", ...its arguments }.
+- A whole new part: call plan first, build in batches, then check with partSummary and measureBetween, and fix what disagrees.
+- Tool arguments are JSON objects that follow each tool's schema exactly.
+- Metric clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11. Inches: convert once (25.4 mm) and say so.
+- Weldment member sizes come from the packet's member.sizes only. Drawing numbers are measured, never given.
+- Finish with one or two plain sentences: what you changed and the result, or the answer, or why you stopped.
+
+Document reference (short; the reference tool gives the rest):
+${compactReference()}`;
+
+function compactReference(): string {
+  const get = (k: string) => referenceSection(k) ?? "";
+  const sketch = get("sketch");
+  // The sketch section up to its constraints, and the first part of the constraint list.
+  const cut = sketch.indexOf("Constraints are");
+  const end = cut > 0 ? sketch.indexOf("\n", cut + 1500) : -1;
+  const doc = get("document");
+  const docCut = doc.indexOf("### Dimension names");
+  return [
+    docCut > 0 ? doc.slice(0, docCut).trim() : doc,
+    cut > 0 ? sketch.slice(0, end > 0 ? end : undefined).trim() : sketch,
+    get("selectors"),
+    get("strategy"),
+    `## Ops (first example each; reference("<op>") gives every field)\n${opIndex()}`,
+    `## More, with the reference tool\n${sectionIndex()}`,
+  ].join("\n\n");
+}
 
 const obj = (properties: Record<string, unknown>, required: string[]) => ({ type: "object" as const, properties, required, additionalProperties: false });
 const any = { type: "object", description: "JSON object" };
@@ -435,6 +477,19 @@ export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; d
 }
 
 /** The user turn: the packet, the screenshot when the prompt is visual, then the user's text, unchanged and last. */
+/**
+ * The tools a small-context model is offered directly: everything but the rarely used edits, which stay available
+ * as batch steps (BATCH_STEP_TOOLS) with the same commands and checks. A weldment target keeps its node and weld tools.
+ */
+const RARE_TOOLS = new Set(["reorderFeature", "setFolder", "suppressFolder", "renameParameter", "setNode", "setBodyMaterial", "setWeld", "setProperties", "setCutList", "renameDimension", "setDriven", "fullyDefine"]);
+
+export function leanTools(tools: Anthropic.Tool[], packet?: unknown): Anthropic.Tool[] {
+  const welding = /"(member|node|joint)"/.test(JSON.stringify((packet as { target?: unknown } | undefined)?.target ?? ""));
+  const keep = tools.filter((t) => !RARE_TOOLS.has(t.name) || (welding && (t.name === "setNode" || t.name === "setWeld")));
+  // Without batch there is no other way to reach the rest: keep the list whole.
+  return keep.some((t) => t.name === "batch") ? keep : tools;
+}
+
 export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Uint8Array, wide = false, build = false): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
   if (image) blocks.push({ type: "image", source: { type: "base64", media_type: "image/png", data: base64(image) } });

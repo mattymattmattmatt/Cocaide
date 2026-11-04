@@ -80,7 +80,7 @@ Browser parametric CAD. One JSON feature document is the source of truth; OpenCa
 2. Push to the default branch, or run **Actions → Deploy to GitHub Pages → Run workflow**.
 3. Open `https://<owner>.github.io/<repo>/` once the run is green. The first visit downloads the 23 MB kernel; after that the browser keeps it.
 
-The build is made for the `/<repo>/` subpath (`COCAIDE_BASE`). Modelling, drawings and STEP export need nothing else; the right-click ask needs your own key in **Settings → Assistant**, which stays in that browser.
+The build is made for the `/<repo>/` subpath (`COCAIDE_BASE`). Modelling, drawings and STEP export need nothing else; the right-click ask needs your own key in **Settings → Assistant**, which stays in that browser, or a local model through Ollama (see [Local models (Ollama)](#local-models-ollama)).
 
 **On your computer** (Node 22.12 or newer):
 
@@ -99,6 +99,8 @@ The right-click ask needs a model. Either start the dev server with a key, so th
 ```sh
 ANTHROPIC_API_KEY=sk-ant-... npm run dev     # the dev server proxies /anthropic and adds the key
 ```
+
+Or run it on a local model with Ollama, no key at all: **Settings → Assistant → AI provider: Ollama (local)** (see [Local models (Ollama)](#local-models-ollama)).
 
 Headless, same document and kernel as the browser:
 
@@ -572,6 +574,65 @@ Every ask is logged in the browser next to the revisions it produced:
 **Settings → Download ask log** saves it as JSON Lines.
 
 **Model.** The default is Claude Opus 5.5 at low effort; Sonnet 5.5 and Haiku 4.5 can be chosen under **Settings**. The SDK is loaded on the first ask, not with the app. What leaves the machine is the packet, plus the one framed image for a visual prompt. Modelling and STEP export never need a key.
+
+## Local models (Ollama)
+
+The assistant can run on a model on your own computer through [Ollama](https://ollama.com) instead of Claude. Everything else is the same: the same agent, tools, context packets, checked transactions with rollback, write scopes, proposals you accept or discard, and the ask log. Nothing is sent anywhere else, and no API key is needed.
+
+**Set it up (Windows 11):**
+
+1. Download and install Ollama from **ollama.com/download**. It runs in the background; its icon sits in the system tray.
+2. Pull a model, in a terminal (or with **Pull a model** in the settings):
+   ```sh
+   ollama pull qwen3.5:9b
+   ```
+3. Let the hosted site talk to it. Ollama only answers web pages whose origin it allows; pages on `localhost` are allowed by default, the GitHub Pages site is not. In a terminal:
+   ```sh
+   setx OLLAMA_ORIGINS "https://mattymattmattmatt.github.io,http://localhost:*"
+   ```
+   then quit Ollama from its tray icon (right-click → Quit) and start it again from the Start menu, so it reads the new setting. (macOS: `launchctl setenv OLLAMA_ORIGINS "<same value>"` and restart the app. Linux with systemd: `systemctl edit ollama.service`, add `Environment="OLLAMA_ORIGINS=<same value>"`, then `systemctl restart ollama`.)
+4. In Cocaide: **Settings → Assistant → AI provider: Ollama (local)**. The status line should say *Connected to Ollama …*; pick the model, press **Test connection**, then **Save**.
+
+The hosted page is https and Ollama is `http://localhost:11434`. Browsers treat `localhost` as a trustworthy address, so this works; Chrome may ask once whether the site may access devices on your local network: allow it. If Ollama runs on another machine, its address has to be reachable from the browser and allowed the same way; nothing more than that is supported.
+
+**Which model** (sizes from the Ollama library's tag pages, November 2026):
+
+| Model | Download | Notes |
+|---|---|---|
+| `qwen3.5:9b` | 6.6 GB (Q4_K_M) | Recommended. Tools, thinking and vision (drawings, photos and screenshots work). |
+| `qwen3.5:4b` | 3.3 GB (Q4_K_M) | The smaller fallback: fits an 8 GB GPU with room to spare and answers faster, but is less reliable on long builds. |
+
+Any Ollama model with tool support works; the settings show what the chosen one can do (tools, vision, thinking, its maximum context). A model without vision still edits and answers, but cannot read a dropped drawing or photo (the ask says so), and screenshots are described to it as not shown. A model without tool support is refused with a message, because the assistant works through tools.
+
+**Hardware** (for example an RTX 3080 Laptop GPU with 8 GB, 32 GB RAM): `qwen3.5:9b` at Q4_K_M is 6.6 GB of weights, and the context cache comes on top, so at the default 16k context it may not fit wholly in 8 GB of video memory. When it doesn't, Ollama runs part of it on the CPU: it still works, several times slower. Check with
+
+```sh
+ollama ps
+```
+
+while an ask runs: the PROCESSOR column says `100% GPU`, or a split such as `25%/75% CPU/GPU`. If it is split and too slow, lower the context length to 8k (short edits only) or use `qwen3.5:4b`. The first ask after a while also loads the model (Keep loaded, default 10 minutes, keeps it in memory between asks).
+
+**Settings** (Settings → Assistant, Ollama): the address (default `http://localhost:11434`) with the connection status and Refresh; the installed models; Pull a model (with progress); Test connection (a one-word chat, timed); Context length (num_ctx, default 16384: the instructions, tools and part are about 10k tokens before the conversation starts, so 16k is the practical minimum); Thinking (default Off, the fastest; on, or a level, makes the model reason first: sometimes better plans, always slower); Keep loaded; Temperature (default 0.2). Switching back to **Anthropic Claude** brings back the Claude settings as they were (the key is kept).
+
+**What is different for a small model.** With a context under 64k the ask sends a compact version of the instructions (the same rules, with more of the document reference behind the reference tool) and offers the commonly used tools directly; the rarely used edits (folders, reordering, renaming dimensions, cut list text, …) stay available as batch steps. Every tool call is checked against its tool's schema before it runs, and the model gets the exact problem back. Common slips are repaired: arguments sent as a JSON string or with text after them, a nested object sent as a string, numbers and booleans in quotes, a tool name in the wrong case or snake_case, and tool calls written into the reply as `<tool_call>{…}</tool_call>` (Qwen style). Unknown tools and arguments that are not JSON are refused with the reason. The same failing call made three times ends the ask; the turn limits, the rebuild check and rollback, the write scope and the accept step are the same as with Claude: the model can only change the part through the same commands, and only as a proposal.
+
+**Offline.** Once Ollama and a model are installed, the model needs no internet. Run Cocaide locally (`npm run build && npm run preview`, or `npm run dev`; localhost pages are allowed by Ollama without OLLAMA_ORIGINS) and everything works offline. The hosted site needs the internet to load the page (and the 23 MB kernel on the first visit; the browser caches it after that, but a cached page is not guaranteed to open offline).
+
+**Troubleshooting** (the settings show the fix for the first three):
+
+- *Nothing answers at http://localhost:11434* (connection refused): Ollama is not running. Start it from the Start menu (tray icon) or run `ollama serve`; check the address in the settings. In Chrome, check the site's permission for local network access.
+- *Ollama is running but refuses requests from this page* (CORS): OLLAMA_ORIGINS does not include this page's origin. Run the `setx` command above and restart Ollama from the tray. `setx` only affects programs started afterwards.
+- *Model not found*: pull it (`ollama pull qwen3.5:9b`) or choose an installed one; `ollama list` shows them.
+- *Out of memory, or very slow*: lower the context length, close other programs using the GPU, or use `qwen3.5:4b`; `ollama ps` shows the CPU/GPU split. A turn that makes no progress for 3 minutes ends with a message.
+- *Tool calls ignored* (the model answers in text, or says what it would do instead of doing it): use a model with tool support (the settings show "Tools ✓"), keep Thinking off or low, keep the context at 16k or more so the instructions are not cut, and keep the request specific. Small models follow long multi-step builds less reliably than Claude; if one keeps failing, the ask log (Settings → Assistant → Download ask log) shows every call and its error.
+
+Tests: `tests/ollama-provider.test.ts` and `tests/ollama-agent.test.ts` run the provider against a scripted stand-in that speaks Ollama's wire format (it is not a model), on the real kernel, through ten scenarios checked by rebuilding the result; `e2e/ollama-settings.spec.ts` checks the settings and one ask in the browser against a stubbed server. The live suite runs the same ten scenarios against a real Ollama, and through Claude for comparison when `ANTHROPIC_API_KEY` is also set, and prints a table:
+
+```sh
+OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=qwen3.5:9b npx vitest run tests/ollama-live.test.ts
+```
+
+It has not been run yet: the environment this was built in cannot reach the Ollama registry to download a model.
 
 ## The part-level prompt
 

@@ -18,7 +18,7 @@ import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 import type { AskModel } from "./model";
 import { composeFor } from "./drawingPacket";
 import { buildPacket, extrudeMeasurements, isDrawingTarget, partOutline, type AskTarget, type Packet } from "./packet";
-import { base64, BATCH_STEP_TOOLS, classify, isVisual, SYSTEM, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
+import { base64, BATCH_STEP_TOOLS, classify, isVisual, leanTools, SYSTEM, SYSTEM_COMPACT, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
 import type { Effort } from "./models";
 import { commandMade, expandTool, planBatch, toolCommand, type StepResult } from "./tools/batch";
 import { featureInfo, facePlane, getSketch, listDatums, listEdges, listFaces, measureBetween, partSummary, shotRequest } from "./tools/inspect";
@@ -164,7 +164,14 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   const CORRECTIONS = budget.corrections;
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image, wide, build) }];
   const whole = wide || req.target.kind === "part";
-  const tools = toolsFor(mode, packet.target.kind, whole ? { part: true, drawing: wide && isObject(req.doc.drawing), build } : undefined);
+  const offered = toolsFor(mode, packet.target.kind, whole ? { part: true, drawing: wide && isObject(req.doc.drawing), build } : undefined);
+  // A provider with a small context (a local model) gets the compact prompt and the lean tool list: same tools, same rules.
+  const traits = req.model.traits ?? {};
+  const tools = traits.leanTools ? leanTools(offered, packet) : offered;
+  const system = traits.compactPrompt ? SYSTEM_COMPACT : SYSTEM;
+  /** Failing calls by tool and arguments: a model that keeps making the same one is stopped (traits.repeatLimit). */
+  const failing = new Map<string, number>();
+  let repeated: string | null = null;
   const texts: string[] = [];
   let corrections = 0;
   let judged = false;
@@ -175,7 +182,7 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   try {
     for (let turn = 1; turn <= MAX_TURNS; turn++) {
       req.onEvent?.({ type: "thinking", turn });
-      const msg = await req.model.next({ system: SYSTEM, messages, tools, maxTokens: budget.maxTokens, ...(budget.minEffort ? { minEffort: budget.minEffort } : {}) }, req.signal);
+      const msg = await req.model.next({ system, messages, tools, maxTokens: budget.maxTokens, ...(budget.minEffort ? { minEffort: budget.minEffort } : {}) }, req.signal);
       result.turns = turn;
       messages.push({ role: "assistant", content: msg.content });
       const said = msg.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text.trim()).filter(Boolean);
@@ -217,12 +224,24 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const u of uses) {
         const before = sandbox.revision;
-        const out =
-          WRITE_TOOL_NAMES.has(u.name) && corrections > CORRECTIONS
+        // A call the provider could not make sense of (or that does not fit its schema) is answered with the reason.
+        const problem = req.model.checkCall?.(u, tools) ?? null;
+        const out: Outcome = problem
+          ? { ok: false, error: problem }
+          : WRITE_TOOL_NAMES.has(u.name) && corrections > CORRECTIONS
             ? { ok: false, error: CORRECTIONS === 1 ? "no more edits in this ask: one correction pass only. Stop and tell the user where it stands." : `no more edits in this ask (${CORRECTIONS} correction turns used). Stop and tell the user where it stands.` }
             : await sandbox.run(u.name, u.input);
         if (sandbox.revision !== before) looked = false;
         else if (out.ok && LOOK_TOOLS.has(u.name)) looked = true;
+        if (!out.ok && traits.repeatLimit) {
+          const key = `${u.name} ${JSON.stringify(u.input)} ${out.error ?? ""}`;
+          const n = (failing.get(key) ?? 0) + 1;
+          failing.set(key, n);
+          if (n >= traits.repeatLimit) {
+            repeated = `${u.name} failed ${n} times with the same arguments`;
+            out.error = `${out.error ?? "failed"} (this exact call has now failed ${n} times; the ask stops here)`;
+          }
+        }
         const png = out.png instanceof Uint8Array ? out.png : null;
         if (png) delete out.png;
         result.calls.push({ tool: u.name, input: u.input, ok: out.ok, ...(out.error ? { error: out.error } : {}), revision: sandbox.revision, hash: sandbox.hash });
@@ -238,6 +257,10 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
       }
       messages.push({ role: "user", content: results });
       if (sandbox.escalated) break;
+      if (repeated) {
+        texts.push(`(Stopped: ${repeated}.)`);
+        break;
+      }
       if (turn === MAX_TURNS) texts.push(`(Stopped after ${MAX_TURNS} steps.)`);
     }
   } catch (e) {

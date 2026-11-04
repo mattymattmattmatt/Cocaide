@@ -2096,3 +2096,9 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .weights-legend { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--muted); }
 .weights-legend span { display: flex; align-items: center; gap: 8px; }
 .weights-legend svg { color: var(--text); }
+.ollama-settings .row input { flex: 1; min-width: 0; }
+.ollama-status { font-size: 12px; padding: 6px 8px; border-radius: 4px; margin: 4px 0 8px; background: rgba(0, 0, 0, 0.04); }
+.ollama-status.problem { color: var(--bad); background: rgba(200, 40, 40, 0.06); }
+.ollama-fix { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
+.ollama-fix code { flex: 1; font-family: var(--mono); font-size: 11px; padding: 4px 6px; background: rgba(0, 0, 0, 0.06); border-radius: 3px; overflow-x: auto; white-space: nowrap; }
+.ollama-settings progress { width: 120px; vertical-align: middle; }

@@ -1,12 +1,17 @@
-// The language model behind the right-click ask. Production uses the
-// Anthropic SDK; tests use a scripted model that answers with fixed turns.
+// The language model behind the right-click ask: the provider interface the
+// agent loop calls (AskModel), the Anthropic implementation, and a scripted
+// model for tests. The other provider, Ollama (local models), is in
+// src/ask/ollama/model.ts; it speaks the same interface, so the loop, the
+// tools, the packets, the transactions and the proposals are the same for both.
+//
+// The interface's lingua franca is the Messages API's shapes (messages with
+// text, image, tool_use and tool_result blocks; a Message back with a stop
+// reason and usage). A provider that speaks another wire format converts to
+// and from them at its edge.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { DrawingReading } from "../intent/drawing";
-import { PhotoReading } from "../intent/photo";
-import { Intent } from "../intent/schema";
-import { ProfileSuggestion } from "./profile";
+import { SCHEMAS } from "./schemas";
 import { DEFAULT_MODEL, MODELS, type Effort } from "./models";
 
 export { DEFAULT_MODEL, MODELS, type Effort };
@@ -28,9 +33,32 @@ export interface IntentRequest {
   schema?: "intent" | "drawing" | "photo" | "profile";
 }
 
+/**
+ * What a provider tells the loop about itself. All optional: a provider that
+ * sets none (Anthropic, the scripted model) gets the loop exactly as it was.
+ */
+export interface ProviderTraits {
+  /** Use the compact system prompt (prompt.ts SYSTEM_COMPACT): the same rules and tools, more of the reference behind the reference tool. */
+  compactPrompt?: boolean;
+  /** Offer the tools most asks use directly (prompt.ts leanTools); the rest stay reachable as batch steps. */
+  leanTools?: boolean;
+  /** End the ask when the same failing call (same tool, same arguments) has been made this many times. */
+  repeatLimit?: number;
+}
+
 export interface AskModel {
   readonly name: string;
+  /** Which provider answers: shown in the ask log. */
+  readonly provider?: "anthropic" | "ollama" | "scripted";
+  readonly traits?: ProviderTraits;
+  /** One assistant turn: text, tool calls, a stop reason and usage, for the messages and tools given. */
   next(req: ModelRequest, signal?: AbortSignal): Promise<Anthropic.Message>;
+  /**
+   * A problem with a tool call this provider's turn produced (arguments that could not be parsed or repaired, an
+   * unknown tool, arguments that do not fit the tool's schema), as the error the model gets back for it; null when
+   * the call is fine. The loop calls it before running each call. Providers whose API validates calls leave it out.
+   */
+  checkCall?(use: Anthropic.ToolUseBlock, tools: Anthropic.Tool[]): string | null;
   /** Reads a request (and a drawing) into intent JSON (src/intent/schema.ts), as structured output. */
   readIntent(req: IntentRequest, signal?: AbortSignal): Promise<unknown>;
 }
@@ -53,9 +81,8 @@ export function anthropicClient(s: ClientSettings): Anthropic {
   });
 }
 
-const SCHEMAS = { intent: Intent, drawing: DrawingReading, photo: PhotoReading, profile: ProfileSuggestion } as const;
-
 export class AnthropicModel implements AskModel {
+  readonly provider = "anthropic" as const;
   constructor(
     private readonly client: Anthropic,
     readonly name: string = DEFAULT_MODEL,

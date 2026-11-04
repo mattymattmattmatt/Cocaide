@@ -73,7 +73,10 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const { ctx } = s;
   const ready = canAsk(ask.settings);
   const scope = scopeFor(ctx.doc, ctx.target);
-  const model = MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model;
+  const model =
+    ask.settings.provider === "ollama"
+      ? `${ask.settings.ollama.model} (local, Ollama)`
+      : (MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model);
   const part = ctx.target.kind === "part";
   const asPhoto = !!ctx.photo && readAs === "photo";
   const dropped = !!ctx.drawing || !!ctx.photo;
