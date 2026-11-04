@@ -94,7 +94,9 @@ function pageContent(sheet: ComposedSheet): string {
     const shift = p.anchor === "start" ? 0 : p.anchor === "middle" ? -w / 2 : -w;
     const x = p.at[0] + shift * c;
     const y = p.at[1] + shift * s;
-    return [`BT /${p.bold ? "F2" : "F1"} ${n(p.size)} Tf ${n(c)} ${n(s)} ${n(-s)} ${n(c)} ${n(x)} ${n(y)} Tm (${pdfString(p.text)}) Tj ET`];
+    // Italic: the letters sheared 12° (the fonts embedded are upright), turned with the text.
+    const k = p.italic ? Math.tan((12 * Math.PI) / 180) : 0;
+    return [`BT /${p.bold ? "F2" : "F1"} ${n(p.size)} Tf ${n(c)} ${n(s)} ${n(k * c - s)} ${n(k * s + c)} ${n(x)} ${n(y)} Tm (${pdfString(p.text)}) Tj ET`];
   }
 }
 

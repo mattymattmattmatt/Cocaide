@@ -215,6 +215,13 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = `${cmd.type} "${cmd.id}"`;
       allowed = has("drawing") || has(`view:${cmd.id}`);
       break;
+    case "editAnnotation":
+      what = `editAnnotation "${cmd.id}"`;
+      {
+        const before = rawAnnotations(doc).find((a) => isObject(a) && a.id === cmd.id) as Record<string, unknown> | undefined;
+        allowed = has("drawing") || (before?.view !== undefined && has(`view:${String(before.view)}`)) || has(`annotation:${cmd.id}`);
+      }
+      break;
     case "setAnnotation": {
       what = `setAnnotation "${cmd.id}"`;
       const drawing = rawAnnotations(doc);

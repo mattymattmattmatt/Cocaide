@@ -105,6 +105,7 @@ export const EDIT_TOOLS = [
   "moveView",
   "setTable",
   "setAnnotation",
+  "editAnnotation",
   "setDimension",
   "renameDimension",
   "setDriven",
@@ -366,6 +367,8 @@ export class AgentSession {
         return this.edit({ type: "moveView", id: String(a.id), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as Vec2 | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "setAnnotation":
         return this.edit({ type: "setAnnotation", id: String(a.id), annotation: isObject(a.annotation) ? a.annotation : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
+      case "editAnnotation":
+        return isObject(a.patch) ? this.edit({ type: "editAnnotation", id: String(a.id), patch: a.patch }) : this.fail("editAnnotation: patch must be an object of the fields to change (null removes one)");
       case "setTable":
         return this.edit({ type: "setTable", id: String(a.id), table: isObject(a.table) ? a.table : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "drawing":
@@ -835,7 +838,7 @@ export class AgentSession {
   private drawingStatus(cmd: Command): Record<string, unknown> {
     const c = this.composed();
     if (!c?.sheet) return {};
-    const id = cmd.type === "setAnnotation" || cmd.type === "setView" || cmd.type === "moveView" ? cmd.id : null;
+    const id = cmd.type === "setAnnotation" || cmd.type === "editAnnotation" || cmd.type === "setView" || cmd.type === "moveView" ? cmd.id : null;
     const a = id ? c.sheets.flatMap((x) => x.annotations).find((x) => x.id === id) : undefined;
     const problems = id ? c.sheets.flatMap((x) => x.problems).filter((p) => p.startsWith(`${id}:`)) : [];
     const failing = drawingChecks(c.sheets, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok);

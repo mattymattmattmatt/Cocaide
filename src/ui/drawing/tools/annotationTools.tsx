@@ -8,11 +8,10 @@
 
 import type { ReactNode } from "react";
 import type { Command } from "../../../doc/commands";
-import type { Annotation, Vec2 } from "../../../doc/types";
+import type { Vec2 } from "../../../doc/types";
 import { validateDocument } from "../../../doc/validate";
-import { autoCenterMarks } from "../../../drafting/centermarks";
+import { autoDimensionSheetView } from "../../../drafting/autodim";
 import { fmt } from "../../../drafting/compose";
-import type { ProjectedView } from "../../../kernel/drawingViews";
 import type { SnapKind, SnapTarget } from "../snap";
 import { annotationKind, offsetFor } from "./kinds";
 import { BaseSession } from "./session";
@@ -429,12 +428,8 @@ registerDrawingTool({
  * and a centre mark on every other circle.
  */
 export function autoDimensionView(c: DrawingToolCtx, viewId: string): Command[] {
-  const view = c.sheetDoc.views.find((v) => v.id === viewId);
-  const cv = c.sheet?.views.find((v) => v.id === viewId);
-  if (!view || !cv) return [];
-  const square = isSquare(c, viewId);
-  const mine = c.sheetDoc.annotations.filter((a) => "view" in a && a.view === viewId) as (Annotation & { view: string })[];
-  const has = (from: string, to: string) => mine.some((a) => a.type === "dimension" && ((a.from === from && a.to === to) || (a.from === to && a.to === from)));
+  // The auto-dimension engine v2 (src/drafting/autodim.ts, wave Q2A): what New drawing would put in this view that it lacks.
+  if (!c.sheet || !isSquare(c, viewId)) return [];
   const taken = new Set<string>();
   const id = (prefix: string) => {
     let n = c.nextId(prefix);
@@ -442,31 +437,7 @@ export function autoDimensionView(c: DrawingToolCtx, viewId: string): Command[] 
     taken.add(n);
     return n;
   };
-  const cmds: Command[] = [];
-  const add = (prefix: string, annotation: Record<string, unknown>) => cmds.push({ type: "setAnnotation", id: id(prefix), annotation, sheet: c.sheetDoc.id });
-  if (!square) return [];
-  if (!has("@left", "@right")) add("d", { type: "dimension", view: viewId, from: "@left", to: "@right" });
-  if (!has("@bottom", "@top")) add("d", { type: "dimension", view: viewId, from: "@bottom", to: "@top" });
-  const holes = holeFeatures(c);
-  const called: Vec2[] = [];
-  const seen = new Set<string>();
-  for (const t of c.snap?.targets ?? []) {
-    if (t.view !== viewId || t.kind !== "circle" || !t.visible || !t.feature || !holes.has(t.feature) || seen.has(t.feature)) continue;
-    seen.add(t.feature);
-    const centre = t.circle!.c;
-    called.push([cv.origin[0] + (centre[0] - cv.centre[0]) / cv.scale, cv.origin[1] + (centre[1] - cv.centre[1]) / cv.scale]);
-    if (!mine.some((a) => a.type === "hole" && a.hole === t.feature)) add("h", { type: "hole", view: viewId, hole: t.feature });
-    const box = cv.box!;
-    if (centre[0] - box.min[0] > 0.5 && !has("@left", t.feature)) add("d", { type: "dimension", view: viewId, from: "@left", to: t.feature });
-    if (centre[1] - box.min[1] > 0.5 && !has("@bottom", t.feature)) add("d", { type: "dimension", view: viewId, from: "@bottom", to: t.feature });
-  }
-  const marked = new Set(mine.flatMap((a) => (a.type === "centerMark" ? [a.at.replace(":c", ":e")] : [])));
-  for (const m of autoCenterMarks(viewId, { edges: cv.edges } as ProjectedView, () => id("c"), { hidden: view.display === "hidden", skip: called })) {
-    if (m.type === "centerMark" && marked.has(m.at.replace(":c", ":e"))) continue;
-    const { id: mid, ...annotation } = m;
-    cmds.push({ type: "setAnnotation", id: mid, annotation, sheet: c.sheetDoc.id });
-  }
-  return cmds;
+  return autoDimensionSheetView(c.doc, c.sheet, viewId, c.measurements, id).map(({ id: aid, ...annotation }) => ({ type: "setAnnotation", id: aid, annotation, sheet: c.sheetDoc.id }) as Command);
 }
 
 registerDrawingTool({

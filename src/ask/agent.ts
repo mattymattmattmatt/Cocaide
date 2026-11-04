@@ -26,7 +26,7 @@ import { planReply, readPlan, runChecks, type Plan } from "./tools/plan";
 import { referenceSection, sectionIndex } from "../mcp/sections";
 import { attachmentBlocks, attachmentNote, type Attachment } from "./attachments";
 
-const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "addSheet", "renameSheet", "deleteSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation"]);
+const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "addSheet", "renameSheet", "deleteSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation", "editAnnotation"]);
 
 /** Tools that only look: calling one after the last edit counts as checking it. */
 const LOOK_TOOLS = new Set(["measure", "partSummary", "measureBetween", "screenshot", "listFaces", "listEdges", "getSketch"]);

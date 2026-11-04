@@ -13,9 +13,24 @@
 
 import { describe, isObject, validateDocument, type Checker } from "./validate";
 import { checkDrawingTables } from "../drafting/tables/validate";
+import { toleranceProblem } from "../drafting/tolerance";
+import { GDT_CHARACTERISTICS } from "../drafting/symbols/glyphs";
 import {
   ANNOTATION_KEYS,
   ANNOTATION_TYPES,
+  ARROW_PLACES,
+  ARROW_STYLES,
+  BALLOON_SHAPES,
+  DIMENSION_KINDS,
+  GDT_MODIFIERS,
+  GDT_ROW_KEYS,
+  LAY_SYMBOLS,
+  SKETCH_LINES,
+  SURFACE_SYMBOLS,
+  VIEW_ANNOTATIONS,
+  WELD_CONTOURS,
+  WELD_SIDE_KEYS,
+  WELD_SYMBOLS,
   BREAK_KEYS,
   DETAIL_STYLES,
   DIMENSION_DIRECTIONS,
@@ -189,6 +204,8 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
   if (input.standard !== undefined && !DRAFTING_STANDARDS.includes(input.standard as never)) c.fail("drawing.standard", `must be "ISO" or "ASME" (got ${describe(input.standard)})`);
   if (input.units !== undefined && input.units !== "mm" && input.units !== "in") c.fail("drawing.units", `must be "mm" or "in" (got ${describe(input.units)})`);
   if (input.generalTolerance !== undefined) text(input.generalTolerance, "drawing.generalTolerance", c, 200);
+  if (input.precision !== undefined && (!Number.isInteger(input.precision) || (input.precision as number) < 0 || (input.precision as number) > 6)) c.fail("drawing.precision", `is the decimal places dimensions are written to, 0 to 6 (got ${describe(input.precision)})`);
+  if (input.dualUnits !== undefined && typeof input.dualUnits !== "boolean") c.fail("drawing.dualUnits", `must be true or false (got ${describe(input.dualUnits)})`);
   if (input.properties !== undefined) {
     if (!isObject(input.properties)) c.fail("drawing.properties", `must be an object of names to text (got ${describe(input.properties)})`);
     else
@@ -502,7 +519,8 @@ export function isSquareView(v: Record<string, unknown>, views: Map<string, { v:
 function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<string, Record<string, unknown>>, all: Map<string, { v: Record<string, unknown>; sheet: number }>, c: Checker): void {
   const type = a.type as Annotation["type"];
   c.keys(a, at, [...ANNOTATION_KEYS[type]]);
-  if (type !== "table" && type !== "note") {
+  const needsView = (VIEW_ANNOTATIONS as readonly string[]).includes(type) || (type === "surface" && a.general !== true && a.view !== undefined);
+  if (needsView || (a.view !== undefined && type !== "table")) {
     if (typeof a.view !== "string" || !here.has(a.view)) {
       const elsewhere = typeof a.view === "string" && all.has(a.view);
       c.fail(`${at}.view`, elsewhere ? `${a.view} is on another sheet: an annotation goes on its view's sheet` : `no view ${describe(a.view)} (views: ${[...here.keys()].join(", ") || "none"})`);
@@ -519,55 +537,343 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
     if (!g || !forms.includes(g.form)) c.fail(path, `must be ${GEOREF_HELP} (got ${describe(v)})`);
     else if (g.view !== a.view) c.fail(path, `is in view ${g.view}; it must be in the annotation's view ${String(a.view)}`);
   };
+  const bool = (key: string) => {
+    if (a[key] !== undefined && typeof a[key] !== "boolean") c.fail(`${at}.${key}`, `must be true or false (got ${describe(a[key])})`);
+  };
+  const str = (key: string, max = 200, required = false) => {
+    if (a[key] === undefined) {
+      if (required) c.fail(`${at}.${key}`, "is required");
+      return;
+    }
+    text(a[key], `${at}.${key}`, c, max);
+  };
+  const oneOf = (key: string, values: readonly string[]) => {
+    if (a[key] !== undefined && !values.includes(a[key] as string)) c.fail(`${at}.${key}`, `must be ${values.map((v) => `"${v}"`).join(", ")} (got ${describe(a[key])})`);
+  };
+  const count = (key: string) => {
+    if (a[key] !== undefined && (!Number.isInteger(a[key]) || (a[key] as number) < 1 || (a[key] as number) > 999)) c.fail(`${at}.${key}`, `must be a whole number 1 to 999 (got ${describe(a[key])})`);
+  };
+  const point = (v: unknown, path: string) => {
+    const r = pointRef(v);
+    if (!r) c.fail(path, `must be ${POINT_HELP} (got ${describe(v)})`);
+    else if (r.kind === "geo" && parseGeoRef(r.ref)!.view !== a.view) c.fail(path, `is in view ${parseGeoRef(r.ref)!.view}; a dimension's points are in its own view ${String(a.view)}`);
+  };
+  const vec = (v: unknown) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === "number" && Number.isFinite(x));
+  const pts = (key: string, min: number, max = 10000) => {
+    const p = a[key];
+    if (!Array.isArray(p) || p.length < min || p.length > max || !p.every(vec)) c.fail(`${at}.${key}`, `must be ${min}${max === min ? "" : " or more"} [x, y] points, sheet mm (got ${describe(p)})`);
+  };
+  const ownPlace = () => {
+    if (a.at !== undefined) c.vec2(a, "at", at);
+  };
+  const arrow = (key = "arrow") => oneOf(key, ARROW_STYLES);
+  const tolerance = () => {
+    if (a.tolerance === undefined) return;
+    const p = toleranceProblem(a.tolerance);
+    if (p) c.fail(`${at}.tolerance`, p);
+  };
+  const leaderTo = (v: unknown, path: string) => {
+    if (typeof v === "string") {
+      const g = parseGeoRef(v);
+      if (!g) c.fail(path, `must be a GeoRef (${GEOREF_HELP}) or a point [x, y] (got ${describe(v)})`);
+      else if (a.view !== undefined && g.view !== a.view) c.fail(path, `is in view ${g.view}; this annotation is in ${String(a.view)}`);
+    } else if (!vec(v)) c.fail(path, `must be a GeoRef or a point [x, y] (got ${describe(v)})`);
+  };
   switch (type) {
     case "dimension": {
+      const kind = (a.kind ?? "linear") as string;
+      if (!DIMENSION_KINDS.includes(kind as never)) {
+        c.fail(`${at}.kind`, `must be ${DIMENSION_KINDS.map((k) => `"${k}"`).join(", ")} (got ${describe(a.kind)})`);
+        break;
+      }
+      const refs = a.refs;
+      if (refs !== undefined) {
+        if (!Array.isArray(refs) || !refs.length) c.fail(`${at}.refs`, `must be a list of GeoRefs (got ${describe(refs)})`);
+        else refs.forEach((r, i) => geo(r, `${at}.refs[${i}]`, ["e", "v", "c", "m", "q", "point"]));
+      }
       const between = a.from !== undefined || a.to !== undefined;
-      if (a.member !== undefined) {
-        named("member", "a member");
-        if (between) c.fail(at, "a dimension is either between two points (from, to) or along a member, not both");
-        if (a.direction !== undefined && a.direction !== "aligned") c.fail(`${at}.direction`, `a member's length is dimensioned along it (got ${describe(a.direction)})`);
-      } else {
-        for (const k of ["from", "to"] as const) {
-          const r = pointRef(a[k]);
-          if (!r) c.fail(`${at}.${k}`, `must be ${POINT_HELP} (got ${describe(a[k])})`);
-          else if (r.kind === "geo" && parseGeoRef(r.ref)!.view !== a.view) c.fail(`${at}.${k}`, `is in view ${parseGeoRef(r.ref)!.view}; a dimension's points are in its own view ${String(a.view)}`);
+      const set = kind === "ordinate" || kind === "baseline" || kind === "chain";
+      const n = Array.isArray(refs) ? refs.length : 0;
+      if (set) {
+        if (between || a.member !== undefined || refs !== undefined) c.fail(at, `a ${kind} set is an origin and points (origin, points), not from/to, member or refs`);
+        if (a.origin !== undefined) point(a.origin, `${at}.origin`);
+        else if (kind !== "chain") c.fail(`${at}.origin`, `a ${kind} set measures from an origin: a point or a side of the view`);
+        if (!Array.isArray(a.points) || a.points.length < (kind === "chain" && a.origin === undefined ? 2 : 1)) c.fail(`${at}.points`, `must be the points it measures, a list (got ${describe(a.points)})`);
+        else a.points.forEach((p, i) => point(p, `${at}.points[${i}]`));
+      } else if (a.origin !== undefined || a.points !== undefined) c.fail(at, `origin and points are for ordinate, baseline and chain sets, not a ${kind} dimension`);
+      if (kind === "linear") {
+        if (a.member !== undefined) {
+          named("member", "a member");
+          if (between || refs !== undefined) c.fail(at, "a dimension is between two points (from, to), along a member, or on GeoRefs (refs): one of them");
+          if (a.direction !== undefined && a.direction !== "aligned") c.fail(`${at}.direction`, `a member's length is dimensioned along it (got ${describe(a.direction)})`);
+        } else if (refs !== undefined) {
+          if (between) c.fail(at, "a dimension is between two points (from, to) or on GeoRefs (refs), not both");
+          if (n > 2) c.fail(`${at}.refs`, "a linear dimension is on one edge or between two GeoRefs");
+        } else {
+          for (const k of ["from", "to"] as const) point(a[k], `${at}.${k}`);
+          if (typeof a.from === "string" && a.from === a.to) c.fail(at, `runs from ${a.from} to itself`);
         }
-        if (typeof a.from === "string" && a.from === a.to) c.fail(at, `runs from ${a.from} to itself`);
+      } else if (!set) {
+        if (between || a.member !== undefined) c.fail(at, `a ${kind} dimension is on its GeoRefs (refs), not from/to or a member`);
+        const want: Record<string, string> = {
+          angular: "two edges or three points",
+          radius: "one arc or circle",
+          diameter: "one circle, or a cylinder's two sides",
+          arcLength: "one arc",
+          chamfer: "one chamfer edge",
+          pathLength: "one or more edges",
+        };
+        const ok = kind === "angular" ? n === 2 || n === 3 : kind === "diameter" ? n === 1 || n === 2 : kind === "pathLength" ? n >= 1 : n === 1;
+        if (!ok) c.fail(`${at}.refs`, `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} dimension is on ${want[kind]} (got ${n} GeoRef${n === 1 ? "" : "s"})`);
       }
-      if (a.direction !== undefined && !DIMENSION_DIRECTIONS.includes(a.direction as never)) {
-        c.fail(`${at}.direction`, `must be "horizontal", "vertical" or "aligned" (got ${describe(a.direction)})`);
-      }
+      if (a.direction !== undefined && !DIMENSION_DIRECTIONS.includes(a.direction as never)) c.fail(`${at}.direction`, `must be "horizontal", "vertical" or "aligned" (got ${describe(a.direction)})`);
       if (a.offset !== undefined) c.num(a, "offset", at, {});
+      ownPlace();
+      for (const k of ["major", "jog", "flip", "typ", "inspection", "dual"]) bool(k);
+      if (a.major !== undefined && kind !== "angular") c.fail(`${at}.major`, "is for an angular dimension");
+      if (a.jog !== undefined && kind !== "radius") c.fail(`${at}.jog`, "is for a radius dimension");
+      oneOf("arrows", ARROW_PLACES);
+      str("prefix", 40);
+      str("suffix", 80);
+      count("count");
+      if (a.precision !== undefined && (!Number.isInteger(a.precision) || (a.precision as number) < 0 || (a.precision as number) > 6)) c.fail(`${at}.precision`, `is decimal places, 0 to 6 (got ${describe(a.precision)})`);
+      tolerance();
+      if (a.last !== undefined) {
+        const l = a.last as Record<string, unknown>;
+        if (!isObject(l) || !Array.isArray(l.pts) || !l.pts.every(vec) || typeof l.text !== "string") c.fail(`${at}.last`, `must be { pts: [[x, y], ...], text } (where it was last drawn; got ${describe(a.last)})`);
+      }
       break;
     }
     case "hole":
       named("hole", "a hole feature");
-      if (a.at !== undefined) c.vec2(a, "at", at);
+      if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "c"]);
+      ownPlace();
+      count("count");
+      bool("pattern");
+      str("prefix", 40);
+      str("suffix", 80);
+      tolerance();
       break;
-    case "balloon":
-      named("member", "a member");
-      if (a.at !== undefined) c.vec2(a, "at", at);
+    case "balloon": {
+      const by = ["member", "body", "item"].filter((k) => a[k] !== undefined);
+      if (by.length !== 1) c.fail(at, `a balloon numbers a member, a body or an item: one of them (got ${by.length ? by.join(", ") : "none"})`);
+      if (a.member !== undefined) named("member", "a member");
+      if (a.body !== undefined) str("body", 80);
+      if (a.item !== undefined) count("item");
+      if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "v", "c", "m", "q", "point"]);
+      ownPlace();
+      oneOf("shape", BALLOON_SHAPES);
+      if (a.size !== undefined) {
+        const s = c.num(a, "size", at, { positive: true });
+        if (s !== undefined && (s < 5 || s > 30)) c.fail(`${at}.size`, `a balloon is 5 to 30 mm across (got ${s})`);
+      }
+      if (a.quantity !== undefined && typeof a.quantity !== "boolean") count("quantity");
+      if (a.stack !== undefined && (!Array.isArray(a.stack) || !a.stack.every((x) => (typeof x === "string" && ID.test(x)) || (Number.isInteger(x) && (x as number) > 0)))) c.fail(`${at}.stack`, `must be members, bodies or item numbers stacked under it (got ${describe(a.stack)})`);
+      arrow();
       break;
-    case "weld":
-      named("weld", "a weld in the weld table");
-      if (a.at !== undefined) c.vec2(a, "at", at);
+    }
+    case "weld": {
+      if (a.weld !== undefined) named("weld", "a weld in the weld table");
+      if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "v", "c", "m", "q", "point"]);
+      if (a.weld === undefined && a.on === undefined) c.fail(at, "a weld symbol is a weld of the weld table (weld) or points at the joint (on)");
+      if (a.weld === undefined && a.arrowSide === undefined && a.otherSide === undefined) c.fail(at, "a weld symbol has a weld on the arrow side, the other side or both (arrowSide, otherSide)");
+      ownPlace();
+      const side = (v: unknown, path: string) => {
+        if (!isObject(v)) return c.fail(path, `must be { symbol, size?, length?, count?, pitch?, angle?, root?, contour?, finish? } (got ${describe(v)})`);
+        c.keys(v, path, [...WELD_SIDE_KEYS]);
+        if (!WELD_SYMBOLS.includes(v.symbol as never)) c.fail(`${path}.symbol`, `must be ${WELD_SYMBOLS.map((s) => `"${s}"`).join(", ")} (got ${describe(v.symbol)})`);
+        if (v.size !== undefined && !(typeof v.size === "number" && v.size > 0) && !(typeof v.size === "string" && /^[asz]?\d+(\.\d+)?$/.test(v.size) || (typeof v.size === "string" && /^\(?\d+(\.\d+)?\)?$/.test(v.size)))) c.fail(`${path}.size`, `must be mm, or "a5" (throat), "z7" (leg), "s6" (penetration) (got ${describe(v.size)})`);
+        for (const k of ["length", "pitch", "root"]) if (v[k] !== undefined) c.num(v, k, path, { positive: true });
+        if (v.angle !== undefined) {
+          const an = c.num(v, "angle", path, { positive: true });
+          if (an !== undefined && an >= 180) c.fail(`${path}.angle`, "a groove's angle is under 180°");
+        }
+        if (v.count !== undefined && (!Number.isInteger(v.count) || (v.count as number) < 1)) c.fail(`${path}.count`, `must be a whole number of welds (got ${describe(v.count)})`);
+        if (v.pitch !== undefined && typeof v.length === "number" && (v.pitch as number) <= v.length) c.fail(`${path}.pitch`, `is centre to centre: more than the length ${v.length}`);
+        if (v.contour !== undefined && !WELD_CONTOURS.includes(v.contour as never)) c.fail(`${path}.contour`, `must be "flush", "convex" or "concave" (got ${describe(v.contour)})`);
+        if (v.finish !== undefined && (typeof v.finish !== "string" || !/^[A-Z]$/.test(v.finish))) c.fail(`${path}.finish`, `must be a capital letter (C chip, G grind, M machine, R roll, H hammer, P peen; got ${describe(v.finish)})`);
+      };
+      if (a.arrowSide !== undefined) side(a.arrowSide, `${at}.arrowSide`);
+      if (a.otherSide !== undefined) side(a.otherSide, `${at}.otherSide`);
+      for (const k of ["staggered", "allAround", "field"]) bool(k);
+      str("process", 40);
+      str("reference", 60);
+      if (a.more !== undefined) {
+        if (!Array.isArray(a.more)) c.fail(`${at}.more`, `must be a list of reference lines { arrowSide?, otherSide? } (got ${describe(a.more)})`);
+        else
+          a.more.forEach((m, i) => {
+            if (!isObject(m)) return c.fail(`${at}.more[${i}]`, "must be { arrowSide?, otherSide? }");
+            c.keys(m, `${at}.more[${i}]`, ["arrowSide", "otherSide"]);
+            if (m.arrowSide !== undefined) side(m.arrowSide, `${at}.more[${i}].arrowSide`);
+            if (m.otherSide !== undefined) side(m.otherSide, `${at}.more[${i}].otherSide`);
+          });
+      }
       break;
+    }
     case "table":
       if (!DRAWING_TABLES.includes(a.table as never)) c.fail(`${at}.table`, `must be "cutList" or "welds" (got ${describe(a.table)})`);
-      if (a.at !== undefined) c.vec2(a, "at", at);
+      ownPlace();
       break;
     case "note":
-      if (typeof a.text !== "string" || !a.text.trim()) c.fail(`${at}.text`, `must be the note's text (got ${describe(a.text)})`);
+    case "text":
+      if (typeof a.text !== "string" || !a.text.trim()) c.fail(`${at}.text`, `must be the ${type}'s text (got ${describe(a.text)})`);
+      else if (a.text.length > 4000) c.fail(`${at}.text`, `is ${a.text.length} characters; at most 4000`);
       c.vec2(a, "at", at);
+      if (a.height !== undefined) {
+        const h = c.num(a, "height", at, { positive: true });
+        if (h !== undefined && (h < 1.8 || h > 20)) c.fail(`${at}.height`, `lettering is 1.8 to 20 mm high (ISO 3098: 2.5, 3.5, 5, 7, 10; got ${h})`);
+      }
+      if (a.angle !== undefined) c.num(a, "angle", at, {});
+      for (const k of ["bold", "italic", "underline", "numbered", "frame"]) bool(k);
+      str("title", 80);
+      oneOf("anchor", ["start", "middle", "end"]);
+      if (a.leaders !== undefined) {
+        if (!Array.isArray(a.leaders)) c.fail(`${at}.leaders`, `must be a list of leaders { to, via?, arrow?, spline? } (got ${describe(a.leaders)})`);
+        else
+          a.leaders.forEach((l, i) => {
+            const lp = `${at}.leaders[${i}]`;
+            if (!isObject(l)) return c.fail(lp, "must be a leader { to, via?, arrow?, spline? }");
+            c.keys(l, lp, ["to", "via", "arrow", "spline"]);
+            leaderTo(l.to, `${lp}.to`);
+            if (l.via !== undefined && (!Array.isArray(l.via) || !l.via.every(vec))) c.fail(`${lp}.via`, "must be a list of [x, y] bends");
+            if (l.arrow !== undefined && !ARROW_STYLES.includes(l.arrow as never)) c.fail(`${lp}.arrow`, `must be ${ARROW_STYLES.map((s) => `"${s}"`).join(", ")}`);
+            if (l.spline !== undefined && typeof l.spline !== "boolean") c.fail(`${lp}.spline`, "must be true or false");
+          });
+      }
       break;
     case "centerMark":
       geo(a.at, `${at}.at`, ["e", "c"]);
       if (a.extend !== undefined) c.num(a, "extend", at, { nonNegative: true });
+      oneOf("style", ["lines", "cross", "pitch"]);
       break;
     case "centerline":
       if (!Array.isArray(a.between) || a.between.length !== 2) c.fail(`${at}.between`, `must be two GeoRefs: two edges (a cylinder's sides) or two points (got ${describe(a.between)})`);
       else a.between.forEach((g, i) => geo(g, `${at}.between[${i}]`, ["e", "v", "c", "m", "q", "point"]));
       if (a.extend !== undefined) c.num(a, "extend", at, { nonNegative: true });
+      break;
+    case "gdt": {
+      if (!Array.isArray(a.rows) || !a.rows.length || a.rows.length > 4) {
+        c.fail(`${at}.rows`, `must be one to four rows { characteristic, tolerance, diameter?, material?, modifiers?, datums? } (got ${describe(a.rows)})`);
+        break;
+      }
+      a.rows.forEach((r, i) => {
+        const rp = `${at}.rows[${i}]`;
+        if (!isObject(r)) return c.fail(rp, "must be a row { characteristic, tolerance, ... }");
+        c.keys(r, rp, [...GDT_ROW_KEYS]);
+        if (!GDT_CHARACTERISTICS.includes(r.characteristic as never)) c.fail(`${rp}.characteristic`, `must be ${GDT_CHARACTERISTICS.map((x) => `"${x}"`).join(", ")} (got ${describe(r.characteristic)})`);
+        c.num(r, "tolerance", rp, { positive: true });
+        for (const k of ["diameter", "spherical"]) if (r[k] !== undefined && typeof r[k] !== "boolean") c.fail(`${rp}.${k}`, "must be true or false");
+        if (r.diameter === true && r.spherical === true) c.fail(rp, "a zone is Ø or SØ, not both");
+        if (r.material !== undefined && r.material !== "M" && r.material !== "L") c.fail(`${rp}.material`, `must be "M" (maximum material) or "L" (least) (got ${describe(r.material)})`);
+        if (r.modifiers !== undefined && (!Array.isArray(r.modifiers) || !r.modifiers.every((m) => GDT_MODIFIERS.includes(m as never)))) c.fail(`${rp}.modifiers`, `must be a list of ${GDT_MODIFIERS.map((m) => `"${m}"`).join(", ")} (got ${describe(r.modifiers)})`);
+        for (const k of ["projected", "unequal", "per"]) if (r[k] !== undefined) c.num(r, k, rp, { positive: true });
+        if (r.projected !== undefined && !(Array.isArray(r.modifiers) && r.modifiers.includes("P"))) c.fail(`${rp}.projected`, 'is Ⓟ\'s height: add "P" to modifiers');
+        if (r.unequal !== undefined && !(Array.isArray(r.modifiers) && r.modifiers.includes("U"))) c.fail(`${rp}.unequal`, 'is Ⓤ\'s amount: add "U" to modifiers');
+        if (r.datums !== undefined) {
+          if (!Array.isArray(r.datums) || r.datums.length > 3) c.fail(`${rp}.datums`, `must be up to three datums { label, modifier? } (got ${describe(r.datums)})`);
+          else
+            r.datums.forEach((d, j) => {
+              const dp = `${rp}.datums[${j}]`;
+              if (!isObject(d)) return c.fail(dp, 'must be { label: "A", modifier?: "M" | "L" | "S" }');
+              c.keys(d, dp, ["label", "modifier"]);
+              if (typeof d.label !== "string" || !/^[A-HJ-NPR-Z]{1,2}\d*(-[A-HJ-NPR-Z]{1,2}\d*)?$/.test(d.label)) c.fail(`${dp}.label`, `must be a datum letter ("A", "B", or "A-B" for a common datum; I, O and Q are not used; got ${describe(d.label)})`);
+              if (d.modifier !== undefined && !["M", "L", "S"].includes(d.modifier as string)) c.fail(`${dp}.modifier`, `must be "M", "L" or "S" (got ${describe(d.modifier)})`);
+            });
+        }
+      });
+      bool("composite");
+      if (a.composite === true && Array.isArray(a.rows) && (a.rows as Record<string, unknown>[]).some((r) => isObject(r) && r.characteristic !== (a.rows as Record<string, unknown>[])[0].characteristic)) c.fail(`${at}.composite`, "a composite frame's rows share one characteristic (position or profile)");
+      if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "v", "c", "m", "q", "point"]);
+      if (a.dimension !== undefined) named("dimension", "a dimension on the sheet");
+      if (a.extension !== undefined && a.extension !== 0 && a.extension !== 1) c.fail(`${at}.extension`, "must be 0 or 1: the dimension's first or second extension line");
+      if (a.extension !== undefined && a.dimension === undefined) c.fail(`${at}.extension`, "is a dimension's extension line: give dimension too");
+      if (a.on === undefined && a.dimension === undefined && a.at === undefined) c.fail(at, "a frame is on a feature (on), a dimension (dimension) or placed (at)");
+      ownPlace();
+      count("count");
+      str("above", 80);
+      str("below", 80);
+      arrow();
+      break;
+    }
+    case "datum":
+      if (typeof a.label !== "string" || !/^[A-HJ-NPR-Z]{1,2}$/.test(a.label)) c.fail(`${at}.label`, `must be a datum letter "A", "B" ... (I, O and Q are not used; got ${describe(a.label)})`);
+      if ([a.on, a.dimension, a.gdt].filter((x) => x !== undefined).length !== 1) c.fail(at, "a datum is on a surface (on), a dimension (dimension) or a frame (gdt): one of them");
+      if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "v", "m", "point"]);
+      if (a.dimension !== undefined) named("dimension", "a dimension on the sheet");
+      if (a.gdt !== undefined) named("gdt", "a feature control frame on the sheet");
+      ownPlace();
+      bool("open");
+      break;
+    case "datumTarget":
+      if (typeof a.label !== "string" || !/^[A-HJ-NPR-Z]{1,2}\d{1,2}$/.test(a.label)) c.fail(`${at}.label`, `must be a datum letter and a number, "A1" (got ${describe(a.label)})`);
+      oneOf("target", ["point", "line", "area"]);
+      if (a.target === undefined) c.fail(`${at}.target`, 'must be "point", "line" or "area"');
+      geo(a.on, `${at}.on`, ["e", "v", "c", "m", "q", "point"]);
+      if (a.size !== undefined && !(typeof a.size === "number" && a.size > 0) && !(Array.isArray(a.size) && a.size.length === 2 && a.size.every((x) => typeof x === "number" && x > 0))) c.fail(`${at}.size`, `must be a diameter or [width, height], mm (got ${describe(a.size)})`);
+      if (a.size !== undefined && a.target !== "area") c.fail(`${at}.size`, "is an area target's size");
+      if (a.length !== undefined) c.num(a, "length", at, { positive: true });
+      ownPlace();
+      break;
+    case "surface":
+      oneOf("symbol", SURFACE_SYMBOLS);
+      if (a.values !== undefined && (!Array.isArray(a.values) || a.values.length > 3 || !a.values.every((x) => typeof x === "string" && x.length <= 40))) c.fail(`${at}.values`, `must be up to three requirements like "Ra 1.6" (got ${describe(a.values)})`);
+      str("process", 60);
+      oneOf("lay", LAY_SYMBOLS);
+      if (a.allowance !== undefined) c.num(a, "allowance", at, { positive: true });
+      for (const k of ["allAround", "general"]) bool(k);
+      if (a.general === true) {
+        if (a.on !== undefined || a.dimension !== undefined) c.fail(at, "a general surface requirement stands by the title block: no on or dimension");
+      } else {
+        if (a.view === undefined) c.fail(`${at}.view`, "a surface symbol is in a view (or general: true for the drawing's general requirement)");
+        if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "v", "m", "point"]);
+        if (a.dimension !== undefined) named("dimension", "a dimension on the sheet");
+        if (a.on === undefined && a.dimension === undefined) c.fail(at, "a surface symbol is on a surface (on) or a dimension's extension line (dimension)");
+      }
+      if (a.extension !== undefined && a.extension !== 0 && a.extension !== 1) c.fail(`${at}.extension`, "must be 0 or 1");
+      ownPlace();
+      break;
+    case "cosmeticThread":
+      named("hole", "a tapped hole or thread feature");
+      if (a.on !== undefined) geo(a.on, `${at}.on`, ["e", "v", "c", "m", "q", "point"]);
+      ownPlace();
+      break;
+    case "revisionCloud":
+      pts("pts", 3);
+      str("rev", 10);
+      ownPlace();
+      if (a.arc !== undefined) {
+        const r = c.num(a, "arc", at, { positive: true });
+        if (r !== undefined && (r < 1 || r > 50)) c.fail(`${at}.arc`, `the cloud's arcs are 1 to 50 mm (got ${r})`);
+      }
+      break;
+    case "leader":
+      leaderTo(a.to, `${at}.to`);
+      ownPlace();
+      if (a.text !== undefined) str("text", 500);
+      if (a.via !== undefined && (!Array.isArray(a.via) || !a.via.every(vec))) c.fail(`${at}.via`, "must be a list of [x, y] bends");
+      arrow();
+      bool("spline");
+      break;
+    case "line":
+      pts("pts", 2, 2);
+      oneOf("line", SKETCH_LINES);
+      break;
+    case "sketch":
+      if (!Array.isArray(a.items) || !a.items.length) c.fail(`${at}.items`, `must be a list of sketch items (lines, arcs, circles, rects, polylines, texts; got ${describe(a.items)})`);
+      else
+        a.items.forEach((it, i) => {
+          const ip = `${at}.items[${i}]`;
+          if (!isObject(it)) return c.fail(ip, "must be a sketch item { kind, ... }");
+          const keys: Record<string, string[]> = { line: ["a", "b"], arc: ["c", "r", "start", "end"], circle: ["c", "r"], rect: ["a", "b"], polyline: ["pts", "closed"], text: ["at", "text", "height", "angle"] };
+          if (!(typeof it.kind === "string" && it.kind in keys)) return c.fail(`${ip}.kind`, `must be "line", "arc", "circle", "rect", "polyline" or "text" (got ${describe(it.kind)})`);
+          c.keys(it, ip, ["kind", ...keys[it.kind as string], ...(it.kind !== "text" ? ["line"] : [])]);
+          for (const k of ["a", "b", "c", "at"]) if (keys[it.kind as string].includes(k) && !vec(it[k])) c.fail(`${ip}.${k}`, "must be a point [x, y]");
+          if (it.r !== undefined) c.num(it, "r", ip, { positive: true });
+          for (const k of ["start", "end", "height", "angle"]) if (it[k] !== undefined) c.num(it, k, ip, {});
+          if (it.kind === "polyline" && (!Array.isArray(it.pts) || it.pts.length < 2 || !it.pts.every(vec))) c.fail(`${ip}.pts`, "must be two or more [x, y] points");
+          if (it.kind === "text" && (typeof it.text !== "string" || !it.text)) c.fail(`${ip}.text`, "must be text");
+          if (it.line !== undefined && !SKETCH_LINES.includes(it.line as never)) c.fail(`${ip}.line`, `must be ${SKETCH_LINES.map((l) => `"${l}"`).join(", ")}`);
+        });
       break;
   }
 }
@@ -678,9 +984,9 @@ export function annotationTargetProblem(a: Annotation, t: DrawingTargets): strin
     case "hole":
       return t.holes.has(a.hole) ? null : `no hole "${a.hole}"${list(t.holes)}`;
     case "balloon":
-      return member(a.member);
+      return a.member ? member(a.member) : null;
     case "weld":
-      return t.welds.has(a.weld) ? null : `no weld "${a.weld}" in the weld table${list(t.welds)}`;
+      return !a.weld || t.welds.has(a.weld) ? null : `no weld "${a.weld}" in the weld table${list(t.welds)}`;
     default:
       return null;
   }

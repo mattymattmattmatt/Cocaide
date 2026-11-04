@@ -5,6 +5,10 @@ import { PLUGIN_OPS, type PluginFeature } from "../features/types";
 import type { HoleFit, HoleKind, ThreadSpec } from "../features/hole/standards";
 import type { DrawingTable } from "../drafting/tables/types";
 import type { CutListSettings } from "./cutListSettings";
+import type { Tolerance } from "../drafting/tolerance";
+import type { GdtCharacteristic } from "../drafting/symbols/glyphs";
+export type { Tolerance } from "../drafting/tolerance";
+export type { GdtCharacteristic } from "../drafting/symbols/glyphs";
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -66,8 +70,12 @@ export interface Drawing {
   properties?: Record<string, string>;
   /** The revision history, newest last: the revision block lists it. */
   revisions?: Revision[];
+  /** Decimal places dimensions are written to unless they say (default: as few as they need, up to one). */
+  precision?: number;
+  /** Dimensions in the other unit too, in brackets ("25 [0.984]"). */
+  dualUnits?: boolean;
 }
-export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions"] as const;
+export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions", "precision", "dualUnits"] as const;
 export const DRAFTING_STANDARDS = ["ISO", "ASME"] as const;
 export type DraftingStandard = (typeof DRAFTING_STANDARDS)[number];
 
@@ -357,51 +365,468 @@ export const OUTLINE_SIDES = ["@left", "@right", "@top", "@bottom"] as const;
 export const DIMENSION_DIRECTIONS = ["horizontal", "vertical", "aligned"] as const;
 export type DimensionDirection = (typeof DIMENSION_DIRECTIONS)[number];
 
+// ------------------------------------------------------------ annotations (Phase Q wave Q2A)
+//
+// Every annotation is measured on the rebuild: none takes a value. Places
+// (`at`) of annotations in a view are sheet mm from the view's centre, so
+// they move with it; a sheet's own (a note, a table, free sketching) are
+// sheet mm from its lower left corner. Where an annotation is attached is a
+// GeoRef ("front:ehole_1/c0"), a dimension's id, or both.
+
 /**
- * A dimension, measured on the rebuild: between two points, or a member's cut
- * length along it (`member`), long point to long point.
+ * What a dimension measures (default "linear"):
+ *  linear     two points (from, to), an edge's length (refs [edge]), two parallel edges' distance, a point's from an edge;
+ *  angular    two edges (refs [edge, edge]) or three points (refs [end, vertex, end]); `major` for the reflex side;
+ *  radius     an arc or circle (refs [edge]): "R5";
+ *  diameter   a circle (refs [edge]): "Ø10"; or a cylinder's two sides seen from the side (refs [edge, edge]): a linear "Ø";
+ *  ordinate   an origin and points, each its distance from the origin along one direction;
+ *  baseline   an origin and points, each its own dimension from the origin, stacked;
+ *  chain      points in a row, each dimension from the one before;
+ *  arcLength  an arc's length along it (refs [edge]): "⌒25.1";
+ *  chamfer    a chamfer's edge (refs [edge]): "C2" or "2 × 45°";
+ *  pathLength edges end to end (refs [edge, ...]): their length together.
+ */
+export const DIMENSION_KINDS = ["linear", "angular", "radius", "diameter", "ordinate", "baseline", "chain", "arcLength", "chamfer", "pathLength"] as const;
+export type DimensionKind = (typeof DIMENSION_KINDS)[number];
+/** Where a dimension's arrows go: inside its extension lines (or the circle), outside them, or wherever they fit (default). */
+export const ARROW_PLACES = ["auto", "inside", "outside"] as const;
+export type ArrowPlace = (typeof ARROW_PLACES)[number];
+
+/**
+ * A dimension, measured on the rebuild: between two points, a member's cut
+ * length along it (`member`), or what its GeoRefs are (`refs`, by `kind`).
  */
 export interface DimensionAnnotation {
   id: string;
   type: "dimension";
   view: string;
+  kind?: DimensionKind;
   from?: DrawingPoint;
   to?: DrawingPoint;
   member?: string;
+  /** The edges, points or circles it measures (see DIMENSION_KINDS). */
+  refs?: GeoRef[];
+  /** ordinate, baseline: the zero; chain: the first point. */
+  origin?: DrawingPoint;
+  /** ordinate, baseline, chain: the points measured. */
+  points?: DrawingPoint[];
   /** Default: horizontal when the points are further apart across the view than up it, else vertical. A member's is along it. */
   direction?: DimensionDirection;
   /** Sheet mm from the part to the dimension line; the sign picks the side (+ above or right). Default: stacked outside the view. */
   offset?: number;
+  /** The text's place, sheet mm from the view's centre (dragged there). A linear dimension's line goes through it. */
+  at?: Vec2;
+  /** angular: the reflex angle (over 180°) instead of the one under. */
+  major?: boolean;
+  /** radius: a jogged leader to a centre off the view (a large, foreshortened radius). */
+  jog?: boolean;
+  arrows?: ArrowPlace;
+  /** The text and leader on the other side. */
+  flip?: boolean;
+  /** Before the value ("2×", "SR", "<MOD-DIAM>"): tokens and drafting characters allowed. */
+  prefix?: string;
+  /** After it ("THRU", "TYP"). */
+  suffix?: string;
+  /** How many alike features it stands for: "4×" before it. */
+  count?: number;
+  /** "TYP" after it: the same size wherever it recurs. */
+  typ?: boolean;
+  /** In an inspection oval: checked at inspection (ASME). */
+  inspection?: boolean;
+  tolerance?: Tolerance;
+  /** Decimal places (default the drawing's). */
+  precision?: number;
+  /** The other unit too, in brackets (default the drawing's `dualUnits`). */
+  dual?: boolean;
+  /** Where it was last drawn, sheet mm from the view's centre (its two feet and its text): a dangling dimension is drawn there, in the warning colour. */
+  last?: AnnotationPlace;
 }
 
-/** "Ø8 THRU" on a hole the view sees as a circle; "4× Ø8 THRU" when it is patterned. */
+/** Where an annotation was last drawn: points (sheet mm from its view's centre) and what it said. */
+export interface AnnotationPlace {
+  pts: Vec2[];
+  text: string;
+}
+
+/** The leader ends (arrowheads) a leader may have (ISO 128-22): filled closed, open, an integral dot (on a surface), none. */
+export const ARROW_STYLES = ["closed", "open", "dot", "none", "slash"] as const;
+export type ArrowStyle = (typeof ARROW_STYLES)[number];
+
+/** A leader from an annotation's text to what it points at, through bends; `spline` draws it smooth. */
+export interface Leader {
+  /** What it points at: a GeoRef, or a point (sheet mm: from the view's centre for a view's annotation, else from the sheet's corner). */
+  to: GeoRef | Vec2;
+  /** Bends between the text and `to`, the same mm as `to`. */
+  via?: Vec2[];
+  arrow?: ArrowStyle;
+  spline?: boolean;
+}
+
+/** "4× Ø8 THRU" on a hole the view sees as a circle: from the hole feature (Hole Wizard), its counterbore ⌴, countersink ⌵, depth ↧ and thread. */
 export interface HoleAnnotation {
   id: string;
   type: "hole";
   view: string;
   hole: string;
+  /** Which of its holes the leader points at (a circle GeoRef). Default: the one nearest the corner it is called out from. */
+  on?: GeoRef;
   /** The text, from the view's centre, sheet mm. Default: beside the hole. */
   at?: Vec2;
+  /** How many it stands for (default: the feature's holes and their pattern copies). */
+  count?: number;
+  /** "EQ SP" and the pitch circle (a circular pattern): default on for a circular pattern. */
+  pattern?: boolean;
+  prefix?: string;
+  suffix?: string;
+  /** On the bore's diameter: "Ø8 H7". */
+  tolerance?: Tolerance;
 }
 
-/** A member's cut list item number in a circle, with a leader to the member. */
+/** The balloon shapes (ISO 6433 circle, and the shapes BOMs use): circle, hexagon, triangle, square box, a circle split across (item over quantity), flag. */
+export const BALLOON_SHAPES = ["circle", "hexagon", "triangle", "box", "split", "flag"] as const;
+export type BalloonShape = (typeof BALLOON_SHAPES)[number];
+
+/** A cut list (or BOM) item number in a balloon, with a leader to its member or body. */
 export interface BalloonAnnotation {
   id: string;
   type: "balloon";
   view: string;
-  member: string;
+  /** The member it numbers (or its body's name). */
+  member?: string;
+  /** A body (a plate, a part of a multibody part) by name. */
+  body?: string;
+  /** Or the item number itself. */
+  item?: number;
+  /** What the leader points at instead of the member's longest visible line. */
+  on?: GeoRef;
   /** The balloon, from the view's centre, sheet mm. Default: outside the view, near the member. */
   at?: Vec2;
+  shape?: BalloonShape;
+  /** Its diameter, mm (default 10; 12 with three digits). */
+  size?: number;
+  /** "2×" beside it (true: the item's quantity). A split balloon writes it in its lower half. */
+  quantity?: number | boolean;
+  /** More items stacked under it, sharing its leader (members, bodies or item numbers). */
+  stack?: (string | number)[];
+  arrow?: ArrowStyle;
 }
 
-/** A weld from the weld table, as a symbol with an arrow to where its bodies meet. */
+/**
+ * The weld symbol's elementary symbols (ISO 2553 / AWS A2.4): fillet, butt
+ * welds (square, V, bevel, U, J, flare-V, flare-bevel), plug or slot, spot,
+ * seam, edge, back or backing weld, surfacing, stud.
+ */
+export const WELD_SYMBOLS = ["fillet", "square", "v", "bevel", "u", "j", "flareV", "flareBevel", "plug", "slot", "spot", "seam", "edge", "backWeld", "backing", "surfacing", "stud"] as const;
+export type WeldSymbolType = (typeof WELD_SYMBOLS)[number];
+export const WELD_CONTOURS = ["flush", "convex", "concave"] as const;
+/** One side's weld: its symbol and what it says. Sizes are mm. */
+export interface WeldSymbolSide {
+  symbol: WeldSymbolType;
+  /** Fillet leg (z) or throat (a): "a5" or "z7"; a butt weld's depth of penetration (s). A number is the throat a (ISO) or leg (AWS). */
+  size?: number | string;
+  /** Length of each weld (an intermittent weld's), mm. */
+  length?: number;
+  /** Intermittent: how many welds, and their pitch (centre to centre; ISO writes the gap (e) between). */
+  count?: number;
+  pitch?: number;
+  /** A groove's angle, degrees, and root opening, mm. */
+  angle?: number;
+  root?: number;
+  contour?: (typeof WELD_CONTOURS)[number];
+  /** How it is finished (ISO 1302's letters, AWS: C chip, G grind, M machine, R roll, H hammer, P peen). */
+  finish?: string;
+}
+export const WELD_SIDE_KEYS = ["symbol", "size", "length", "count", "pitch", "angle", "root", "contour", "finish"] as const;
+
+/**
+ * A weld symbol (ISO 2553 / AWS A2.4): a reference line (ISO adds a dashed
+ * identification line for the other side), an arrow to the joint, a symbol
+ * on the arrow side, the other side or both, all-around, field weld, a tail
+ * with the process and a reference, and more reference lines for welds made
+ * in order. `weld` takes it from the weld table (and keeps up with it).
+ */
 export interface WeldAnnotation {
   id: string;
   type: "weld";
   view: string;
-  weld: string;
+  /** The weld table's weld: its type, size, length, sides, process. */
+  weld?: string;
+  /** What the arrow points at (an edge or point GeoRef). Default: where the weld's bodies meet. */
+  on?: GeoRef;
   /** The symbol's reference line, from the view's centre, sheet mm. */
   at?: Vec2;
+  arrowSide?: WeldSymbolSide;
+  otherSide?: WeldSymbolSide;
+  /** Intermittent welds on both sides, staggered. */
+  staggered?: boolean;
+  allAround?: boolean;
+  /** Welded on site (a flag at the knee). */
+  field?: boolean;
+  /** The process (ISO 4063 number "135", or AWS "GMAW") and a reference (a WPS), in the tail. */
+  process?: string;
+  reference?: string;
+  /** More reference lines, the next welds in order, above the first. */
+  more?: { arrowSide?: WeldSymbolSide; otherSide?: WeldSymbolSide }[];
+}
+
+/**
+ * Text on the sheet: rich (**bold**, *italic*, __underlined__, the symbols
+ * palette's tokens <MOD-DIAM>), linked properties ($PRP:"partNumber",
+ * $PRPMODEL:"mass", $PRPSHEET:"scale") read live, with leaders to what it is
+ * about, or a numbered block of general notes ("NOTES: 1. ...").
+ */
+export interface NoteAnnotation {
+  id: string;
+  type: "note";
+  text: string;
+  /** Where the text starts on the sheet (its first line's baseline), sheet mm from the corner; in a view, from its centre. */
+  at: Vec2;
+  /** A view it sits in (it moves with it, and its leaders' GeoRefs are in it). */
+  view?: string;
+  leaders?: Leader[];
+  /** Capital height, mm (default 3.5; 5 and 7 for titles). */
+  height?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  /** A numbered list: each line its number ("1. "), under `title` ("NOTES:"). */
+  numbered?: boolean;
+  title?: string;
+  /** A box round it. */
+  frame?: boolean;
+  /** Degrees, counter-clockwise. */
+  angle?: number;
+}
+
+/** A centre mark: a cross on a circle's centre, its arms a little past the circle (thin chain lines). A new view gets one for every circle it sees end on; delete the ones not wanted. */
+export interface CenterMarkAnnotation {
+  id: string;
+  type: "centerMark";
+  view: string;
+  /** The circle or arc: "<view>:e<edgeKey>", or its centre "<view>:c<edgeKey>". */
+  at: GeoRef;
+  /** How far the arms run past the circle, sheet mm (default 2.5). */
+  extend?: number;
+  /** "lines" (centre lines across the circle, the default), "cross" (the small cross only), "pitch" (a pattern's: the arc of its pitch circle through it, and a radial line). */
+  style?: "lines" | "cross" | "pitch";
+}
+
+/** A centre line: midway between two edges (a cylinder's sides, seen from the side), or through two points (circle centres). */
+export interface CenterlineAnnotation {
+  id: string;
+  type: "centerline";
+  view: string;
+  between: [GeoRef, GeoRef];
+  /** How far it runs past the ends, sheet mm (default 2.5). */
+  extend?: number;
+}
+
+/** The ISO 1101 / ASME Y14.5 material and zone modifiers a tolerance may carry (after its value). */
+export const GDT_MODIFIERS = ["P", "F", "T", "S", "U", "CZ", "ST", "E", "I", "LE", "ACS"] as const;
+export type GdtModifier = (typeof GDT_MODIFIERS)[number];
+/** A datum in a frame: its letter (or "A-B" for a common datum), and a material modifier. */
+export interface GdtDatumRef {
+  label: string;
+  modifier?: "M" | "L" | "S";
+}
+/**
+ * One row of a feature control frame: the characteristic, its tolerance
+ * zone (Ø for a cylindrical zone, SØ spherical, the value in mm, a material
+ * modifier, other modifiers), and up to three datums.
+ */
+export interface GdtRow {
+  characteristic: GdtCharacteristic;
+  /** Ø: a cylindrical zone (position of a hole). */
+  diameter?: boolean;
+  /** SØ: a spherical zone. */
+  spherical?: boolean;
+  tolerance: number;
+  /** Ⓜ maximum or Ⓛ least material condition. */
+  material?: "M" | "L";
+  modifiers?: GdtModifier[];
+  /** Ⓟ's projected height, mm (written after it). */
+  projected?: number;
+  /** Ⓤ's unequal disposition, mm. */
+  unequal?: number;
+  /** A per-unit refinement ("0.05/100": tolerance per this length). */
+  per?: number;
+  datums?: GdtDatumRef[];
+}
+export const GDT_ROW_KEYS = ["characteristic", "diameter", "spherical", "tolerance", "material", "modifiers", "projected", "unequal", "per", "datums"] as const;
+
+/**
+ * A feature control frame (GD&T), attached to a feature (a leader to an edge,
+ * a surface, a circle), under a dimension's text (its size's feature), or to
+ * a dimension's extension line.
+ */
+export interface GdtAnnotation {
+  id: string;
+  type: "gdt";
+  view: string;
+  rows: GdtRow[];
+  /** Two or more rows of one characteristic sharing its symbol (a composite frame); else each row its own (stacked). */
+  composite?: boolean;
+  /** The feature: a leader to it. */
+  on?: GeoRef;
+  /** Under this dimension's text (it tolerances the size's feature). */
+  dimension?: string;
+  /** With `dimension`: on its extension line 0 or 1 instead (the surface the line stands on). */
+  extension?: 0 | 1;
+  /** The frame's lower left corner, sheet mm from the view's centre. */
+  at?: Vec2;
+  /** "6×" above it, and notes above and below ("ALL AROUND", "EACH ELEMENT"). */
+  count?: number;
+  above?: string;
+  below?: string;
+  arrow?: ArrowStyle;
+}
+
+/** A datum feature symbol: its letter in a frame, a triangle on the feature (or on its dimension, its extension line, a frame). */
+export interface DatumAnnotation {
+  id: string;
+  type: "datum";
+  view: string;
+  /** "A", "B", ... (I, O and Q are not used). */
+  label: string;
+  /** The feature: an edge (the surface seen edge on) or a point on it. */
+  on?: GeoRef;
+  /** A dimension: the datum is its feature of size (the triangle on its dimension line). */
+  dimension?: string;
+  /** A feature control frame it hangs from. */
+  gdt?: string;
+  /** The letter's frame, sheet mm from the view's centre. Default: straight out from the surface. */
+  at?: Vec2;
+  /** An open triangle instead of the filled one. */
+  open?: boolean;
+}
+
+/** A datum target (ISO 5459 / ASME Y14.5): a point, a line or an area of a datum feature, with its symbol (size over label). */
+export interface DatumTargetAnnotation {
+  id: string;
+  type: "datumTarget";
+  view: string;
+  /** "A1". */
+  label: string;
+  target: "point" | "line" | "area";
+  /** Where it is on the part: a point GeoRef (the target point, the line's middle, the area's centre). */
+  on: GeoRef;
+  /** An area's size: its diameter (round) or width and height (rectangular), mm. */
+  size?: number | [number, number];
+  /** A line target's length and angle on the sheet, mm and degrees (default: along the edge it is on). */
+  length?: number;
+  /** The symbol, sheet mm from the view's centre. */
+  at?: Vec2;
+}
+
+/** The surface texture symbol (ISO 1302 / ISO 21920-1, ASME Y14.36): basic, material removal required, or not allowed. */
+export const SURFACE_SYMBOLS = ["basic", "removal", "noRemoval"] as const;
+/** The direction of lay: parallel, perpendicular, crossed, multi-directional, circular, radial, particulate. */
+export const LAY_SYMBOLS = ["=", "⊥", "X", "M", "C", "R", "P"] as const;
+/** A surface texture symbol on a surface (an edge seen edge on, on it or by a leader), on an extension line, or a general one in the title area. */
+export interface SurfaceAnnotation {
+  id: string;
+  type: "surface";
+  /** The view it is in; a general requirement (`general`) has none. */
+  view?: string;
+  symbol?: (typeof SURFACE_SYMBOLS)[number];
+  /** The requirements, one per line: "Ra 1.6", "Rz 6.3", "Ra 3.2 max". */
+  values?: string[];
+  /** The manufacturing method: "ground", "milled". */
+  process?: string;
+  lay?: (typeof LAY_SYMBOLS)[number];
+  /** Machining allowance, mm (on a casting or forging). */
+  allowance?: number;
+  /** All round the outline seen in the view: a circle at the symbol's knee. */
+  allAround?: boolean;
+  on?: GeoRef;
+  /** On this dimension's extension line (0 or 1). */
+  dimension?: string;
+  extension?: 0 | 1;
+  /** Sheet mm from the view's centre (a general one: from the sheet's corner). */
+  at?: Vec2;
+  /** The drawing's general requirement: "√Ra 3.2 (√)" near the title block, for every surface not marked otherwise. */
+  general?: boolean;
+}
+
+/** A cosmetic thread's callout: "M8×1.25 - 6H ↧16" with a leader, from a tapped hole or thread feature. */
+export interface CosmeticThreadAnnotation {
+  id: string;
+  type: "cosmeticThread";
+  view: string;
+  /** The tapped hole or the thread feature. */
+  hole: string;
+  on?: GeoRef;
+  at?: Vec2;
+}
+
+/** A revision cloud round what changed, and its revision's triangle. */
+export interface RevisionCloudAnnotation {
+  id: string;
+  type: "revisionCloud";
+  /** The outline, closed, sheet mm (from the view's centre when it is in one). */
+  pts: Vec2[];
+  view?: string;
+  /** The revision ("B"): its letter in a triangle by the cloud. */
+  rev?: string;
+  /** The triangle, the same mm as `pts`. Default: at the cloud's top right. */
+  at?: Vec2;
+  /** The arcs' size, mm (default 6). */
+  arc?: number;
+}
+
+/** A leader with text (or none): an arrow to a GeoRef or a point, the text at its other end. */
+export interface LeaderAnnotation {
+  id: string;
+  type: "leader";
+  view?: string;
+  to: GeoRef | Vec2;
+  /** The text's place (the same mm as `to`). Default: out of the view, near what it points at. */
+  at?: Vec2;
+  text?: string;
+  via?: Vec2[];
+  arrow?: ArrowStyle;
+  spline?: boolean;
+}
+
+/** One line of rich text placed on the sheet. */
+export interface TextAnnotation {
+  id: string;
+  type: "text";
+  text: string;
+  at: Vec2;
+  view?: string;
+  height?: number;
+  angle?: number;
+  anchor?: "start" | "middle" | "end";
+  bold?: boolean;
+}
+
+/** The kinds of line free sketching draws (ISO 128): thick, thin, centre (chain), hidden (dashed), phantom. */
+export const SKETCH_LINES = ["thick", "thin", "center", "hidden", "phantom"] as const;
+export type SketchLine = (typeof SKETCH_LINES)[number];
+/** A straight line drawn on the sheet. */
+export interface LineAnnotation {
+  id: string;
+  type: "line";
+  view?: string;
+  pts: [Vec2, Vec2];
+  line?: SketchLine;
+}
+
+/** Free sketching on the sheet: lines, arcs, circles, rectangles, polylines and text. */
+export type SketchItem =
+  | { kind: "line"; a: Vec2; b: Vec2; line?: SketchLine }
+  | { kind: "arc"; c: Vec2; r: number; start: number; end: number; line?: SketchLine }
+  | { kind: "circle"; c: Vec2; r: number; line?: SketchLine }
+  | { kind: "rect"; a: Vec2; b: Vec2; line?: SketchLine }
+  | { kind: "polyline"; pts: Vec2[]; closed?: boolean; line?: SketchLine }
+  | { kind: "text"; at: Vec2; text: string; height?: number; angle?: number };
+export interface SketchAnnotation {
+  id: string;
+  type: "sketch";
+  /** In a view: its points from the view's centre, moving with it. */
+  view?: string;
+  items: SketchItem[];
 }
 
 export const DRAWING_TABLES = ["cutList", "welds"] as const;
@@ -417,36 +842,6 @@ export interface TableAnnotation {
   at?: Vec2;
 }
 
-/** Free text on the sheet. */
-export interface NoteAnnotation {
-  id: string;
-  type: "note";
-  text: string;
-  /** Where the text starts on the sheet (its first line's baseline). */
-  at: Vec2;
-}
-
-/** A centre mark: a cross on a circle's centre, its arms a little past the circle (thin chain lines). A new view gets one for every circle it sees end on; delete the ones not wanted. */
-export interface CenterMarkAnnotation {
-  id: string;
-  type: "centerMark";
-  view: string;
-  /** The circle or arc: "<view>:e<edgeKey>", or its centre "<view>:c<edgeKey>". */
-  at: GeoRef;
-  /** How far the arms run past the circle, sheet mm (default 2.5). */
-  extend?: number;
-}
-
-/** A centre line: midway between two edges (a cylinder's sides, seen from the side), or through two points (circle centres). */
-export interface CenterlineAnnotation {
-  id: string;
-  type: "centerline";
-  view: string;
-  between: [GeoRef, GeoRef];
-  /** How far it runs past the ends, sheet mm (default 2.5). */
-  extend?: number;
-}
-
 export type Annotation =
   | DimensionAnnotation
   | HoleAnnotation
@@ -455,19 +850,60 @@ export type Annotation =
   | TableAnnotation
   | NoteAnnotation
   | CenterMarkAnnotation
-  | CenterlineAnnotation;
+  | CenterlineAnnotation
+  | GdtAnnotation
+  | DatumAnnotation
+  | DatumTargetAnnotation
+  | SurfaceAnnotation
+  | CosmeticThreadAnnotation
+  | RevisionCloudAnnotation
+  | LeaderAnnotation
+  | TextAnnotation
+  | LineAnnotation
+  | SketchAnnotation;
 export type AnnotationType = Annotation["type"];
-export const ANNOTATION_TYPES = ["dimension", "hole", "balloon", "weld", "table", "note", "centerMark", "centerline"] as const;
+export const ANNOTATION_TYPES = [
+  "dimension",
+  "hole",
+  "balloon",
+  "weld",
+  "table",
+  "note",
+  "centerMark",
+  "centerline",
+  "gdt",
+  "datum",
+  "datumTarget",
+  "surface",
+  "cosmeticThread",
+  "revisionCloud",
+  "leader",
+  "text",
+  "line",
+  "sketch",
+] as const;
 export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
-  dimension: ["id", "type", "view", "from", "to", "member", "direction", "offset"],
-  hole: ["id", "type", "view", "hole", "at"],
-  balloon: ["id", "type", "view", "member", "at"],
-  weld: ["id", "type", "view", "weld", "at"],
+  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "count", "typ", "inspection", "tolerance", "precision", "dual", "last"],
+  hole: ["id", "type", "view", "hole", "on", "at", "count", "pattern", "prefix", "suffix", "tolerance"],
+  balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow"],
+  weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more"],
   table: ["id", "type", "table", "at"],
-  note: ["id", "type", "text", "at"],
-  centerMark: ["id", "type", "view", "at", "extend"],
+  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle"],
+  centerMark: ["id", "type", "view", "at", "extend", "style"],
   centerline: ["id", "type", "view", "between", "extend"],
+  gdt: ["id", "type", "view", "rows", "composite", "on", "dimension", "extension", "at", "count", "above", "below", "arrow"],
+  datum: ["id", "type", "view", "label", "on", "dimension", "gdt", "at", "open"],
+  datumTarget: ["id", "type", "view", "label", "target", "on", "size", "length", "at"],
+  surface: ["id", "type", "view", "symbol", "values", "process", "lay", "allowance", "allAround", "on", "dimension", "extension", "at", "general"],
+  cosmeticThread: ["id", "type", "view", "hole", "on", "at"],
+  revisionCloud: ["id", "type", "pts", "view", "rev", "at", "arc"],
+  leader: ["id", "type", "view", "to", "at", "text", "via", "arrow", "spline"],
+  text: ["id", "type", "text", "at", "view", "height", "angle", "anchor", "bold"],
+  line: ["id", "type", "view", "pts", "line"],
+  sketch: ["id", "type", "view", "items"],
 };
+/** The annotations that must sit in a view (the others may, or are the sheet's). */
+export const VIEW_ANNOTATIONS: readonly AnnotationType[] = ["dimension", "hole", "balloon", "weld", "centerMark", "centerline", "gdt", "datum", "datumTarget", "cosmeticThread"];
 
 // ------------------------------------------------------------ frames
 

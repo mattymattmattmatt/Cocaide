@@ -9,18 +9,13 @@
 // has, or that its view can't show, is not drawn: it is listed in `problems`.
 
 import type { DrawingGeometry } from "../ask/kernel";
-import { allViews, parseGeoRef, parseScale, pointRef, STANDARD_SCALES, viewKind } from "../doc/drawing";
+import { allViews, parseGeoRef, parseScale, STANDARD_SCALES, viewKind } from "../doc/drawing";
 import {
-  type Annotation,
   type AnnotationType,
-  type BalloonAnnotation,
-  type CenterlineAnnotation,
-  type CenterMarkAnnotation,
   type DimensionAnnotation,
   type Drawing,
   type DrawingSheet,
   type DrawingView,
-  type HoleAnnotation,
   type NoteAnnotation,
   type Projection,
   type SheetFormat,
@@ -32,7 +27,6 @@ import {
   type ViewKind,
   type ViewLook,
   VIEW_LOOKS,
-  type WeldAnnotation,
 } from "../doc/types";
 import { validateDocument, type ValidationResult } from "../doc/validate";
 import type { Measurements } from "../kernel/measure";
@@ -45,13 +39,14 @@ import { drawFormat, paperSize, type FormatLayout } from "./formats";
 import { BODY_ANGLES, hatchLines, materialPattern } from "./hatch";
 import { geoInView, resolveGeoRef } from "./georef";
 import { holesInView, holeTable, holeTagPrims, outlineOrigin, renderSheetTables, type DrawingTable, type HoleTableRow, type RenderedTable, type RevisionRow, type TableContext } from "./tables";
-import { cutListOf } from "../weldment/items";
+import { cutListOf, itemNumberFor } from "../weldment/items";
+import { draftStyle, layoutSheetAnnotations, measureDimension, Occupancy, planDimensionRows, rowDistance, type AnnotationContext, type AnnotationData, type DraftStyle, type Grip, type Measure, type ViewInfo } from "./annotate";
 import { nestCutList } from "../weldment/nesting";
 import type { PropContext } from "./props";
-import { boxOf, centre, grow, inside, overlaps, primBox, union, type Box, type Prim } from "./sheet";
+import { boxOf, centre, grow, inside, overlaps, primBox, type Box, type Prim } from "./sheet";
 import { projectionOf } from "./specs";
 import { CAP, CENTER_DASH, HIDDEN_DASH, LINE, PHANTOM_DASH, TEXT, textWidth } from "./text";
-import { DIRECTION_VECTORS, inView, isSquareFrame, leftOf, placeFromFront, sameFrame, sectionSide, toModel, viewFrame, type ViewFrame } from "./views";
+import { DIRECTION_VECTORS, inView, isSquareFrame, leftOf, placeFromFront, sameFrame, sectionSide, viewFrame, type ViewFrame } from "./views";
 
 export interface ComposeContext {
   measurements: Measurements | null;
@@ -114,8 +109,15 @@ export interface ComposedAnnotation {
   /** Where it is held on the sheet (a balloon's centre, a callout's text, a weld's knee, a table's top left): what a drag moves. */
   at?: Vec2;
   box: Box | null;
-  /** Why it isn't on the sheet. */
+  /** Why it isn't on the sheet (a dangling one is drawn at its last place, in the warning colour). */
   problem?: string;
+  dangling?: boolean;
+  /** Where its text is, on the sheet. */
+  textBox?: Box;
+  /** The handles a drag moves (src/drafting/annotate/picks dragGrip). */
+  grips?: Grip[];
+  /** Where it is now, from its view's centre: what rememberPlaces keeps as its `last`. */
+  place?: { pts: Vec2[]; text: string };
 }
 
 /** What the Phase L points of a view are made from: nodes, members, holes. */
@@ -168,12 +170,7 @@ export const TITLE_BLOCK: Vec2 = [180, 39];
 const GAP = 6;
 const INSET = 4;
 /** The first dimension line's distance from the view, and each next one's. */
-const DIM_FIRST = 10;
-const DIM_STEP = 8;
 const ARROW = { length: 3, half: 0.6 };
-const BALLOON_R = 4.5;
-/** A weld symbol's reference line, mm. */
-const WELD_LINE = 26;
 const ROW = 7;
 /** The colour of a dangling annotation (its target gone): drawn where it was, never deleted. */
 export const WARNING = "#c0392b";
@@ -229,18 +226,6 @@ export function unbreak(breaks: ComposedBreak[], p: Vec2): Vec2 {
   return q;
 }
 
-type Side = -1 | 1;
-
-interface DimPlan {
-  a: DimensionAnnotation;
-  /** "h" and "v" stack outside the view; "a" sits beside its points. */
-  dir: "h" | "v" | "a";
-  side: Side;
-  span: number;
-  /** Its place in the stack on its side, nearest first. */
-  stack: number;
-}
-
 /** The named look a frame is, else "custom". */
 function lookOf(f: ViewFrame): ViewLook | "custom" {
   return VIEW_LOOKS.find((l) => sameFrame(viewFrame(l), f)) ?? "custom";
@@ -262,13 +247,16 @@ class Composer {
   private readonly holes = new Map<string, HoleRecord>();
   private readonly holeCounts = new Map<string, number>();
   private views: ComposedView[] = [];
-  private readonly dims = new Map<string, DimPlan>();
   /** Every view of the drawing by id (a section's parent may be on another sheet). */
   private readonly allViews: Map<string, DrawingView>;
   /** This sheet's views, by id. */
   private readonly here: Map<string, DrawingView>;
   private readonly props: PropContext;
   private readonly points: PointContext;
+  /** How annotations are drawn: the standard's, or Phase L's for the classic template. */
+  private readonly style: DraftStyle;
+  /** The scale dimensions are planned at before the sheet's is known. */
+  private readonly provisional = 1;
 
   constructor(
     private readonly v: ValidationResult,
@@ -279,6 +267,7 @@ class Composer {
     private readonly doc: unknown = null,
   ) {
     this.template = s.format.template ?? (d.standard === "ASME" ? "ansi" : "iso");
+    this.style = draftStyle(d.standard ?? "ISO", this.template);
     this.allViews = new Map(allViews(d).map((x) => [x.id, x]));
     this.here = new Map(s.views.map((x) => [x.id, x]));
     this.cut = ctx.measurements ? cutList(ctx.measurements.members) : [];
@@ -350,7 +339,7 @@ class Composer {
     for (const cv of views) this.drawMarks(cv);
     // Labels come first (balloons and callouts keep clear of them), under the room the view's dimensions take.
     for (const cv of views) this.drawLabel(cv, scale);
-    for (const a of this.s.annotations) this.drawAnnotation(a, tables);
+    this.drawAnnotations(tables);
     for (const t of sheetTables) {
       this.prims.push(...t.rendered.prims);
       for (const p of t.rendered.problems) this.problems.push(`${t.table.id}: ${p}`);
@@ -570,7 +559,19 @@ class Composer {
     return out;
   }
 
-  /** Decides each dimension's side and its place in the stack. */
+  /** Each dimension measured in its view (view mm), before the views are placed. */
+  private readonly measures = new Map<string, Measure | { problem: string }>();
+  /** Each view's linear dimensions with the side they go on. */
+  private readonly dimItems = new Map<string, { id: string; m: Measure; side: -1 | 1; fixed: boolean }[]>();
+  private readonly rowCache = new Map<string, Map<string, { side: -1 | 1; row: number; dir: "h" | "v" | "a" }>>();
+
+  /** A view as far as measuring in it goes. */
+  private viewInfo(view: DrawingView): ViewInfo {
+    const pv = this.pv(view);
+    return { id: view.id, edges: pv?.edges ?? [], frame: this.frameOf(view), outline: this.outline(view), square: this.squareById(view.id) };
+  }
+
+  /** Measures each dimension and decides its side: away from the views beside it, else the side its points are nearer. */
   private planDimensions(): void {
     const grid = this.grid();
     const occupied = new Set([...grid.values()].map(String));
@@ -578,54 +579,77 @@ class Composer {
       const g = grid.get(id);
       return !!g && occupied.has(String([g[0] + dx, g[1] + dy]));
     };
-    const byView = new Map<string, DimPlan[]>();
+    const members = this.points.members;
     for (const a of this.s.annotations) {
       if (a.type !== "dimension") continue;
       const view = this.here.get(a.view);
       if (!view) continue;
-      const pts = this.dimPoints(a, view);
-      if ("problem" in pts) continue;
-      const { dir, span, near } = pts;
-      let side: Side;
+      const info = this.viewInfo(view);
+      const m = measureDimension(a, info, this.points, members);
+      this.measures.set(a.id, m);
+      if ("problem" in m || (m.kind !== "linear" && m.kind !== "set")) continue;
+      const dir = m.kind === "linear" ? m.dir : m.dir;
+      let side: -1 | 1;
       if (a.offset !== undefined && a.offset !== 0) side = a.offset > 0 ? 1 : -1;
       else if (dir === "a") side = 1;
       else {
-        // Away from the views beside it; a member's dimension goes on the side it is nearer.
-        const toward = (sd: Side) => (dir === "h" ? neighbour(a.view, 0, sd) : neighbour(a.view, sd, 0));
-        side = near ?? (toward(-1) && !toward(1) ? 1 : -1);
-        if (near !== undefined && toward(side) && !toward(-side as Side)) side = -side as Side;
-      }
-      const plan: DimPlan = { a, dir, side, span, stack: 0 };
-      this.dims.set(a.id, plan);
-      byView.set(a.view, [...(byView.get(a.view) ?? []), plan]);
-    }
-    for (const plans of byView.values()) {
-      for (const dir of ["h", "v"] as const) {
-        for (const side of [-1, 1] as const) {
-          const stack = plans.filter((p) => p.dir === dir && p.side === side && p.a.offset === undefined).sort((x, y) => x.span - y.span);
-          stack.forEach((p, i) => (p.stack = i));
+        const toward = (sd: -1 | 1) => (dir === "h" ? neighbour(a.view, 0, sd) : neighbour(a.view, sd, 0));
+        const o = info.outline!;
+        const axis = dir === "h" ? 1 : 0;
+        const mid = (o.min[axis] + o.max[axis]) / 2;
+        const half = (o.max[axis] - o.min[axis]) / 2 || 1;
+        let near: -1 | 1 | undefined;
+        if (m.kind === "linear") {
+          if (m.near !== undefined) near = m.near;
+          else if (!m.sides[0] || !m.sides[1]) {
+            const pts = [m.p1, m.p2].filter((_, i) => !m.sides[i]);
+            const c = pts.reduce((t, p) => t + p[axis], 0) / pts.length;
+            // Only a clear lean counts: a point near the middle goes on the usual side.
+            if (Math.abs(c - mid) > 0.25 * half) near = c > mid ? 1 : -1;
+          }
         }
+        side = near ?? (toward(-1) && !toward(1) ? 1 : -1);
+        if (toward(side) && !toward(-side as -1 | 1)) side = -side as -1 | 1;
       }
+      this.dimItems.set(a.view, [...(this.dimItems.get(a.view) ?? []), { id: a.id, m, side, fixed: a.offset !== undefined || a.at !== undefined }]);
     }
+  }
+
+  /** The rows of a view's dimensions at scale k. */
+  private rows(viewId: string, k: number): Map<string, { side: -1 | 1; row: number; dir: "h" | "v" | "a" }> {
+    const key = `${viewId}@${k}`;
+    let r = this.rowCache.get(key);
+    if (!r) {
+      r = planDimensionRows(this.dimItems.get(viewId) ?? [], k, this.style);
+      this.rowCache.set(key, r);
+    }
+    return r;
   }
 
   /** Room each view's annotations need around it, sheet mm: [left, bottom, right, top]. */
   private padding(view: DrawingView, k?: number, sheetScale?: number): [number, number, number, number] {
     const pad: [number, number, number, number] = [INSET, INSET, INSET, INSET];
     const need = (i: number, mm: number) => (pad[i] = Math.max(pad[i], mm));
-    const text = TEXT.dimension * CAP + 3;
-    for (const p of this.dims.values()) {
-      if (p.a.view !== view.id) continue;
-      const dist = p.a.offset !== undefined ? Math.abs(p.a.offset) : DIM_FIRST + DIM_STEP * p.stack;
-      if (p.dir === "h") need(p.side < 0 ? 1 : 3, dist + text);
-      else if (p.dir === "v") need(p.side < 0 ? 0 : 2, dist + text);
-      else for (let i = 0; i < 4; i++) need(i, DIM_FIRST + text);
+    const text = this.style.h + this.style.lift + 2.5;
+    const rows = this.rows(view.id, k ?? this.provisional);
+    for (const item of this.dimItems.get(view.id) ?? []) {
+      const a = this.s.annotations.find((x) => x.id === item.id) as DimensionAnnotation;
+      const r = rows.get(item.id);
+      const deepest = item.m.kind === "set" && item.m.mode === "baseline" ? Math.max(0, ...item.m.pts.map((_, i) => rows.get(`${item.id}#${i}`)?.row ?? 0)) : (r?.row ?? 0);
+      const dist = a.offset !== undefined ? Math.abs(a.offset) : rowDistance(deepest, this.style);
+      const extra = item.m.kind === "set" && item.m.mode === "ordinate" ? 3 * this.style.font : 0;
+      if (r?.dir === "h" || (item.m.kind === "set" && item.m.dir === "h")) need(item.side < 0 ? 1 : 3, dist + text + extra);
+      else if (r?.dir === "v" || (item.m.kind === "set" && item.m.dir === "v")) need(item.side < 0 ? 0 : 2, dist + text + extra);
+      else for (let i = 0; i < 4; i++) need(i, this.style.first + text);
     }
+    // Radial and angular dimensions, callouts, symbols and balloons stand out of the view where there is room.
+    let room0 = 0;
     for (const a of this.s.annotations) {
       if (!("view" in a) || a.view !== view.id || ("at" in a && a.at)) continue;
-      const room = a.type === "balloon" ? 2 * BALLOON_R + 7 : a.type === "weld" ? 16 : a.type === "hole" ? 18 : 0;
-      for (let i = 0; i < 4; i++) need(i, room);
+      const room = a.type === "balloon" ? 17 : a.type === "weld" ? 18 : a.type === "hole" ? 16 : a.type === "gdt" ? 14 : a.type === "datum" ? 12 : a.type === "surface" ? 14 : a.type === "dimension" && a.kind && ["radius", "diameter", "chamfer", "angular", "arcLength", "pathLength"].includes(a.kind) && a.refs?.length === 1 ? 12 : 0;
+      room0 = Math.max(room0, room);
     }
+    if (room0) for (let i = 0; i < 4; i++) need(i, room0);
     // A section's cutting line, a detail's circle: their letters and arrows stand out of the parent.
     for (const child of this.allViews.values()) {
       if (child.parent !== view.id) continue;
@@ -1249,9 +1273,16 @@ class Composer {
   /** How far under a view its dimensions reach, sheet mm. */
   private dimsBelow(id: string): number {
     let below = 0;
-    for (const p of this.dims.values()) {
-      if (p.a.view !== id || p.dir !== "h" || p.side > 0) continue;
-      below = Math.max(below, (p.a.offset !== undefined ? Math.abs(p.a.offset) : DIM_FIRST + DIM_STEP * p.stack) + TEXT.dimension * CAP);
+    const cv = this.cv(id);
+    const rows = this.rows(id, cv?.scale ?? this.provisional);
+    for (const item of this.dimItems.get(id) ?? []) {
+      const r = rows.get(item.id);
+      const dir = item.m.kind === "set" ? item.m.dir : r?.dir;
+      if (dir !== "h" || item.side > 0) continue;
+      const a = this.s.annotations.find((x) => x.id === item.id) as DimensionAnnotation;
+      const deepest = item.m.kind === "set" && item.m.mode === "baseline" ? Math.max(0, ...item.m.pts.map((_, i) => rows.get(`${item.id}#${i}`)?.row ?? 0)) : (r?.row ?? 0);
+      const extra = item.m.kind === "set" && item.m.mode === "ordinate" ? 3 * this.style.font : 0;
+      below = Math.max(below, (a.offset !== undefined ? Math.abs(a.offset) : rowDistance(deepest, this.style)) + this.style.h + this.style.lift + extra);
     }
     return below;
   }
@@ -1280,543 +1311,116 @@ class Composer {
 
   // ---------------------------------------------------------- annotations
 
-  private fail(a: Annotation, problem: string): void {
-    this.problems.push(`${a.id}: ${problem}`);
-    this.annotations.set(a.id, { id: a.id, type: a.type, ...("view" in a ? { view: a.view } : {}), text: "", box: null, problem });
-  }
-
-  private drawAnnotation(a: Annotation, tables: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[]): void {
-    const start = this.prims.length;
-    let text = "";
-    let extra: Partial<ComposedAnnotation> = {};
-    if (a.type === "table") {
-      const t = tables.find((x) => x.a.id === a.id)!;
-      this.drawTable(t);
-      text = a.table === "cutList" ? `cut list, ${t.rows.length - 2} item${t.rows.length - 2 === 1 ? "" : "s"}` : `weld table, ${t.rows.length - 2} weld${t.rows.length - 2 === 1 ? "" : "s"}`;
-      extra = { at: [t.box.min[0], t.box.max[1]] };
-    } else if (a.type === "note") {
-      this.drawNote(a);
-      text = a.text;
-      extra = { at: a.at };
-    } else {
-      const cv = this.cv(a.view);
-      if (!cv || !cv.outline) return this.fail(a, `its view ${a.view} shows nothing`);
-      const r =
-        a.type === "dimension"
-          ? this.drawDimension(a, cv)
-          : a.type === "balloon"
-            ? this.drawBalloon(a, cv)
-            : a.type === "hole"
-              ? this.drawHole(a, cv)
-              : a.type === "weld"
-                ? this.drawWeld(a, cv)
-                : a.type === "centerMark"
-                  ? this.drawCenterMark(a, cv)
-                  : this.drawCenterline(a, cv);
-      if ("problem" in r) return this.fail(a, r.problem);
-      ({ text, ...extra } = r);
-    }
-    const mine = this.prims.slice(start);
-    const layer = a.type === "dimension" ? "DIMENSION" : a.type === "centerMark" || a.type === "centerline" ? "CENTER" : a.type === "table" ? "TABLE" : "ANNOTATION";
-    for (const p of mine) {
-      p.owner = a.id;
-      p.layer ??= layer;
-    }
-    const box = mine.reduce<Box | null>((acc, p) => union(acc, primBox(p, textWidth)), null);
-    this.annotations.set(a.id, { id: a.id, type: a.type, ...("view" in a ? { view: a.view } : {}), text, ...extra, box });
-  }
-
-  private nodes(): Record<string, Vec3> {
-    return this.v.nodes;
-  }
-
-  /** A member by its feature's id, or by its body's name (a renamed body is named on the sheet by its new name). */
-  private member(id: string) {
-    const members = this.ctx.measurements?.members ?? [];
-    return members.find((m) => m.id === id) ?? members.find((m) => m.body === id);
-  }
-
-  /** A dimension point in the view, model mm. A side of the view's outline has only the coordinate it names. */
-  private point(ref: string, f: ViewFrame, outline: Box): { p: Vec2; side?: "x" | "y" } | { problem: string } {
-    const r = pointRef(ref);
-    if (!r) return { problem: `"${ref}" is not a point` };
-    if (r.kind === "geo") {
-      const g = this.geo(r.ref);
-      if (!g || g.kind !== "point") return { problem: `${ref} is not in its view (the edge it names is gone)` };
-      return { p: g.inView };
-    }
-    if (r.kind === "side") {
-      const s = r.side;
-      return s === "@left" ? { p: [outline.min[0], NaN], side: "x" } : s === "@right" ? { p: [outline.max[0], NaN], side: "x" } : s === "@bottom" ? { p: [NaN, outline.min[1]], side: "y" } : { p: [NaN, outline.max[1]], side: "y" };
-    }
-    if (r.kind === "end") {
-      const m = this.member(r.member);
-      if (!m) return { problem: `no member "${r.member}" built` };
-      return { p: inView(m.ends[r.end === "start" ? 0 : 1], f) };
-    }
-    const node = this.nodes()[r.name];
-    if (node) return { p: inView(node, f) };
-    const hole = this.holes.get(r.name);
-    if (hole) return { p: inView(hole.entry, f) };
-    return { problem: `no node or hole "${r.name}" in the part` };
-  }
-
-  /** A dimension's points in its view, how it runs, and how long it is. */
-  private dimPoints(a: DimensionAnnotation, view: DrawingView): { p1: Vec2; p2: Vec2; dir: "h" | "v" | "a"; span: number; near?: Side; value: number } | { problem: string } {
-    const f = this.frameById(view.id);
-    const outline = this.outline(view);
-    if (!outline) return { problem: `its view ${view.id} shows nothing` };
-    if (!this.squareById(view.id)) return { problem: `${view.id} is ${view.look === "iso" ? "an iso view" : "a view at an angle to the part"}, which shortens every length` };
-    if (a.member !== undefined) {
-      const m = this.member(a.member);
-      if (!m) return { problem: `no member "${a.member}" built` };
-      const p1 = inView(m.ends[0], f);
-      const p2 = inView(m.ends[1], f);
-      const along = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
-      if (along < m.length * 0.999) return { problem: `${a.member} doesn't lie flat in ${view.id} (it runs ${along < 1e-6 ? "straight at the viewer" : "at an angle to it"}): dimension it in a view it lies flat in` };
-      const dir = Math.abs(p2[1] - p1[1]) < 1e-6 ? "h" : Math.abs(p2[0] - p1[0]) < 1e-6 ? "v" : "a";
-      const c = centre(outline);
-      const mid: Vec2 = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
-      const near: Side = dir === "h" ? (mid[1] >= c[1] ? 1 : -1) : mid[0] >= c[0] ? 1 : -1;
-      return { p1, p2, dir, span: m.length, near: dir === "a" ? undefined : near, value: m.length };
-    }
-    const q1 = this.point(a.from!, f, outline);
-    const q2 = this.point(a.to!, f, outline);
-    if ("problem" in q1) return q1;
-    if ("problem" in q2) return q2;
-    const sides = [q1.side, q2.side].filter(Boolean);
-    let dir: "h" | "v" | "a";
-    if (a.direction) dir = a.direction === "horizontal" ? "h" : a.direction === "vertical" ? "v" : "a";
-    else if (sides.length) dir = sides[0] === "x" ? "h" : "v";
-    else dir = Math.abs(q2.p[0] - q1.p[0]) >= Math.abs(q2.p[1] - q1.p[1]) ? "h" : "v";
-    for (const [q, ref] of [[q1, a.from], [q2, a.to]] as const) {
-      if (q.side === "x" && dir !== "h") return { problem: `${ref} is a side of the view: use it in a horizontal dimension` };
-      if (q.side === "y" && dir !== "v") return { problem: `${ref} is the top or bottom of the view: use it in a vertical dimension` };
-    }
-    // A side has only its own coordinate: the other comes from the view's edge nearest the dimension.
-    const fill = (p: Vec2): Vec2 => [Number.isNaN(p[0]) ? outline.min[0] : p[0], Number.isNaN(p[1]) ? outline.min[1] : p[1]];
-    const p1 = fill(q1.p);
-    const p2 = fill(q2.p);
-    const value = dir === "h" ? Math.abs(p2[0] - p1[0]) : dir === "v" ? Math.abs(p2[1] - p1[1]) : Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
-    if (value < 1e-6) return { problem: `${a.from} and ${a.to} are at the same place ${dir === "h" ? "across" : dir === "v" ? "up" : "in"} ${view.id}` };
-    return { p1, p2, dir, span: value, value };
-  }
-
-  private drawDimension(a: DimensionAnnotation, cv: ComposedView): { text: string; value: number; along: Vec3 } | { problem: string } {
-    const view = this.here.get(cv.id)!;
-    const r = this.dimPoints(a, view);
-    if ("problem" in r) return r;
-    const plan = this.dims.get(a.id);
-    const f = this.frameById(view.id);
-    const s1 = this.toSheet(cv, r.p1);
-    const s2 = this.toSheet(cv, r.p2);
-    // Sides: put the extension line's foot on the view's edge nearest the dimension.
-    const box = cv.box!;
-    const side = plan?.side ?? -1;
-    const dist = a.offset !== undefined ? Math.abs(a.offset) : DIM_FIRST + DIM_STEP * (plan?.stack ?? 0);
-    const fromSide = (s: Vec2, ref?: string) => {
-      const pr = ref ? pointRef(ref) : null;
-      if (pr?.kind !== "side") return s;
-      if (r.dir === "h") return [s[0], side > 0 ? box.max[1] : box.min[1]] as Vec2;
-      return [side > 0 ? box.max[0] : box.min[0], s[1]] as Vec2;
-    };
-    const a1 = fromSide(s1, a.from);
-    const a2 = fromSide(s2, a.to);
-    const text = fmt(r.value);
-    let u: Vec2;
-    let n: Vec2;
-    let level: number;
-    if (r.dir === "h") {
-      u = [1, 0];
-      n = [0, side];
-      level = side > 0 ? box.max[1] + dist : box.min[1] - dist;
-    } else if (r.dir === "v") {
-      u = [0, 1];
-      n = [side, 0];
-      level = side > 0 ? box.max[0] + dist : box.min[0] - dist;
-    } else {
-      const d: Vec2 = [a2[0] - a1[0], a2[1] - a1[1]];
-      const len = Math.hypot(d[0], d[1]);
-      u = [d[0] / len, d[1] / len];
-      n = [-u[1], u[0]];
-      // Away from the view's centre.
-      const mid: Vec2 = [(a1[0] + a2[0]) / 2, (a1[1] + a2[1]) / 2];
-      if ((mid[0] - cv.centre[0]) * n[0] + (mid[1] - cv.centre[1]) * n[1] < 0) n = [-n[0], -n[1]];
-      level = Math.max(a1[0] * n[0] + a1[1] * n[1], a2[0] * n[0] + a2[1] * n[1]) + (a.offset !== undefined ? Math.abs(a.offset) : DIM_FIRST);
-    }
-    if (r.dir !== "a") level *= r.dir === "h" ? n[1] : n[0];
-    this.linear(a1, a2, u, n, level, text);
-    const along = r.dir === "h" ? f.right : r.dir === "v" ? f.up : normalize3(toModel([r.p2[0] - r.p1[0], r.p2[1] - r.p1[1]], f));
-    return { text, value: r.value, along };
-  }
-
-  /**
-   * A linear dimension: extension lines from a and b to the dimension line
-   * {x : x·n = level}, the line with arrows, and the text above it.
-   */
-  private linear(a: Vec2, b: Vec2, u: Vec2, n: Vec2, level: number, text: string): void {
-    const foot = (p: Vec2): Vec2 => {
-      const t = level - (p[0] * n[0] + p[1] * n[1]);
-      return [p[0] + n[0] * t, p[1] + n[1] * t];
-    };
-    const fa = foot(a);
-    const fb = foot(b);
-    for (const [p, q] of [
-      [a, fa],
-      [b, fb],
-    ] as const) {
-      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-      if (len < 2) continue;
-      const dir: Vec2 = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
-      this.prims.push({ k: "line", pts: [[p[0] + dir[0] * 1.5, p[1] + dir[1] * 1.5], [q[0] + dir[0] * 2, q[1] + dir[1] * 2]], w: LINE.thin });
-    }
-    const span = (fb[0] - fa[0]) * u[0] + (fb[1] - fa[1]) * u[1];
-    const along: Vec2 = span >= 0 ? u : [-u[0], -u[1]];
-    const inside = Math.abs(span) >= 2 * ARROW.length + 4;
-    if (inside) {
-      this.prims.push({ k: "line", pts: [fa, fb], w: LINE.thin });
-      this.arrow(fa, [-along[0], -along[1]]);
-      this.arrow(fb, along);
-    } else {
-      // Too short for arrows inside: they point in from outside.
-      this.prims.push({ k: "line", pts: [[fa[0] - along[0] * 6, fa[1] - along[1] * 6], [fb[0] + along[0] * 6, fb[1] + along[1] * 6]], w: LINE.thin });
-      this.arrow(fa, along);
-      this.arrow(fb, [-along[0], -along[1]]);
-    }
-    // Text reads from the bottom or the right of the sheet, above the line.
-    let t = along;
-    let angle = (Math.atan2(t[1], t[0]) * 180) / Math.PI;
-    if (angle <= -90 + 1e-6 || angle > 90 + 1e-6) {
-      t = [-t[0], -t[1]];
-      angle = (Math.atan2(t[1], t[0]) * 180) / Math.PI;
-    }
-    const up: Vec2 = [-t[1], t[0]];
-    const mid: Vec2 = [(fa[0] + fb[0]) / 2 + up[0] * 1.2, (fa[1] + fb[1]) / 2 + up[1] * 1.2];
-    this.prims.push({ k: "text", at: mid, text, size: TEXT.dimension, anchor: "middle", ...(Math.abs(angle) > 1e-6 ? { angle: round3(angle) } : {}) });
-  }
-
-  /** A filled arrowhead with its tip at `tip`, pointing along `dir`. */
-  private arrow(tip: Vec2, dir: Vec2): void {
-    const back: Vec2 = [tip[0] - dir[0] * ARROW.length, tip[1] - dir[1] * ARROW.length];
-    const side: Vec2 = [-dir[1] * ARROW.half, dir[0] * ARROW.half];
-    this.prims.push({ k: "line", pts: [tip, [back[0] + side[0], back[1] + side[1]], [back[0] - side[0], back[1] - side[1]]], closed: true, fill: true, w: LINE.thin });
-  }
-
-  /** A point outside the view's box, along the direction from its centre through `from`. */
-  private outside(cv: ComposedView, from: Vec2, clear: number, dir?: Vec2, nearest = false): Vec2 {
-    let d = dir ?? ([from[0] - cv.centre[0], from[1] - cv.centre[1]] as Vec2);
-    const len = Math.hypot(d[0], d[1]);
-    d = len < 1e-9 ? [Math.SQRT1_2, Math.SQRT1_2] : [d[0] / len, d[1] / len];
-    const box = grow(cv.box!, clear);
-    // Past both sides of the box the way it goes (clear of its corner), or, `nearest`, out through the first side it meets.
-    const exits: number[] = [];
-    for (const i of [0, 1]) {
-      if (d[i] > 1e-9) exits.push((box.max[i] - from[i]) / d[i]);
-      if (d[i] < -1e-9) exits.push((box.min[i] - from[i]) / d[i]);
-    }
-    const t = Math.max(0, nearest ? Math.min(...exits) : Math.max(...exits));
-    return [from[0] + d[0] * t, from[1] + d[1] * t];
-  }
-
-  /** The middle of the longest visible line of a body in a view, view mm, and how much of it shows. */
-  visibleAnchor(viewId: string, body: string): { at: Vec2; length: number } | null {
-    const pv = this.projected.get(projectionOf(this.allViews, viewId));
-    const b = pv?.bodies.find((x) => x.name === body);
-    if (!b) return null;
-    let best: { at: Vec2; length: number; seg: number } | null = null;
-    let total = 0;
-    for (const line of b.visible) {
-      for (let i = 1; i < line.length; i++) {
-        const len = Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
-        total += len;
-        if (!best || len > best.seg) best = { at: [(line[i][0] + line[i - 1][0]) / 2, (line[i][1] + line[i - 1][1]) / 2], length: 0, seg: len };
+  /** The sheet's annotations laid out (src/drafting/annotate), each keeping clear of what is already there. */
+  private drawAnnotations(tables: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[]): void {
+    const occ = new Occupancy(this.frame);
+    for (const cv of this.views) occ.addBox(cv.box ? grow(cv.box, 1) : null, "view", cv.id);
+    occ.addBox(this.titleBlock, "title", "titleBlock");
+    if (this.format?.revisionBlock) occ.addBox(this.format.revisionBlock, "title", "revisionBlock");
+    for (const b of this.tableBoxes) occ.addBox(b, "table", "table");
+    for (const b of this.labels) occ.addBox(b, "label", "label");
+    // The views' marks: cutting lines' letters and arrows, detail letters (a callout keeps clear of them).
+    for (const p of this.prims) {
+      if (p.owner === "sheet" || p.owner === "titleBlock" || p.layer === "TEXT") continue;
+      if (p.k === "text") occ.addPrims([p], p.owner ?? "mark");
+      else if (p.layer === "SECTION" && p.k === "line") {
+        const b = boxOf(p.pts);
+        if (b && Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]) < 16) occ.addBox(grow(b, 0.5), "label", p.owner ?? "mark");
       }
     }
-    return best && best.seg > 1e-6 ? { at: best.at, length: total } : null;
-  }
-
-  private placedBalloons: { view: string; c: Vec2; r: number }[] = [];
-
-  /**
-   * Where a balloon goes: on a ring just outside its view, as near its member
-   * as it can be while on the sheet, clear of the other balloons, views,
-   * tables and the title block.
-   */
-  private balloonSpot(cv: ComposedView, tip: Vec2, r: number): Vec2 {
-    const blocked = [this.titleBlock, ...this.views.filter((x) => x.id !== cv.id && x.box).map((x) => grow(x.box!, 2)), ...this.tableBoxes, ...this.labels];
-    const frame = grow(this.frame, -(r + 1));
-    let best: { c: Vec2; cost: number } | null = null;
-    for (let k = 0; k < 72; k++) {
-      const t = (k / 72) * 2 * Math.PI;
-      const c = this.outside(cv, cv.centre, 6 + r, [Math.cos(t), Math.sin(t)]);
-      if (!inside({ min: c, max: c }, frame)) continue;
-      const box: Box = { min: [c[0] - r, c[1] - r], max: [c[0] + r, c[1] + r] };
-      if (blocked.some((b) => overlaps(box, b))) continue;
-      if (this.placedBalloons.some((b) => Math.hypot(b.c[0] - c[0], b.c[1] - c[1]) < b.r + r + 3)) continue;
-      const cost = Math.hypot(c[0] - tip[0], c[1] - tip[1]);
-      if (!best || cost < best.cost) best = { c, cost };
-    }
-    return best?.c ?? this.outside(cv, tip, 6 + r);
-  }
-
-  /**
-   * Where a weld symbol's reference line starts: just outside its view, above
-   * it if there is room, as near the weld as it can be, with the whole line
-   * and its text on the sheet and clear of everything else.
-   */
-  private weldSpot(cv: ComposedView, tip: Vec2): { knee: Vec2; dir: 1 | -1 } {
-    const blocked = [this.titleBlock, ...this.views.filter((x) => x.id !== cv.id && x.box).map((x) => grow(x.box!, 2)), ...this.tableBoxes, ...this.labels];
-    let best: { knee: Vec2; dir: 1 | -1; cost: number } | null = null;
-    for (let k = 0; k < 72; k++) {
-      const t = (k / 72) * 2 * Math.PI;
-      const knee = this.outside(cv, cv.centre, 8, [Math.cos(t), Math.sin(t)]);
-      const away: 1 | -1 = knee[0] >= cv.centre[0] ? 1 : -1;
-      // The reference line runs away from the view if it can, else back over it.
-      for (const dir of [away, -away as 1 | -1]) {
-        const box: Box = { min: [Math.min(knee[0], knee[0] + dir * WELD_LINE) - 2, knee[1] - 6], max: [Math.max(knee[0], knee[0] + dir * WELD_LINE) + 2, knee[1] + 2] };
-        if (!inside(box, this.frame) || blocked.some((b) => overlaps(box, b))) continue;
-        if (this.placedBalloons.some((b) => b.view === cv.id && overlaps(box, { min: [b.c[0] - b.r, b.c[1] - b.r], max: [b.c[0] + b.r, b.c[1] + b.r] }))) continue;
-        // Above or beside the view reads best; below it, under the dimensions, does not.
-        const cost = Math.hypot(knee[0] - tip[0], knee[1] - tip[1]) + (knee[1] < cv.box!.min[1] ? 40 : 0) + (dir === away ? 0 : 6);
-        if (!best || cost < best.cost) best = { knee, dir, cost };
-      }
-    }
-    return best ?? { knee: this.outside(cv, tip, 8, [tip[0] >= cv.centre[0] ? 1 : -1, 1]), dir: tip[0] >= cv.centre[0] ? 1 : -1 };
-  }
-
-  private drawBalloon(a: BalloonAnnotation, cv: ComposedView): { text: string; item: number; at: Vec2 } | { problem: string } {
-    const m = this.member(a.member);
-    if (!m) return { problem: `no member "${a.member}" built` };
-    const body = m.body;
-    const item = this.cut.find((i) => i.members.includes(m.id));
-    if (!item) return { problem: `${a.member} is not in the cut list` };
-    const anchor = this.visibleAnchor(cv.id, body);
-    if (!anchor) return { problem: `${a.member} can't be seen in ${cv.id}: balloon it in a view that shows it` };
-    const tip = this.toSheet(cv, anchor.at);
-    const text = String(item.item);
-    const r = text.length > 1 ? BALLOON_R + 0.7 : BALLOON_R;
-    const c: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.balloonSpot(cv, tip, r);
-    this.placedBalloons.push({ view: cv.id, c, r });
-    const d: Vec2 = [tip[0] - c[0], tip[1] - c[1]];
-    const len = Math.hypot(d[0], d[1]);
-    if (len > r + 0.5) {
-      this.prims.push({ k: "line", pts: [[c[0] + (d[0] / len) * r, c[1] + (d[1] / len) * r], tip], w: LINE.thin });
-      this.prims.push({ k: "circle", c: tip, r: 0.7, w: LINE.thin, fill: true });
-    }
-    this.prims.push({ k: "circle", c, r, w: LINE.thin });
-    this.prims.push({ k: "text", at: [c[0], c[1] - (TEXT.balloon * CAP) / 2], text, size: TEXT.balloon, anchor: "middle" });
-    return { text, item: item.item, at: c };
-  }
-
-  private drawHole(a: HoleAnnotation, cv: ComposedView): { text: string; at: Vec2 } | { problem: string } {
-    const h = this.holes.get(a.hole);
-    if (!h) return { problem: `no hole "${a.hole}" built` };
-    const f = cv.frame;
-    const facing = Math.abs(h.axis[0] * f.eye[0] + h.axis[1] * f.eye[1] + h.axis[2] * f.eye[2]);
-    if (facing < 0.999) return { problem: `${a.hole} isn't seen as a circle in ${cv.id}: call it out in a view that looks along it` };
-    const lines = holeText(h, this.holeCounts.get(a.hole));
-    const c = this.toSheet(cv, inView(h.entry, f));
-    const r = ((h.counterbore?.diameter ?? h.countersink?.diameter ?? h.diameter) / 2) * cv.scale;
-    // Its centre mark.
-    const m = r + 2;
-    this.prims.push({ k: "line", pts: [[c[0] - m, c[1]], [c[0] + m, c[1]]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
-    this.prims.push({ k: "line", pts: [[c[0], c[1] - m], [c[0], c[1] + m]], w: LINE.thin, dash: [6, 1.5, 1, 1.5] });
-    const w = Math.max(...lines.map((l) => calloutWidth(l, TEXT.dimension)));
-    // Just out of the view, near the hole, on the sheet and clear of everything placed so far (other callouts too).
-    const at: Vec2 = a.at ? [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] : this.calloutSpot(cv, c, w, lines.length);
-    const right = at[0] >= c[0];
-    // Leader from the hole's edge to a landing under the text.
-    const d: Vec2 = [at[0] - c[0], at[1] - c[1]];
-    const len = Math.hypot(d[0], d[1]) || 1;
-    const edge: Vec2 = [c[0] + (d[0] / len) * r, c[1] + (d[1] / len) * r];
-    const landing: Vec2 = [at[0] + (right ? w + 1 : -w - 1), at[1]];
-    this.prims.push({ k: "line", pts: [landing, at, edge], w: LINE.thin });
-    this.arrow(edge, [-d[0] / len, -d[1] / len]);
-    lines.forEach((l, i) => this.calloutLine([at[0] + (right ? 0.5 : -0.5), at[1] + 1.2 - i * TEXT.dimension * 1.25], l, TEXT.dimension, right ? "start" : "end"));
-    return { text: lines.join(" "), at };
-  }
-
-  /** The box a hole callout's text (and its landing) takes with its leader's knee at `at`, the text running right or left. */
-  private calloutBox(at: Vec2, right: boolean, w: number, lines: number): Box {
-    const x0 = right ? at[0] : at[0] - w - 1;
-    return { min: [x0, at[1] + 1.2 - (lines - 1) * TEXT.dimension * 1.25 - TEXT.dimension * 0.3], max: [x0 + w + 1, at[1] + 1.2 + TEXT.dimension * CAP] };
-  }
-
-  /**
-   * Where a hole callout's leader turns: just outside its view, up and right
-   * of the hole if there is room, else as near the hole as it can be, with
-   * its text on the sheet and clear of the other views, tables, the title
-   * block, the view labels and the annotations placed before it (another
-   * hole's callout, a dimension).
-   */
-  private calloutSpot(cv: ComposedView, hole: Vec2, w: number, lines: number): Vec2 {
-    const blocked = [
-      this.titleBlock,
-      ...this.views.filter((x) => x.box).map((x) => grow(x.box!, x.id === cv.id ? 1 : 2)),
-      ...this.tableBoxes,
-      ...this.labels,
-      ...[...this.annotations.values()].filter((x) => x.box && (x.type === "hole" || x.type === "weld" || x.type === "balloon" || x.type === "dimension")).map((x) => x.box!),
-      ...this.placedCallouts,
-    ];
-    const fits = (at: Vec2) => {
-      const box = this.calloutBox(at, at[0] >= hole[0], w, lines);
-      return inside(box, this.frame) && !blocked.some((b) => overlaps(box, b));
+    const ctx: AnnotationContext = {
+      sheet: { id: this.s.id, views: this.views, points: this.points, frame: this.frame, titleBlock: this.titleBlock },
+      style: this.style,
+      drawing: this.d,
+      data: this.annotationData(),
+      occ,
+      layouts: new Map(),
+      all: new Map(this.s.annotations.map((a) => [a.id, a])),
+      resolve: (ref) => resolveGeoRef(this.views.length ? [this.partial()] : [], ref),
+      view: (id) => this.cv(id),
+      row: (id) => {
+        const base = id.split("#")[0];
+        const a = this.s.annotations.find((x) => x.id === base);
+        if (!a || !("view" in a) || !a.view) return undefined;
+        const cv = this.cv(a.view);
+        const r = this.rows(a.view, cv?.scale ?? this.provisional).get(id);
+        const item = this.dimItems.get(a.view)?.find((x) => x.id === base);
+        return r ? { ...r, side: item?.side ?? r.side } : undefined;
+      },
     };
-    // Up and right of the hole, out through the view's nearer side: the usual place.
-    const usual = this.outside(cv, [hole[0] + 1, hole[1] + 1], 8, [1, 1], true);
-    let best: { at: Vec2; cost: number } | null = fits(usual) ? { at: usual, cost: 0 } : null;
-    if (!best) {
-      for (let k = 0; k < 72; k++) {
-        const t = (k / 72) * 2 * Math.PI;
-        for (const clear of [8, 16, 24]) {
-          const at = this.outside(cv, hole, clear, [Math.cos(t), Math.sin(t)]);
-          if (!fits(at)) continue;
-          // Above the view reads best; below it, among the dimensions, least.
-          // A leader square to the sheet runs along the hole's centre line and the dimensions' extension lines: slanted reads apart.
-          const dx = Math.abs(at[0] - hole[0]);
-          const dy = Math.abs(at[1] - hole[1]);
-          const square = Math.min(dx, dy) < 0.15 * Math.max(dx, dy) ? 12 : 0;
-          const cost = Math.hypot(at[0] - hole[0], at[1] - hole[1]) + (at[1] < cv.box!.min[1] ? 30 : 0) + square;
-          if (!best || cost < best.cost) best = { at, cost };
+    this.annotationCtx = ctx;
+    const layouts = layoutSheetAnnotations(this.s.annotations, ctx, this.measures);
+    for (const a of this.s.annotations) {
+      if (a.type === "table") {
+        const start = this.prims.length;
+        const t = tables.find((x) => x.a.id === a.id)!;
+        this.drawTable(t);
+        for (const p of this.prims.slice(start)) {
+          p.owner = a.id;
+          p.layer ??= "TABLE";
         }
+        const text = a.table === "cutList" ? `cut list, ${t.rows.length - 2} item${t.rows.length - 2 === 1 ? "" : "s"}` : `weld table, ${t.rows.length - 2} weld${t.rows.length - 2 === 1 ? "" : "s"}`;
+        this.annotations.set(a.id, { id: a.id, type: a.type, text, at: [t.box.min[0], t.box.max[1]], box: t.box });
+        continue;
       }
+      const l = layouts.get(a.id)!;
+      const layer = a.type === "dimension" ? "DIMENSION" : a.type === "centerMark" || a.type === "centerline" ? "CENTER" : a.type === "note" || a.type === "text" ? "TEXT" : "ANNOTATION";
+      for (const p of l.prims) this.prims.push({ ...p, owner: a.id, layer: p.layer ?? layer });
+      if (l.problem) this.problems.push(`${a.id}: ${l.problem}`);
+      this.annotations.set(a.id, {
+        id: a.id,
+        type: a.type,
+        ...("view" in a && a.view ? { view: a.view } : {}),
+        text: l.problem && !l.dangling ? "" : l.text,
+        ...(l.value !== undefined ? { value: l.value } : {}),
+        ...(l.along ? { along: l.along } : {}),
+        ...(l.item !== undefined ? { item: l.item } : {}),
+        ...(l.at ? { at: l.at } : {}),
+        box: l.problem && !l.dangling ? null : l.box,
+        ...(l.problem ? { problem: l.problem } : {}),
+        ...(l.dangling ? { dangling: true } : {}),
+        ...(l.textBox ? { textBox: l.textBox } : {}),
+        grips: l.grips,
+        ...(l.place ? { place: l.place } : {}),
+      });
     }
-    const at = best?.at ?? usual;
-    this.placedCallouts.push(this.calloutBox(at, at[0] >= hole[0], w, lines));
-    return at;
   }
 
-  /** The hole callouts' text boxes placed so far. */
-  private placedCallouts: Box[] = [];
-
-  /**
-   * One line of a hole callout. The depth symbol ⌴ is drawn (a box open at
-   * the top), not set as text: Helvetica, the PDF's font, has no such glyph.
-   */
-  private calloutLine(at: Vec2, text: string, size: number, anchor: "start" | "end"): void {
-    if (!text.includes(DEPTH)) {
-      this.prims.push({ k: "text", at, text, size, anchor });
-      return;
+  /** What the annotations read from the model: holes, patterns, welds, members, items, properties. */
+  private annotationData(): AnnotationData {
+    const m = this.ctx.measurements;
+    const patterns = new Map<string, { op: string; id: string; count: number }>();
+    for (const vf of this.v.features) {
+      if (!vf.feature) continue;
+      const x = vf.feature as unknown as { op?: string; id: string; features?: unknown; feature?: unknown; count?: unknown; suppressed?: boolean };
+      const of = Array.isArray(x.features) ? (x.features as string[]) : typeof x.feature === "string" ? [x.feature] : [];
+      if ((x.op === "circularPattern" || x.op === "linearPattern" || x.op === "mirror") && !x.suppressed) for (const id of of) if (!patterns.has(id)) patterns.set(id, { op: x.op, id: x.id, count: typeof x.count === "number" ? x.count : 0 });
     }
-    let x = anchor === "start" ? at[0] : at[0] - calloutWidth(text, size);
-    const pieces = text.split(DEPTH);
-    pieces.forEach((piece, i) => {
-      if (piece) this.prims.push({ k: "text", at: [x, at[1]], text: piece, size, anchor: "start" });
-      x += textWidth(piece, size);
-      if (i === pieces.length - 1) return;
-      const h = size * CAP * 0.8;
-      const w = size * DEPTH_WIDTH;
-      const inset = size * 0.08;
-      this.prims.push({ k: "line", pts: [[x + inset, at[1] + h], [x + inset, at[1]], [x + w - inset, at[1]], [x + w - inset, at[1] + h]], w: LINE.thin });
-      x += w;
-    });
+    let v2: ReturnType<typeof cutListOf> | null = null;
+    const list = () => (v2 ??= m && this.doc ? cutListOf(this.doc, m) : null);
+    return {
+      holes: this.holes,
+      holeCounts: this.holeCounts,
+      patterns,
+      welds: this.v.welds,
+      members: m?.members ?? [],
+      bodies: m?.bodies ?? [],
+      cutList: this.cut,
+      itemOf: (id) => {
+        const l = list();
+        return l ? itemNumberFor(l, id) : null;
+      },
+      quantityOf: (item) => list()?.items.find((i) => i.item === item)?.quantity ?? this.cut.find((i) => i.item === item)?.quantity ?? 1,
+      props: this.props,
+    };
   }
 
-  /** Where two bodies meet: the middle of where their boxes overlap (or come closest). */
-  private weldPoint(between: string[]): Vec3 | null {
-    const boxes = between.slice(0, 2).map((n) => this.ctx.measurements?.bodies.find((b) => b.name === n)?.boundingBox);
-    if (boxes.length < 2 || !boxes[0] || !boxes[1]) return null;
-    const [p, q] = boxes as NonNullable<(typeof boxes)[0]>[];
-    return [0, 1, 2].map((i) => {
-      const lo = Math.max(p.min[i], q.min[i]);
-      const hi = Math.min(p.max[i], q.max[i]);
-      return (lo + hi) / 2;
-    }) as Vec3;
-  }
-
-  private drawWeld(a: WeldAnnotation, cv: ComposedView): { text: string; at: Vec2 } | { problem: string } {
-    const w = this.v.welds.find((x) => x.id === a.weld);
-    if (!w) return { problem: `no weld "${a.weld}" in the weld table` };
-    const at3 = this.weldPoint(w.between);
-    if (!at3) return { problem: `the bodies of ${w.id} (${w.between.join(", ")}) aren't built` };
-    const f = cv.frame;
-    const tip = this.toSheet(cv, inView(at3, f));
-    const spot = a.at ? { knee: [cv.centre[0] + a.at[0], cv.centre[1] + a.at[1]] as Vec2, dir: (a.at[0] >= 0 ? 1 : -1) as 1 | -1 } : this.weldSpot(cv, tip);
-    const { knee, dir } = spot;
-    const end: Vec2 = [knee[0] + dir * WELD_LINE, knee[1]];
-    this.placedBalloons.push({ view: cv.id, c: [knee[0] + (dir * WELD_LINE) / 2, knee[1] - 2], r: WELD_LINE / 2 });
-    const d: Vec2 = [tip[0] - knee[0], tip[1] - knee[1]];
-    const len = Math.hypot(d[0], d[1]) || 1;
-    this.prims.push({ k: "line", pts: [tip, knee, end], w: LINE.thin });
-    this.arrow(tip, [d[0] / len, d[1] / len]);
-    if (w.allRound) this.prims.push({ k: "circle", c: knee, r: 1.6, w: LINE.thin });
-    // The symbol on the arrow side: under the reference line (ISO 2553).
-    const sx = knee[0] + dir * 8 - (dir < 0 ? 4 : 0);
-    const y = knee[1];
-    if (w.type === "fillet") this.prims.push({ k: "line", pts: [[sx, y], [sx, y - 4], [sx + 4, y]], closed: true, w: LINE.thin });
-    else if (w.type === "butt") {
-      this.prims.push({ k: "line", pts: [[sx + 0.8, y], [sx + 0.8, y - 4]], w: LINE.thin });
-      this.prims.push({ k: "line", pts: [[sx + 3.2, y], [sx + 3.2, y - 4]], w: LINE.thin });
-    } else this.prims.push({ k: "line", pts: [[sx, y], [sx, y - 3], [sx + 4, y - 3], [sx + 4, y]], w: LINE.thin });
-    const textY = y - 3.6;
-    this.prims.push({ k: "text", at: [sx - 1, textY], text: fmt(w.size), size: TEXT.dimension, anchor: "end" });
-    this.prims.push({ k: "text", at: [sx + 5, textY], text: fmt(w.length), size: TEXT.dimension, anchor: "start" });
-    return { text: `${w.id}: ${w.type} ${fmt(w.size)}, ${fmt(w.length)} long${w.allRound ? ", all round" : ""}`, at: knee };
-  }
-
-  /** A GeoRef of this sheet, resolved (view mm in `inView`). */
-  private geo(ref: string) {
-    return resolveGeoRef(this.views.length ? [this.partial()] : [], ref);
-  }
+  /** The annotation context the sheet was laid out in (for previews and picks). */
+  annotationCtx: AnnotationContext | null = null;
 
   /** This sheet as composed so far: enough to resolve GeoRefs against its views. */
   private partial(): ComposedSheet {
     return { id: this.s.id, views: this.views, points: this.points } as ComposedSheet;
-  }
-
-  /** A centre mark: the circle's centre lines a little past it, and the short cross where they meet (thin chain lines). */
-  private drawCenterMark(a: CenterMarkAnnotation, cv: ComposedView): { text: string; at: Vec2 } | { problem: string } {
-    const g = this.geo(a.at);
-    if (!g) return { problem: `${a.at} is not in ${cv.id} any more` };
-    let c: Vec2;
-    let r: number;
-    if (g.kind === "circle") {
-      c = g.inView.c;
-      r = g.inView.r;
-    } else if (g.kind === "point" && g.of === "centre") {
-      c = g.inView;
-      const e = cv.edges.find((x) => x.key === g.key && x.circle);
-      r = e?.circle?.r ?? 0;
-    } else return { problem: `${a.at} is not a circle or an arc's centre` };
-    const s = this.toSheet(cv, c);
-    const R = r * cv.scale + (a.extend ?? 2.5);
-    const cross = Math.min(1.5, R / 3);
-    this.prims.push({ k: "line", pts: [[s[0] - R, s[1]], [s[0] + R, s[1]]], w: LINE.thin, dash: R > 6 ? CENTER_DASH : undefined });
-    this.prims.push({ k: "line", pts: [[s[0], s[1] - R], [s[0], s[1] + R]], w: LINE.thin, dash: R > 6 ? CENTER_DASH : undefined });
-    if (R > 6) {
-      // The dash pattern may leave the centre open: a short solid cross marks it.
-      this.prims.push({ k: "line", pts: [[s[0] - cross, s[1]], [s[0] + cross, s[1]]], w: LINE.thin });
-      this.prims.push({ k: "line", pts: [[s[0], s[1] - cross], [s[0], s[1] + cross]], w: LINE.thin });
-    }
-    return { text: `centre mark Ø${fmt(2 * (g.kind === "circle" ? g.radius : r))}`, at: s };
-  }
-
-  /** A centre line: midway between two edges (a cylinder's sides), or through two points, a little past both ends. */
-  private drawCenterline(a: CenterlineAnnotation, cv: ComposedView): { text: string; at: Vec2 } | { problem: string } {
-    const [g1, g2] = a.between.map((r) => this.geo(r));
-    if (!g1 || !g2) return { problem: `${!g1 ? a.between[0] : a.between[1]} is not in ${cv.id} any more` };
-    let p: Vec2;
-    let q: Vec2;
-    if (g1.kind === "edge" && g2.kind === "edge" && g1.inView.a && g1.inView.b && g2.inView.a && g2.inView.b) {
-      const [a1, b1] = [g1.inView.a, g1.inView.b];
-      let [a2, b2] = [g2.inView.a, g2.inView.b];
-      // Pair the ends that are nearer each other.
-      if (Math.hypot(a1[0] - a2[0], a1[1] - a2[1]) > Math.hypot(a1[0] - b2[0], a1[1] - b2[1])) [a2, b2] = [b2, a2];
-      p = [(a1[0] + a2[0]) / 2, (a1[1] + a2[1]) / 2];
-      q = [(b1[0] + b2[0]) / 2, (b1[1] + b2[1]) / 2];
-    } else if (g1.kind !== "edge" && g2.kind !== "edge") {
-      p = g1.kind === "circle" ? g1.inView.c : g1.inView;
-      q = g2.kind === "circle" ? g2.inView.c : g2.inView;
-    } else return { problem: "a centre line is between two edges or through two points" };
-    const s = this.toSheet(cv, p);
-    const t = this.toSheet(cv, q);
-    const d: Vec2 = [t[0] - s[0], t[1] - s[1]];
-    const l = Math.hypot(d[0], d[1]);
-    if (l < 1e-6) return { problem: "its two ends are the same place" };
-    const ext = a.extend ?? 2.5;
-    const u: Vec2 = [d[0] / l, d[1] / l];
-    this.prims.push({ k: "line", pts: [[s[0] - u[0] * ext, s[1] - u[1] * ext], [t[0] + u[0] * ext, t[1] + u[1] * ext]], w: LINE.thin, dash: CENTER_DASH });
-    return { text: "centre line", at: [(s[0] + t[0]) / 2, (s[1] + t[1]) / 2] };
   }
 
   // --------------------------------------------------------------- tables
@@ -1900,9 +1504,7 @@ class Composer {
       });
   }
 
-  private drawNote(a: NoteAnnotation): void {
-    a.text.split("\n").forEach((l, i) => this.prims.push({ k: "text", at: [a.at[0], a.at[1] - i * TEXT.note * 1.4], text: l, size: TEXT.note, anchor: "start" }));
-  }
+
 
   // ----------------------------------------------------------- title block
 
@@ -1982,17 +1584,6 @@ class Composer {
   }
 }
 
-/** The depth symbol of a hole callout (ISO 129): drawn on the sheet, written in the callout's text. */
-const DEPTH = "⌴";
-/** Its width, as a fraction of the font size. */
-const DEPTH_WIDTH = 0.62;
-
-/** A callout line's width on the sheet, the depth symbol as drawn. */
-function calloutWidth(text: string, size: number): number {
-  const pieces = text.split(DEPTH);
-  return pieces.reduce((w, p) => w + textWidth(p, size), 0) + (pieces.length - 1) * size * DEPTH_WIDTH;
-}
-
 /**
  * "4× Ø6.6 THRU", then a counterbore or countersink line. A tapped hole: its
  * thread, "3× M6×1 - 6H ⌴12" (or THRU), then its tap drill when the drill
@@ -2003,7 +1594,7 @@ export function holeText(h: HoleRecord, count = h.copies + 1): string[] {
   const n = count;
   if (h.thread) {
     const lines = [`${n > 1 ? `${n}× ` : ""}${threadCallout(h.thread)}`];
-    if (!h.through) lines.push(`Ø${fmt(h.diameter)} ${DEPTH}${fmt(h.depth)}`);
+    if (!h.through) lines.push(`Ø${fmt(h.diameter)} ⌴${fmt(h.depth)}`);
     return lines;
   }
   const lines = [`${n > 1 ? `${n}× ` : ""}Ø${fmt(h.diameter)} ${h.through ? "THRU" : `× ${fmt(h.depth)} DEEP`}`];
@@ -2032,8 +1623,4 @@ function nextScaleUp(k: number): number {
 function normalize3(v: Vec3): Vec3 {
   const n = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / n, v[1] / n, v[2] / n];
-}
-
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000 + 0;
 }

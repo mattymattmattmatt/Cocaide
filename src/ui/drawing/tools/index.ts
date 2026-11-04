@@ -6,6 +6,7 @@ import "./kinds";
 import "./viewTools";
 import "./annotationTools";
 import "./sheetTools";
+import "./annotationKinds";
 
 export * from "./registry";
 export * from "./kinds";

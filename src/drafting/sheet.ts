@@ -37,6 +37,8 @@ export type Prim = (
       /** Degrees, counter-clockwise. */
       angle?: number;
       bold?: boolean;
+      /** Slanted (rich text's *italic*): SVG's font-style, a sheared text matrix in the PDF. */
+      italic?: boolean;
       color?: string;
       owner?: string;
     }

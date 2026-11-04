@@ -3,6 +3,7 @@
 // rebuild, the sheet composed from them, the drawing checks, and the PDF and
 // SVG exports. The browser half is e2e/drafting.spec.ts.
 
+import { ANNOTATION_TYPES } from "../src/doc/types";
 import { viewSpecs } from "../src/drafting/specs";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -98,11 +99,11 @@ describe("the drawing in the document", () => {
       'document: drawing.sheets[0].views[1].hidden: must be true or false (got "yes"); a view\'s hidden edges are now display: "hidden"',
       'document: drawing.sheets[0].annotations[0].view: no view "nowhere" (views: front)',
       'document: drawing.sheets[0].annotations[0].from: must be a node ("A"), a member end ("leg_a.start"), a hole ("hole_1"), a side of the view ("@left", "@right", "@top", "@bottom") or a point of the view\'s geometry ("front:vextrude_1/l3.0", "front:chole_1/c0") (got "@middle")',
-      "document: drawing.sheets[0].annotations[1]: a dimension is either between two points (from, to) or along a member, not both",
+      "document: drawing.sheets[0].annotations[1]: a dimension is between two points (from, to), along a member, or on GeoRefs (refs): one of them",
       "document: drawing.sheets[0].annotations[2].member: must name a member (got 3)",
       'document: drawing.sheets[0].annotations[3].text: must be the note\'s text (got "")',
       'document: drawing.sheets[0].annotations[4].table: must be "cutList" or "welds" (got "bom")',
-      'document: drawing.sheets[0].annotations[5].type: must be "dimension", "hole", "balloon", "weld", "table", "note", "centerMark", "centerline" (got "arrow")',
+      `document: drawing.sheets[0].annotations[5].type: must be ${ANNOTATION_TYPES.map((t) => `"${t}"`).join(", ")} (got "arrow")`,
     ]);
   });
 
@@ -238,15 +239,17 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     expect(at.right[1]).toBeCloseTo(at.front[1], 9);
     expect(at.right[0]).toBeGreaterThan(at.front[0]);
     const dims = sheet.annotations.filter((a) => a.type === "dimension").map((a) => [a.view, a.text]);
+    // The overall sizes, and the legs' length (an item whose length is no overall size); Phase Q adds the general notes.
     expect(dims).toEqual([
       ["front", "1200"],
       ["front", "900"],
       ["right", "600"],
+      ["front", "860"],
     ]);
     expect(sheet.problems).toEqual([]);
     expect(checks.map((c) => [c.label, c.ok, c.actual])).toEqual([
       ["Every view shows the part", true, "front, top, right, iso"],
-      ["Every annotation is attached", true, "7 annotations"],
+      ["Every annotation is attached", true, "9 annotations"],
       ["Every cut list item has a balloon", true, "3 of 3"],
       ["The overall size is dimensioned", true, "length, width and height"],
       ["Nothing overlaps or runs off the sheet", true, "clear"],
@@ -292,12 +295,12 @@ describe("Phase L acceptance: the table frame's drawing", () => {
 
   it("switching every member to SHS 50×50×3 updates the sheet: the leg reads 850, the balloons still match", async () => {
     let doc = await withDrawing(table);
-    doc = run(doc, { type: "setAnnotation", id: "d9", annotation: { type: "dimension", view: "front", member: "leg_a" } });
+    // New drawing dimensions the legs (d7, after the balloons).
     const before = await sheetOf(doc);
-    expect(said(before.sheet, "d9").text).toBe("860");
+    expect(said(before.sheet, "d7").text).toBe("860");
     for (const f of doc.features) if (f.op === "member") doc = run(doc, { type: "updateFeature", id: String(f.id), patch: { size: "SHS 50x50x3" } });
     const after = await sheetOf(doc);
-    expect(said(after.sheet, "d9").text).toBe("850");
+    expect(said(after.sheet, "d7").text).toBe("850");
     expect(after.sheet.annotations.filter((a) => a.type === "dimension").map((a) => a.text)).toEqual(["1200", "900", "600", "850"]);
     expect(after.sheet.cutList.map((i) => [i.item, i.designation, i.length])).toEqual([
       [1, "SHS 50x50x3", 1200],
@@ -366,8 +369,9 @@ describe("a weldment's welds on the sheet", () => {
     const doc = await withDrawing(welded);
     const { sheet, checks } = await sheetOf(doc);
     expect(sheet.annotations.filter((a) => a.type === "weld").map((a) => [a.view, a.text])).toEqual([
-      ["front", "w1: fillet 3, 160 long, all round"],
-      ["front", "w2: butt 3, 40 long"],
+      // ISO 2553: a fillet's leg z3 all around; a thin butt weld square, its penetration s3, 40 long.
+      ["front", "w1: arrow side fillet z3 all around"],
+      ["front", "w2: arrow side square s3 40"],
     ]);
     // The ISO title block is taller than Phase L's: with the cut list on it and the weld table beside it, 1:20 is what fits.
     expect(sheet.scaleText).toBe("1:20");
@@ -388,15 +392,20 @@ describe("a plate's drawing", () => {
   it("calls out the hole where it shows as a circle, places it, and shows it hidden in the front", async () => {
     const doc = await withDrawing(bracket);
     const { sheet, checks } = await sheetOf(doc);
+    // The auto-dimension engine v2: the plan view (the hole's) carries the plate's size and the hole's place from
+    // datum B (the hole sits on the plate's middle line across, so it needs no place that way); the section its
+    // thickness; the right view adds nothing and is left out; datums A, B, C; the general notes.
     expect(sheet.annotations.map((a) => [a.id, a.view, a.text])).toEqual([
-      ["d1", "front", "80"],
-      ["d2", "front", "6"],
-      ["d3", "right", "40"],
+      ["d1", "top", "80"],
+      ["d2", "top", "40"],
+      ["d3", "front", "6"],
       ["h4", "top", "Ø6.6 THRU"],
       ["d5", "top", "70"],
-      ["d6", "top", "20"],
-      // The centre line along the hole, in the right view (the top view's hole has its callout's mark).
-      ["c7", "right", "centre line"],
+      ["c6", "top", "centre mark Ø6.6"],
+      ["datum_A", "front", "datum A"],
+      ["datum_B", "top", "datum B"],
+      ["datum_C", "top", "datum C"],
+      ["general_notes", undefined, "BREAK ALL SHARP EDGES 0.5 × 45° MAX.\nGENERAL TOLERANCES ISO 2768-mK.\nDIMENSIONS IN MILLIMETRES. DO NOT SCALE."],
     ]);
     expect(sheet.scaleText).toBe("2:1");
     // The front view is a section through the hole (the plate has insides), hatched; the right view shows it hidden.
@@ -404,12 +413,12 @@ describe("a plate's drawing", () => {
     expect([front.kind, front.label]).toEqual(["section", "A"]);
     expect(sheet.prims.some((p) => p.owner === "front" && p.layer === "HATCH")).toBe(true);
     expect(failed(checks)).toEqual([]);
-    expect(sheet.prims.some((p) => p.owner === "right" && p.k === "line" && p.dash)).toBe(true);
+    expect(sheet.views.map((v) => v.id)).toEqual(["top", "front", "iso"]);
   });
 
   it("fails the hole check when the callout goes, and the size check when a dimension does", async () => {
     let doc = await withDrawing(bracket);
-    doc = run(doc, { type: "setAnnotation", id: "h4", annotation: null }, { type: "setAnnotation", id: "d3", annotation: null });
+    doc = run(doc, { type: "setAnnotation", id: "h4", annotation: null }, { type: "setAnnotation", id: "d2", annotation: null });
     const { checks } = await sheetOf(doc);
     expect(checks.filter((c) => !c.ok).map((c) => [c.label, c.actual])).toEqual([
       ["The overall size is dimensioned", "no dimension of 40 (y)"],

@@ -405,9 +405,69 @@ GeoRefs (what annotations attach to; the geoRefs tool and the view packet list t
 key is the feature that made it, a letter (l line, c circle or arc, o other, s a round face's side a/b) and its number: "ext_1/l3".
 Keys follow the model, so they survive rebuilds that leave that feature's edges alone.
 A dimension point is a node ("A"), a member end ("leg_a.start" / ".end"), a hole feature ("hole_1"), a side of the
-view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertical), or a GeoRef point of its view. Dimensions
+view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertical), or a GeoRef point of its view (every kind of
+annotation, tolerances, fits, GD&T and symbols: the "annotations" section). Dimensions
 are never in a view at an angle (iso). What every annotation reads is measured; none takes a value. The drawing never blocks
 the part: an annotation whose member, node, hole, weld or edge is gone is a drawing problem (the drawing's checks), not an error.
+
+## annotations (every kind on a drawing: dimensions, tolerances and fits, GD&T, datums, surface texture, welds, notes)
+Add, replace or remove with setAnnotation(id, annotation | null); change some fields with editAnnotation(id, patch) (null removes a field).
+Places ("at") of an annotation in a view are sheet mm from the view's centre (they move with it); a note, text, line, sketch or
+revision cloud without a view is in sheet mm from the lower left corner. Leave "at" out and the sheet places it: outside the view,
+near what it points at, its text over nothing else, its leader crossing as little as can be. Text may hold **bold**, *italic*,
+__underline__, linked properties ($PRP:"partNumber", $PRPMODEL:"mass", $PRPSHEET:"scale") and symbol tokens: <MOD-DIAM> Ø, <MOD-DEG> °,
+<MOD-PM> ±, <MOD-SQUARE> □, <MOD-MMC> Ⓜ, <MOD-LMC> Ⓛ, <MOD-PROJ> Ⓟ, <MOD-FREE> Ⓕ, <MOD-TANG> Ⓣ, <MOD-UNEQ> Ⓤ, <MOD-ARC> ⌒, <MOD-TAPER>,
+<MOD-SLOPE>, <MOD-CL> ℄, <HOLE-DEPTH> ↧, <HOLE-CBORE> ⌴, <HOLE-CSK> ⌵, <GDT-POS> ⌖, <GDT-FLAT>, <GDT-PERP> ... (drawn as lines on every export).
+Dimensions ("kind", default "linear"; every value is measured; precision = decimals, the drawing's "precision" by default):
+  { "type": "dimension", "view": "top", "from": "@left", "to": "top:chole_1/c1" }                 two points (nodes, member ends, holes, @sides, GeoRef points)
+  { "type": "dimension", "view": "top", "refs": ["top:eplate/l7"] }                                an edge's length ("direction" to force horizontal/vertical)
+  { "type": "dimension", "view": "top", "refs": ["top:eplate/l2", "top:eplate/l15"] }               two parallel edges' distance; a point and an edge: square from it
+  { "kind": "angular", "refs": [edge, edge] | [point, vertex, point], "major"?: true }              the angle (major: the reflex one)
+  { "kind": "radius", "refs": ["top:eplate/c1"], "typ": true, "jog"?: true }                       "R6 TYP"; jog: a large radius from a false centre
+  { "kind": "diameter", "refs": ["top:ehub/c0"] }  or  { "kind": "diameter", "refs": ["right:ehub/s0a", "right:ehub/s0b"] }   a circle, or a cylinder from the side
+  { "kind": "ordinate" | "baseline", "origin": "@left", "points": [...], "direction": "horizontal" }   values from one zero / stacked from it
+  { "kind": "chain", "points": [p1, p2, p3] }   end to end in one row;   { "kind": "arcLength", "refs": [arc] };   { "kind": "chamfer", "refs": [edge] } "C2" (ASME "2 × 45°")
+  { "kind": "pathLength", "refs": [edge, edge, ...] };  any: "offset", "at", "arrows": "auto"|"inside"|"outside", "flip", "prefix", "suffix",
+  "count": 4 ("4×"), "typ", "inspection" (oval), "dual" (other units), "precision", "tolerance".
+Tolerances: { "kind": "symmetric", "plus": 0.1 } ±0.1 · { "kind": "bilateral", "plus": 0.1, "minus": 0.05 } +0.1/−0.05 (minus is how far UNDER;
+  g6 on Ø25 is plus −0.007, minus 0.020) · { "kind": "limit", ... } the limits stacked · { "kind": "fit", "fit": "H7" | "g6" | "H7/g6" }
+  ISO 286 class (all of A–ZC / a–zc, IT01–IT18, 0–3150 mm) · "fitWithTol" adds "(+0.021/0)" · "fitLimits" adds the limits · "basic" (boxed)
+  · "reference" (in brackets) · "min" · "max"; "precision" for the deviations. Ø25 H7 = +0.021/0, g6 = −0.007/−0.020, m6 on Ø40 = +0.025/+0.009.
+  Preferred fits: H7/g6 sliding, H7/h6 location, H7/k6 transition, H7/p6 press, H7/s6 shrink, H7/m6 dowels, H8/f7 running, H9/d9 free.
+  General tolerances (drawing "generalTolerance"): "ISO 2768-mK" (m on 30–120 mm ±0.3; K flatness of 100–300 mm 0.4), "ISO 13920-BF"
+  (weldments), or an ASME block "X.X ±0.5, X.XX ±0.1, ANG ±0.5°". A dimension without its own tolerance has the general one.
+GD&T: { "type": "gdt", "view": "top", "dimension": "d7" | "on": GeoRef | "dimension" + "extension": 0|1, "rows": [{ "characteristic":
+  "position", "diameter": true, "tolerance": 0.1, "material": "M", "modifiers"?: ["P","F","T","S","U","CZ","ST","E","I"], "projected"?: 20,
+  "datums": [{ "label": "A" }, { "label": "B", "modifier": "M" }, { "label": "C" }] }], "composite"?: true, "count"?: 4, "above"?, "below"? }
+  characteristics: straightness flatness circularity cylindricity profileLine profileSurface angularity perpendicularity parallelism
+  position concentricity symmetry circularRunout totalRunout. Rules checked: form tolerances take no datum; orientation, run-out,
+  concentricity and symmetry need one; Ⓜ/Ⓛ and position only on features of size (a hole, its diameter dimension); every datum named
+  must have its datum symbol on the drawing.
+  { "type": "datum", "view": "front", "label": "A", "on": "front:@bottom" | "dimension": "d3" | "gdt": "g1", "open"?: true }
+  { "type": "datumTarget", "view": "front", "label": "A1", "target": "point" | "line" | "area", "on": GeoRef point, "size"?: 6 }
+Surface texture (ISO 1302 / ISO 21920, ASME Y14.36): { "type": "surface", "view": "top", "on": "top:@top", "symbol": "basic" |
+  "removal" | "noRemoval", "values": ["Ra 1.6"], "process"?: "ground", "lay"?: "=" | "⊥" | "X" | "M" | "C" | "R" | "P", "allowance"?: 0.5,
+  "allAround"? } · the general requirement by the title block: { "type": "surface", "general": true, "symbol": "removal", "values": ["Ra 3.2"] }
+Welds (ISO 2553 with the dashed line for the other side; AWS A2.4 when the drawing's standard is ASME): { "type": "weld", "view": "front",
+  "weld": "w1" (from the weld table) | "on": GeoRef, "arrowSide"?: { "symbol": "fillet" | "square" | "v" | "bevel" | "u" | "j" | "flareV" |
+  "flareBevel" | "plug" | "slot" | "spot" | "seam" | "edge" | "backWeld" | "backing" | "surfacing" | "stud", "size": "a5" | "z7" | 6,
+  "length": 50, "count": 3, "pitch": 150, "angle": 60, "root": 2, "contour": "flush" | "convex" | "concave", "finish": "G" },
+  "otherSide"?: {...}, "staggered"?, "allAround"?, "field"?, "process"?: "135", "reference"?: "WPS-12", "more"?: [{ "arrowSide": ... }] }
+Holes: { "type": "hole", "view": "top", "hole": "cbore_1", "count"?: 4, "pattern"?: true, "tolerance"?: { "kind": "fit", "fit": "H7" } }
+  writes "4× Ø6.6 THRU", "⌴ Ø11 ↧4", "⌵ Ø13 × 90°", "M8×1.25 - 6H ↧16", "EQ SP" / "ON PCD Ø80" for a circular pattern.
+  { "type": "cosmeticThread", "view": "front", "hole": "tap_1" } the thread alone.
+Balloons: { "type": "balloon", "view": "iso", "member": "leg_a" | "body": "plate" | "item": 3, "shape"?: "circle" | "hexagon" | "triangle" |
+  "box" | "split" | "flag", "size"?: 10, "quantity"?: true, "stack"?: ["leg_b", 4] }
+Notes: { "type": "note", "text": "BREAK ALL SHARP EDGES\\nDEBURR", "at": [30, 60], "numbered": true, "title": "NOTES:", "height": 3.5,
+  "leaders": [{ "to": "top:eplate/l7", "arrow": "closed" | "open" | "dot" | "none", "via"?: [[x, y]], "spline"?: true }], "frame"?: true }
+  { "type": "leader", "view": "top", "to": GeoRef, "text": "↧3" }, { "type": "text", "text": "...", "at": [x, y] },
+  { "type": "line", "pts": [[x, y], [x, y]], "line": "thick" | "thin" | "center" | "hidden" | "phantom" },
+  { "type": "sketch", "items": [{ "kind": "line", "a", "b" } | { "kind": "arc", "c", "r", "start", "end" } | { "kind": "circle", "c", "r" } |
+  { "kind": "rect", "a", "b" } | { "kind": "polyline", "pts" } | { "kind": "text", "at", "text" }] },
+  { "type": "revisionCloud", "pts": [[x, y], ...], "rev": "B" }, { "type": "centerMark", ..., "style": "lines" | "cross" | "pitch" }.
+New drawing dimensions a part from its design intent: overall sizes once (a round part's diameters from the side), alike holes in one
+callout, hole places from datums A, B, C (or centre to centre when symmetric), pockets and slots sized and placed, corner radii and
+fillets once TYP, a numbered general notes block. A dimension whose target goes stays where it was, red, listed by the checks.
 
 ## properties (the part's number, description, revision ...)
 "properties": { "partNumber": "BR-1001", "description": "Base bracket, 6 mm plate", "revision": "B", "author": "J. Smith",
@@ -563,7 +623,7 @@ importStep(path, newBody?, at?, rotate?) - a STEP file read from disk into the p
 exportDxf(what: "sketch" | "face" | "plates", sketch?, face?, file?, version?) - DXF written to the output folder (plates: a ZIP).
 newDrawing(date?) - code plans an ISO sheet: front (a section when the part has insides), top and right projected from it, iso, a detail of small crowded features, the overall size, every hole, centre marks, a balloon per cut list item, the tables.
 setSheet(patch, sheet?), addSheet(id?, sheet?, index?), renameSheet(id, name), deleteSheet(id), moveSheet(id, index), setDrawingOptions(patch) - the sheets and the drawing's settings.
-setView(id, view | null, sheet?), moveView(id, at?, sheet?), setAnnotation(id, annotation | null, sheet?), setTable(id, table | null, sheet?) - edit the drawing; a view takes its annotations and the views made from it with it.
+setView(id, view | null, sheet?), moveView(id, at?, sheet?), setAnnotation(id, annotation | null, sheet?), editAnnotation(id, patch), setTable(id, table | null, sheet?) - edit the drawing; a view takes its annotations and the views made from it with it.
 drawing - every composed sheet: each view's kind, scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks. geoRefs(view) - what a view offers to attach to.
 exportDrawing(format: "pdf" | "svg" | "dxf", file?, sheet?) - a PDF of every sheet (font embedded), or one sheet as SVG or DXF (a layer per kind of line).
 undo, redo.

@@ -42,6 +42,7 @@ export const COMMAND_TOOLS = [
   "moveView",
   "setTable",
   "setAnnotation",
+  "editAnnotation",
   "setDimension",
   "renameDimension",
   "setDriven",
@@ -96,6 +97,8 @@ export function toolCommand(name: string, a: Raw): Command | string {
       return { type: "setBodyMaterial", body: str("body"), material: obj("material") };
     case "setAnnotation":
       return { type: "setAnnotation", id: str("id"), annotation: obj("annotation"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
+    case "editAnnotation":
+      return { type: "editAnnotation", id: str("id"), patch: (obj("patch") ?? {}) as Record<string, unknown> };
     case "setView":
       return { type: "setView", id: str("id"), view: obj("view"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "setTable":
