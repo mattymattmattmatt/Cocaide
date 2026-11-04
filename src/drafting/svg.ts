@@ -39,7 +39,7 @@ export function sheetSVG(sheet: ComposedSheet, opts: SvgOptions = {}): string {
     }
     const anchor = p.anchor === "start" ? "" : ` text-anchor="${p.anchor}"`;
     const rot = p.angle ? ` transform="rotate(${n(-p.angle)} ${n(p.at[0])} ${y(p.at[1])})"` : "";
-    return `<text x="${n(p.at[0])}" y="${y(p.at[1])}" font-size="${n(p.size)}"${anchor}${p.bold ? ` font-weight="bold"` : ""}${rot} fill="${p.color ? esc(p.color) : "currentColor"}" stroke="none">${esc(p.text)}</text>`;
+    return `<text x="${n(p.at[0])}" y="${y(p.at[1])}" font-size="${n(p.size)}"${anchor}${p.bold ? ` font-weight="bold"` : ""}${p.italic ? ` font-style="italic"` : ""}${rot} fill="${p.color ? esc(p.color) : "currentColor"}" stroke="none">${esc(p.text)}</text>`;
   };
   const groups: string[] = [];
   let owner: string | undefined;
