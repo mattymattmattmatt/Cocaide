@@ -12,12 +12,12 @@
 
 import type { DrawingGeometry } from "../ask/kernel";
 import { parseScale, STANDARD_SCALES } from "../doc/drawing";
-import type { Annotation, Drawing, DrawingView, Vec2, Vec3, ViewLook } from "../doc/types";
+import type { Annotation, Drawing, DrawingView, Vec2, ViewLook } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import type { Measurements } from "../kernel/measure";
 import type { ViewSpec } from "../kernel/drawingViews";
 import { cutList } from "../weldment/cutlist";
-import { autoCenterMarks } from "./centermarks";
+import { autoDimension } from "./autodim";
 import { composeSheet } from "./compose";
 import { inView, viewFrame } from "./views";
 
@@ -74,27 +74,29 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     views[0] = { id: "top", look: "top", ...hidden };
     views[1] = { id: "front", kind: "section", parent: "top", line: [r2([topOutline.max[0] + margin, y]), r2([topOutline.min[0] - margin, y])], label: "A" };
   }
-  const side = "right";
-
-  // The overall size: length and height on the front, width on the side.
-  annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@left", to: "@right" });
-  annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@bottom", to: "@top" });
-  annotations.push({ id: id("d"), type: "dimension", view: side, from: "@left", to: "@right" });
-
-  // Each hole feature, called out once (its first hole; the callout counts them all) and placed from the view's left and bottom where it shows as a circle.
-  const called = new Set<string>();
-  const callouts = new Map<string, Vec2[]>();
-  for (const h of geometry?.holes ?? []) {
-    if (called.has(h.feature)) continue;
-    called.add(h.feature);
-    const view = views.find((x) => look[x.id] && x.id !== "iso" && x.kind !== "section" && facing(h.axis, look[x.id]));
-    if (!view) continue;
-    annotations.push({ id: id("h"), type: "hole", view: view.id, hole: h.feature });
-    const at = inView(h.entry, viewFrame(look[view.id]));
-    callouts.set(view.id, [...(callouts.get(view.id) ?? []), at]);
-    const outline = outlineOf(geometry, view.id);
-    if (outline && at[0] - outline.min[0] > 1e-6) annotations.push({ id: id("d"), type: "dimension", view: view.id, from: "@left", to: h.feature });
-    if (outline && at[1] - outline.min[1] > 1e-6) annotations.push({ id: id("d"), type: "dimension", view: view.id, from: "@bottom", to: h.feature });
+  const generalTolerance = weldment ? "ISO 13920-BF" : "ISO 2768-mK";
+  let planned = views;
+  if (!weldment) {
+    // The auto-dimension engine v2 (src/drafting/autodim.ts): sizes and places from the features' intent.
+    const r = autoDimension({ v, m, geometry, views, looks: look, id, generalTolerance });
+    planned = views.filter((x) => !r.unneeded.includes(x.id));
+    annotations.push(...r.annotations);
+  } else {
+    // The overall size: length and height on the front, width on the side.
+    annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@left", to: "@right" });
+    annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@bottom", to: "@top" });
+    annotations.push({ id: id("d"), type: "dimension", view: "right", from: "@left", to: "@right" });
+    // Each cut list item's length once, where a member of it lies flat in the front and its length is not an overall size.
+    const bb = m?.boundingBox?.size;
+    const f = viewFrame("front");
+    for (const item of cutList(members)) {
+      const mem = item.members.map((mid) => members.find((x) => x.id === mid)!).find((x) => {
+        const d = inView(x.ends[1], f).map((c, i) => c - inView(x.ends[0], f)[i]);
+        return Math.abs(Math.hypot(d[0], d[1]) - x.length) < 1e-3 && (Math.abs(d[0]) < 1e-6 || Math.abs(d[1]) < 1e-6);
+      });
+      if (!mem || (bb && bb.some((s) => Math.abs(s - mem.length) < 0.05))) continue;
+      annotations.push({ id: id("d"), type: "dimension", view: "front", member: mem.id });
+    }
   }
 
   // A balloon per cut list item, on the member of it the iso shows most of.
@@ -106,27 +108,32 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     annotations.push({ id: id("b"), type: "balloon", view: "iso", member: best.mid });
   }
   for (const w of v.welds) annotations.push({ id: id("w"), type: "weld", view: "front", weld: w.id });
+  if (weldment) {
+    const lines = [`GENERAL TOLERANCES ${generalTolerance}.`, "WELDS TO ISO 2553; REMOVE SPATTER AND SLAG.", "BREAK ALL SHARP EDGES.", "DIMENSIONS IN MILLIMETRES. DO NOT SCALE."];
+    annotations.push({ id: "general_notes", type: "note", text: lines.join("\n"), at: [0, 0], numbered: true, title: "NOTES:" });
+  }
   if (items.length) annotations.push({ id: "cut_list", type: "table", table: "cutList" });
   if (v.welds.length) annotations.push({ id: "weld_table", type: "table", table: "welds" });
 
-  // Centre marks and lines in the square views (not on a weldment's tubes: their ends would crowd it).
-  if (!weldment) {
-    for (const view of views) {
-      if (view.id === "iso" || view.kind === "section") continue;
-      const pv = geometry?.views.find((x) => x.id === view.id);
-      if (!pv) continue;
-      // A called-out hole draws its own mark.
-      annotations.push(...autoCenterMarks(view.id, pv, () => id("c"), { hidden: view.display === "hidden", skip: callouts.get(view.id) }));
-    }
-  }
-
   const drawing: Drawing = {
-    sheets: [{ id: "sheet1", format: { size: "A3", template: "iso", ...(opts.date ? { date: opts.date } : {}) }, projection: "third", views, annotations }],
+    sheets: [{ id: "sheet1", format: { size: "A3", template: "iso", ...(opts.date ? { date: opts.date } : {}) }, projection: "third", views: planned, annotations }],
     standard: "ISO",
-    generalTolerance: weldment ? "ISO 13920-BF" : "ISO 2768-mK",
+    generalTolerance,
   };
+  placeNotes(doc, drawing, m, geometry);
   addDetail(doc, drawing, m, geometry);
   return drawing;
+}
+
+/** The general notes block: in the sheet's lower left corner, inside its border. */
+function placeNotes(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
+  const s = drawing.sheets[0];
+  const note = s.annotations.find((a) => a.id === "general_notes");
+  if (!note || note.type !== "note") return;
+  const sheet = composeSheet({ ...(doc as object), drawing: { ...drawing, sheets: [{ ...s, annotations: s.annotations.filter((a) => a !== note) }] } }, { measurements: m, geometry });
+  if (!sheet) return;
+  const lines = note.text.split("\n").length;
+  note.at = [Math.round(sheet.frame.min[0] + 6), Math.round(sheet.frame.min[1] + 7 + lines * 4.9)];
 }
 
 /**
@@ -171,10 +178,6 @@ function r2(p: Vec2): Vec2 {
   return [Math.round(p[0] * 100) / 100 + 0, Math.round(p[1] * 100) / 100 + 0];
 }
 
-function facing(axis: Vec3, look: ViewLook): boolean {
-  const e = viewFrame(look).eye;
-  return Math.abs(axis[0] * e[0] + axis[1] * e[1] + axis[2] * e[2]) > 0.999;
-}
 
 function outlineOf(g: DrawingGeometry | null, view: string): { min: [number, number]; max: [number, number] } | null {
   const pv = g?.views.find((x) => x.id === view);

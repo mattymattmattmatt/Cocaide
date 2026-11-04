@@ -140,6 +140,8 @@ export type Command =
   | { type: "setTable"; id: string; table: Record<string, unknown> | null; sheet?: string }
   /** Adds or replaces an annotation by id (on its view's sheet; a note or table on `sheet`, else the first), or removes it. What it points at must be in the part. */
   | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null; sheet?: string }
+  /** Changes some fields of an annotation (null removes a field): its tolerance, its text's place, a frame's rows ... The rest stays. */
+  | { type: "editAnnotation"; id: string; patch: Record<string, unknown> }
   /** Gives a body its own material, or puts it back on the part's (null). */
   | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null }
   /**
@@ -171,6 +173,12 @@ export interface ApplyOptions {
 export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): ApplyResult {
   if (!isObject(input) || !Array.isArray(input.features)) {
     return { ok: false, error: "document: not a document (needs a features array)" };
+  }
+  if (cmd.type === "editAnnotation") {
+    // A patch of an annotation is setting it, merged.
+    const set = editAsSet(input as RawDocument, cmd);
+    if (typeof set === "string") return { ok: false, error: set };
+    return apply(input, set, opts);
   }
   const outside = scopeProblem(input as RawDocument, cmd, opts.writeScope);
   if (outside) return { ok: false, error: outside };
@@ -1411,4 +1419,20 @@ export function nextId(doc: unknown, prefix: string): string {
     isObject(doc) && Array.isArray(doc.features) ? doc.features.map((f) => (isObject(f) ? f.id : undefined)) : [],
   );
   for (let n = 1; ; n++) if (!used.has(`${prefix}_${n}`)) return `${prefix}_${n}`;
+}
+
+/** An editAnnotation as the setAnnotation it is: the annotation with the patch merged in (null removes a field). */
+export function editAsSet(doc: RawDocument, cmd: { id: string; patch: Record<string, unknown> }): Extract<Command, { type: "setAnnotation" }> | string {
+  if (!isObject(cmd.patch)) return `editAnnotation: patch must be an object of fields to change (got ${JSON.stringify(cmd.patch)})`;
+  const a = rawAnnotations(doc).find((x) => x.id === cmd.id);
+  if (!a) return `editAnnotation: no annotation "${cmd.id}"`;
+  if ("id" in cmd.patch || "type" in cmd.patch) return "editAnnotation: an annotation's id and type stay; to change them, set a new one (setAnnotation)";
+  const next: Record<string, unknown> = { ...a };
+  for (const [k, v] of Object.entries(cmd.patch)) {
+    if (v === null) delete next[k];
+    else next[k] = structuredClone(v);
+  }
+  // A moved or changed dimension's remembered place is no longer where it is.
+  if (next.type === "dimension" && !("last" in cmd.patch)) delete next.last;
+  return { type: "setAnnotation", id: cmd.id, annotation: next };
 }

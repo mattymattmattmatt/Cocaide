@@ -10,6 +10,7 @@ import type { Check } from "../intent/critic";
 import type { Measurements } from "../kernel/measure";
 import type { ComposedDrawing, ComposedSheet } from "./compose";
 import { fmt } from "./compose";
+import { holeSignature } from "./autodim";
 import { inside, overlaps, type Box } from "./sheet";
 
 const AXES = ["x", "y", "z"] as const;
@@ -44,7 +45,9 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
   const bb = m?.boundingBox;
   if (bb) {
     const dims = drawn.filter((a) => a.type === "dimension" && a.value !== undefined && a.along);
-    const missing = AXES.filter((_, i) => bb.size[i] > 1e-6 && !dims.some((d) => Math.abs(d.along![i]) > 0.999 && Math.abs(d.value! - bb.size[i]) < 0.05));
+    // A round part's diameter is its size across both ways it is seen round.
+    const diameters = drawn.filter((a) => a.type === "dimension" && a.value !== undefined && a.text.includes("Ø"));
+    const missing = AXES.filter((_, i) => bb.size[i] > 1e-6 && !dims.some((d) => Math.abs(d.along![i]) > 0.999 && Math.abs(d.value! - bb.size[i]) < 0.05) && !diameters.some((d) => Math.abs(d.value! - bb.size[i]) < 0.05));
     add(
       "The overall size is dimensioned",
       missing.length === 0,
@@ -59,7 +62,9 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
   const holes = geometry?.holes ?? [];
   if (holes.length) {
     const called = new Set(attached("hole").map((a) => (a.type === "hole" ? a.hole : "")));
-    const missing = holes.filter((h) => !called.has(h.feature)).map((h) => h.feature);
+    // A callout of several alike holes ("4×") calls out the features it counts.
+    const groups = attached("hole").filter((a) => a.type === "hole" && a.count !== undefined).map((a) => (a.type === "hole" ? holes.find((h) => h.feature === a.hole) : undefined)).filter((h): h is NonNullable<typeof h> => !!h).map(holeSignature);
+    const missing = holes.filter((h) => !called.has(h.feature) && !groups.includes(holeSignature(h))).map((h) => h.feature);
     add("Every hole is called out", missing.length === 0, `${holes.length}`, missing.length ? `no callout for ${missing.join(", ")}` : `${holes.length} of ${holes.length}`);
   }
 

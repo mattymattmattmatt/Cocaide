@@ -199,6 +199,15 @@ export function layoutGdt(a: GdtAnnotation, ctx: AnnotationContext, cv: Composed
   return { prims, textBox: box, text, at: origin, grips: [{ name: "frame", at: [origin[0], origin[1]], field: "at" }], place: { pts: [fromCentre(cv, origin)], text } };
 }
 
+/** How far a datum may slide along its edge from where it stands (to stay on the surface). */
+function edgeReach(ctx: AnnotationContext, ref: string, base: Vec2, along: Vec2): number {
+  const g = ctx.resolve(ref);
+  if (!g || g.kind !== "edge" || !g.a || !g.b) return 4;
+  const ta = dot(sub(g.a, base), along);
+  const tb = dot(sub(g.b, base), along);
+  return Math.max(2, Math.min(Math.abs(ta), Math.abs(tb)) * 0.8);
+}
+
 /** A point on a dimension's extension line (its middle), for a frame or a datum on it. */
 function extensionTip(dim: AnnotationLayout, i: 0 | 1): Vec2 | undefined {
   const e = dim.extensions?.[i] ?? dim.extensions?.[0];
@@ -240,17 +249,26 @@ export function layoutDatum(a: DatumAnnotation, ctx: AnnotationContext, cv: Comp
   if (a.at && !a.gdt && !a.dimension) {
     boxC = add(cv.centre, a.at);
   } else if (!a.at) {
-    // Slide along the surface to a free place.
-    const tries = [0, 4, -4, 8, -8, 12, -12];
+    // Slide along the surface (within its middle) and out to a free place: nothing over it, its stem crossing as little as can be.
     const along = perp(n);
-    for (const t of tries) {
-      const c = add(add(base, mul(along, t)), mul(n, tri + stem));
-      const b: Box = { min: [c[0] - H / 2, c[1] - H / 2], max: [c[0] + H / 2, c[1] + H / 2] };
-      if (ctx.occ.overlap(b, { ignore: [a.id], kinds: ["text", "symbol", "balloon", "label", "table"] }) === 0 && ctx.occ.overlap(b, { views: true, kinds: ["view"], ignore: [a.id] }) < 4) {
-        boxC = c;
-        base = add(base, mul(along, t));
-        break;
+    const reach = a.on ? edgeReach(ctx, a.on, base, along) : 6;
+    let best: { c: Vec2; base: Vec2; cost: number } | null = null;
+    for (const out of [stem, stem + 4, stem + 9, stem + 15]) {
+      for (let k = 0; k <= 12; k++) {
+        const t = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (reach / 6);
+        const b0 = add(base, mul(along, t));
+        const c = add(b0, mul(n, tri + out));
+        const b: Box = { min: [c[0] - H / 2 - 0.5, c[1] - H / 2 - 0.5], max: [c[0] + H / 2 + 0.5, c[1] + H / 2 + 0.5] };
+        if (!ctx.occ.inFrame(b)) continue;
+        let cost = ctx.occ.overlap(b, { ignore: [a.id], kinds: ["text", "symbol", "balloon", "label", "table", "title"] }) * 50;
+        cost += ctx.occ.overlap(b, { views: true, kinds: ["view"], ignore: [a.id] }) * 2;
+        cost += ctx.occ.linesThrough(b, [a.id]) * 8 + ctx.occ.crossings(b0, c, [a.id]) * 6 + ctx.occ.textCrossed(b0, c, [a.id]) * 60 + Math.abs(t) * 0.3 + (out - stem) * 0.5;
+        if (!best || cost < best.cost) best = { c, base: b0, cost };
       }
+    }
+    if (best) {
+      boxC = best.c;
+      base = best.base;
     }
   }
   const prims: Prim[] = [];

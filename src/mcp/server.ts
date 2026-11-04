@@ -232,8 +232,13 @@ export const TOOLS: Record<string, ToolSpec> = {
   },
   setAnnotation: {
     description:
-      "Add or replace an annotation by id, or remove it (annotation: null): a dimension, hole callout, balloon, weld symbol, table, note, centerMark { view, at: GeoRef } or centerline { view, between: [GeoRef, GeoRef] } (see cocaide://reference). It goes on its view's sheet. What it reads is measured on the rebuild; the result says what it reads.",
+      "Add or replace an annotation by id, or remove it (annotation: null): a dimension (linear, angular, radius, diameter, ordinate, baseline, chain, arcLength, chamfer, pathLength; tolerances incl. ISO 286 fits), hole callout, balloon, weld symbol (ISO 2553 / AWS), gdt (feature control frame), datum, datumTarget, surface (texture), cosmeticThread, note (rich, leaders, numbered), leader, text, line, sketch, revisionCloud, table, centerMark or centerline (see cocaide://reference drawing). It goes on its view's sheet. What it reads is measured on the rebuild; the result says what it reads.",
     input: { id: z.string(), annotation: obj.nullable(), sheet: z.string().optional() },
+  },
+  editAnnotation: {
+    description:
+      'Change some fields of an annotation, keeping the rest: { "tolerance": { "kind": "fit", "fit": "H7" } }, { "at": [x, y] }, { "typ": true }, a frame\'s "rows"; null removes a field. Every kind is in cocaide://reference drawing.',
+    input: { id: z.string(), patch: obj },
   },
   setTable: {
     description:

@@ -219,7 +219,7 @@ export function measureDimension(a: DimensionAnnotation, v: ViewInfo, points: Po
       const origin = fill(o.p);
       const pts2 = ps.map((q) => fill(q.p));
       // A chain runs point to point in order along its direction.
-      const order = pts2.map((p, i) => i).sort((i, j) => pts2[i][axis] - pts2[j][axis]);
+      const order = pts2.map((_, i) => i).sort((i, j) => pts2[i][axis] - pts2[j][axis]);
       const sorted = kind === "chain" ? order.map((i) => pts2[i]) : pts2;
       const sortedSides = kind === "chain" ? order.map((i) => !!ps[i].side) : ps.map((q) => !!q.side);
       const values = kind === "chain" ? sorted.map((p, i) => Math.abs(p[axis] - (i ? sorted[i - 1][axis] : origin[axis]))) : sorted.map((p) => Math.abs(p[axis] - origin[axis]));
@@ -421,6 +421,8 @@ interface RowItem {
   group?: number;
   rows: number;
   fixed: boolean;
+  /** Its true length (the interval may hold its text too): shorter ones go nearer the part. */
+  span?: number;
 }
 
 /**
@@ -449,7 +451,7 @@ export function planDimensionRows(items: { id: string; m: Measure; side: Side; f
         lo -= 0.01;
         hi += 0.01;
       }
-      rows.push({ id, dir: m.dir, side, lo, hi, rows: 1, fixed });
+      rows.push({ id, dir: m.dir, side, lo, hi, rows: 1, fixed, span: Math.abs(m.p1[axis] - m.p2[axis]) * k });
     } else if (m.kind === "set") {
       const axis = m.dir === "h" ? 0 : 1;
       const all = [m.origin[axis], ...m.pts.map((p) => p[axis])].map((x) => x * k);
@@ -463,7 +465,7 @@ export function planDimensionRows(items: { id: string; m: Measure; side: Side; f
   }
   for (const dir of ["h", "v"] as const) {
     for (const side of [-1, 1] as const) {
-      const here = rows.filter((r) => r.dir === dir && r.side === side && !r.fixed).sort((x, y) => x.hi - x.lo - (y.hi - y.lo) || x.lo - y.lo);
+      const here = rows.filter((r) => r.dir === dir && r.side === side && !r.fixed).sort((x, y) => (x.span ?? x.hi - x.lo) - (y.span ?? y.hi - y.lo) || x.lo - y.lo);
       const placed: RowItem[][] = [];
       for (const r of here) {
         let row = 0;
@@ -653,7 +655,25 @@ export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, 
       } else level = Math.max(lv, nearest + 2);
     }
     const { label, text } = dimensionLabel(a, m.value, sym, style, ctx.drawing, { side: a.kind === "diameter" ? "shaft" : "hole" });
-    const d = drawLinear({ a: a1, b: a2, u, n, level, label, ...(at ? { textPoint: at } : {}), arrows: a.arrows ?? "auto", outsideEnd: a.flip ? 0 : 1, owner }, style);
+    const spec = { a: a1, b: a2, u, n, level, label, arrows: a.arrows ?? "auto", outsideEnd: (a.flip ? 0 : 1) as 0 | 1, owner };
+    let d = drawLinear({ ...spec, ...(at ? { textPoint: at } : {}) }, style);
+    if (!at) {
+      // Text over other text, a symbol or a view's marks: slid along its line to the nearest clear place.
+      const busy = (b: Box) => ctx.occ.overlap(b, { ignore: [owner], kinds: ["text", "symbol", "label", "balloon", "table", "title"] });
+      if (busy(d.textBox) > 0) {
+        const mid = mul(add(d.line[0], d.line[1]), 0.5);
+        const half = dist(d.line[0], d.line[1]) / 2;
+        const dir = unit(sub(d.line[1], d.line[0]));
+        const w = measureLabel(label).w;
+        for (const t of [4, -4, 8, -8, 12, -12, 18, -18, half + w / 2 + 6, -(half + w / 2 + 6)]) {
+          const tryD = drawLinear({ ...spec, textPoint: add(mid, mul(dir, t)) }, style);
+          if (busy(tryD.textBox) === 0) {
+            d = tryD;
+            break;
+          }
+        }
+      }
+    }
     const f = cv.frame;
     const alongModel: Vec3 = m.dir === "h" ? f.right : m.dir === "v" ? f.up : normalize3(toModel(sub(m.p2, m.p1), f));
     return {
@@ -703,7 +723,7 @@ function radial(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedView
   const knee = at ?? add(c, mul(u, r + Math.max(7, r * 0.25 + 5)));
   const right = knee[0] >= c[0];
   const landing = add(knee, [right ? lm.w + 1.5 : -lm.w - 1.5, 0]);
-  if (m.diameter && r * 2 > lm.w + 12 && !at) {
+  if (m.diameter && r * 2 > Math.max(lm.w + 12, 50) && !at) {
     // Across the circle through its centre, arrows inside at both sides, run on to the text outside.
     const other = sub(c, mul(u, r));
     prims.push({ k: "line", pts: [other, edge, knee, landing], w: style.thin });
@@ -744,7 +764,7 @@ function radial(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedView
 }
 
 /** A free way out of a circle for its leader: up and right if nothing is there, else the clearest of 16 directions. */
-function chooseRadialDirection(ctx: AnnotationContext, cv: ComposedView, c: Vec2, r: number, arc: [number, number] | undefined, w: number, owner: string): Vec2 {
+function chooseRadialDirection(ctx: AnnotationContext, _cv: ComposedView, c: Vec2, r: number, arc: [number, number] | undefined, w: number, owner: string): Vec2 {
   let best: { u: Vec2; cost: number } | null = null;
   for (let k = 0; k < 16; k++) {
     const t = Math.PI / 4 + (k * Math.PI) / 8;

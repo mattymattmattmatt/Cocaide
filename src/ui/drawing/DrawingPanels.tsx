@@ -76,6 +76,16 @@ const ANNOTATION_ICON: Record<Annotation["type"], IconName> = {
   note: "note",
   centerMark: "plus",
   centerline: "centerline",
+  gdt: "note",
+  datum: "note",
+  datumTarget: "plus",
+  surface: "note",
+  cosmeticThread: "hole",
+  revisionCloud: "note",
+  leader: "note",
+  text: "note",
+  line: "dimension",
+  sketch: "dimension",
 };
 
 const lookName = (l: ViewLook) => (l === "iso" || l === "dimetric" || l === "trimetric" ? l : `from the ${l}`);

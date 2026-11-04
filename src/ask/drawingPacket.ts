@@ -101,7 +101,7 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     target: { kind: "annotation", id: a.id, type: a.type, label },
     ...base,
     annotation: reads(a),
-    parent: "view" in a ? { view: viewSummary(doc, a.view, sheet, geometry, check) } : { sheet: sheetBrief },
+    parent: "view" in a && a.view ? { view: viewSummary(doc, a.view, sheet, geometry, check) } : { sheet: sheetBrief },
     children: [],
     measurements,
   };

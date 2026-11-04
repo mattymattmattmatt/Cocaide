@@ -560,7 +560,7 @@ export interface WeldAnnotation {
   process?: string;
   reference?: string;
   /** More reference lines, the next welds in order, above the first. */
-  more?: { arrowSide?: WeldSymbolSide; otherSide?: WeldSide }[];
+  more?: { arrowSide?: WeldSymbolSide; otherSide?: WeldSymbolSide }[];
 }
 
 /**
@@ -774,8 +774,8 @@ export interface LeaderAnnotation {
   type: "leader";
   view?: string;
   to: GeoRef | Vec2;
-  /** The text's place (the same mm as `to`). */
-  at: Vec2;
+  /** The text's place (the same mm as `to`). Default: out of the view, near what it points at. */
+  at?: Vec2;
   text?: string;
   via?: Vec2[];
   arrow?: ArrowStyle;
