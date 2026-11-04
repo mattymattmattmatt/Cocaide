@@ -51,7 +51,7 @@ test("New drawing on the table frame: one A3 sheet, dimensioned 1200, 600 and 90
   expect(words).toEqual(expect.arrayContaining(["1200", "900", "600", "1", "2", "3", "CUT LIST", "table-frame", "1:10", "A3", "1 / 1", "ISO 13920-BF", "23.98 kg"]));
   await expect.poll(() => checks(page)).toEqual([
     "✓ Every view shows the part: front, top, right, iso",
-    "✓ Every annotation is attached: 7 annotations",
+    "✓ Every annotation is attached: 9 annotations",
     "✓ Every cut list item has a balloon: 3 of 3",
     "✓ The overall size is dimensioned: length, width and height",
     "✓ Nothing overlaps or runs off the sheet: clear",
@@ -126,7 +126,7 @@ test("right-click the front view, ask for the leg height: accepted, it reads 860
 
   // The packet was the view, and the model was given the drawing's tools alone.
   const body = sent[0].body as { tools: { name: string }[]; messages: { content: { type: string; text?: string }[] }[] };
-  expect(body.tools.map((t) => t.name)).toEqual(["escalate", "setAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
+  expect(body.tools.map((t) => t.name)).toEqual(["escalate", "setAnnotation", "editAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
   const packet = body.messages[0].content.find((b) => b.type === "text")!.text!;
   expect(packet).toContain('"kind": "view"');
   expect(packet).toContain('"liesFlat": true');
@@ -144,7 +144,7 @@ test("right-click the front view, ask for the leg height: accepted, it reads 860
   expect(words).not.toContain("860");
   await expect.poll(() => checks(page)).toEqual([
     "✓ Every view shows the part: front, top, right, iso",
-    "✓ Every annotation is attached: 8 annotations",
+    "✓ Every annotation is attached: 10 annotations",
     "✓ Every cut list item has a balloon: 3 of 3",
     "✓ The overall size is dimensioned: length, width and height",
     "✓ Nothing overlaps or runs off the sheet: clear",

@@ -58,7 +58,7 @@ test("sheets, a section and a detail, and the PDF and DXF of them", async ({ pag
   await expect(group(page, "section_1").locator("polyline")).not.toHaveCount(0);
   const doc = (await savedDocument(page)) as unknown as Doc;
   expect(doc.drawing.sheets.map((s) => [s.id, s.name, s.views.map((v) => [v.id, v.kind ?? "model", v.label ?? ""])])).toEqual([
-    ["sheet1", undefined, [["top", "model", ""], ["front", "section", "A"], ["right", "projected", ""], ["iso", "model", ""]]],
+    ["sheet1", undefined, [["top", "model", ""], ["front", "section", "A"], ["iso", "model", ""]]],
     ["sheet2", "Details", [["front_1", "model", ""], ["section_1", "section", "B"], ["detail_1", "detail", "C"]]],
   ]);
 

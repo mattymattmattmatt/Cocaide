@@ -353,8 +353,13 @@ const DRAWING_TOOLS: Anthropic.Tool[] = [
   {
     name: "setAnnotation",
     description:
-      'Add or replace an annotation on the drawing by id, or remove it (annotation: null). Types: dimension {view, from, to, direction?, offset?} or {view, member}; hole {view, hole}; balloon {view, member}; weld {view, weld}; table {table: "cutList" | "welds"}; note {text, at}; centerMark {view, at: "<view>:c<edge>"}; centerline {view, between: [GeoRef, GeoRef]}. Points may be GeoRefs from the packet (view.geoRefs). It goes on its view\'s sheet. What it reads is measured, never given.',
+      'Add or replace an annotation on the drawing by id, or remove it (annotation: null). Types: dimension {view, from, to} or {view, member} or {view, kind: "linear" | "angular" | "radius" | "diameter" | "ordinate" | "baseline" | "chain" | "arcLength" | "chamfer" | "pathLength", refs: [GeoRef...]} with tolerance? {kind: "symmetric" | "bilateral" | "limit" | "fit" | "fitWithTol" | "basic" | "reference" | "min" | "max", plus?, minus?, fit?: "H7" | "g6" | "H7/g6"}, typ?, count?, prefix?, suffix?, precision?; hole {view, hole, count?}; gdt {view, rows: [{characteristic, tolerance, diameter?, material?, datums?: [{label}]}], dimension? | on?}; datum {view, label, on | dimension}; surface {view, on, symbol, values: ["Ra 1.6"]} or {general: true, ...}; weld {view, weld} or {view, on, arrowSide: {symbol, size, length}}; balloon {view, member | body | item}; note {text, at, numbered?, title?, leaders?}; leader, text, line, sketch, revisionCloud, cosmeticThread, datumTarget; centerMark; centerline; table. Read reference("annotations") for every field. Points may be GeoRefs from the packet (view.geoRefs). It goes on its view\'s sheet. What it reads is measured, never given.',
     input_schema: obj({ id: { type: "string" }, annotation: { type: ["object", "null"] }, sheet: { type: "string" } }, ["id", "annotation"]),
+  },
+  {
+    name: "editAnnotation",
+    description: 'Change some fields of an annotation, keeping the rest (null removes a field): {tolerance: {kind: "fit", fit: "H7"}}, {typ: true}, {at: [x, y]}, a frame\'s rows.',
+    input_schema: obj({ id: { type: "string" }, patch: { type: "object" } }, ["id", "patch"]),
   },
   {
     name: "setView",

@@ -54,7 +54,7 @@ describe("a right-click on the sheet", () => {
   });
 
   it("gets the drawing's tools and nothing that edits the part", () => {
-    expect(toolsFor("edit", "view").map((t) => t.name)).toEqual(["escalate", "setAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
+    expect(toolsFor("edit", "view").map((t) => t.name)).toEqual(["escalate", "setAnnotation", "editAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
     expect(toolsFor("explain", "view").map((t) => t.name)).toEqual(["escalate"]);
     expect(toolsFor("edit", "feature").map((t) => t.name)).not.toContain("setAnnotation");
   });

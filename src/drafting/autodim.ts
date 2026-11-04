@@ -22,6 +22,7 @@
 import type { DrawingGeometry } from "../ask/kernel";
 import type { Annotation, DimensionAnnotation, DrawingView, Vec2, Vec3, ViewLook } from "../doc/types";
 import type { ValidationResult } from "../doc/validate";
+import * as validateModule from "../doc/validate";
 import type { ProjectedEdge, ProjectedView } from "../kernel/drawingViews";
 import type { Measurements } from "../kernel/measure";
 import type { HoleRecord } from "../kernel/rebuild";
@@ -449,4 +450,32 @@ function locate(viewId: string, positions: Pos[], o: { min: Vec2; max: Vec2 }, f
 /** The part's valid features themselves. */
 function feats(v: ValidationResult): { id: string; op: string }[] {
   return v.features.flatMap((f) => (f.feature ? [f.feature as unknown as { id: string; op: string }] : []));
+}
+
+/**
+ * Auto-dimension one view of a composed sheet (the editor's Auto Dimension
+ * tool): the engine run over the sheet's views as they are, keeping what it
+ * puts in `viewId` that the view hasn't already (the same points, edges,
+ * hole or circle). Ids come from `nextId`.
+ */
+export function autoDimensionSheetView(doc: unknown, sheet: import("./compose").ComposedSheet, viewId: string, m: Measurements | null, nextId: (prefix: string) => string): Annotation[] {
+  const { validateDocument } = validateModule;
+  const v = validateDocument(doc);
+  const sheetDoc = v.drawing?.sheets.find((s) => s.id === sheet.id);
+  if (!sheetDoc) return [];
+  const looks: Record<string, ViewLook> = {};
+  for (const cv of sheet.views) if (cv.look !== "custom") looks[cv.id] = cv.look;
+  if (!looks[viewId]) return [];
+  const geometry: DrawingGeometry = {
+    views: sheet.views.map((cv) => ({ id: cv.id, frame: cv.frame, edges: cv.edges, bodies: [] }) as unknown as ProjectedView),
+    holes: [...sheet.points.holes.values()],
+  };
+  let n = 0;
+  const r = autoDimension({ v, m, geometry, views: sheetDoc.views.filter((x) => x.kind !== "section"), looks, id: (p) => `${p}__${++n}`, generalTolerance: v.drawing?.generalTolerance });
+  const mine = sheetDoc.annotations.filter((a) => "view" in a && a.view === viewId);
+  const key = (a: Annotation) => JSON.stringify([a.type, "from" in a ? [a.from, a.to].sort() : null, "refs" in a ? a.refs : null, "hole" in a ? a.hole : null, a.type === "centerMark" ? a.at.replace(":c", ":e") : null, "points" in a ? a.points : null]);
+  const have = new Set(mine.map(key));
+  return r.annotations
+    .filter((a) => "view" in a && a.view === viewId && a.type !== "note" && a.type !== "datum" && !have.has(key(a)))
+    .map((a) => ({ ...a, id: nextId(a.type === "dimension" ? "d" : a.type === "hole" ? "h" : a.type === "centerMark" || a.type === "centerline" ? "c" : "a") }) as Annotation);
 }
