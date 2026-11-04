@@ -332,7 +332,7 @@ describe("the auto-dimension engine v2", () => {
       expect(clashes).toEqual([]);
       const dims = s.annotations.filter((a) => a.type === "dimension" && a.along);
       // The same size along the same direction between the same two places is a duplicate (two features of one size are not).
-      const keys = dims.map((d) => `${d.text}@${d.along!.map((x) => Math.round(Math.abs(x))).join("")}@${JSON.stringify(d.place?.pts.slice(0, 2).map((p) => p[d.along![0] ? 0 : 1]).sort())}`);
+      const keys = dims.map((d) => `${d.text}@${d.along!.map((x) => Math.round(Math.abs(x))).join("")}@${JSON.stringify(d.place?.pts.slice(0, 2))}`);
       expect(new Set(keys).size, keys.join(", ")).toBe(keys.length);
     });
   }

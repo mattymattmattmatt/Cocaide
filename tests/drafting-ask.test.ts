@@ -73,6 +73,7 @@ describe("a right-click on the sheet", () => {
     expect(p.children).toEqual([
       { id: "d1", type: "dimension", view: "front", from: "@left", to: "@right", reads: "1200" },
       { id: "d2", type: "dimension", view: "front", from: "@bottom", to: "@top", reads: "900" },
+      { id: "d7", type: "dimension", view: "front", member: "leg_a", reads: "860" },
     ]);
     expect((p.checks as { ok: boolean }[]).every((c) => c.ok)).toBe(true);
     expect(p.measurements).toMatchObject({ overallSize: [1200, 600, 900] });
@@ -207,6 +208,8 @@ describe("drawings over the agent session (MCP)", () => {
       ["b4", "1"],
       ["b5", "2"],
       ["b6", "3"],
+      ["d7", "860"],
+      ["general_notes", "GENERAL TOLERANCES ISO 13920-BF.\nWELDS TO ISO 2553; REMOVE SPATTER AND SLAG.\nBREAK ALL SHARP EDGES.\nDIMENSIONS IN MILLIMETRES. DO NOT SCALE."],
       ["cut_list", "cut list, 3 items"],
       ["d10", "860"],
     ]);

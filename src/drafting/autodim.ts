@@ -352,9 +352,9 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
   // ---- datums A (the face it stands on, in the elevation), B and C (the plan's left and bottom), when anything is located from them
   const located = out.some((a) => a.type === "dimension" && typeof a.from === "string" && a.from.startsWith("@") && a.to?.includes(":"));
   if (located && !round) {
-    if (elevation) out.push({ id: id("datum_"), type: "datum", view: elevation.id, label: "A", on: `${elevation.id}:@bottom` });
-    out.push({ id: id("datum_"), type: "datum", view: plan.id, label: "B", on: `${plan.id}:@left` });
-    out.push({ id: id("datum_"), type: "datum", view: plan.id, label: "C", on: `${plan.id}:@bottom` });
+    if (elevation) out.push({ id: "datum_A", type: "datum", view: elevation.id, label: "A", on: `${elevation.id}:@bottom` });
+    out.push({ id: "datum_B", type: "datum", view: plan.id, label: "B", on: `${plan.id}:@left` });
+    out.push({ id: "datum_C", type: "datum", view: plan.id, label: "C", on: `${plan.id}:@bottom` });
   }
 
   // ---- the general notes

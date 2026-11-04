@@ -81,22 +81,14 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     const r = autoDimension({ v, m, geometry, views, looks: look, id, generalTolerance });
     planned = views.filter((x) => !r.unneeded.includes(x.id));
     annotations.push(...r.annotations);
-  } else {
+  }
+  /** A weldment's member lengths: after its balloons and welds (they keep the ids they had). */
+  const lengths: Annotation[] = [];
+  if (weldment) {
     // The overall size: length and height on the front, width on the side.
     annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@left", to: "@right" });
     annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@bottom", to: "@top" });
     annotations.push({ id: id("d"), type: "dimension", view: "right", from: "@left", to: "@right" });
-    // Each cut list item's length once, where a member of it lies flat in the front and its length is not an overall size.
-    const bb = m?.boundingBox?.size;
-    const f = viewFrame("front");
-    for (const item of cutList(members)) {
-      const mem = item.members.map((mid) => members.find((x) => x.id === mid)!).find((x) => {
-        const d = inView(x.ends[1], f).map((c, i) => c - inView(x.ends[0], f)[i]);
-        return Math.abs(Math.hypot(d[0], d[1]) - x.length) < 1e-3 && (Math.abs(d[0]) < 1e-6 || Math.abs(d[1]) < 1e-6);
-      });
-      if (!mem || (bb && bb.some((s) => Math.abs(s - mem.length) < 0.05))) continue;
-      annotations.push({ id: id("d"), type: "dimension", view: "front", member: mem.id });
-    }
   }
 
   // A balloon per cut list item, on the member of it the iso shows most of.
@@ -108,6 +100,20 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     annotations.push({ id: id("b"), type: "balloon", view: "iso", member: best.mid });
   }
   for (const w of v.welds) annotations.push({ id: id("w"), type: "weld", view: "front", weld: w.id });
+  if (weldment) {
+    // Each cut list item's length once, where a member of it lies flat in the front and its length is not an overall size.
+    const bb = m?.boundingBox?.size;
+    const f = viewFrame("front");
+    for (const item of cutList(members)) {
+      const mem = item.members.map((mid) => members.find((x) => x.id === mid)!).find((x) => {
+        const d = inView(x.ends[1], f).map((c, i) => c - inView(x.ends[0], f)[i]);
+        return Math.abs(Math.hypot(d[0], d[1]) - x.length) < 1e-3 && (Math.abs(d[0]) < 1e-6 || Math.abs(d[1]) < 1e-6);
+      });
+      if (!mem || (bb && bb.some((s) => Math.abs(s - mem.length) < 0.05))) continue;
+      lengths.push({ id: id("d"), type: "dimension", view: "front", member: mem.id });
+    }
+    annotations.push(...lengths);
+  }
   if (weldment) {
     const lines = [`GENERAL TOLERANCES ${generalTolerance}.`, "WELDS TO ISO 2553; REMOVE SPATTER AND SLAG.", "BREAK ALL SHARP EDGES.", "DIMENSIONS IN MILLIMETRES. DO NOT SCALE."];
     annotations.push({ id: "general_notes", type: "note", text: lines.join("\n"), at: [0, 0], numbered: true, title: "NOTES:" });
@@ -133,7 +139,12 @@ function placeNotes(doc: unknown, drawing: Drawing, m: Measurements | null, geom
   const sheet = composeSheet({ ...(doc as object), drawing: { ...drawing, sheets: [{ ...s, annotations: s.annotations.filter((a) => a !== note) }] } }, { measurements: m, geometry });
   if (!sheet) return;
   const lines = note.text.split("\n").length;
-  note.at = [Math.round(sheet.frame.min[0] + 6), Math.round(sheet.frame.min[1] + 7 + lines * 4.9)];
+  // In the lower left corner, above any table along the bottom border there.
+  const h = lines * 4.9 + 7;
+  const x0 = sheet.frame.min[0] + 6;
+  let y0 = sheet.frame.min[1] + 4;
+  for (const b of [...sheet.blocks.map((x) => x.box), sheet.titleBlock]) if (b.min[0] < x0 + 120 && b.max[0] > x0 && b.min[1] < y0 + h) y0 = Math.max(y0, b.max[1] + 4);
+  note.at = [Math.round(x0), Math.round(y0 + 3 + lines * 4.9)];
 }
 
 /**
