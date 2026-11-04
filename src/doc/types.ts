@@ -3,6 +3,7 @@
 
 import { PLUGIN_OPS, type PluginFeature } from "../features/types";
 import type { HoleFit, HoleKind, ThreadSpec } from "../features/hole/standards";
+import type { CutListSettings } from "./cutListSettings";
 
 export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
@@ -32,6 +33,8 @@ export interface CocaideDocument {
   nodes?: Record<string, Vec3>;
   /** The weld table: notes, stored and listed, never modelled. */
   welds?: Weld[];
+  /** The cut list's text and settings (Phase Q): descriptions, finishes, custom properties, stock bars and kerf, kept item numbers (src/doc/cutListSettings.ts). */
+  cutList?: CutListSettings;
   features: Feature[];
   /** The part's fabrication drawing (Phase L): views of the rebuilt part, annotated. */
   drawing?: Drawing;
@@ -196,10 +199,18 @@ export interface Weld {
   /** Welded all round the joint. */
   allRound?: boolean;
   note?: string;
+  /** Phase Q: the welding process, as written in the tail ("135 MAG", "GMAW", "141 TIG"). */
+  process?: string;
+  /** Phase Q: which side of the joint: the arrow side, the other side, or both. */
+  side?: WeldSide;
+  /** Phase Q: how many alike welds this line stands for (default 1). */
+  count?: number;
 }
+export const WELD_SIDES = ["arrow", "other", "both"] as const;
+export type WeldSide = (typeof WELD_SIDES)[number];
 export const WELD_TYPES = ["fillet", "butt", "plug"] as const;
 export type WeldType = (typeof WELD_TYPES)[number];
-export const WELD_KEYS = ["id", "between", "type", "size", "length", "allRound", "note"] as const;
+export const WELD_KEYS = ["id", "between", "type", "size", "length", "allRound", "note", "process", "side", "count"] as const;
 
 // ------------------------------------------------------- weldment profiles
 

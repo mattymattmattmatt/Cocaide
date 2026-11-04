@@ -174,6 +174,19 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: 'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field. The drawing\'s title block, the cut list CSV, STEP export and export file names read them.',
     input: { patch: obj },
   },
+  setCutList: {
+    description: "Change the cut list's text and nesting settings (merged): { \"itemText\": [{ \"item\": 1, \"members\": [\"rail_front\", \"rail_back\"], \"description\"?, \"finish\"?, \"notes\"?, \"weldPrep\"?, \"group\"?, \"properties\"?: { \"Supplier\": \"Steel & Co\" } }] } sets text on cut list items (members from the cut list; the kept item sharing them keeps its number; \"\" or null removes a field); \"members\": { \"<member id or body>\": { ...text } } sets one member's own text (alike members with different text become separate items); \"stock\": { \"lengths\": [6000, 6100], \"kerf\": 3, \"trim\": 0, \"minOffcut\": 300, \"profiles\": { \"SHS 40x40x3\": { \"lengths\": [8000] } } } for nesting; \"tolerance\": mm within which lengths are one item (0.5). null removes a field.",
+    input: { patch: obj },
+  },
+  cutList: {
+    description: "The cut list as a workshop reads it: every item (members grouped by size, length and end cuts with their orientation; plates and other bodies) with its number, quantity, description, material, length, ends, mass, paint area and typed text; the totals; and the nesting: stock bars to buy and each bar's cuts.",
+    readOnly: true,
+  },
+  exportCutList: {
+    description: 'Write the cut list to the output folder: format "csv" (columns: item, quantity, description, profile, designation, standard, material, grade, length, width, thickness, angle1, angle2, orientation, face, ends, cuts, massEach, massTotal, areaEach, areaTotal, plateArea, finish, weldPrep, group, notes, members, "prop:<name>"), "xlsx" (cut list, stock buy list, cutting plan, plates, welds) or "plan" (a printable cutting plan page, HTML).',
+    input: { format: z.enum(["csv", "xlsx", "plan"]).optional(), columns: z.array(z.string()).optional(), file: z.string().optional() },
+    readOnly: true,
+  },
   importStep: {
     description: "Read a STEP file (.step/.stp, any units) from disk into the part as an import feature: each solid becomes a body (newBody, newBody_2 ...), turned by rotate (degrees about X, then Y, then Z) and moved by at. A relative path is from the document's folder.",
     input: { path: z.string(), newBody: z.string().optional(), at: vec3.optional(), rotate: vec3.optional() },

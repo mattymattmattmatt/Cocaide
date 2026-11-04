@@ -16,6 +16,7 @@
 //   "weld:<id>"     change or remove that weld in the weld table ("+" adds one)
 //   "drawing"       anything in the drawing (never the part's features), and the part's properties its title block shows
 //   "properties"    the part's properties (part number, description, revision, author, finish, custom)
+//   "cutList"       the cut list's text and settings (descriptions, finishes, custom properties, stock and kerf, item numbers)
 //   "folder:<id>"   that folder of the tree (rename it, change what is in it; "+" adds one)
 //   "view:<id>"     that view, the annotations in it, and new annotations in it
 //   "annotation:<id>" that annotation, in the view it is in
@@ -192,6 +193,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       // The part's number, description ...: they change no feature; the drawing's title block shows them.
       what = "setProperties";
       allowed = has("properties") || has("drawing");
+      break;
+    case "setCutList":
+      // Text and nesting settings: they change no feature; the drawing's cut list table shows them.
+      what = "setCutList";
+      allowed = has("cutList") || has("drawing");
       break;
     case "setView":
       what = `setView "${cmd.id}"`;

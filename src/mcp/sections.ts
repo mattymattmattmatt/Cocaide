@@ -24,7 +24,7 @@ const SUBSECTIONS: { key: string; from: string; heading: string }[] = [
 /** Section names that group several headings. */
 const GROUPS: Record<string, string[]> = {
   selectors: ["Face selectors", "Edge selectors"],
-  weldments: ["member", "frames"],
+  weldments: ["member", "frames", "cutList"],
   ops: [],
 };
 
@@ -37,6 +37,7 @@ function keyOf(heading: string): { key: string; aliases: string[] } {
   if (head === "multibody tools") aliases.push("mirror", "split", "move", "deleteBody", "combine");
   if (head === "References") aliases.push("datums", "datumRef");
   if (head === "bodies") aliases.push("body");
+  if (head === "cutList") aliases.push("nesting", "stock", "tables", "bom");
   return { key, aliases };
 }
 

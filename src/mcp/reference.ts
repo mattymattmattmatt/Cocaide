@@ -397,6 +397,40 @@ the part number (description and author too), and export file names start with t
 Change them with setProperties(patch): merged in, null or "" removes a field, "custom" replaces the custom ones whole.
 Write scope: "properties" (or "drawing", whose title block shows them, or "*").
 
+## cutList (the cut list: items, end cuts, text, stock and nesting; drawing tables)
+The cut list is read from the rebuild (tool cutList): every member, grouped with the alike ones (same profile and size,
+material, length within "tolerance" (0.5 mm), the same end cuts: angle 1 / angle 2 with their orientation, "same plane"
+(a trapezoid like a picture frame's piece, or a parallelogram) or "twisted", and the face the angle is seen on; mitre,
+cope and notch), then plates (end caps, gussets, base plates: thickness × width × length, plan area), then other bodies.
+Each item: number, quantity, description, size, standard, material and grade, length, ends, kg each and total, paint
+area (whole surface), finish (default the part's), weld prep, group, notes, custom properties. Item numbers stay put
+across rebuilds once kept: an item takes the number of the kept entry that shares the most members with it.
+"cutList": { "tolerance": 0.5,
+  "stock": { "lengths": [6000, 6100], "kerf": 3, "trim": 0, "minOffcut": 300, "profiles": { "SHS 40x40x3": { "lengths": [8000], "kerf": 2 } } },
+  "items": [{ "item": 1, "members": ["rail_front", "rail_back"], "description": "Top rail", "finish": "Hot-dip galvanised",
+    "notes": "", "weldPrep": "Bevel 30° both ends", "group": "Frame", "properties": { "Supplier": "Steel & Co", "Heat no.": "H2231" } }],
+  "members": { "leg_a": { "notes": "check fit" } } }       every field optional; text up to 500 characters
+setCutList(patch) changes it: "itemText": [{ "item", "members", ...text }] sets text on items (the members come from the
+cut list; "" or null removes a field; properties merge by name), "stock" merges, "members" sets one member's own text
+(members with different text are different items), "items" replaces the kept numbers whole, null removes a field.
+Nesting: each size's pieces packed into the stock bars (first fit decreasing, improved): bars to buy, each bar's cuts with
+a kerf between pieces, the offcut (kept when at least minOffcut) and the scrap. exportCutList(format: "csv" | "xlsx" |
+"plan", columns?, file?) writes it. Write scope: "cutList" (or "drawing", or "*").
+Tables on a drawing sheet (DrawingSheet.tables): { "id": "t1", "kind": "cutList" | "bom" | "holes" | "welds" |
+  "revisions" | "general" | "stock", "title"?: "CUT LIST" | null, "columns"?: [keys, "prop:Supplier"], "widths"?: { key: mm },
+  "sort"?: [{ "column": "length", "descending": true }], "group"?: "group", "maxRows"?: 20, "split"?: "left" | "right",
+  "headerAt"?: "top" | "bottom", "totals"?: true, "footer"?: "ALL LENGTHS IN mm",
+  "anchor"?: { "corner": "topLeft" | "topRight" | "bottomLeft" | "bottomRight" | "aboveTitleBlock" | "leftOfTitleBlock", "offset"?: [x, y] } | { "at": [x, y] },
+  "style"?: { "textSize": 3.5, "rowHeight": 6, "titleSize": 4.2, "boldHeader": true, "rowLines": true },
+  "view"?: "top" (holes), "origin"?: "@lowerLeft" (holes), "only"?: [items or bodies] (cutList, bom), "header"?, "rows"? (general) }
+Columns: cutList: item, quantity, description, profile, designation, standard, material, grade, length, width, thickness,
+angle1, angle2, orientation, face, ends, cuts, massEach, massTotal, areaEach, areaTotal, plateArea, finish, weldPrep, group,
+notes, members, prop:<name>. bom: item, quantity, part, description, material, grade, finish, massEach, massTotal, notes.
+holes: tag (A1, A2 by size, smallest first), x, y (from the origin), size (from the hole feature). welds: id, type, size,
+length, count, side, process, between, note. revisions: rev, zone, description, date, by, approved. stock: size, stock,
+bars, cut, used, offcut, waste. Balloons show the cut list's item numbers (the BOM uses the same numbers).
+Welds also take "process": "135 MAG", "side": "arrow" | "other" | "both", "count": 4 (setWeld).
+
 ## files (STEP in, DXF out and in)
 A STEP file's solids come in as bodies with the import op (below; MCP: importStep(path, newBody?, at?, rotate?) reads
 the file from disk). DXF is for 2D: exportDxf("sketch", sketch) writes a sketch in its own plane (profile on PROFILE,
@@ -503,6 +537,7 @@ rebuild, validate (schema + rebuild + selector health), measure(selector?) - who
 exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.
 setBodyMaterial(body, material | null) - a body's own material. saveBody(body, file?) - one body as a part of its own, written to the output folder.
 setProperties(patch) - the part's properties (partNumber, description, revision, author, finish, custom); null removes one.
+setCutList(patch) - the cut list's text (itemText, members), stock bars, kerf and tolerance (reference: cutList). cutList - the items, totals and nesting. exportCutList(format: "csv" | "xlsx" | "plan", columns?, file?) - written to the output folder.
 importStep(path, newBody?, at?, rotate?) - a STEP file read from disk into the part as an import feature (its solids become bodies).
 exportDxf(what: "sketch" | "face" | "plates", sketch?, face?, file?, version?) - DXF written to the output folder (plates: a ZIP).
 newDrawing(date?) - code plans the sheet: front, top, right and iso views, the overall size, every hole, a balloon per cut list item, the tables.

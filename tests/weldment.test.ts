@@ -186,7 +186,8 @@ describe("profiles in a part, and members", () => {
       { name: "rail", volume: 564 * 600, min: [100, -25, -25], max: [700, 25, 25] },
     ]);
     expect(b.interference).toEqual([]);
-    expect(b.members.map((m) => ({ ...m, massKg: Math.round(m.massKg * 1e4) / 1e4 }))).toEqual([
+    // Phase Q adds the end faces' normals, the profile's axes, its symmetry and the surface (tests/cutlist-v2.test.ts); these are the Phase J fields.
+    expect(b.members.map((m) => ({ ...m, massKg: Math.round(m.massKg * 1e4) / 1e4 }))).toMatchObject([
       { id: "leg", body: "leg", profile: "SHS", designation: "SHS 40x40x3", length: 900, angles: [0, 0], perimeters: [160, 160], ends: [[0, 0, 0], [0, 0, 900]], massKg: 3.1369 },
       { id: "rail", body: "rail", profile: "SHS", designation: "SHS 50x50x3", length: 600, angles: [0, 0], perimeters: [200, 200], ends: [[100, 0, 0], [700, 0, 0]], massKg: 2.6564 },
     ]);

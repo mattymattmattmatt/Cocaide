@@ -58,6 +58,25 @@ export interface MemberMeasurement {
   /** Where it starts and ends on its line, long point to long point: [at from, at to]. */
   ends: [Vec3, Vec3];
   massKg: number;
+  /** Phase Q: each end's cut face's outward normal (unit), [at from, at to]; square ends point along the line. */
+  normals?: [Vec3, Vec3];
+  /** Phase Q: the profile's own axes on this member (x across, y up the section), carried through mirrors and patterns. */
+  axes?: { x: Vec3; y: Vec3 };
+  /** Phase Q: the section's symmetry, for telling alike cuts (src/weldment/endCuts.ts). */
+  symmetry?: SectionSymmetry;
+  /** Phase Q: flat faces across the line at each end (more than one: a notch), and curved ones (a cope). */
+  endFaces?: [number, number];
+  copes?: [boolean, boolean];
+  /** Phase Q: the body's whole surface, mm² (what is painted). */
+  area?: number;
+}
+
+/** Which ways a section maps onto itself: mirrored across its y axis (x to -x), across its x axis (y to -y), a quarter turn, any turn (round). */
+export interface SectionSymmetry {
+  mirrorX: boolean;
+  mirrorY: boolean;
+  quarter: boolean;
+  round: boolean;
 }
 
 export interface BodyMeasurement {
@@ -69,6 +88,10 @@ export interface BodyMeasurement {
   boundingBox: { min: Vec3; max: Vec3; size: Vec3 } | null;
   holeCount: number;
   solids: number;
+  /** Phase Q: its whole surface, mm² (what is painted). */
+  area?: number;
+  /** Phase Q: a flat plate (end cap, gusset, base plate): its thickness, laid-flat size and plan area (src/kernel/flat.ts). Weldments only. */
+  plate?: { thickness: number; size: [number, number]; area: number; holes: number; cutLength: number };
 }
 
 export interface Interference {
@@ -180,6 +203,7 @@ function measureBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, materia
     boundingBox: bb && { min: bb.min, max: bb.max, size: sub3(bb.max, bb.min) },
     holeCount: findHoles(infos.flatMap((f) => (f.cylinder ? [f.cylinder] : []))).length,
     solids: countSubShapes(oc, s, body, "solid"),
+    area: roundTo(infos.reduce((sum, f) => sum + f.area, 0), 6),
   };
 }
 
