@@ -11,6 +11,8 @@ import type { Drawing, PartAskResult, Photo } from "../../ask/part";
 import type { RawDocument } from "../../doc/commands";
 import type { SketchFeature } from "../../doc/types";
 import type { LibraryEntry } from "../../weldment/library";
+import type { Attachment } from "../../ask/attachments";
+import { addHistory, clearHistory, docKey, earlierOf, entryOf, historyOf, loadDraft, saveDraft, threadOf, updateHistory, type HistoryEntry } from "./history";
 import { logAsk, updateAsk } from "./log";
 import { canAsk, loadSettings, modelFor, saveSettings, type AskSettings } from "./settings";
 
@@ -35,7 +37,7 @@ export interface AskContext {
 }
 
 export type AskState =
-  | { phase: "menu"; ctx: AskContext; draft: string }
+  | { phase: "menu"; ctx: AskContext; draft: string; /** The history entry this request follows up. */ followUp?: string }
   | { phase: "running"; ctx: AskContext; prompt: string; applyNow: boolean; steps: string[] }
   | {
       phase: "done";
@@ -49,6 +51,8 @@ export type AskState =
       /** Why an open proposal was dropped (the user edited what it touched). */
       dropped?: string;
       error?: string;
+      /** The names of the files sent with it. */
+      attachments?: string[];
     };
 
 interface Options {
@@ -73,18 +77,34 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
     setSettingsState(s);
   }, []);
 
-  const open = useCallback((ctx: AskContext, draft = "") => {
+  /** Bumped when the history changes, so the panel reads it again. */
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const touchHistory = useCallback(() => setHistoryVersion((v) => v + 1), []);
+  const setStatus = useCallback(
+    (s: { ctx: AskContext; recordId: string }, status: HistoryEntry["status"]) => {
+      updateHistory(docKey(s.ctx.doc), s.recordId, { status });
+      touchHistory();
+    },
+    [touchHistory],
+  );
+
+  /** Opens the ask; with no text given, the unsent draft for this target comes back. */
+  const open = useCallback((ctx: AskContext, draft = "", followUp?: string) => {
     abort.current?.abort();
-    setState({ phase: "menu", ctx, draft });
+    setState({ phase: "menu", ctx, draft: draft || loadDraft(docKey(ctx.doc), ctx.target), ...(followUp ? { followUp } : {}) });
   }, []);
 
   const close = useCallback(() => {
     abort.current?.abort();
     setState((s) => {
-      if (s?.phase === "done" && s.result.proposal && !s.accepted) updateAsk(s.recordId, { discarded: { at: new Date().toISOString(), reason: "closed" } });
+      if (s?.phase === "done" && s.result.proposal && !s.accepted) {
+        updateAsk(s.recordId, { discarded: { at: new Date().toISOString(), reason: "closed" } });
+        updateHistory(docKey(s.ctx.doc), s.recordId, { status: "discarded" });
+      }
       return null;
     });
-  }, []);
+    touchHistory();
+  }, [touchHistory]);
 
   const accept = useCallback(
     async (s: Extract<AskState, { phase: "done" }>) => {
@@ -94,6 +114,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
         const f = p.doc.features.find((x) => x.id === s.ctx.sketch!.id) as unknown as SketchFeature | undefined;
         if (f) s.ctx.sketch.apply(f);
         updateAsk(s.recordId, { accepted: { at: new Date().toISOString(), hash: await hashDoc(p.doc) } });
+        setStatus(s, "accepted");
         setState({ ...s, accepted: true, preview: false });
         return;
       }
@@ -106,15 +127,20 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       }
       replaceDoc(r.doc);
       updateAsk(s.recordId, { accepted: { at: new Date().toISOString(), hash: await hashDoc(r.doc) } });
+      setStatus(s, "accepted");
       setState({ ...s, accepted: true, preview: false });
     },
-    [replaceDoc],
+    [replaceDoc, setStatus],
   );
 
   const submit = useCallback(
-    async (ctx: AskContext, prompt: string, applyNow: boolean, reach: AskReach = settings.reach) => {
+    async (ctx: AskContext, prompt: string, applyNow: boolean, reach: AskReach = settings.reach, extra: { attachments?: Attachment[]; followUp?: string } = {}) => {
       const text = prompt.trim();
       if (!text) return;
+      const dk = docKey(ctx.doc);
+      const attachments = extra.attachments ?? [];
+      // A follow-up carries its thread: what was asked, said and changed before.
+      const earlier = extra.followUp ? earlierOf(threadOf(historyOf(dk), extra.followUp)) : [];
       if (!canAsk(settings)) {
         setSettingsOpen(true);
         return;
@@ -131,14 +157,20 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
         else steps.push(`${e.name} ${e.ok ? "✓" : `✗ ${e.error ?? ""}`}`);
         if (!controller.signal.aborted) show();
       };
+      // The text is sent: it is no longer a draft.
+      saveDraft(dk, ctx.target, "");
       const model = await modelFor(settings);
+      const more = { ...(attachments.length ? { attachments } : {}), ...(earlier.length ? { earlier } : {}) };
       // The part-level prompt (intent schema, planner) loads on first use.
       const result: PartAskResult =
         ctx.target.kind === "part"
-          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, library, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e) })
-          : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, reach, signal: controller.signal, onEvent });
+          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, library, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e), ...more })
+          : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, reach, signal: controller.signal, onEvent, ...more });
       if (controller.signal.aborted) return;
       const recordId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      const names = [...attachments.map((a) => a.name), ...(ctx.drawing && !ctx.photo ? [ctx.drawing.name] : []), ...(ctx.photo ? [ctx.photo.name] : [])];
+      addHistory(dk, entryOf(result, { id: recordId, at: new Date().toISOString(), label: ctx.label, target: ctx.target, prompt: text, attachments: names, ...(extra.followUp ? { followUpOf: extra.followUp } : {}) }));
+      touchHistory();
       logAsk({
         id: recordId,
         at: new Date().toISOString(),
@@ -164,12 +196,12 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
           : {}),
         ...(ctx.photo ? { photo: { name: ctx.photo.name, sha256: ctx.photo.sha256, width: ctx.photo.width, height: ctx.photo.height } } : {}),
       });
-      const done: Extract<AskState, { phase: "done" }> = { phase: "done", ctx, prompt: text, applyNow, result, recordId, preview: true, accepted: false };
+      const done: Extract<AskState, { phase: "done" }> = { phase: "done", ctx, prompt: text, applyNow, result, recordId, preview: true, accepted: false, ...(names.length ? { attachments: names } : {}) };
       setState(done);
       // From empty space a change is always a proposal (spec 6.2): never applied immediately.
       if (applyNow && result.proposal && ctx.target.kind !== "part") await accept(done);
     },
-    [settings, kernel, accept, library],
+    [settings, kernel, accept, library, touchHistory],
   );
 
   /** The user filled the confirmation card: build with their numbers. */
@@ -185,17 +217,24 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       const result = await continuePartAsk({ doc: s.ctx.doc, text: s.prompt, drawing: s.ctx.drawing, model, kernel, library, signal: controller.signal }, s.result, answers);
       if (controller.signal.aborted) return;
       updateAsk(s.recordId, { outcome: result.outcome, text: result.text, calls: [...s.result.calls, ...result.calls], answers });
+      const e = entryOf(result, { id: s.recordId, at: new Date().toISOString(), label: s.ctx.label, target: s.ctx.target, prompt: s.prompt, attachments: s.attachments ?? [] });
+      updateHistory(docKey(s.ctx.doc), s.recordId, { outcome: e.outcome, reply: e.reply, calls: e.calls, changes: e.changes, status: e.status });
+      touchHistory();
       setState({ ...s, result, preview: true, accepted: false, dropped: undefined, error: undefined });
     },
-    [settings, kernel, library],
+    [settings, kernel, library, touchHistory],
   );
 
   const discard = useCallback(() => {
     setState((s) => {
-      if (s?.phase === "done") updateAsk(s.recordId, { discarded: { at: new Date().toISOString() } });
+      if (s?.phase === "done") {
+        updateAsk(s.recordId, { discarded: { at: new Date().toISOString() } });
+        updateHistory(docKey(s.ctx.doc), s.recordId, { status: "discarded" });
+      }
       return null;
     });
-  }, []);
+    touchHistory();
+  }, [touchHistory]);
 
   const togglePreview = useCallback(() => setState((s) => (s?.phase === "done" ? { ...s, preview: !s.preview } : s)), []);
 
@@ -205,6 +244,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
     const hit = conflictsWith(state.result.proposal, doc);
     if (!hit.length) return;
     updateAsk(state.recordId, { discarded: { at: new Date().toISOString(), reason: `user edited ${hit.join(", ")}` } });
+    updateHistory(docKey(state.ctx.doc), state.recordId, { status: "discarded" });
     setState({
       ...state,
       result: { ...state.result, proposal: null },
@@ -216,5 +256,17 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
   /** The document to show while a proposal is open and previewed. */
   const previewDoc = state?.phase === "done" && state.preview && !state.accepted && !state.ctx.sketch ? (state.result.proposal?.doc ?? null) : null;
 
-  return { state, open, close, submit, answer, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen };
+  /** The AI history of a document, and clearing it. */
+  const history = useCallback((doc: RawDocument) => (void historyVersion, historyOf(docKey(doc))), [historyVersion]);
+  const clear = useCallback(
+    (doc: RawDocument) => {
+      clearHistory(docKey(doc));
+      touchHistory();
+    },
+    [touchHistory],
+  );
+  /** Keeps the unsent text of the open ask. */
+  const keepDraft = useCallback((ctx: AskContext, text: string) => saveDraft(docKey(ctx.doc), ctx.target, text), []);
+
+  return { state, open, close, submit, answer, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen, history, clearHistory: clear, keepDraft };
 }

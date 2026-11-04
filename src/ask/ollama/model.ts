@@ -111,7 +111,7 @@ export class OllamaModel implements AskModel {
   ) {
     this.name = `ollama/${options.model}`;
     const compact = options.compact ?? this.numCtx < 65536;
-    this.traits = { compactPrompt: compact, leanTools: compact, repeatLimit: 3 };
+    this.traits = { compactPrompt: compact, leanTools: compact, repeatLimit: 3, documents: false };
   }
 
   get numCtx(): number {
@@ -301,6 +301,9 @@ export function toOllamaMessages(system: string, messages: Anthropic.MessagePara
         const d = imageData(b);
         if (vision && d) images.push(d);
         else texts.push(noImage);
+      } else if (b.type === "document") {
+        // Attachments are sent to this provider as text and page images (traits.documents: false); this is a fallback.
+        texts.push(`(an attached document${b.title ? ` ${b.title}` : ""} is not shown: ${model} does not read PDF files directly)`);
       } else if (b.type === "tool_result") {
         const parts = typeof b.content === "string" ? [{ type: "text" as const, text: b.content }] : (b.content ?? []);
         const text = parts

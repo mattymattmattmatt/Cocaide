@@ -29,7 +29,8 @@ import { Intent } from "../intent/schema";
 import { round6 } from "../kernel/inspect";
 import type { ProfileDef } from "../doc/types";
 import { partCopy, type LibraryEntry } from "../weldment/library";
-import { diffDocs, runAsk, type AskEvent, type AskResult, type Proposal } from "./agent";
+import { diffDocs, earlierText, runAsk, type AskEvent, type AskResult, type EarlierTurn, type Proposal } from "./agent";
+import { attachmentBlocks, attachmentNote, type Attachment } from "./attachments";
 import type { KernelPort } from "./kernel";
 import type { AskModel } from "./model";
 import { classify } from "./prompt";
@@ -51,6 +52,10 @@ export interface PartAskRequest {
   onEvent?(e: AskEvent | { type: "intent"; intent: Intent }): void;
   /** The section library in this browser: what a frame can be made of (Phase K). */
   library?: LibraryEntry[];
+  /** Files attached for reference (images, PDFs, text, DXF/STEP summaries). */
+  attachments?: Attachment[];
+  /** A follow-up: the earlier requests of this conversation. */
+  earlier?: EarlierTurn[];
 }
 
 export interface PartAskResult extends AskResult {
@@ -134,7 +139,7 @@ Never round or convert. notes: anything else that matters, briefly.`;
 
 /** Runs a part-level ask: answer, edit proposal, new-part proposal, or questions. */
 export async function runPartAsk(req: PartAskRequest): Promise<PartAskResult> {
-  const base = { target: { kind: "part" } as const, doc: req.doc, model: req.model, kernel: req.kernel, signal: req.signal, onEvent: req.onEvent };
+  const base = { target: { kind: "part" } as const, doc: req.doc, model: req.model, kernel: req.kernel, signal: req.signal, onEvent: req.onEvent, attachments: req.attachments, earlier: req.earlier };
   if (req.photo) return readPhoto(req, req.photo);
   if (req.drawing) return readDrawing(req, req.drawing);
   if (classify(req.text) === "explain") return runAsk({ ...base, text: req.text, mode: "explain" });
@@ -404,6 +409,8 @@ async function buildOther(req: PartAskRequest, review: Review, common: PartAskRe
     kernel: req.kernel,
     signal: req.signal,
     onEvent: req.onEvent,
+    attachments: req.attachments,
+    earlier: req.earlier,
   });
   if (!r.proposal) return { ...common, ...r, outcome: r.outcome === "proposal" ? "failed" : r.outcome, intent: review.intent, review };
   const check = await req.kernel.check(r.proposal.doc);
@@ -449,7 +456,13 @@ function intentContent(req: PartAskRequest): Anthropic.ContentBlockParam[] {
   const current = req.doc.features.length
     ? `The current part is "${req.doc.name}", ${req.doc.features.length} features.`
     : "There is no current part: the document is empty.";
-  return [{ type: "text", text: `${current}\n\nThe request:\n${req.text.trim()}` }];
+  const atts = req.attachments ?? [];
+  return [
+    ...attachmentBlocks(atts, { documents: req.model.traits?.documents !== false }),
+    ...(atts.length ? [{ type: "text" as const, text: attachmentNote(atts) }] : []),
+    ...(req.earlier?.length ? [{ type: "text" as const, text: earlierText(req.earlier) }] : []),
+    { type: "text", text: `${current}\n\nThe request:\n${req.text.trim()}` },
+  ];
 }
 
 /** The pages at 200 dpi, the PDF's text layer, and the user's note last. */

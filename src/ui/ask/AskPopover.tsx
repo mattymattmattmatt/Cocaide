@@ -1,9 +1,14 @@
 // The right-click ask on screen: a menu labelled with the target, a prompt
-// box, the scoped actions, then progress and the result. A proposal shows
-// what it changes and waits for Accept or Discard.
+// box with attachments, the scoped actions, then progress and the result. A
+// proposal shows what it changes and waits for Accept or Discard. The History
+// tab lists this document's earlier requests; any can be read again or
+// followed up. The window closes only with its Close button (or Escape when
+// nothing is typed): clicking the model or the view leaves it open, and
+// unsent text is kept as a draft.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { AskReach, Change } from "../../ask/agent";
+import type { AskReach } from "../../ask/agent";
+import { ACCEPT, canAdd, sizeText, type Attachment } from "../../ask/attachments";
 import { MODELS } from "../../ask/models";
 import { describeScope, scopeFor } from "../../ask/packet";
 import { scopedActions } from "../../ask/prompt";
@@ -11,6 +16,7 @@ import { IntentCard } from "./IntentCard";
 import type { useAsk } from "./useAsk";
 import { canAsk } from "./settings";
 import { Icon } from "../icons";
+import { changeLines, threadOf, type HistoryEntry } from "./history";
 
 type Ask = ReturnType<typeof useAsk>;
 
@@ -25,7 +31,13 @@ export function AskPopover({ ask }: { ask: Ask }) {
   /** A dropped image: read as a drawing or as a photo. */
   const [readAs, setReadAs] = useState<"drawing" | "photo">("drawing");
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const key = s ? `${JSON.stringify(s.ctx.target)}@${s.ctx.x},${s.ctx.y}` : "";
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"ask" | "history">("ask");
+  /** The history entry being read again. */
+  const [reading, setReading] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const key = s ? `${JSON.stringify(s.ctx.target)}@${s.ctx.x},${s.ctx.y}|${s.phase === "menu" ? (s.followUp ?? "") : ""}` : "";
 
   useEffect(() => {
     if (s?.phase === "menu") {
@@ -33,8 +45,38 @@ export function AskPopover({ ask }: { ask: Ask }) {
       setApplyNow(false);
       setReach(ask.settings.reach);
       setReadAs(s.ctx.readAs ?? "drawing");
+      setAttachments([]);
+      setAttachError(null);
+      setTab("ask");
+      setReading(null);
     }
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const changeDraft = (text: string) => {
+    setDraft(text);
+    if (s) ask.keepDraft(s.ctx, text);
+  };
+
+  /** Files dropped, pasted or picked: read, checked against the limits, shown as chips. */
+  const attach = async (files: File[]) => {
+    setAttachError(null);
+    const { prepareAttachment } = await import("./attach");
+    let list = attachments;
+    for (const f of files) {
+      const a = await prepareAttachment(f);
+      if (typeof a === "string") {
+        setAttachError(a);
+        continue;
+      }
+      const problem = canAdd(list, a);
+      if (problem) {
+        setAttachError(`${a.name}: ${problem}`);
+        continue;
+      }
+      list = [...list, a];
+    }
+    setAttachments(list);
+  };
 
   // Keep the popover inside the window, also when it grows on its own (a drawing's thumbnail loading).
   const place = useCallback(() => {
@@ -54,20 +96,16 @@ export function AskPopover({ ask }: { ask: Ask }) {
 
   useEffect(() => {
     if (!s) return;
+    // Escape closes it only when nothing would be lost: no typed text, no attachments, no ask running.
+    // Clicking elsewhere (the model, the view) never closes it.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ask.close();
-    };
-    // Clicking elsewhere closes the menu, but never an open result: a proposal is not lost by accident.
-    const onDown = (e: PointerEvent) => {
-      if (s.phase === "menu" && box.current && !box.current.contains(e.target as Node)) ask.close();
+      if (e.key !== "Escape" || s.phase === "running") return;
+      if (s.phase === "menu" && (draft.trim() || attachments.length)) return;
+      ask.close();
     };
     window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onDown, true);
-    };
-  }, [s, ask]);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [s, ask, draft, attachments]);
 
   if (!s) return null;
   const { ctx } = s;
@@ -84,8 +122,10 @@ export function AskPopover({ ask }: { ask: Ask }) {
     // Only what the user chose goes with the ask: the drawing, or the photo.
     const sent: typeof ctx = !dropped ? ctx : asPhoto ? { ...ctx, drawing: undefined, readAs } : { ...ctx, photo: undefined, readAs };
     const fallback = asPhoto ? "Read the part from this photo." : ctx.drawing ? "Read the part from this drawing." : "";
-    ask.submit(sent, text || fallback, applyNow && !part, reach);
+    ask.submit(sent, text || fallback, applyNow && !part, reach, { attachments, ...(s.phase === "menu" && s.followUp ? { followUp: s.followUp } : {}) });
   };
+  const history = ask.history(ctx.doc);
+  const followed = s.phase === "menu" && s.followUp ? history.find((h) => h.id === s.followUp) : undefined;
   const wide = reach === "part" && !part;
 
   return (
@@ -97,6 +137,18 @@ export function AskPopover({ ask }: { ask: Ask }) {
       data-testid="ask"
       style={pos ? { left: pos.left, top: pos.top } : { left: ctx.x, top: ctx.y, visibility: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
+      onDragOver={(e) => {
+        if (s.phase !== "menu" || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        // Dropped on the AI window: an attachment of this request, not a drawing for a new part.
+        if (s.phase !== "menu" || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void attach([...e.dataTransfer.files]);
+      }}
     >
       <header className="ask-head">
         <span>
@@ -108,7 +160,39 @@ export function AskPopover({ ask }: { ask: Ask }) {
       </header>
 
       {s.phase === "menu" && (
+        <div className="tabs ask-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "ask"} onClick={() => setTab("ask")} data-testid="ask-tab-ask">
+            Ask
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "history"} onClick={() => setTab("history")} data-testid="ask-tab-history">
+            History{history.length ? ` (${history.length})` : ""}
+          </button>
+        </div>
+      )}
+
+      {s.phase === "menu" && tab === "history" && (
+        <HistoryView
+          entries={history}
+          reading={reading}
+          onRead={setReading}
+          onFollowUp={(id) => ask.open(ctx, "", id)}
+          onClear={() => {
+            ask.clearHistory(ctx.doc);
+            setReading(null);
+          }}
+        />
+      )}
+
+      {s.phase === "menu" && tab === "ask" && (
         <>
+          {followed && (
+            <div className="ask-follow" data-testid="ask-follow">
+              Following up: <em>{followed.prompt}</em>
+              <button type="button" className="link" onClick={() => ask.open(ctx, draft)} title="Ask without the earlier conversation">
+                (new conversation)
+              </button>
+            </div>
+          )}
           {ctx.photo && (
             <div className="ask-read-as" role="radiogroup" aria-label="Read the image as" data-testid="ask-read-as">
               <span className="muted">Read it as</span>
@@ -158,7 +242,14 @@ export function AskPopover({ ask }: { ask: Ask }) {
                   : "Ask about it, or say what to change…"
               }
               data-testid="ask-input"
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => changeDraft(e.target.value)}
+              onPaste={(e) => {
+                // A pasted image (a screenshot) is an attachment; pasted text is just text.
+                const files = [...e.clipboardData.files];
+                if (!files.length) return;
+                e.preventDefault();
+                void attach(files);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -166,10 +257,50 @@ export function AskPopover({ ask }: { ask: Ask }) {
                 }
               }}
             />
+            <button
+              type="button"
+              className="icon ask-attach"
+              onClick={() => fileInput.current?.click()}
+              title="Attach reference files: images (or paste a screenshot, or drop files here), PDFs, text, DXF or STEP"
+              aria-label="Attach files"
+              data-testid="ask-attach"
+            >
+              +
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              accept={ACCEPT}
+              hidden
+              data-testid="ask-attach-input"
+              onChange={(e) => {
+                const files = [...(e.target.files ?? [])];
+                e.target.value = "";
+                void attach(files);
+              }}
+            />
             <button type="submit" className="primary" disabled={!draft.trim() && !dropped} data-testid="ask-submit">
               Ask
             </button>
           </form>
+          {(attachments.length > 0 || attachError) && (
+            <div className="ask-attachments" data-testid="ask-attachments">
+              {attachments.map((a, i) => (
+                <span key={a.id} className="ask-chip" data-testid={`ask-attachment-${i}`} title={`${a.name}: ${a.kind}, ${sizeText(a.size)}${a.truncated ? ", cut to fit" : ""}`}>
+                  {a.name} <span className="muted">{sizeText(a.size)}</span>
+                  <button type="button" className="icon" aria-label={`Remove ${a.name}`} onClick={() => setAttachments(attachments.filter((x) => x.id !== a.id))} data-testid={`ask-attachment-remove-${i}`}>
+                    ×
+                  </button>
+                </span>
+              ))}
+              {attachError && (
+                <span className="why" role="alert" data-testid="ask-attach-error">
+                  {attachError}
+                </span>
+              )}
+            </div>
+          )}
           <div className="ask-actions">
             {scopedActions(ctx.kind).map((a) => (
               <button
@@ -253,6 +384,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
       {s.phase === "done" && (
         <div className="ask-body">
           <blockquote className="ask-prompt">{s.prompt}</blockquote>
+          {s.attachments?.length ? <div className="muted small" data-testid="ask-sent-attachments">Attached: {s.attachments.join(", ")}</div> : null}
           <div className={`ask-outcome ${s.result.outcome}`} data-testid="ask-outcome">
             {s.accepted ? "Applied" : s.result.outcome === "questions" && s.result.review?.ready ? "Check the reading" : OUTCOME[s.result.outcome]}
           </div>
@@ -320,6 +452,9 @@ export function AskPopover({ ask }: { ask: Ask }) {
               </>
             ) : (
               <>
+                <button onClick={() => ask.open(ctx, "", s.recordId)} data-testid="ask-follow-up" title="Ask more about this, with this conversation">
+                  Follow up
+                </button>
                 <button onClick={() => ask.open(ctx, s.prompt)} data-testid="ask-again">
                   Ask again
                 </button>
@@ -343,17 +478,96 @@ const OUTCOME: Record<string, string> = {
   failed: "Could not finish",
 };
 
-function changeLines(c: Change): string[] {
-  const name = c.what ? `${c.what} ${c.id}` : c.id;
-  if (c.kind === "added") return [`+ ${name}`];
-  if (c.kind === "removed") return [`− ${name}`];
-  return (c.fields ?? []).map((f) => `${name}${c.id === "parameters" ? ":" : ""} ${f.path}: ${short(f.before)} → ${short(f.after)}`);
-}
+const STATUS: Record<HistoryEntry["status"], string> = { open: "not decided", accepted: "accepted", discarded: "discarded", none: "" };
 
-function short(v: unknown): string {
-  if (v === undefined) return "—";
-  const s = JSON.stringify(v);
-  return s.length > 48 ? `${s.slice(0, 45)}…` : s;
+/** This document's earlier requests: newest first; one opened to read again, with Follow up. */
+function HistoryView({ entries, reading, onRead, onFollowUp, onClear }: { entries: HistoryEntry[]; reading: string | null; onRead(id: string | null): void; onFollowUp(id: string): void; onClear(): void }) {
+  if (!entries.length) return <p className="muted small ask-body" data-testid="ask-history-empty">No requests yet on this part. Each one you make is kept here, in this browser.</p>;
+  const open = reading ? entries.find((e) => e.id === reading) : undefined;
+  if (open) {
+    const thread = threadOf(entries, open.id);
+    return (
+      <div className="ask-body ask-history-entry" data-testid="ask-history-entry">
+        {thread.map((e) => (
+          <div key={e.id} className="ask-history-turn">
+            <div className="muted small">
+              {new Date(e.at).toLocaleString()} · {e.label} · {e.model}
+            </div>
+            <blockquote className="ask-prompt">{e.prompt}</blockquote>
+            {e.attachments.length > 0 && <div className="muted small">Attached: {e.attachments.join(", ")}</div>}
+            {e.reply && <div className="ask-text">{e.reply}</div>}
+            {e.calls.length > 0 && (
+              <details className="small">
+                <summary>{e.calls.length} tool call{e.calls.length === 1 ? "" : "s"}</summary>
+                <ul className="ask-calls">
+                  {e.calls.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {e.changes.length > 0 && (
+              <ul className="ask-changes">
+                {e.changes.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
+            )}
+            <div className={`ask-outcome ${e.outcome}`}>
+              {OUTCOME[e.outcome]}
+              {STATUS[e.status] ? ` · ${STATUS[e.status]}` : ""}
+            </div>
+          </div>
+        ))}
+        <div className="ask-buttons">
+          <button className="primary" onClick={() => onFollowUp(open.id)} data-testid="ask-history-follow">
+            Follow up
+          </button>
+          <button onClick={() => onRead(null)} data-testid="ask-history-back">
+            Back to the list
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="ask-body">
+      <ol className="ask-history" data-testid="ask-history-list">
+        {[...entries].reverse().map((e, i) => (
+          <li key={e.id}>
+            <button className="link" onClick={() => onRead(e.id)} data-testid={`ask-history-${i}`} title={new Date(e.at).toLocaleString()}>
+              <span className="ask-history-prompt">{e.prompt}</span>
+              <span className="muted small">
+                {" "}
+                · {e.label} · {OUTCOME[e.outcome]}
+                {STATUS[e.status] ? `, ${STATUS[e.status]}` : ""}
+                {e.attachments.length ? ` · ${e.attachments.length} attached` : ""}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="ask-buttons">
+        <button
+          onClick={() => {
+            const url = URL.createObjectURL(new Blob([JSON.stringify(entries, null, 1)], { type: "application/json" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "cocaide-ai-history.json";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}
+          data-testid="ask-history-download"
+          title="The history as a JSON file to keep beside the part (it is not saved in the part file)"
+        >
+          Download
+        </button>
+        <button onClick={onClear} data-testid="ask-history-clear">
+          Clear history
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function fmt(x: number): string {

@@ -2102,3 +2102,16 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .ollama-fix { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
 .ollama-fix code { flex: 1; font-family: var(--mono); font-size: 11px; padding: 4px 6px; background: rgba(0, 0, 0, 0.06); border-radius: 3px; overflow-x: auto; white-space: nowrap; }
 .ollama-settings progress { width: 120px; vertical-align: middle; }
+.ask-tabs { display: flex; gap: 2px; padding: 4px 10px 0; }
+.ask-tabs button { font-size: 12px; padding: 2px 8px; }
+.ask-attach { font-size: 16px; line-height: 1; padding: 2px 8px; }
+.ask-attachments { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px; align-items: center; }
+.ask-chip { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; padding: 1px 2px 1px 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.06); max-width: 100%; }
+.ask-chip button { padding: 0 5px; font-size: 13px; line-height: 1.2; }
+.ask-follow { font-size: 12px; padding: 4px 10px; color: var(--muted); }
+.ask-history { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
+.ask-history li { padding: 3px 0; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.ask-history button { text-align: left; }
+.ask-history-entry { max-height: 420px; overflow-y: auto; }
+.ask-history-turn { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.ask-calls { margin: 2px 0 0 16px; padding: 0; font-family: var(--mono); font-size: 11px; }

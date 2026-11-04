@@ -44,6 +44,8 @@ export interface ProviderTraits {
   leanTools?: boolean;
   /** End the ask when the same failing call (same tool, same arguments) has been made this many times. */
   repeatLimit?: number;
+  /** false: the provider does not read PDF document blocks; an attached PDF goes as its text and page images. */
+  documents?: boolean;
 }
 
 export interface AskModel {

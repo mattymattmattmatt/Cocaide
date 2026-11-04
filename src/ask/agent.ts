@@ -24,6 +24,7 @@ import { commandMade, expandTool, planBatch, toolCommand, type StepResult } from
 import { featureInfo, facePlane, getSketch, listDatums, listEdges, listFaces, measureBetween, partSummary, shotRequest } from "./tools/inspect";
 import { planReply, readPlan, runChecks, type Plan } from "./tools/plan";
 import { referenceSection, sectionIndex } from "../mcp/sections";
+import { attachmentBlocks, attachmentNote, type Attachment } from "./attachments";
 
 const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "addSheet", "renameSheet", "deleteSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation"]);
 
@@ -74,6 +75,44 @@ export interface AskRequest {
   kernel: KernelPort;
   signal?: AbortSignal;
   onEvent?(e: AskEvent): void;
+  /** Files the user attached for reference (src/ask/attachments.ts): images, PDFs, text, DXF/STEP summaries. */
+  attachments?: Attachment[];
+  /** A follow-up: the earlier requests of this conversation, in order (from the AI history). */
+  earlier?: EarlierTurn[];
+}
+
+/** One earlier request of a conversation, as a follow-up carries it: what was asked, said and changed. */
+export interface EarlierTurn {
+  prompt: string;
+  reply: string;
+  /** The changes it proposed, one line each ("hole_1 diameter: 6.6 → 8"). */
+  changes: string[];
+  /** What became of them: "accepted", "discarded", "open", or "none" (an answer). */
+  status: string;
+}
+
+/** The earlier turns as one text block: the model sees what was said, the packet shows the part as it is now. */
+export function earlierText(turns: EarlierTurn[]): string {
+  const lines = turns.map((t, i) =>
+    [
+      `${i + 1}. The user asked: ${t.prompt}`,
+      t.reply ? `   You answered: ${t.reply}` : "",
+      t.changes.length ? `   Changes you proposed (${t.status}): ${t.changes.join("; ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+  return `This follows up an earlier conversation about this part. The part may have changed since: the packet below is how it is now.\n${lines.join("\n")}`;
+}
+
+/** The first user turn's extra blocks: the attachments (as the provider takes them) and the earlier conversation. */
+function leadBlocks(req: AskRequest): Anthropic.ContentBlockParam[] {
+  const atts = req.attachments ?? [];
+  return [
+    ...attachmentBlocks(atts, { documents: req.model.traits?.documents !== false }),
+    ...(atts.length ? [{ type: "text" as const, text: attachmentNote(atts) }] : []),
+    ...(req.earlier?.length ? [{ type: "text" as const, text: earlierText(req.earlier) }] : []),
+  ];
 }
 
 export type AskReach = "target" | "part";
@@ -162,7 +201,7 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   const build = budget.kind === "build";
   const MAX_TURNS = budget.maxTurns;
   const CORRECTIONS = budget.corrections;
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userTurn(packet, req.text, mode, image, wide, build) }];
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: [...leadBlocks(req), ...userTurn(packet, req.text, mode, image, wide, build)] }];
   const whole = wide || req.target.kind === "part";
   const offered = toolsFor(mode, packet.target.kind, whole ? { part: true, drawing: wide && isObject(req.doc.drawing), build } : undefined);
   // A provider with a small context (a local model) gets the compact prompt and the lean tool list: same tools, same rules.
