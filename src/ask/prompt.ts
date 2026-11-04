@@ -162,7 +162,7 @@ Rules:
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
 - Weldments: a member's size must be one of the sizes in the packet's member.sizes; never invent one. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
-- Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>") or the drawing ("drawing"); the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", or a side of the view "@left", "@right", "@top", "@bottom"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
+- Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>") or the drawing ("drawing"); the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
 - Look before you write: listFaces and listEdges give a selector for every face and edge (never guess one), facePlane a face's frame, getSketch what holds a sketch, measureBetween any distance or angle, screenshot a picture. reference("<op>") gives an op's full section before you first use it.
@@ -353,17 +353,45 @@ const DRAWING_TOOLS: Anthropic.Tool[] = [
   {
     name: "setAnnotation",
     description:
-      'Add or replace an annotation on the drawing by id, or remove it (annotation: null). Types: dimension {view, from, to, direction?, offset?} or {view, member}; hole {view, hole}; balloon {view, member}; weld {view, weld}; table {table: "cutList" | "welds"}; note {text, at}. What it reads is measured, never given.',
-    input_schema: obj({ id: { type: "string" }, annotation: { type: ["object", "null"] } }, ["id", "annotation"]),
+      'Add or replace an annotation on the drawing by id, or remove it (annotation: null). Types: dimension {view, from, to, direction?, offset?} or {view, member}; hole {view, hole}; balloon {view, member}; weld {view, weld}; table {table: "cutList" | "welds"}; note {text, at}; centerMark {view, at: "<view>:c<edge>"}; centerline {view, between: [GeoRef, GeoRef]}. Points may be GeoRefs from the packet (view.geoRefs). It goes on its view\'s sheet. What it reads is measured, never given.',
+    input_schema: obj({ id: { type: "string" }, annotation: { type: ["object", "null"] }, sheet: { type: "string" } }, ["id", "annotation"]),
   },
   {
     name: "setView",
-    description: 'Add or replace a view by id ({look: "front" | "back" | "top" | "bottom" | "left" | "right" | "iso", at?, scale?, hidden?}), or remove it and its annotations (view: null).',
-    input_schema: obj({ id: { type: "string" }, view: { type: ["object", "null"] } }, ["id", "view"]),
+    description:
+      'Add or replace a view by id, or remove it with its annotations and the views made from it (view: null). Kinds: model {look: "front" | "back" | "top" | "bottom" | "left" | "right" | "iso" | "dimetric" | "trimetric"}; projected {kind: "projected", parent, direction: "left" | "right" | "up" | "down" | "upLeft" | "upRight" | "downLeft" | "downRight"}; section {kind: "section", parent, line: [[x, y], [x, y], ...] on the parent (view mm), half?, aligned?, flip?, depth?}; detail {kind: "detail", parent, circle: {at: [x, y], r}, scale?}; auxiliary {kind: "auxiliary", parent, edge: "<parent>:e<edge>"}. Any view: at, scale, display ("visible" | "hidden" | "removed" | "shaded" | "shadedEdges"), tangent ("visible" | "phantom" | "removed"), breaks [{axis, from, to}], crop, bodies.',
+    input_schema: obj({ id: { type: "string" }, view: { type: ["object", "null"] }, sheet: { type: "string" } }, ["id", "view"]),
+  },
+  {
+    name: "moveView",
+    description: "Move a view to at [x, y] on its sheet (null: back to its automatic place), and/or to another sheet (sheet) with its annotations.",
+    input_schema: obj({ id: { type: "string" }, at: { type: ["array", "null"], items: { type: "number" } }, sheet: { type: "string" } }, ["id"]),
   },
   {
     name: "setSheet",
-    description: 'Change the sheet: size ("A4".."A0"), scale ("1:10"; null for what fits), projection ("third" | "first"), title, number, revision, drawnBy, date. Merged in; null removes a field.',
+    description:
+      'Change a sheet (sheet: its id; default the first): size ("A4".."A0", "ANSI A".."ANSI E"), orientation ("landscape" | "portrait"), template ("iso" | "ansi" | "minimal" | "classic"), scale ("1:10"; null for what fits), projection ("third" | "first"), name, and the title block: title, subtitle, number, revision, drawnBy, date, checkedBy, checkedDate, approvedBy, approvedDate, company, material, finish, mass (text, may link $PRP:"name"). Merged in; null removes a field.',
+    input_schema: obj({ patch: any, sheet: { type: "string" } }, ["patch"]),
+  },
+  {
+    name: "setTable",
+    description:
+      'Add or replace a table on a sheet by id, or remove it (table: null): {kind: "cutList" | "bom" | "holes" | "welds" | "revisions" | "general" | "stock", title?, columns?, sort?, group?, anchor? ({corner: "aboveTitleBlock" | "topRight" | ...} or {at: [x, y]}), view and origin (holes), header and rows (general)}. Views and annotations keep clear of it.',
+    input_schema: obj({ id: { type: "string" }, table: { type: ["object", "null"] }, sheet: { type: "string" } }, ["id", "table"]),
+  },
+  {
+    name: "addSheet",
+    description: "Add a sheet to the drawing (after the others, or at index), its format from the sheet before it unless given in sheet.",
+    input_schema: obj({ id: { type: "string" }, sheet: { type: "object" }, index: { type: "integer" } }, []),
+  },
+  {
+    name: "deleteSheet",
+    description: "Delete a sheet with its views and annotations (never the last one).",
+    input_schema: obj({ id: { type: "string" } }, ["id"]),
+  },
+  {
+    name: "setDrawingOptions",
+    description: 'The drawing\'s settings: standard ("ISO" | "ASME"), units ("mm" | "in"), generalTolerance ("ISO 2768-mK"), properties {name: text}, revisions [{rev, description, date, by, approved, zone}]. Merged in; null removes one.',
     input_schema: obj({ patch: any }, ["patch"]),
   },
 ];

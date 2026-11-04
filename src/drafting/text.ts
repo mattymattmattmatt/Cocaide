@@ -42,3 +42,7 @@ export const CAP = 0.72;
 export const LINE = { visible: 0.5, thin: 0.25, border: 0.7 } as const;
 /** Hidden edges: 3 mm dashes with 1.5 mm gaps. */
 export const HIDDEN_DASH = [3, 1.5];
+/** Centre lines and cutting lines (ISO 128 type 04.1, long dash and dot), sheet mm. */
+export const CENTER_DASH = [12, 1.5, 1, 1.5];
+/** Phantom lines: tangent edges, adjacent parts (type 05.1, long dash and two dots). */
+export const PHANTOM_DASH = [10, 1.5, 1, 1.5, 1, 1.5];

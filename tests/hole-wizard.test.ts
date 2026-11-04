@@ -377,6 +377,6 @@ describe("a tapped hole on a drawing", () => {
     const { planDrawing, DEFAULT_VIEWS } = await import("../src/drafting/plan");
     const c = await kernel.check(doc);
     const plan = planDrawing(doc, c.measurements, await kernel.project(doc, DEFAULT_VIEWS), { date: "2026-10-12" });
-    expect(plan.annotations.filter((a) => a.type === "hole")).toHaveLength(1);
+    expect(plan.sheets[0].annotations.filter((a) => a.type === "hole")).toHaveLength(1);
   });
 });

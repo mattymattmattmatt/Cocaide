@@ -7,11 +7,13 @@ import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
 import type { DrawingGeometry } from "../ask/kernel";
 import { featureKind, isDrawingTarget, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
-import { geometryKey } from "../doc/drawing";
+import { allAnnotations, allViews, findAnnotation, findView, geometryKey, nextSheetId } from "../doc/drawing";
 import { drawingChecks } from "../drafting/checks";
-import { composeSheet } from "../drafting/compose";
-import { sheetPDF } from "../drafting/pdf";
+import { composeDrawing } from "../drafting/compose";
+import { sheetDXF } from "../drafting/dxf";
+import { drawingPDF } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing, visibleLength } from "../drafting/plan";
+import { viewSpecs } from "../drafting/specs";
 import { sheetSVG } from "../drafting/svg";
 import { bodyPart, bodyPartFile } from "../doc/bodyPart";
 import { apply, nextId, sketchEntityUsers, type Command, type RawDocument } from "../doc/commands";
@@ -41,7 +43,7 @@ import { addFramePath } from "../weldment/frame";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
-import { exportBase } from "../doc/properties";
+import { exportBase, safeFileName } from "../doc/properties";
 import { PartProperties } from "./files/PartProperties";
 import { OPEN_ACCEPT, useFiles } from "./files/useFiles";
 import { FeatureTree, OP_ICON } from "./FeatureTree";
@@ -59,7 +61,7 @@ import { useViewPrefs } from "./viewport/viewPrefs";
 import { EMPTY_MODEL, modelView } from "./sketcher/model";
 import { commandLabel, useDocument } from "./useDocument";
 import { DrawingSide, DrawingTree, nextDrawingId } from "./drawing/DrawingPanels";
-import { SheetView, type SheetTarget } from "./drawing/SheetView";
+import { SheetTabs, SheetView, pdfFonts, sheetPNG, type SheetTarget } from "./drawing/SheetView";
 import { Icon, type IconName } from "./icons";
 import { COMMANDS, keyFor, keyHint, pointer, useCommands, useInputPrefs } from "./input";
 import type { Closest, MassProperties } from "../kernel/evaluate";
@@ -200,6 +202,8 @@ export function App() {
   /** The views projected for the drawing, for the geometry and view directions in `key`. */
   const [geometry, setGeometry] = useState<{ key: string; g: DrawingGeometry | null } | null>(null);
   const [drawingSel, setDrawingSel] = useState<string | null>(null);
+  /** The sheet shown in the drawing (its id); the first when unset or gone. */
+  const [activeSheet, setActiveSheet] = useState<string | null>(null);
   // Evaluate and view (Phase O wave 5): the panels over the view, the section, the selection filter.
   const [measuring, setMeasuring] = useState(false);
   const [weighing, setWeighing] = useState(false);
@@ -503,13 +507,14 @@ export function App() {
     return () => clearTimeout(timer);
   }, [viewDoc, kernel, sessionFeature]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // In the drawing: project the rebuilt part for its views. The worker reuses its rebuild, so this is only the projection.
-  const viewsKey = shownDrawing ? shownDrawing.views.map((v) => `${v.id}:${v.look}`).join(",") : "";
+  // In the drawing: project the rebuilt part for its views. The worker reuses its rebuild, and keeps each view's projection, so this is only what changed.
+  const specs = useMemo(() => (shownDrawing ? viewSpecs(shownDrawing) : []), [shownDrawing]);
+  const viewsKey = JSON.stringify(specs);
   const projectionKey = shown && shownDrawing && view ? `${geometryKey(shown)}|${viewsKey}` : null;
   useEffect(() => {
     if (mode !== "drawing" || !projectionKey || !shown || !shownDrawing || geometry?.key === projectionKey) return;
     let live = true;
-    kernel.port.project(shown, shownDrawing.views.map((v) => ({ id: v.id, look: v.look }))).then(
+    kernel.port.project(shown, specs).then(
       (g) => live && setGeometry({ key: projectionKey, g }),
       (e: Error) => live && setNotice({ kind: "error", text: `Could not project the views: ${e.message}` }),
     );
@@ -518,11 +523,12 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, projectionKey]);
-  const sheet = useMemo(
-    () => (shown && shownDrawing ? composeSheet(shown, { measurements: view?.measurements ?? null, geometry: geometry?.g ?? null }) : null),
+  const composed = useMemo(
+    () => (shown && shownDrawing ? composeDrawing(shown, { measurements: view?.measurements ?? null, geometry: geometry?.g ?? null }) : null),
     [shown, shownDrawing, view, geometry],
   );
-  const drawingChecksNow = useMemo(() => (sheet && shown ? drawingChecks(sheet, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [sheet, shown, view, geometry]);
+  const sheet = useMemo(() => composed?.sheets.find((x) => x.id === activeSheet) ?? composed?.sheets[0] ?? null, [composed, activeSheet]);
+  const drawingChecksNow = useMemo(() => (composed && shown ? drawingChecks(composed.sheets, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [composed, shown, view, geometry]);
   const failedIds = useMemo(() => (sheet ? sheet.annotations.filter((a) => a.problem).map((a) => a.id) : []), [sheet]);
 
   // Keep the working document across reloads.
@@ -1126,7 +1132,8 @@ export function App() {
       const drawing = planDrawing(doc, view.measurements, g, { date: new Date().toISOString().slice(0, 10) });
       if (run({ type: "setDrawing", drawing }) === null) {
         setDrawingSel(null);
-        setNotice({ kind: "info", text: `New drawing: ${drawing.sheet.size}, ${drawing.views.length} views, ${drawing.annotations.length} annotations.${docDrawing ? " Ctrl+Z puts the old one back." : ""}` });
+        setActiveSheet(null);
+        setNotice({ kind: "info", text: `New drawing: ${drawing.sheets[0].format.size}, ${allViews(drawing).length} views, ${allAnnotations(drawing).length} annotations.${docDrawing ? " Ctrl+Z puts the old one back." : ""}` });
       }
     } catch (e) {
       setNotice({ kind: "error", text: `No drawing: ${(e as Error).message}` });
@@ -1139,41 +1146,48 @@ export function App() {
     const ballooned = new Set(sheet.annotations.filter((a) => a.type === "balloon" && !a.problem).map((a) => a.item));
     const missing = sheet.cutList.filter((i) => !ballooned.has(i.item));
     if (!missing.length) return setNotice({ kind: "info", text: "Every cut list item has a balloon." });
-    const viewId = (docDrawing.views.find((v) => v.look === "iso") ?? docDrawing.views[0])?.id;
+    const here = docDrawing.sheets.find((x) => x.id === sheet.id) ?? docDrawing.sheets[0];
+    const viewId = (here.views.find((v) => v.look === "iso") ?? here.views[0])?.id;
     if (!viewId) return setNotice({ kind: "error", text: "Add a view first." });
     const members = view?.measurements?.members ?? [];
-    let d = docDrawing;
+    const taken = new Set<string>();
     const cmds: Command[] = [];
     for (const item of missing) {
       const member = [...item.members].sort((a, b) => visibleLength(geometry?.g ?? null, viewId, members.find((m) => m.id === b)?.body ?? b) - visibleLength(geometry?.g ?? null, viewId, members.find((m) => m.id === a)?.body ?? a))[0];
-      const id = nextDrawingId(d, "b");
+      const id = nextDrawingId(docDrawing, "b", taken);
+      taken.add(id);
       const annotation = { type: "balloon" as const, view: viewId, member };
       cmds.push({ type: "setAnnotation", id, annotation });
-      d = { ...d, annotations: [...d.annotations, { id, ...annotation }] };
     }
     const problem = batch(cmds);
     if (problem) setNotice({ kind: "error", text: problem });
     else setNotice({ kind: "info", text: `Ballooned ${missing.length} item${missing.length === 1 ? "" : "s"} in ${viewId}.` });
   };
 
-  const exportDrawing = (kind: "pdf" | "svg") => {
-    if (!sheet) return setNotice({ kind: "error", text: "There is no drawing to export." });
-    const name = `${exportBase(doc, view?.name ?? "part")}-drawing.${kind}`;
-    if (kind === "pdf") download(name, sheetPDF(sheet, { title: docDrawing?.sheet.title ?? view?.name ?? "drawing" }), "application/pdf");
-    else download(name, sheetSVG(sheet), "image/svg+xml");
+  /** PDF: every sheet, a page each, the font embedded. SVG, DXF, PNG: the sheet shown. */
+  const exportDrawing = async (kind: "pdf" | "svg" | "dxf" | "png") => {
+    if (!sheet || !composed) return setNotice({ kind: "error", text: "There is no drawing to export." });
+    const many = composed.sheets.length > 1 && kind !== "pdf";
+    const name = `${exportBase(doc, view?.name ?? "part")}-drawing${many ? `-${safeFileName(sheet.name)}` : ""}.${kind}`;
+    try {
+      if (kind === "pdf") download(name, drawingPDF(composed.sheets, { title: docDrawing?.sheets[0]?.format.title ?? view?.name ?? "drawing", ...(await pdfFonts().then((f) => (f ? { fonts: f } : {}))) }), "application/pdf");
+      else if (kind === "svg") download(name, sheetSVG(sheet), "image/svg+xml");
+      else if (kind === "dxf") download(name, sheetDXF(sheet), "application/dxf");
+      else download(name, await sheetPNG(sheet), "image/png");
+    } catch (e) {
+      return setNotice({ kind: "error", text: `Could not export: ${(e as Error).message}` });
+    }
     const failing = drawingChecksNow.filter((c) => !c.ok).length;
-    setNotice({ kind: "info", text: `Exported ${name}.${failing ? ` ${failing} drawing check${failing === 1 ? "" : "s"} fail${failing === 1 ? "s" : ""}: see Checks.` : ""}` });
+    setNotice({ kind: "info", text: `Exported ${name}${kind === "pdf" && composed.sheets.length > 1 ? ` (${composed.sheets.length} pages)` : ""}.${failing ? ` ${failing} drawing check${failing === 1 ? "" : "s"} fail${failing === 1 ? "s" : ""}: see Checks.` : ""}` });
   };
 
   const moveView = (id: string, at: Vec2) => {
-    const v = docDrawing?.views.find((x) => x.id === id);
-    if (!v) return;
-    const { id: _id, ...rest } = v;
-    run({ type: "setView", id, view: { ...rest, at } });
+    if (!docDrawing || !findView(docDrawing, id)) return;
+    run({ type: "moveView", id, at });
   };
 
   const moveAnnotation = (id: string, delta: Vec2) => {
-    const a = docDrawing?.annotations.find((x) => x.id === id);
+    const a = docDrawing ? findAnnotation(docDrawing, id) : undefined;
     const placed = sheet?.annotations.find((x) => x.id === id)?.at;
     if (!a || !placed) return;
     const moved: Vec2 = [placed[0] + delta[0], placed[1] + delta[1]];
@@ -1714,7 +1728,7 @@ export function App() {
         title = "Drawing";
         items = [
           { label: "Balloon every item", icon: "balloon", disabled: !sheet, onClick: balloonAll },
-          { label: "Export PDF", icon: "export", disabled: !sheet, onClick: () => exportDrawing("pdf") },
+          { label: "Export PDF", icon: "export", disabled: !sheet, onClick: () => void exportDrawing("pdf") },
         ];
         break;
     }
@@ -2390,8 +2404,10 @@ export function App() {
             />
             <ToolButton icon="balloon" label="Balloon all" onClick={balloonAll} disabled={!sheet || sheet.cutList.length === 0} title="A balloon for every cut list item that has none" testId="drawing-balloon-all" />
             <span className="sep" />
-            <ToolButton icon="export" label="Export PDF" onClick={() => exportDrawing("pdf")} disabled={!sheet} title="Download the sheet as a PDF, to print or send" testId="drawing-export-pdf" />
-            <ToolButton icon="export" label="Export SVG" onClick={() => exportDrawing("svg")} disabled={!sheet} title="Download the sheet as an SVG drawing" testId="drawing-export-svg" />
+            <ToolButton icon="export" label="Export PDF" onClick={() => void exportDrawing("pdf")} disabled={!sheet} title="Download every sheet as a vector PDF, a page each, to print or send" testId="drawing-export-pdf" />
+            <ToolButton icon="export" label="Export SVG" onClick={() => void exportDrawing("svg")} disabled={!sheet} title="Download this sheet as an SVG drawing" testId="drawing-export-svg" />
+            <ToolButton icon="dxfExport" label="Export DXF" onClick={() => void exportDrawing("dxf")} disabled={!sheet} title="Download this sheet as a DXF (R2000, a layer per kind of line)" testId="drawing-export-dxf" />
+            <ToolButton icon="export" label="Export PNG" onClick={() => void exportDrawing("png")} disabled={!sheet} title="Download this sheet as a picture (200 dpi)" testId="drawing-export-png" />
           </div>
         )}
         {!sketch && mode === "model" && (
@@ -2415,6 +2431,7 @@ export function App() {
                   <DrawingTree
                     doc={doc}
                     drawing={docDrawing}
+                    sheetId={sheet?.id ?? docDrawing.sheets[0].id}
                     sheet={sheet}
                     selected={drawingSel}
                     dispatch={d.dispatch}
@@ -2429,6 +2446,21 @@ export function App() {
                 )}
               </aside>
               <section className="center sheet-center">
+                {composed && docDrawing && sheet && (
+                  <SheetTabs
+                    sheets={composed.sheets}
+                    active={sheet.id}
+                    onPick={(id) => {
+                      setActiveSheet(id);
+                      setDrawingSel(null);
+                    }}
+                    onAdd={() => {
+                      const id = nextSheetId(docDrawing);
+                      if (run({ type: "addSheet", id }) === null) setActiveSheet(id);
+                    }}
+                    onRename={(id, name) => run({ type: "renameSheet", id, name })}
+                  />
+                )}
                 {sheet ? (
                   <SheetView
                     sheet={sheet}
@@ -2458,6 +2490,8 @@ export function App() {
                   <DrawingSide
                     doc={doc}
                     drawing={docDrawing}
+                    sheetId={sheet?.id ?? docDrawing.sheets[0].id}
+                    onSheetGone={() => setActiveSheet(null)}
                     sheet={sheet}
                     checks={drawingChecksNow}
                     selected={drawingSel}
@@ -2901,7 +2935,7 @@ export function App() {
                 : [
                     { id: "drawing-new", icon: "drawing" as IconName, label: "New drawing", disabled: undefined, run: () => void newDrawing() },
                     { id: "balloon-all", icon: "balloon" as IconName, label: "Balloon all", disabled: !sheet ? "No drawing yet" : undefined, run: balloonAll },
-                    { id: "export-pdf", icon: "export" as IconName, label: "Export PDF", disabled: !sheet ? "No drawing yet" : undefined, run: () => exportDrawing("pdf") },
+                    { id: "export-pdf", icon: "export" as IconName, label: "Export PDF", disabled: !sheet ? "No drawing yet" : undefined, run: () => void exportDrawing("pdf") },
                   ]
               ).map((t) => (
                 <ToolButton

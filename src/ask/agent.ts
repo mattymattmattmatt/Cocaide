@@ -25,7 +25,7 @@ import { featureInfo, facePlane, getSketch, listDatums, listEdges, listFaces, me
 import { planReply, readPlan, runChecks, type Plan } from "./tools/plan";
 import { referenceSection, sectionIndex } from "../mcp/sections";
 
-const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "setView", "setAnnotation"]);
+const DRAWING_COMMANDS = new Set<string>(["setDrawing", "setSheet", "addSheet", "renameSheet", "deleteSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation"]);
 
 /** Tools that only look: calling one after the last edit counts as checking it. */
 const LOOK_TOOLS = new Set(["measure", "partSummary", "measureBetween", "screenshot", "listFaces", "listEdges", "getSketch"]);
@@ -519,8 +519,8 @@ class Sandbox {
     if (cmds.some((c) => DRAWING_COMMANDS.has(c.type))) {
       const before = await this.drawingNow(this.doc, this.check);
       drawn = await this.drawingNow(doc, next);
-      const had = new Set((before?.state.sheet.annotations ?? []).filter((a) => a.problem).map((a) => `${a.id}: ${a.problem}`));
-      const fresh = (drawn?.state.sheet.annotations ?? []).filter((a) => a.problem && !had.has(`${a.id}: ${a.problem}`));
+      const had = new Set((before?.state.sheets.flatMap((x) => x.annotations) ?? []).filter((a) => a.problem).map((a) => `${a.id}: ${a.problem}`));
+      const fresh = (drawn?.state.sheets.flatMap((x) => x.annotations) ?? []).filter((a) => a.problem && !had.has(`${a.id}: ${a.problem}`));
       if (fresh.length) return { ok: false, error: `${what} rolled back: ${fresh.map((a) => `${a.id}: ${a.problem}`).join("; ")}` };
     }
     if (opts.dryRun) {
@@ -554,7 +554,7 @@ class Sandbox {
       // What the drawing now reads, and what it still lacks.
       const last = cmds[cmds.length - 1];
       const id = "id" in last ? last.id : null;
-      const a = id ? drawn.state.sheet.annotations.find((x) => x.id === id) : undefined;
+      const a = id ? drawn.state.sheets.flatMap((x) => x.annotations).find((x) => x.id === id) : undefined;
       return { ok: true, ...(a ? { annotation: { id: a.id, type: a.type, reads: a.text } } : {}), checks: drawn.checks.filter((c) => !c.ok).map((c) => `${c.label}: ${c.actual}`) };
     }
     const topo = await this.kernel.topology(this.doc);
@@ -656,7 +656,7 @@ class Sandbox {
   /** The drawing as it now stands, for an ask from the sheet. */
   private async drawingNow(doc: RawDocument, check: CheckResult) {
     const state = await composeFor(doc, this.kernel, check);
-    return state ? { state, checks: drawingChecks(state.sheet, doc, check.measurements, state.geometry) } : null;
+    return state ? { state, checks: drawingChecks(state.sheets, doc, check.measurements, state.geometry) } : null;
   }
 
   /** Drawing checks that passed before this ask and fail now, as sentences. None for an ask that isn't on the sheet. */
@@ -701,6 +701,18 @@ function localMeasurements(doc: RawDocument, id: string, topo: PartTopology | nu
   return out;
 }
 
+/** The drawing's own settings (standard, units, tolerance, properties, revisions): everything but its sheets. */
+function drawingOptions(d: NonNullable<ReturnType<typeof rawDrawing>>): Record<string, unknown> {
+  const { sheets: _s, ...rest } = d.drawing;
+  return rest;
+}
+
+/** A sheet's own fields: its format, scale, projection, name (not its views and annotations). */
+function sheetFields(sh: NonNullable<ReturnType<typeof rawDrawing>>["sheets"][number]): Record<string, unknown> {
+  const { views: _v, annotations: _a, ...rest } = sh;
+  return rest;
+}
+
 function nextFree(doc: RawDocument, op: string): string {
   const used = new Set(doc.features.map((f) => f.id));
   for (let n = 1; ; n++) if (!used.has(`${op}_${n}`)) return `${op}_${n}`;
@@ -715,8 +727,11 @@ function items(doc: RawDocument): Map<string, string> {
   if (doc.cutList !== undefined) out.set("cutList", JSON.stringify(doc.cutList));
   const d = rawDrawing(doc);
   if (d) {
-    out.set("drawing:sheet", JSON.stringify(d.sheet));
-    for (const x of [...d.views, ...d.annotations]) out.set(`drawing:${String(x.id)}`, JSON.stringify(x));
+    out.set("drawing:options", JSON.stringify(drawingOptions(d)));
+    for (const sh of d.sheets) {
+      out.set(`drawing:sheet:${sh.id}`, JSON.stringify(sheetFields(sh)));
+      for (const x of [...sh.views, ...sh.annotations]) out.set(`drawing:${String(x.id)}`, JSON.stringify(x));
+    }
   }
   return out;
 }
@@ -750,12 +765,23 @@ export function diffDocs(base: RawDocument, doc: RawDocument): Change[] {
   if (JSON.stringify(base.cutList ?? {}) !== JSON.stringify(doc.cutList ?? {})) {
     out.push({ id: "cutList", what: "cut list", kind: "changed", fields: leafDiff((base.cutList ?? {}) as Record<string, unknown>, (doc.cutList ?? {}) as Record<string, unknown>, "") });
   }
-  // The drawing: its sheet, and each view and annotation.
+  // The drawing: its options, its sheets, and each view and annotation.
   const db = rawDrawing(base);
   const da = rawDrawing(doc);
   if (db || da) {
-    if (JSON.stringify(db?.sheet) !== JSON.stringify(da?.sheet)) out.push({ id: "sheet", what: "drawing", kind: !db ? "added" : !da ? "removed" : "changed", fields: leafDiff(db?.sheet ?? {}, da?.sheet ?? {}, "") });
-    const all = (d: typeof db) => new Map([...(d?.views ?? []).map((v) => [String(v.id), { what: "view", x: v }] as const), ...(d?.annotations ?? []).map((a) => [String(a.id), { what: String(a.type), x: a }] as const)]);
+    const ob = db ? drawingOptions(db) : {};
+    const oa = da ? drawingOptions(da) : {};
+    if (JSON.stringify(ob) !== JSON.stringify(oa)) out.push({ id: "options", what: "drawing", kind: "changed", fields: leafDiff(ob, oa, "") });
+    const sb = new Map((db?.sheets ?? []).map((x) => [x.id, sheetFields(x)]));
+    const sa = new Map((da?.sheets ?? []).map((x) => [x.id, sheetFields(x)]));
+    for (const [id, x] of sa) {
+      const old = sb.get(id);
+      if (!old) out.push({ id, what: "sheet", kind: "added" });
+      else if (JSON.stringify(old) !== JSON.stringify(x)) out.push({ id, what: "sheet", kind: "changed", fields: leafDiff(old, x, "") });
+    }
+    for (const id of sb.keys()) if (!sa.has(id)) out.push({ id, what: "sheet", kind: "removed" });
+    const all = (d: typeof db) =>
+      new Map([...(d?.sheets ?? []).flatMap((sh) => sh.views).map((v) => [String(v.id), { what: "view", x: v }] as const), ...(d?.sheets ?? []).flatMap((sh) => sh.annotations).map((a) => [String(a.id), { what: String(a.type), x: a }] as const)]);
     const vb = all(db);
     const va = all(da);
     for (const [id, { what, x }] of va) {

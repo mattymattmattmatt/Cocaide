@@ -1,17 +1,28 @@
-// New drawing (Phase L): code plans the first sheet, not the model. Front, top
-// and right views and an iso; the overall size dimensioned; every hole called
-// out and placed; a balloon for every cut list item, on the member of it the
-// iso shows best; the cut list and weld tables; the title block. The sheet
-// size is A3, the scale whatever fits.
+// New drawing (Phase L; Phase Q makes it smarter): code plans the first
+// sheet, not the model. A front view, the top and right views projected from
+// it (so they stay lined up), and an iso. A part with hidden insides has its
+// front view drawn as a full section, cut along the top view through the most
+// holes; small, crowded features
+// get a detail at a larger scale. The overall size dimensioned; every hole
+// called out and placed; centre marks on the circles and centre lines on the
+// round faces seen from the side; a balloon for every cut list item, on the
+// member of it the iso shows best; the cut list and weld tables; an ISO title
+// block with the general tolerance (ISO 2768-mK for a part, ISO 13920-BF for
+// a weldment). The sheet is A3, the scale whatever fits.
 
 import type { DrawingGeometry } from "../ask/kernel";
-import type { Annotation, Drawing, DrawingView, Vec3, ViewLook } from "../doc/types";
+import { parseScale, STANDARD_SCALES } from "../doc/drawing";
+import type { Annotation, Drawing, DrawingView, Vec2, Vec3, ViewLook } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import type { Measurements } from "../kernel/measure";
+import type { ViewSpec } from "../kernel/drawingViews";
 import { cutList } from "../weldment/cutlist";
+import { autoCenterMarks } from "./centermarks";
+import { composeSheet } from "./compose";
 import { inView, viewFrame } from "./views";
 
-export const DEFAULT_VIEWS: { id: string; look: ViewLook }[] = [
+/** What New drawing projects first: the planned views' looks. */
+export const DEFAULT_VIEWS: (ViewSpec & { look: ViewLook })[] = [
   { id: "front", look: "front" },
   { id: "top", look: "top" },
   { id: "right", look: "right" },
@@ -28,26 +39,59 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   const v = validateDocument(doc);
   const members = m?.members ?? [];
   const weldment = members.length > 0;
-  // Hollow sections fill a view with hidden lines; a plate's hidden holes are worth showing.
-  const views: DrawingView[] = DEFAULT_VIEWS.map((d) => ({ ...d, ...(d.look !== "iso" && !weldment ? { hidden: true } : {}) }));
+  const hidden = !weldment ? { display: "hidden" as const } : {};
+  const look: Record<string, ViewLook> = { front: "front", top: "top", right: "right", iso: "iso" };
+  const views: DrawingView[] = [
+    { id: "front", look: "front", ...hidden },
+    { id: "top", kind: "projected", parent: "front", direction: "up", ...hidden },
+    { id: "right", kind: "projected", parent: "front", direction: "right", ...hidden },
+    { id: "iso", look: "iso" },
+  ];
   const annotations: Annotation[] = [];
   let n = 0;
   const id = (prefix: string) => `${prefix}${++n}`;
 
-  // The overall size: length and height on the front, width on the right.
+  // Hidden insides: the front view becomes a full section, cut along the top view through the most holes (or the middle).
+  const top = geometry?.views.find((x) => x.id === "top");
+  const topOutline = outlineOf(geometry, "top");
+  const insides = visibleLength(geometry, "front", null, true) + visibleLength(geometry, "right", null, true);
+  if (!weldment && top && topOutline && insides > 1e-6) {
+    const mid = (topOutline.min[1] + topOutline.max[1]) / 2;
+    // Each line across the top view through a circle's centre, scored by the circles on it.
+    const score = new Map<number, number>();
+    for (const e of top.edges) {
+      if (!e.circle || e.look !== "circle") continue;
+      const y = Math.round(e.circle.c[1] * 1000) / 1000;
+      if (y <= topOutline.min[1] + 1e-6 || y >= topOutline.max[1] - 1e-6) continue;
+      score.set(y, (score.get(y) ?? 0) + 1);
+    }
+    const best = [...score].sort((p, q) => q[1] - p[1] || Math.abs(p[0] - mid) - Math.abs(q[0] - mid))[0];
+    const y = best ? best[0] : mid;
+    const w = topOutline.max[0] - topOutline.min[0];
+    const h = topOutline.max[1] - topOutline.min[1];
+    const margin = Math.max(2, 0.08 * Math.max(w, h));
+    // Drawn right to left, the viewer stands at the front: the section is the front view.
+    views[0] = { id: "top", look: "top", ...hidden };
+    views[1] = { id: "front", kind: "section", parent: "top", line: [r2([topOutline.max[0] + margin, y]), r2([topOutline.min[0] - margin, y])], label: "A" };
+  }
+  const side = "right";
+
+  // The overall size: length and height on the front, width on the side.
   annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@left", to: "@right" });
   annotations.push({ id: id("d"), type: "dimension", view: "front", from: "@bottom", to: "@top" });
-  annotations.push({ id: id("d"), type: "dimension", view: "right", from: "@left", to: "@right" });
+  annotations.push({ id: id("d"), type: "dimension", view: side, from: "@left", to: "@right" });
 
   // Each hole feature, called out once (its first hole; the callout counts them all) and placed from the view's left and bottom where it shows as a circle.
   const called = new Set<string>();
+  const callouts = new Map<string, Vec2[]>();
   for (const h of geometry?.holes ?? []) {
     if (called.has(h.feature)) continue;
     called.add(h.feature);
-    const view = views.find((x) => x.look !== "iso" && facing(h.axis, x.look));
+    const view = views.find((x) => look[x.id] && x.id !== "iso" && x.kind !== "section" && facing(h.axis, look[x.id]));
     if (!view) continue;
     annotations.push({ id: id("h"), type: "hole", view: view.id, hole: h.feature });
-    const at = inView(h.entry, viewFrame(view.look));
+    const at = inView(h.entry, viewFrame(look[view.id]));
+    callouts.set(view.id, [...(callouts.get(view.id) ?? []), at]);
     const outline = outlineOf(geometry, view.id);
     if (outline && at[0] - outline.min[0] > 1e-6) annotations.push({ id: id("d"), type: "dimension", view: view.id, from: "@left", to: h.feature });
     if (outline && at[1] - outline.min[1] > 1e-6) annotations.push({ id: id("d"), type: "dimension", view: view.id, from: "@bottom", to: h.feature });
@@ -65,11 +109,66 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   if (items.length) annotations.push({ id: "cut_list", type: "table", table: "cutList" });
   if (v.welds.length) annotations.push({ id: "weld_table", type: "table", table: "welds" });
 
-  return {
-    sheet: { size: "A3", projection: "third", title: v.name, ...(opts.date ? { date: opts.date } : {}) },
-    views,
-    annotations,
+  // Centre marks and lines in the square views (not on a weldment's tubes: their ends would crowd it).
+  if (!weldment) {
+    for (const view of views) {
+      if (view.id === "iso" || view.kind === "section") continue;
+      const pv = geometry?.views.find((x) => x.id === view.id);
+      if (!pv) continue;
+      // A called-out hole draws its own mark.
+      annotations.push(...autoCenterMarks(view.id, pv, () => id("c"), { hidden: view.display === "hidden", skip: callouts.get(view.id) }));
+    }
+  }
+
+  const drawing: Drawing = {
+    sheets: [{ id: "sheet1", format: { size: "A3", template: "iso", ...(opts.date ? { date: opts.date } : {}) }, projection: "third", views, annotations }],
+    standard: "ISO",
+    generalTolerance: weldment ? "ISO 13920-BF" : "ISO 2768-mK",
   };
+  addDetail(doc, drawing, m, geometry);
+  return drawing;
+}
+
+/**
+ * A detail for small, crowded features: circles the sheet's scale draws under
+ * 3 mm across, in the front or top view, gathered in one circle and drawn at
+ * a scale that makes the smallest at least 6 mm.
+ */
+function addDetail(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
+  if (!geometry || !m || (m.members?.length ?? 0) > 0) return;
+  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry });
+  if (!sheet) return;
+  const scale = sheet.scale;
+  let best: { view: string; small: { c: Vec2; r: number }[] } | null = null;
+  for (const id of ["front", "top"]) {
+    const pv = geometry.views.find((x) => x.id === id);
+    if (!pv) continue;
+    const small: { c: Vec2; r: number }[] = [];
+    for (const e of pv.edges) {
+      if (!e.visible || e.look !== "circle" || !e.circle) continue;
+      if (2 * e.circle.r * scale >= 3) continue;
+      if (small.some((s) => Math.hypot(s.c[0] - e.circle!.c[0], s.c[1] - e.circle!.c[1]) < 1e-6)) continue;
+      small.push({ c: e.circle.c, r: e.circle.r });
+    }
+    if (small.length && (!best || small.length > best.small.length)) best = { view: id, small };
+  }
+  if (!best) return;
+  // Around the first, the ones within 12 mm of paper.
+  const first = best.small[0];
+  const group = best.small.filter((s) => Math.hypot(s.c[0] - first.c[0], s.c[1] - first.c[1]) * scale < 12);
+  const c: Vec2 = [group.reduce((a, s) => a + s.c[0], 0) / group.length, group.reduce((a, s) => a + s.c[1], 0) / group.length];
+  const r = Math.max(...group.map((s) => Math.hypot(s.c[0] - c[0], s.c[1] - c[1]) + s.r)) * 1.8 + 2 / scale;
+  const rmin = Math.min(...group.map((s) => s.r));
+  const want = Math.max(scale * 2, 6 / (2 * rmin));
+  const scales = STANDARD_SCALES.map((x) => parseScale(x)!).sort((a, b) => a - b);
+  const k = scales.find((x) => x >= want - 1e-9) ?? scales[scales.length - 1];
+  const s = drawing.sheets[0];
+  const label = s.views.some((x) => x.label === "A") ? "B" : "A";
+  s.views.push({ id: `detail_${label}`, kind: "detail", parent: best.view, circle: { at: r2(c), r: Math.round(r * 10) / 10 }, label, scale: k >= 1 ? `${k}:1` : `1:${Math.round(1 / k)}` });
+}
+
+function r2(p: Vec2): Vec2 {
+  return [Math.round(p[0] * 100) / 100 + 0, Math.round(p[1] * 100) / 100 + 0];
 }
 
 function facing(axis: Vec3, look: ViewLook): boolean {
@@ -89,10 +188,13 @@ function outlineOf(g: DrawingGeometry | null, view: string): { min: [number, num
   return Number.isFinite(min[0]) ? { min, max } : null;
 }
 
-/** How much of a body's outline a view shows, mm. */
-export function visibleLength(g: DrawingGeometry | null, view: string, body: string): number {
-  const b = g?.views.find((x) => x.id === view)?.bodies.find((x) => x.name === body);
+/** How much of a body's outline (or every body's, `body` null) a view shows, mm; its hidden lines with `hidden`. */
+export function visibleLength(g: DrawingGeometry | null, view: string, body: string | null, hidden = false): number {
+  const pv = g?.views.find((x) => x.id === view);
   let total = 0;
-  for (const line of b?.visible ?? []) for (let i = 1; i < line.length; i++) total += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
+  for (const b of pv?.bodies ?? []) {
+    if (body !== null && b.name !== body) continue;
+    for (const line of hidden ? b.hidden : b.visible) for (let i = 1; i < line.length; i++) total += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
+  }
   return total;
 }

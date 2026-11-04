@@ -48,7 +48,7 @@ test("New drawing on the table frame: one A3 sheet, dimensioned 1200, 600 and 90
     await expect(page.getByTestId("sheet").locator(`g[data-id="${id}"]`).first()).toBeAttached();
   }
   const words = await sheetTexts(page);
-  expect(words).toEqual(expect.arrayContaining(["1200", "900", "600", "1", "2", "3", "CUT LIST", "table-frame", "1:10", "A3", "THIRD ANGLE", "23.98 kg"]));
+  expect(words).toEqual(expect.arrayContaining(["1200", "900", "600", "1", "2", "3", "CUT LIST", "table-frame", "1:10", "A3", "1 / 1", "ISO 13920-BF", "23.98 kg"]));
   await expect.poll(() => checks(page)).toEqual([
     "✓ Every view shows the part: front, top, right, iso",
     "✓ Every annotation is attached: 7 annotations",
@@ -56,9 +56,15 @@ test("New drawing on the table frame: one A3 sheet, dimensioned 1200, 600 and 90
     "✓ The overall size is dimensioned: length, width and height",
     "✓ Nothing overlaps or runs off the sheet: clear",
   ]);
-  const doc = (await savedDocument(page)) as { drawing: { sheet: { size: string; projection: string }; views: { id: string }[] } };
-  expect(doc.drawing.sheet).toMatchObject({ size: "A3", projection: "third" });
-  expect(doc.drawing.views.map((v) => v.id)).toEqual(["front", "top", "right", "iso"]);
+  // One sheet: the top and right views projected from the front, so they stay lined up with it.
+  const doc = (await savedDocument(page)) as { drawing: { sheets: { format: { size: string }; projection: string; views: { id: string; kind?: string }[] }[] } };
+  expect(doc.drawing.sheets[0]).toMatchObject({ format: { size: "A3", template: "iso" }, projection: "third" });
+  expect(doc.drawing.sheets[0].views.map((v) => [v.id, v.kind ?? "model"])).toEqual([
+    ["front", "model"],
+    ["top", "projected"],
+    ["right", "projected"],
+    ["iso", "model"],
+  ]);
   await page.screenshot({ path: "docs/phase-l-drawing.png" });
 });
 
@@ -71,22 +77,23 @@ test("the checks fail when a balloon is deleted and when a view is dragged onto 
   await page.getByTestId("undo").click();
   await expect.poll(() => checks(page)).toContain("✓ Every cut list item has a balloon: 3 of 3");
 
-  // Drag the top view onto the title block.
-  const [x, y] = await centreOf(page, "top");
+  // Drag the iso view onto the title block (the top view, projected from the front, would only slide up and down its line).
+  const [x, y] = await centreOf(page, "iso");
   const [tx, ty] = await centreOf(page, "titleBlock");
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move((x + tx) / 2, (y + ty) / 2, { steps: 5 });
   await page.mouse.move(tx, ty, { steps: 5 });
   await page.mouse.up();
-  await expect.poll(async () => (await checks(page)).find((c) => c.startsWith("✗ Nothing overlaps"))).toContain("view top overlaps the title block");
+  await expect.poll(async () => (await checks(page)).find((c) => c.startsWith("✗ Nothing overlaps"))).toContain("view iso overlaps the title block");
   // Only the view that was moved: the others stay placed and clear of it.
   const overlap = (await checks(page)).find((c) => c.startsWith("✗ Nothing overlaps"))!;
-  expect(overlap.split(": ")[1].split("; ").every((p) => p.startsWith("view top"))).toBe(true);
-  const doc = (await savedDocument(page)) as { drawing: { views: { id: string; at?: number[] }[] } };
-  expect(doc.drawing.views.find((v) => v.id === "top")!.at).toHaveLength(2);
+  // (its balloons go with it)
+  expect(overlap.split(": ")[1].split("; ").every((p) => p.startsWith("view iso") || /^b[456] /.test(p))).toBe(true);
+  const doc = (await savedDocument(page)) as { drawing: { sheets: { views: { id: string; at?: number[] }[] }[] } };
+  expect(doc.drawing.sheets[0].views.find((v) => v.id === "iso")!.at).toHaveLength(2);
   // Placed with the others again, it is clear.
-  await page.getByTestId("drawing-item-top").click();
+  await page.getByTestId("drawing-item-iso").click();
   await page.getByTestId("prop-view-auto").click();
   await expect.poll(() => checks(page)).toContain("✓ Nothing overlaps or runs off the sheet: clear");
 });
@@ -119,7 +126,7 @@ test("right-click the front view, ask for the leg height: accepted, it reads 860
 
   // The packet was the view, and the model was given the drawing's tools alone.
   const body = sent[0].body as { tools: { name: string }[]; messages: { content: { type: string; text?: string }[] }[] };
-  expect(body.tools.map((t) => t.name)).toEqual(["escalate", "setAnnotation", "setView", "setSheet"]);
+  expect(body.tools.map((t) => t.name)).toEqual(["escalate", "setAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
   const packet = body.messages[0].content.find((b) => b.type === "text")!.text!;
   expect(packet).toContain('"kind": "view"');
   expect(packet).toContain('"liesFlat": true');

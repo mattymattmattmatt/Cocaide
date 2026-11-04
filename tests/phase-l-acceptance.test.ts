@@ -3,6 +3,7 @@
 // checks run without a key in tests/drafting-ask.test.ts (scripted model) and
 // e2e/drafting.spec.ts (the browser, with the API answered by a script).
 
+import { viewSpecs } from "../src/drafting/specs";
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { applyProposal, runAsk } from "../src/ask/agent";
@@ -37,7 +38,7 @@ describe.skipIf(!key)("Phase L acceptance (live model)", () => {
     const accepted = applyProposal(drawn, r.proposal!);
     expect(accepted.ok).toBe(true);
     const doc = (accepted as { doc: RawDocument }).doc;
-    const views = validateDocument(doc).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+    const views = viewSpecs(validateDocument(doc).drawing!);
     const c = await kernel.check(doc);
     const sheet = composeSheet(doc, { measurements: c.measurements, geometry: await kernel.project(doc, views) })!;
     const added = r.proposal!.changes.filter((x) => x.kind === "added").map((x) => sheet.annotations.find((a) => a.id === x.id));

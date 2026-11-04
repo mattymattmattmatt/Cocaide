@@ -10,9 +10,12 @@ import type { Annotation, Drawing, Vec2 } from "../doc/types";
 import { validateDocument } from "../doc/validate";
 import { partProperties } from "../doc/properties";
 import { drawingChecks } from "../drafting/checks";
-import { composeSheet, type ComposedSheet, type ComposedView } from "../drafting/compose";
+import { allAnnotations, findAnnotation, findView, sheetHolding } from "../doc/drawing";
+import { composeDrawing, viewToSheet, type ComposedSheet } from "../drafting/compose";
+import { listGeoRefs } from "../drafting/georef";
 import { visibleLength } from "../drafting/plan";
-import { inView, isOrthographic, viewFrame } from "../drafting/views";
+import { viewSpecs } from "../drafting/specs";
+import { inView } from "../drafting/views";
 import { round6 } from "../kernel/inspect";
 import type { CheckResult, DrawingGeometry, KernelPort } from "./kernel";
 import type { AskTarget, Packet } from "./packet";
@@ -24,29 +27,31 @@ const at = (p: Vec2): Vec2 => [r1(p[0]), r1(p[1])];
 
 export interface DrawingState {
   drawing: Drawing;
+  /** The first sheet (or the one asked for). */
   sheet: ComposedSheet;
+  sheets: ComposedSheet[];
   geometry: DrawingGeometry | null;
 }
 
-/** The drawing composed as the app shows it, for a packet or a check. */
-export async function composeFor(doc: RawDocument, kernel: KernelPort, check: CheckResult): Promise<DrawingState | null> {
+/** The drawing composed as the app shows it, for a packet or a check. `holding`: the sheet with this view or annotation. */
+export async function composeFor(doc: RawDocument, kernel: KernelPort, check: CheckResult, holding?: string): Promise<DrawingState | null> {
   const drawing = validateDocument(doc).drawing;
   if (!drawing) return null;
-  const geometry = await kernel.project(
-    doc,
-    drawing.views.map((v) => ({ id: v.id, look: v.look })),
-  );
-  const sheet = composeSheet(doc, { measurements: check.measurements, geometry });
-  return sheet ? { drawing, sheet, geometry } : null;
+  const geometry = await kernel.project(doc, viewSpecs(drawing));
+  const composed = composeDrawing(doc, { measurements: check.measurements, geometry });
+  if (!composed || !composed.sheets.length) return null;
+  const id = holding ? sheetHolding(drawing, holding)?.id : undefined;
+  const sheet = composed.sheets.find((x) => x.id === id) ?? composed.sheets[0];
+  return { drawing, sheet, sheets: composed.sheets, geometry };
 }
 
 export async function drawingPacket(doc: RawDocument, target: DrawingTarget, kernel: KernelPort, check: CheckResult, label: string, writeScope: string[]): Promise<Packet> {
-  const state = await composeFor(doc, kernel, check);
+  const state = await composeFor(doc, kernel, check, target.kind === "drawing" ? undefined : target.id);
   if (!state) throw new Error("the part has no drawing: make one first (New drawing)");
-  const { drawing, sheet, geometry } = state;
-  const checks = drawingChecks(sheet, doc, check.measurements, geometry);
+  const { drawing, sheet, sheets, geometry } = state;
+  const checks = drawingChecks(sheets, doc, check.measurements, geometry);
   const reads = (a: Annotation) => {
-    const c = sheet.annotations.find((x) => x.id === a.id);
+    const c = sheets.flatMap((x) => x.annotations).find((x) => x.id === a.id);
     return { ...a, ...(c?.problem ? { problem: c.problem } : { reads: c?.text ?? "" }) };
   };
   const m = check.measurements;
@@ -54,7 +59,16 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     overallSize: m?.boundingBox?.size.map(round6) ?? null,
     ...(sheet.cutList.length ? { cutList: sheet.cutList.map((i) => ({ item: i.item, size: i.designation, length: i.length, quantity: i.quantity, members: i.members })) } : {}),
   };
-  const sheetBrief = { size: sheet.size, scale: sheet.scaleText, projection: sheet.projection, views: sheet.views.map((v) => ({ id: v.id, look: v.look, scale: v.scaleText })) };
+  const brief = (sh: ComposedSheet) => ({
+    id: sh.id,
+    name: sh.name,
+    size: sh.size,
+    template: sh.template,
+    scale: sh.scaleText,
+    projection: sh.projection,
+    views: sh.views.map((v) => ({ id: v.id, kind: v.kind, look: v.look, ...(v.parent ? { parent: v.parent } : {}), ...(v.label ? { label: v.label } : {}), scale: v.scaleText })),
+  });
+  const sheetBrief = { ...brief(sheet), ...(sheets.length > 1 ? { otherSheets: sheets.filter((x) => x !== sheet).map(brief) } : {}), ...(drawing.standard ? { standard: drawing.standard } : {}), ...(drawing.generalTolerance ? { generalTolerance: drawing.generalTolerance } : {}) };
   // The part's properties: the title block shows them where the sheet sets nothing of its own (setProperties changes them).
   const properties = partProperties(doc);
   const base = { units: "mm" as const, writeScope, checks, error: sheet.problems.length ? sheet.problems.join("; ") : null, ...(Object.keys(properties).length ? { properties } : {}) };
@@ -63,25 +77,25 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     return {
       target: { kind: "drawing", label },
       ...base,
-      drawing: { ...sheetBrief, annotations: drawing.annotations.map(reads) },
+      drawing: { ...sheetBrief, annotations: allAnnotations(drawing).map(reads) },
       parent: null,
       children: [],
       measurements,
     };
   }
   if (target.kind === "view") {
-    const view = drawing.views.find((v) => v.id === target.id);
+    const view = findView(drawing, target.id);
     if (!view) throw new Error(`no view "${target.id}" in the drawing`);
     return {
       target: { kind: "view", id: view.id, label },
       ...base,
       view: viewSummary(doc, view.id, sheet, geometry, check),
       parent: { sheet: sheetBrief },
-      children: drawing.annotations.filter((a) => "view" in a && a.view === view.id).map(reads),
+      children: allAnnotations(drawing).filter((a) => "view" in a && a.view === view.id).map(reads),
       measurements,
     };
   }
-  const a = drawing.annotations.find((x) => x.id === target.id);
+  const a = findAnnotation(drawing, target.id);
   if (!a) throw new Error(`no annotation "${target.id}" in the drawing`);
   return {
     target: { kind: "annotation", id: a.id, type: a.type, label },
@@ -97,9 +111,9 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
 function viewSummary(doc: RawDocument, id: string, sheet: ComposedSheet, geometry: DrawingGeometry | null, check: CheckResult) {
   const cv = sheet.views.find((v) => v.id === id);
   if (!cv) return { id, missing: "not on the sheet" };
-  const f = viewFrame(cv.look);
-  const ortho = isOrthographic(cv.look);
-  const place = (p: [number, number, number]) => at(toSheet(cv, inView(p, f)));
+  const f = cv.frame;
+  const ortho = cv.square;
+  const place = (p: [number, number, number]) => at(viewToSheet(cv, inView(p, f)));
   const v = validateDocument(doc);
   const members = (check.measurements?.members ?? []).map((m) => {
     const a = inView(m.ends[0], f);
@@ -118,11 +132,16 @@ function viewSummary(doc: RawDocument, id: string, sheet: ComposedSheet, geometr
       liesFlat: ortho && flat,
     };
   });
+  // What the view offers to attach to (edges, their ends, circle centres), by GeoRef: the first 80.
+  const refs = listGeoRefs(sheet, id).filter((r) => r.visible);
   return {
     id,
+    kind: cv.kind,
     look: cv.look,
     scale: cv.scaleText,
     orthographic: ortho,
+    geoRefs: refs.slice(0, 80).map((r) => ({ ref: r.ref, what: r.what, at: at(r.at), ...(r.feature ? { feature: r.feature } : {}), ...(r.length !== undefined ? { length: round6(r.length) } : {}), ...(r.radius !== undefined ? { radius: round6(r.radius) } : {}) })),
+    ...(refs.length > 80 ? { moreGeoRefs: refs.length - 80 } : {}),
     ...(ortho ? {} : { note: "an iso view shortens lengths: no dimensions here" }),
     onSheet: cv.box ? { min: at(cv.box.min), max: at(cv.box.max) } : null,
     shows: {
@@ -142,8 +161,4 @@ function viewSummary(doc: RawDocument, id: string, sheet: ComposedSheet, geometr
         : {}),
     },
   };
-}
-
-function toSheet(cv: ComposedView, p: Vec2): Vec2 {
-  return [cv.centre[0] + (p[0] - cv.origin[0]) * cv.scale, cv.centre[1] + (p[1] - cv.origin[1]) * cv.scale];
 }

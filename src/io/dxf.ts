@@ -66,7 +66,7 @@ export interface DxfLayer {
   name: string;
   /** AutoCAD colour index (1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white/black, 8 grey). */
   color?: number;
-  lineType?: "CONTINUOUS" | "DASHED";
+  lineType?: "CONTINUOUS" | "DASHED" | "CENTER" | "PHANTOM";
 }
 
 export interface DxfDrawing {
@@ -175,6 +175,13 @@ export function writeDxf(drawing: DxfDrawing, opts: WriteOptions = {}): string {
 }
 
 const DASHED = { name: "DASHED", description: "Dashed __ __ __", pattern: [9.525, -3.175] };
+/** Line types a layer may have beyond continuous (a drawing's hidden, centre and phantom lines). */
+const LINE_TYPES = [
+  DASHED,
+  { name: "CENTER", description: "Center ____ _ ____ _", pattern: [12, -1.5, 1, -1.5] },
+  { name: "PHANTOM", description: "Phantom ____ _ _ ____", pattern: [10, -1.5, 1, -1.5, 1, -1.5] },
+];
+const lineTypeOf = (name: string | undefined) => LINE_TYPES.find((t) => t.name === name);
 
 function writeR2000(entities: DxfEntity[], layers: DxfLayer[], box: { min: Vec2; max: Vec2 }): string {
   // Handles: every object gets one, and every owner is known before its children are written.
@@ -184,7 +191,7 @@ function writeR2000(entities: DxfEntity[], layers: DxfLayer[], box: { min: Vec2;
   const groups = h();
   const T = { vport: h(), ltype: h(), layer: h(), style: h(), view: h(), ucs: h(), appid: h(), dimstyle: h(), block: h() };
   const vport = h();
-  const ltypes = ["ByBlock", "ByLayer", "Continuous", DASHED.name].map((name) => ({ name, handle: h() }));
+  const ltypes = ["ByBlock", "ByLayer", "Continuous", ...LINE_TYPES.map((t) => t.name)].map((name) => ({ name, handle: h() }));
   const layerHandles = layers.map(() => h());
   const style = h();
   const appid = h();
@@ -277,12 +284,13 @@ function writeR2000(entities: DxfEntity[], layers: DxfLayer[], box: { min: Vec2;
   table("LTYPE", T.ltype, ltypes.length, () => {
     for (const l of ltypes) {
       record("LTYPE", l.handle, T.ltype, "AcDbLinetypeTableRecord", l.name);
-      if (l.name === DASHED.name) {
-        o.g(3, DASHED.description);
+      const t = lineTypeOf(l.name);
+      if (t) {
+        o.g(3, t.description);
         o.i(72, 65);
-        o.i(73, DASHED.pattern.length);
-        o.g(40, DASHED.pattern.reduce((s, x) => s + Math.abs(x), 0));
-        for (const x of DASHED.pattern) {
+        o.i(73, t.pattern.length);
+        o.g(40, t.pattern.reduce((s, x) => s + Math.abs(x), 0));
+        for (const x of t.pattern) {
           o.g(49, x);
           o.i(74, 0);
         }
@@ -298,7 +306,7 @@ function writeR2000(entities: DxfEntity[], layers: DxfLayer[], box: { min: Vec2;
     layers.forEach((l, i) => {
       record("LAYER", layerHandles[i], T.layer, "AcDbLayerTableRecord", l.name);
       o.i(62, l.color ?? 7);
-      o.g(6, l.lineType === "DASHED" ? DASHED.name : "Continuous");
+      o.g(6, lineTypeOf(l.lineType)?.name ?? "Continuous");
       o.i(370, -3);
       o.g(390, "0");
     });
@@ -507,11 +515,8 @@ function writeR12(entities: DxfEntity[], layers: DxfLayer[], box: { min: Vec2; m
   o.g(2, "TABLES");
   o.g(0, "TABLE");
   o.g(2, "LTYPE");
-  o.i(70, 2);
-  for (const [name, description, pattern] of [
-    ["CONTINUOUS", "Solid line", [] as number[]],
-    [DASHED.name, DASHED.description, DASHED.pattern],
-  ] as const) {
+  o.i(70, 1 + LINE_TYPES.length);
+  for (const [name, description, pattern] of [["CONTINUOUS", "Solid line", [] as number[]] as const, ...LINE_TYPES.map((t) => [t.name, t.description, t.pattern] as const)]) {
     o.g(0, "LTYPE");
     o.g(2, name);
     o.i(70, 0);
@@ -530,7 +535,7 @@ function writeR12(entities: DxfEntity[], layers: DxfLayer[], box: { min: Vec2; m
     o.g(2, l.name);
     o.i(70, 0);
     o.i(62, l.color ?? 7);
-    o.g(6, l.lineType === "DASHED" ? DASHED.name : "CONTINUOUS");
+    o.g(6, lineTypeOf(l.lineType)?.name ?? "CONTINUOUS");
   }
   o.g(0, "ENDTAB");
   o.g(0, "TABLE");

@@ -3,6 +3,7 @@
 
 import { PLUGIN_OPS, type PluginFeature } from "../features/types";
 import type { HoleFit, HoleKind, ThreadSpec } from "../features/hole/standards";
+import type { DrawingTable } from "../drafting/tables/types";
 import type { CutListSettings } from "./cutListSettings";
 
 export type Vec2 = [number, number];
@@ -43,58 +44,307 @@ export interface CocaideDocument {
 // ---------------------------------------------------------------- drawing
 
 /**
- * A drawing of the part (Phase L): one sheet of views projected from the
- * rebuilt solid. Every number on it is measured on the rebuild; only notes and
- * the title block are typed. Coordinates on the sheet are mm from its lower
- * left corner, y up.
+ * The part's drawing (Phase Q; Phase L had one sheet): sheets of views
+ * projected from the rebuilt solid, annotated. Every number on it is measured
+ * on the rebuild; only notes and the title block are typed. Coordinates on a
+ * sheet are mm from its lower left corner, y up.
+ *
+ * A Phase L drawing ({ sheet, views, annotations }) is read as one sheet
+ * (src/doc/drawing.ts migrateDrawing); it is written back in this shape the
+ * first time the drawing is edited.
  */
 export interface Drawing {
-  sheet: Sheet;
-  views: DrawingView[];
-  annotations: Annotation[];
+  /** One or more; views and annotations have ids unique across all of them. */
+  sheets: DrawingSheet[];
+  /** The drafting standard: arrowheads, lettering, symbols and the default projection. Default ISO. */
+  standard?: DraftingStandard;
+  /** The units the drawing shows (the model is mm). Default mm. */
+  units?: "mm" | "in";
+  /** "ISO 2768-mK", or a title-block tolerance block "X.X ±0.5, X.XX ±0.1, ANG ±0.5°". */
+  generalTolerance?: string;
+  /** The drawing's own properties, for title-block fields and notes that link them ($PRP:"name"). */
+  properties?: Record<string, string>;
+  /** The revision history, newest last: the revision block lists it. */
+  revisions?: Revision[];
 }
+export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions"] as const;
+export const DRAFTING_STANDARDS = ["ISO", "ASME"] as const;
+export type DraftingStandard = (typeof DRAFTING_STANDARDS)[number];
 
-/** Landscape sheet sizes, mm (ISO 216). */
-export const SHEET_SIZES = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] } as const;
+export interface Revision {
+  /** "A", "B", "02". */
+  rev: string;
+  description?: string;
+  /** "2026-11-04". */
+  date?: string;
+  by?: string;
+  approved?: string;
+  /** Where on the sheet it changed: a zone of the border grid, "C4". */
+  zone?: string;
+}
+export const REVISION_KEYS = ["rev", "description", "date", "by", "approved", "zone"] as const;
+
+/**
+ * Paper sizes, landscape, mm: ISO 216 A0–A4 and ANSI/ASME Y14.1 A–E. A
+ * portrait sheet swaps them.
+ */
+export const SHEET_SIZES = {
+  A4: [297, 210],
+  A3: [420, 297],
+  A2: [594, 420],
+  A1: [841, 594],
+  A0: [1189, 841],
+  "ANSI A": [279.4, 215.9],
+  "ANSI B": [431.8, 279.4],
+  "ANSI C": [558.8, 431.8],
+  "ANSI D": [863.6, 558.8],
+  "ANSI E": [1117.6, 863.6],
+} as const;
 export type SheetSize = keyof typeof SHEET_SIZES;
 export const PROJECTIONS = ["third", "first"] as const;
 export type Projection = (typeof PROJECTIONS)[number];
+export const SHEET_ORIENTATIONS = ["landscape", "portrait"] as const;
+/**
+ * The sheet's border and title block: "iso" (ISO 5457 border with zones, an
+ * ISO 7200 title block), "ansi" (ASME Y14.1 border and title block with the
+ * tolerance block), "minimal" (a border and one strip), "classic" (Phase L's
+ * block, which old drawings keep).
+ */
+export const SHEET_TEMPLATES = ["iso", "ansi", "minimal", "classic"] as const;
+export type SheetTemplate = (typeof SHEET_TEMPLATES)[number];
 
-export interface Sheet {
+/**
+ * The title block's fields. Each is text and may link a property:
+ * `$PRP:"partNumber"` (the drawing's properties, then the part's),
+ * `$PRPMODEL:"mass"` (measured). An unset field shows its default link.
+ */
+export const TITLE_FIELDS = [
+  "title",
+  "subtitle",
+  "number",
+  "revision",
+  "drawnBy",
+  "date",
+  "checkedBy",
+  "checkedDate",
+  "approvedBy",
+  "approvedDate",
+  "company",
+  "material",
+  "finish",
+  "mass",
+] as const;
+export type TitleField = (typeof TITLE_FIELDS)[number];
+
+/** The paper: size, orientation, template and what its title block says. */
+export type SheetFormat = {
   size: SheetSize;
+  /** Default landscape. */
+  orientation?: (typeof SHEET_ORIENTATIONS)[number];
+  /** Default "iso" (ASME drawings: "ansi"). */
+  template?: SheetTemplate;
+} & Partial<Record<TitleField, string>>;
+export const FORMAT_KEYS = ["size", "orientation", "template", ...TITLE_FIELDS] as const;
+
+export interface DrawingSheet {
+  /** "sheet1". */
+  id: string;
+  /** Its tab's name. Default "Sheet <n>". */
+  name?: string;
+  format: SheetFormat;
   /** "1:10", "2:1". Without it, the largest standard scale that fits. */
   scale?: string;
   /** Third-angle (the top view above the front) or first-angle (below). */
   projection: Projection;
-  /** The title block. The part's name, material, mass and the scale fill the rest. */
+  views: DrawingView[];
+  annotations: Annotation[];
+  /** Tables placed on the sheet (src/drafting/tables). */
+  tables?: DrawingTable[];
+}
+export const SHEET_KEYS = ["id", "name", "format", "scale", "projection", "views", "annotations", "tables"] as const;
+
+/** Phase L's sheet: what migrateDrawing reads. */
+export interface LegacySheet {
+  size: "A4" | "A3" | "A2" | "A1" | "A0";
+  scale?: string;
+  projection: Projection;
   title?: string;
   number?: string;
   revision?: string;
   drawnBy?: string;
   date?: string;
 }
-export const SHEET_KEYS = ["size", "scale", "projection", "title", "number", "revision", "drawnBy", "date"] as const;
 
-/** Where a view looks from. "iso" is from the front, right and above. */
-export const VIEW_LOOKS = ["front", "back", "top", "bottom", "left", "right", "iso"] as const;
+/** Named orientations of a model view. "iso" is from the front, right and above. */
+export const VIEW_LOOKS = ["front", "back", "top", "bottom", "left", "right", "iso", "dimetric", "trimetric"] as const;
 export type ViewLook = (typeof VIEW_LOOKS)[number];
+
+/**
+ * What a view is: "model" (a named or custom orientation of the part),
+ * "projected" (from a parent view, kept aligned with it), "section" (the
+ * parent cut along a line drawn on it), "detail" (a part of the parent,
+ * enlarged), "auxiliary" (looking square at an edge seen in the parent).
+ */
+export const VIEW_KINDS = ["model", "projected", "section", "detail", "auxiliary"] as const;
+export type ViewKind = (typeof VIEW_KINDS)[number];
+/** Where a projected view is from its parent: the four sides (orthographic), or a corner (an iso from that corner). */
+export const PROJECT_DIRECTIONS = ["left", "right", "up", "down", "upLeft", "upRight", "downLeft", "downRight"] as const;
+export type ProjectDirection = (typeof PROJECT_DIRECTIONS)[number];
+/**
+ * How a view draws the part: every edge solid ("visible"), hidden edges dashed
+ * ("hidden"), hidden edges left out ("removed", the default), faces shaded
+ * ("shaded"), or shaded with the visible edges over them ("shadedEdges").
+ */
+export const DISPLAY_MODES = ["visible", "hidden", "removed", "shaded", "shadedEdges"] as const;
+export type DisplayMode = (typeof DISPLAY_MODES)[number];
+/** Edges between faces that meet smoothly (a fillet's): drawn ("visible"), thin long-dash ("phantom"), or left out ("removed", the default). */
+export const TANGENT_MODES = ["visible", "phantom", "removed"] as const;
+export type TangentMode = (typeof TANGENT_MODES)[number];
+/** A detail view's look: its circle and label ("circle"), with a leader from the parent's circle ("connected"), or with no boundary drawn round the detail ("noBoundary"). */
+export const DETAIL_STYLES = ["circle", "connected", "noBoundary"] as const;
+export type DetailStyle = (typeof DETAIL_STYLES)[number];
+/**
+ * Section hatching (ISO 128-50 / ANSI patterns): "general" (45° lines),
+ * "steel" (pairs of lines), "aluminium" (lines and dashes), "copper" (brass,
+ * bronze: alternate lines dashed), "plastic" (cross-hatch), "rubber" (dense
+ * cross-hatch), "wood" (grain), "concrete" (dots and lines), "solid" (filled,
+ * for thin sections), "none". Default: from the body's material.
+ */
+export const HATCH_PATTERNS = ["general", "steel", "aluminium", "copper", "plastic", "rubber", "wood", "concrete", "solid", "none"] as const;
+export type HatchPattern = (typeof HATCH_PATTERNS)[number];
+export interface HatchStyle {
+  pattern?: HatchPattern;
+  /** Degrees from the sheet's x axis. Default 45° (each body of a weldment its own). */
+  angle?: number;
+  /** Between lines, sheet mm. Default by the view's size (2–4 mm). */
+  spacing?: number;
+}
+export const HATCH_KEYS = ["pattern", "angle", "spacing"] as const;
+
+/** A break: the view shortened by leaving out the part between `from` and `to` (view mm along x or y). Dimensions still read true lengths. */
+export interface ViewBreak {
+  axis: "x" | "y";
+  from: number;
+  to: number;
+  /** Paper left between the break lines, sheet mm. Default 6. */
+  gap?: number;
+  /** Break lines: "zigzag" (default), "straight" or "curved" (for round bars and tubes). */
+  style?: "zigzag" | "straight" | "curved";
+}
+export const BREAK_KEYS = ["axis", "from", "to", "gap", "style"] as const;
+
+/** A broken-out section: the material inside `profile` (view mm, closed) removed `depth` mm into the part from its nearest face. */
+export interface BrokenOut {
+  profile: Vec2[];
+  depth: number;
+}
+
+/**
+ * A geometry reference: a point, edge or circle of a view, kept as text so it
+ * survives a rebuild where the model's provenance allows (src/drafting/georef.ts):
+ * "<view>:e<edgeKey>" an edge, "<view>:v<edgeKey>.<0|1>" an end of one,
+ * "<view>:c<edgeKey>" a circle's or arc's centre, "<view>:m<edgeKey>" an
+ * edge's midpoint, "<view>:q<edgeKey>.<0-3>" a circle's quadrant point, and
+ * the Phase L points "<view>:A" (a node), "<view>:leg_a.start", "<view>:hole_1",
+ * "<view>:@left".
+ */
+export type GeoRef = string;
 
 export interface DrawingView {
   id: string;
-  look: ViewLook;
-  /** The view's centre on the sheet. Without it, the view is placed with the others. */
+  /** Default "model". */
+  kind?: ViewKind;
+  /** model: a named orientation (default "front"). */
+  look?: ViewLook;
+  /** model: a custom orientation instead: from the part toward the viewer, and which way is up on the sheet. */
+  orientation?: { eye: Vec3; up?: Vec3 };
+  /** projected, section, detail, auxiliary: the view it is made from. */
+  parent?: string;
+  /** projected: which side of the parent it is drawn. */
+  direction?: ProjectDirection;
+  /** section: the cutting line, two or more points on the parent (view mm, the parent's frame). */
+  line?: Vec2[];
+  /** section, detail, auxiliary: its letter ("A"). Default the next free one. */
+  label?: string;
+  /** section: cut only from the line's first point to its last, not beyond (a half section: draw the line from outside the part to its centre). */
+  half?: boolean;
+  /** section: an aligned section, the line's second segment turned into the plane of its first about the middle point (three points). */
+  aligned?: boolean;
+  /** section: look the other way along the line. */
+  flip?: boolean;
+  /** section: how far behind the cut to show, mm. Default all of it. */
+  depth?: number;
+  /** section: draw the part behind the cut (default true); false shows the cut faces alone. */
+  showBehind?: boolean;
+  /** section, brokenOut: the hatch, instead of the material's. */
+  hatch?: HatchStyle;
+  /** detail: the circle on the parent (view mm). */
+  circle?: { at: Vec2; r: number };
+  /** detail: a closed outline on the parent instead of a circle (view mm). */
+  profile?: Vec2[];
+  /** detail: how it is drawn (default "circle"). */
+  style?: DetailStyle;
+  /** auxiliary: the straight edge on the parent to look square at. */
+  edge?: GeoRef;
+  /** The view's centre on the sheet. Without it, the view is placed with the others (a projected view stays lined up with its parent). */
   at?: Vec2;
-  /** Its own scale; else the sheet's. */
+  /** Its own scale; else the sheet's (a detail: twice its parent's). */
   scale?: string;
-  /** Hidden edges, dashed. */
-  hidden?: boolean;
+  /** Default "removed". */
+  display?: DisplayMode;
+  /** Default "removed". */
+  tangent?: TangentMode;
+  /** Cosmetic threads of tapped holes and thread features (default true). */
+  threads?: boolean;
+  /** Shortened view. */
+  breaks?: ViewBreak[];
+  /** Only what is inside this closed outline (view mm) is shown. */
+  crop?: Vec2[];
+  brokenOut?: BrokenOut[];
+  /** Only these bodies (a weldment's members, a multibody part's bodies). Default all. */
+  bodies?: string[];
+  /** Its label under it ("SECTION A-A", "DETAIL B (2:1)"). Default: shown for sections, details, auxiliaries and views at their own scale. */
+  showLabel?: boolean;
+  /** The scale in its label. Default when the view's scale is not the sheet's. */
+  showScale?: boolean;
 }
-export const VIEW_KEYS = ["id", "look", "at", "scale", "hidden"] as const;
+export const VIEW_KEYS = [
+  "id",
+  "kind",
+  "look",
+  "orientation",
+  "parent",
+  "direction",
+  "line",
+  "label",
+  "half",
+  "aligned",
+  "flip",
+  "depth",
+  "showBehind",
+  "hatch",
+  "circle",
+  "profile",
+  "style",
+  "edge",
+  "at",
+  "scale",
+  "display",
+  "tangent",
+  "threads",
+  "breaks",
+  "crop",
+  "brokenOut",
+  "bodies",
+  "showLabel",
+  "showScale",
+] as const;
 
 /**
  * A point a dimension runs from or to: a node ("A"), a member's end
- * ("leg_a.start", "leg_a.end"), a hole's centre ("hole_1"), or a side of the
- * view's outline ("@left", "@right", "@top", "@bottom").
+ * ("leg_a.start", "leg_a.end"), a hole's centre ("hole_1"), a side of the
+ * view's outline ("@left", "@right", "@top", "@bottom"), or a GeoRef
+ * ("front:vextrude_1/l3.0", "front:chole_1/c0").
  */
 export type DrawingPoint = string;
 export const OUTLINE_SIDES = ["@left", "@right", "@top", "@bottom"] as const;
@@ -149,13 +399,14 @@ export interface WeldAnnotation {
 }
 
 export const DRAWING_TABLES = ["cutList", "welds"] as const;
-export type DrawingTable = (typeof DRAWING_TABLES)[number];
+/** The Phase L tables an annotation can place (DrawingSheet.tables holds the Phase Q ones). */
+export type TableName = (typeof DRAWING_TABLES)[number];
 
 /** The cut list or the weld table. */
 export interface TableAnnotation {
   id: string;
   type: "table";
-  table: DrawingTable;
+  table: TableName;
   /** The table's top left corner on the sheet. Default: stacked above the title block. */
   at?: Vec2;
 }
@@ -169,9 +420,38 @@ export interface NoteAnnotation {
   at: Vec2;
 }
 
-export type Annotation = DimensionAnnotation | HoleAnnotation | BalloonAnnotation | WeldAnnotation | TableAnnotation | NoteAnnotation;
+/** A centre mark: a cross on a circle's centre, its arms a little past the circle (thin chain lines). A new view gets one for every circle it sees end on; delete the ones not wanted. */
+export interface CenterMarkAnnotation {
+  id: string;
+  type: "centerMark";
+  view: string;
+  /** The circle or arc: "<view>:e<edgeKey>", or its centre "<view>:c<edgeKey>". */
+  at: GeoRef;
+  /** How far the arms run past the circle, sheet mm (default 2.5). */
+  extend?: number;
+}
+
+/** A centre line: midway between two edges (a cylinder's sides, seen from the side), or through two points (circle centres). */
+export interface CenterlineAnnotation {
+  id: string;
+  type: "centerline";
+  view: string;
+  between: [GeoRef, GeoRef];
+  /** How far it runs past the ends, sheet mm (default 2.5). */
+  extend?: number;
+}
+
+export type Annotation =
+  | DimensionAnnotation
+  | HoleAnnotation
+  | BalloonAnnotation
+  | WeldAnnotation
+  | TableAnnotation
+  | NoteAnnotation
+  | CenterMarkAnnotation
+  | CenterlineAnnotation;
 export type AnnotationType = Annotation["type"];
-export const ANNOTATION_TYPES = ["dimension", "hole", "balloon", "weld", "table", "note"] as const;
+export const ANNOTATION_TYPES = ["dimension", "hole", "balloon", "weld", "table", "note", "centerMark", "centerline"] as const;
 export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
   dimension: ["id", "type", "view", "from", "to", "member", "direction", "offset"],
   hole: ["id", "type", "view", "hole", "at"],
@@ -179,6 +459,8 @@ export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
   weld: ["id", "type", "view", "weld", "at"],
   table: ["id", "type", "table", "at"],
   note: ["id", "type", "text", "at"],
+  centerMark: ["id", "type", "view", "at", "extend"],
+  centerline: ["id", "type", "view", "between", "extend"],
 };
 
 // ------------------------------------------------------------ frames

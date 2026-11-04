@@ -5,7 +5,12 @@
 
 import type { Vec2 } from "../doc/types";
 
-export type Prim =
+/**
+ * One thing drawn on a sheet. `layer` says what kind of line it is for DXF
+ * (VISIBLE, HIDDEN, CENTER, HATCH ...; src/drafting/dxf.ts); without it, the
+ * layer comes from its owner and its dash.
+ */
+export type Prim = (
   | {
       k: "line";
       pts: Vec2[];
@@ -15,9 +20,13 @@ export type Prim =
       closed?: boolean;
       /** Filled (arrowheads), closed. */
       fill?: boolean;
+      /** Drawn in this colour ("#c0392b" for a dangling annotation); default black. */
+      color?: string;
       owner?: string;
     }
-  | { k: "circle"; c: Vec2; r: number; w: number; fill?: boolean; owner?: string }
+  | { k: "circle"; c: Vec2; r: number; w: number; fill?: boolean; dash?: number[]; color?: string; owner?: string }
+  /** A filled region (a shaded face, a solid hatch): its loops even-odd, no outline. */
+  | { k: "area"; loops: Vec2[][]; fill: string; owner?: string }
   | {
       k: "text";
       /** The baseline's start, middle or end, by anchor. */
@@ -28,8 +37,10 @@ export type Prim =
       /** Degrees, counter-clockwise. */
       angle?: number;
       bold?: boolean;
+      color?: string;
       owner?: string;
-    };
+    }
+) & { layer?: string };
 
 export interface Box {
   min: Vec2;
@@ -80,6 +91,7 @@ export function centre(b: Box): Vec2 {
 /** The box a primitive covers, text included (from its font metrics). */
 export function primBox(p: Prim, width: (text: string, size: number, bold?: boolean) => number): Box | null {
   if (p.k === "line") return boxOf(p.pts);
+  if (p.k === "area") return boxOf(p.loops.flat());
   if (p.k === "circle") return { min: [p.c[0] - p.r, p.c[1] - p.r], max: [p.c[0] + p.r, p.c[1] + p.r] };
   const w = width(p.text, p.size, p.bold);
   const x0 = p.anchor === "start" ? 0 : p.anchor === "middle" ? -w / 2 : -w;

@@ -15,12 +15,15 @@ import { isDriven } from "../geom/axes";
 import { mmPerPixel, photoOf, rescaled } from "./photo";
 import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
-import { annotationTargetProblem, drawingTargets, rawDrawing, renameInDrawing } from "./drawing";
+import { annotationTargetProblem, dependentViews, drawingTargets, migrateDrawing, migrateView, nextSheetId, nextViewLabel, rawAnnotations, rawDrawing, renameInDrawing, viewKind, type RawSheet } from "./drawing";
 import { checkCutList, mergeCutList } from "./cutListSettings";
+import { setTableIn } from "../drafting/tables/validate";
+import type { DrawingTable } from "../drafting/tables/types";
 import {
   BODY_NAME,
   DEFAULT_BODY,
   DERIVED_SUFFIX,
+  FORMAT_KEYS,
   NODE_NAME,
   seedIds,
   type Annotation,
@@ -109,14 +112,34 @@ export type Command =
   | { type: "renameNode"; from: string; to: string }
   /** Adds or replaces a weld in the weld table by id, or removes it. */
   | { type: "setWeld"; id: string; weld: Weld | Record<string, unknown> | null }
-  /** Puts a whole drawing in the part (New drawing), or removes it. */
+  /** Puts a whole drawing in the part (New drawing), or removes it. A Phase L drawing ({ sheet, views, annotations }) is taken as one sheet. */
   | { type: "setDrawing"; drawing: Drawing | Record<string, unknown> | null }
-  /** Changes the drawing's sheet: size, scale, projection, the title block. Shallow merge; null removes a field. */
-  | { type: "setSheet"; patch: Record<string, unknown> }
-  /** Adds or replaces a view by id, or removes it with every annotation in it. */
-  | { type: "setView"; id: string; view: DrawingView | Record<string, unknown> | null }
-  /** Adds or replaces an annotation by id, or removes it. What it points at must be in the part. */
-  | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null }
+  /**
+   * Changes a sheet (`sheet`, default the first): its format (size, orientation, template and the title block's
+   * fields: title, number, revision, drawnBy, date ...), scale, projection, name. Shallow merge; null removes a field.
+   */
+  | { type: "setSheet"; patch: Record<string, unknown>; sheet?: string }
+  /** Adds a sheet (after the others, or at `index`): its format, projection and title block from the sheet before it unless given. */
+  | { type: "addSheet"; id?: string; sheet?: Record<string, unknown>; index?: number }
+  /** Renames a sheet's tab. */
+  | { type: "renameSheet"; id: string; name: string }
+  /** Deletes a sheet with its views and annotations (never the last one). */
+  | { type: "deleteSheet"; id: string }
+  /** Moves a sheet to place `index` (0 = first). */
+  | { type: "moveSheet"; id: string; index: number }
+  /** The drawing's own settings: standard, units, generalTolerance, properties, revisions (merged in; null removes one; properties and revisions are replaced whole). */
+  | { type: "setDrawingOptions"; patch: Record<string, unknown> }
+  /**
+   * Adds or replaces a view by id (on `sheet`, else the sheet it is on, else the first), or removes it with every
+   * annotation in it and the views made from it. A new section, detail or auxiliary view gets the next free label.
+   */
+  | { type: "setView"; id: string; view: DrawingView | Record<string, unknown> | null; sheet?: string }
+  /** Moves a view: to `at` on its sheet (null: back to its automatic place), and/or to another sheet with its annotations. */
+  | { type: "moveView"; id: string; at?: Vec2 | null; sheet?: string }
+  /** Adds or replaces a table (cut list, BOM, holes, welds, revisions, general, stock) on a sheet (`sheet`, else the one holding it, else the first) by id, or removes it (null). */
+  | { type: "setTable"; id: string; table: Record<string, unknown> | null; sheet?: string }
+  /** Adds or replaces an annotation by id (on its view's sheet; a note or table on `sheet`, else the first), or removes it. What it points at must be in the part. */
+  | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null; sheet?: string }
   /** Gives a body its own material, or puts it back on the part's (null). */
   | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null }
   /**
@@ -522,63 +545,24 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         if (doc.drawing === undefined) return { ok: false, error: "setDrawing: the part has no drawing" };
         delete doc.drawing;
       } else {
-        doc.drawing = structuredClone(cmd.drawing);
-        const d = rawDrawing(doc);
-        const problem = d && targetProblem(doc, d.annotations);
+        doc.drawing = structuredClone(migrateDrawing(cmd.drawing));
+        const problem = targetProblem(doc, rawAnnotations(doc));
         if (problem) return { ok: false, error: `setDrawing: ${problem}` };
       }
       break;
     }
-    case "setSheet": {
-      const d = rawDrawing(doc);
-      if (!d) return { ok: false, error: "setSheet: the part has no drawing; make one first (setDrawing)" };
-      if (!isObject(cmd.patch)) return { ok: false, error: `setSheet: patch must be an object of sheet fields (got ${JSON.stringify(cmd.patch)})` };
-      const sheet: Record<string, unknown> = { ...(isObject(d.sheet) ? d.sheet : {}), ...structuredClone(cmd.patch) };
-      for (const [k, v] of Object.entries(sheet)) if (v === null) delete sheet[k];
-      doc.drawing = { ...(doc.drawing as object), sheet };
-      break;
-    }
-    case "setView": {
-      const d = rawDrawing(doc);
-      if (!d) return { ok: false, error: "setView: the part has no drawing; make one first (setDrawing)" };
-      const views = [...d.views];
-      const i = views.findIndex((v) => v.id === cmd.id);
-      let annotations = d.annotations;
-      if (cmd.view === null) {
-        if (i < 0) return { ok: false, error: `setView: no view "${cmd.id}"` };
-        views.splice(i, 1);
-        // Its annotations have nowhere to be.
-        annotations = annotations.filter((a) => a.view !== cmd.id);
-      } else {
-        if (!isObject(cmd.view)) return { ok: false, error: `setView: view must be an object (got ${JSON.stringify(cmd.view)})` };
-        if (i < 0 && annotations.some((a) => a.id === cmd.id)) return { ok: false, error: `setView: "${cmd.id}" is an annotation's id` };
-        const { id: _v, ...view } = structuredClone(cmd.view) as Record<string, unknown>;
-        const v = { id: cmd.id, ...view };
-        if (i < 0) views.push(v);
-        else views[i] = v;
-      }
-      doc.drawing = { ...(doc.drawing as object), views, annotations };
-      break;
-    }
+    case "setSheet":
+    case "addSheet":
+    case "renameSheet":
+    case "deleteSheet":
+    case "moveSheet":
+    case "setDrawingOptions":
+    case "setView":
+    case "moveView":
+    case "setTable":
     case "setAnnotation": {
-      const d = rawDrawing(doc);
-      if (!d) return { ok: false, error: "setAnnotation: the part has no drawing; make one first (setDrawing)" };
-      const annotations = [...d.annotations];
-      const i = annotations.findIndex((a) => a.id === cmd.id);
-      if (cmd.annotation === null) {
-        if (i < 0) return { ok: false, error: `setAnnotation: no annotation "${cmd.id}"` };
-        annotations.splice(i, 1);
-      } else {
-        if (!isObject(cmd.annotation)) return { ok: false, error: `setAnnotation: annotation must be an object (got ${JSON.stringify(cmd.annotation)})` };
-        if (i < 0 && d.views.some((v) => v.id === cmd.id)) return { ok: false, error: `setAnnotation: "${cmd.id}" is a view's id` };
-        const { id: _a, ...annotation } = structuredClone(cmd.annotation) as Record<string, unknown>;
-        const a = { id: cmd.id, ...annotation };
-        const problem = targetProblem(doc, [a]);
-        if (problem) return { ok: false, error: `setAnnotation: ${problem}` };
-        if (i < 0) annotations.push(a);
-        else annotations[i] = a;
-      }
-      doc.drawing = { ...(doc.drawing as object), annotations };
+      const r = drawingCommand(doc, cmd);
+      if (r) return { ok: false, error: r };
       break;
     }
     case "setProfile": {
@@ -787,6 +771,196 @@ function renameBodyRefs(doc: RawDocument, renamed: Map<string, string>): void {
     if (isObject(cut.members)) cut.members = Object.fromEntries(Object.entries(cut.members).map(([k, v]) => [to(k), v]));
     doc.cutList = cut;
   }
+}
+
+type DrawingCommand = Extract<Command, { type: "setSheet" | "addSheet" | "renameSheet" | "deleteSheet" | "moveSheet" | "setDrawingOptions" | "setView" | "moveView" | "setTable" | "setAnnotation" }>;
+
+/** The sheet commands, on the drawing migrated to sheets. Writes doc.drawing; returns an error or null. */
+function drawingCommand(doc: RawDocument, cmd: DrawingCommand): string | null {
+  const t = cmd.type;
+  const raw = rawDrawing(doc);
+  if (!raw) return `${t}: the part has no drawing; make one first (setDrawing)`;
+  const sheets = raw.sheets;
+  const write = () => {
+    doc.drawing = { ...raw.drawing, sheets };
+  };
+  const sheetIndex = (id: string | undefined, what = "sheet"): number | string => {
+    if (id === undefined) return 0;
+    const i = sheets.findIndex((s) => s.id === id);
+    return i < 0 ? `${t}: no ${what} "${id}" (sheets: ${sheets.map((s) => s.id).join(", ")})` : i;
+  };
+  const holding = (id: string, key: "views" | "annotations") => sheets.findIndex((s) => s[key].some((x) => x.id === id));
+  const taken = (id: string) => sheets.some((s) => s.views.some((v) => v.id === id) || s.annotations.some((a) => a.id === id) || (Array.isArray(s.tables) && s.tables.some((x) => isObject(x) && x.id === id)));
+  switch (cmd.type) {
+    case "setSheet": {
+      const i = sheetIndex(cmd.sheet);
+      if (typeof i === "string") return i;
+      if (!isObject(cmd.patch)) return `setSheet: patch must be an object of sheet fields (got ${JSON.stringify(cmd.patch)})`;
+      const sheet: Record<string, unknown> = { ...sheets[i] };
+      const format: Record<string, unknown> = isObject(sheet.format) ? { ...sheet.format } : {};
+      for (const [k, v] of Object.entries(structuredClone(cmd.patch))) {
+        // The paper and its title block are the format's; a format given whole replaces it.
+        if (k === "format" && isObject(v)) Object.assign(format, v);
+        else if ((FORMAT_KEYS as readonly string[]).includes(k)) format[k] = v;
+        else if (k === "id" || k === "views" || k === "annotations") return `setSheet: "${k}" can't be patched (use ${k === "id" ? "renameSheet for its name" : k === "views" ? "setView" : "setAnnotation"})`;
+        else sheet[k] = v;
+      }
+      for (const [k, v] of Object.entries(format)) if (v === null) delete format[k];
+      for (const [k, v] of Object.entries(sheet)) if (v === null) delete sheet[k];
+      sheet.format = format;
+      sheets[i] = sheet as RawSheet;
+      break;
+    }
+    case "addSheet": {
+      const id = cmd.id ?? nextSheetId({ sheets });
+      if (sheets.some((s) => s.id === id)) return `addSheet: a sheet "${id}" already exists`;
+      const index = cmd.index ?? sheets.length;
+      if (!Number.isInteger(index) || index < 0 || index > sheets.length) return `addSheet: index ${index} is outside 0..${sheets.length}`;
+      const like = sheets[Math.max(0, index - 1)] ?? sheets[0];
+      const given = isObject(cmd.sheet) ? structuredClone(cmd.sheet) : {};
+      for (const k of ["id", "views", "annotations"]) if (k in given) return `addSheet: a new sheet starts empty; give its ${k === "id" ? "id as the command's id" : k} after (setView, setAnnotation)`;
+      const format = { ...(isObject(like?.format) ? like.format : { size: "A3" }), ...(isObject(given.format) ? given.format : {}) };
+      const sheet: RawSheet = { id, format, projection: like?.projection ?? "third", ...given, views: [], annotations: [] } as RawSheet;
+      sheet.format = format;
+      sheets.splice(index, 0, sheet);
+      break;
+    }
+    case "renameSheet": {
+      const i = sheetIndex(cmd.id);
+      if (typeof i === "string") return i;
+      if (typeof cmd.name !== "string") return `renameSheet: name must be text (got ${JSON.stringify(cmd.name)})`;
+      if (cmd.name.trim()) sheets[i] = { ...sheets[i], name: cmd.name.trim() };
+      else {
+        const { name: _n, ...rest } = sheets[i];
+        sheets[i] = rest as RawSheet;
+      }
+      break;
+    }
+    case "deleteSheet": {
+      const i = sheetIndex(cmd.id);
+      if (typeof i === "string") return i;
+      if (sheets.length === 1) return "deleteSheet: a drawing has at least one sheet; delete the drawing instead (setDrawing null)";
+      const gone = new Set(sheets[i].views.map((v) => String(v.id)));
+      // A view on another sheet made from one of these goes too.
+      for (const id of [...gone]) for (const d of dependentViews({ sheets: sheets as never }, id)) gone.add(d);
+      sheets.splice(i, 1);
+      for (let k = 0; k < sheets.length; k++) {
+        sheets[k] = { ...sheets[k], views: sheets[k].views.filter((v) => !gone.has(String(v.id))), annotations: sheets[k].annotations.filter((a) => !gone.has(String(a.view))) };
+      }
+      break;
+    }
+    case "moveSheet": {
+      const i = sheetIndex(cmd.id);
+      if (typeof i === "string") return i;
+      if (!Number.isInteger(cmd.index) || cmd.index < 0 || cmd.index >= sheets.length) return `moveSheet: index ${cmd.index} is outside 0..${sheets.length - 1}`;
+      const [s] = sheets.splice(i, 1);
+      sheets.splice(cmd.index, 0, s);
+      break;
+    }
+    case "setDrawingOptions": {
+      if (!isObject(cmd.patch)) return `setDrawingOptions: patch must be an object (got ${JSON.stringify(cmd.patch)})`;
+      for (const [k, v] of Object.entries(structuredClone(cmd.patch))) {
+        if (k === "sheets") return "setDrawingOptions: sheets change through addSheet, setSheet, deleteSheet and moveSheet";
+        if (v === null) delete raw.drawing[k];
+        else raw.drawing[k] = v;
+      }
+      break;
+    }
+    case "setView": {
+      const from = holding(cmd.id, "views");
+      if (cmd.view === null) {
+        if (from < 0) return `setView: no view "${cmd.id}"`;
+        // Its annotations have nowhere to be, nor have the views made from it.
+        const gone = new Set([cmd.id, ...dependentViews({ sheets: sheets as never }, cmd.id)]);
+        for (let k = 0; k < sheets.length; k++) {
+          sheets[k] = { ...sheets[k], views: sheets[k].views.filter((v) => !gone.has(String(v.id))), annotations: sheets[k].annotations.filter((a) => !gone.has(String(a.view))) };
+        }
+        break;
+      }
+      if (!isObject(cmd.view)) return `setView: view must be an object (got ${JSON.stringify(cmd.view)})`;
+      if (from < 0 && taken(cmd.id)) return `setView: "${cmd.id}" is an annotation's id`;
+      const { id: _v, ...view } = migrateView(structuredClone(cmd.view)) as Record<string, unknown>;
+      const v: Record<string, unknown> = { id: cmd.id, ...view };
+      const kind = viewKind(v);
+      if ((kind === "section" || kind === "detail" || kind === "auxiliary") && v.label === undefined) {
+        const old = from >= 0 ? sheets[from].views.find((x) => x.id === cmd.id) : undefined;
+        v.label = typeof old?.label === "string" ? old.label : nextViewLabel({ sheets });
+      }
+      const target = cmd.sheet !== undefined ? sheetIndex(cmd.sheet) : from >= 0 ? from : 0;
+      if (typeof target === "string") return target;
+      if (from >= 0 && from !== target) return `setView: ${cmd.id} is on ${sheets[from].id}; move it with moveView`;
+      const list = [...sheets[target].views];
+      const i = list.findIndex((x) => x.id === cmd.id);
+      if (i < 0) list.push(v);
+      else list[i] = v;
+      sheets[target] = { ...sheets[target], views: list };
+      break;
+    }
+    case "moveView": {
+      const from = holding(cmd.id, "views");
+      if (from < 0) return `moveView: no view "${cmd.id}"`;
+      const view = { ...sheets[from].views.find((v) => v.id === cmd.id)! };
+      if (cmd.at === null) delete view.at;
+      else if (cmd.at !== undefined) view.at = cmd.at;
+      const to = cmd.sheet !== undefined ? sheetIndex(cmd.sheet) : from;
+      if (typeof to === "string") return to;
+      if (to === from) {
+        sheets[from] = { ...sheets[from], views: sheets[from].views.map((v) => (v.id === cmd.id ? view : v)) };
+      } else {
+        // To another sheet, with its annotations; its place there is found again unless given.
+        if (cmd.at === undefined) delete view.at;
+        const mine = sheets[from].annotations.filter((a) => a.view === cmd.id);
+        sheets[from] = { ...sheets[from], views: sheets[from].views.filter((v) => v.id !== cmd.id), annotations: sheets[from].annotations.filter((a) => a.view !== cmd.id) };
+        sheets[to] = { ...sheets[to], views: [...sheets[to].views, view], annotations: [...sheets[to].annotations, ...mine] };
+      }
+      break;
+    }
+    case "setTable": {
+      const tablesOf = (i: number) => (Array.isArray(sheets[i].tables) ? (sheets[i].tables as DrawingTable[]) : []);
+      const from = sheets.findIndex((_s, i) => tablesOf(i).some((x) => x.id === cmd.id));
+      if (cmd.table !== null && from < 0 && taken(cmd.id)) return `setTable: "${cmd.id}" is a view's or an annotation's id`;
+      const target = cmd.sheet !== undefined ? sheetIndex(cmd.sheet) : from >= 0 ? from : 0;
+      if (typeof target === "string") return target;
+      if (cmd.table === null && from < 0) return `setTable: no table "${cmd.id}"`;
+      if (cmd.table !== null && !isObject(cmd.table)) return `setTable: table must be an object (got ${JSON.stringify(cmd.table)})`;
+      const at = cmd.table === null ? from : target;
+      if (from >= 0 && from !== at) sheets[from] = { ...sheets[from], tables: tablesOf(from).filter((x) => x.id !== cmd.id) };
+      const r = setTableIn(from === at ? tablesOf(at) : tablesOf(at).filter((x) => x.id !== cmd.id), cmd.id, cmd.table === null ? null : structuredClone(cmd.table), { views: sheets[at].views.map((v) => String(v.id)) });
+      if (!r.ok) return `setTable: ${r.error}`;
+      const next = { ...sheets[at], tables: r.tables } as RawSheet;
+      if (!r.tables.length) delete next.tables;
+      sheets[at] = next;
+      break;
+    }
+    case "setAnnotation": {
+      const from = holding(cmd.id, "annotations");
+      if (cmd.annotation === null) {
+        if (from < 0) return `setAnnotation: no annotation "${cmd.id}"`;
+        sheets[from] = { ...sheets[from], annotations: sheets[from].annotations.filter((a) => a.id !== cmd.id) };
+        break;
+      }
+      if (!isObject(cmd.annotation)) return `setAnnotation: annotation must be an object (got ${JSON.stringify(cmd.annotation)})`;
+      if (from < 0 && taken(cmd.id)) return `setAnnotation: "${cmd.id}" is a view's id`;
+      const { id: _a, ...annotation } = structuredClone(cmd.annotation) as Record<string, unknown>;
+      const a: Record<string, unknown> = { id: cmd.id, ...annotation };
+      const problem = targetProblem(doc, [a]);
+      if (problem) return `setAnnotation: ${problem}`;
+      // In a view: on the view's sheet. Else where it was, or the sheet asked for, or the first.
+      const ofView = typeof a.view === "string" ? holding(a.view, "views") : -1;
+      const asked = cmd.sheet !== undefined ? sheetIndex(cmd.sheet) : null;
+      if (typeof asked === "string") return asked;
+      const target = ofView >= 0 ? ofView : (asked ?? (from >= 0 ? from : 0));
+      if (from >= 0 && from !== target) sheets[from] = { ...sheets[from], annotations: sheets[from].annotations.filter((x) => x.id !== cmd.id) };
+      const list = [...sheets[target].annotations];
+      const i = list.findIndex((x) => x.id === cmd.id);
+      if (i < 0) list.push(a);
+      else list[i] = a;
+      sheets[target] = { ...sheets[target], annotations: list };
+      break;
+    }
+  }
+  write();
+  return null;
 }
 
 /** What the first of these annotations points at that the part doesn't have, if anything. */

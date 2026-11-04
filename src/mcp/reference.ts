@@ -370,23 +370,43 @@ under its body's name.
 "bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } } at the top of the document
 gives a body its own material (setBodyMaterial); its mass and the part's follow.
 
-## drawing (one sheet of views, measured on the rebuild)
-"drawing": { "sheet": { "size": "A3", "projection": "third", "scale": "1:10" (optional: else what fits), "title": "",
-  "number": "", "revision": "", "drawnBy": "", "date": "" },
-  "views": [{ "id": "front", "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso",
-    "at": [x, y] (optional: sheet mm from the lower left, else placed with the others), "scale": "1:20" (optional), "hidden": true (optional) }],
-  "annotations": [
+## drawing (sheets of views, measured on the rebuild)
+"drawing": { "sheets": [{ "id": "sheet1", "name": "Sheet 1" (optional),
+    "format": { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic",
+      title-block fields (text, optional; may link properties $PRP:"partNumber", $PRPMODEL:"mass", $PRPSHEET:"scale"): "title", "subtitle", "number",
+      "revision", "drawnBy", "date", "checkedBy", "checkedDate", "approvedBy", "approvedDate", "company", "material", "finish", "mass" },
+    "scale": "1:10" (optional: else what fits), "projection": "third" | "first", "views": [...], "annotations": [...], "tables": [...] (see cutList) }],
+  "standard": "ISO" | "ASME", "units": "mm" | "in", "generalTolerance": "ISO 2768-mK", "properties": { "company": "Acme" },
+  "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-11-04", "by": "JS", "approved": "", "zone": "C3" }] }
+A Phase L drawing ({ sheet, views, annotations }) is read as one sheet in the classic template. Ids are unique across sheets.
+Views (kind, default "model"; every view may have at, scale, display "visible" | "hidden" | "removed" | "shaded" | "shadedEdges",
+tangent "visible" | "phantom" | "removed", threads (cosmetic, default true), breaks [{ axis "x" | "y", from, to, gap?, style? }]
+(view mm; dimensions still read true), crop (closed outline), brokenOut [{ profile, depth }], bodies [names], showLabel, showScale):
+  { "id": "front", "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso" | "dimetric" | "trimetric" }  or "orientation": { "eye": [x, y, z], "up"?: [..] }
+  { "id": "top", "kind": "projected", "parent": "front", "direction": "up" | "down" | "left" | "right" | "upLeft" ... }  lined up with its parent
+  { "id": "A", "kind": "section", "parent": "top", "line": [[x, y], [x, y], ...] (on the parent, view mm; offset lines turn at right angles),
+    "half"?, "aligned"? (three points), "flip"?, "depth"?, "showBehind"?, "hatch"?: { "pattern", "angle", "spacing" }, "label"? }
+    the viewer stands left of the line's first segment (flip: right); hatch by each body's material, each body its own angle
+  { "id": "B", "kind": "detail", "parent": "front", "circle": { "at": [x, y], "r": 8 } or "profile": [...], "scale"? (default twice the parent's), "style"? }
+  { "id": "C", "kind": "auxiliary", "parent": "front", "edge": "front:e<edge>" }  square to a straight edge of the parent
+Annotations (on their view's sheet):
     { "id": "d1", "type": "dimension", "view": "front", "from": "@left", "to": "@right", "direction": "horizontal" | "vertical" | "aligned" (optional), "offset": 10 (optional, sheet mm; the sign picks the side) },
     { "id": "d2", "type": "dimension", "view": "front", "member": "leg_a" }   its cut length, where it lies flat in the view
     { "id": "h1", "type": "hole", "view": "top", "hole": "hole_1" }          "4× Ø6.6 THRU", where the hole shows as a circle
     { "id": "b1", "type": "balloon", "view": "iso", "member": "rail_front" } its cut list item number
     { "id": "w1s", "type": "weld", "view": "front", "weld": "w1" }           the weld table's weld, as a symbol
-    { "id": "cut_list", "type": "table", "table": "cutList" | "welds" }
-    { "id": "n1", "type": "note", "text": "Deburr all edges", "at": [30, 30] } ] }
-A dimension point is a node ("A"), a member end ("leg_a.start" / ".end"), a hole feature ("hole_1"), or a side of the
-view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertical). Dimensions are never in an iso
-view. What every annotation reads is measured; none takes a value. The drawing never blocks the part: an annotation
-whose member, node, hole or weld is gone is a drawing problem (see the drawing tool's checks), not an error.
+    { "id": "cut_list", "type": "table", "table": "cutList" | "welds" }     (Phase L; sheet tables are setTable's)
+    { "id": "n1", "type": "note", "text": "Deburr all edges", "at": [30, 30] }
+    { "id": "c1", "type": "centerMark", "view": "top", "at": "top:ehole_1/c1" }   a circle's centre mark (New drawing adds them)
+    { "id": "c2", "type": "centerline", "view": "right", "between": ["right:ehole_1/s0a", "right:ehole_1/s0b"] }
+GeoRefs (what annotations attach to; the geoRefs tool and the view packet list them): "<view>:e<edge>" an edge, "<view>:v<edge>.0" or
+".1" its ends, "<view>:c<edge>" a circle's or arc's centre, "<view>:m<edge>" a midpoint, "<view>:q<edge>.0".."3" a quadrant. An edge
+key is the feature that made it, a letter (l line, c circle or arc, o other, s a round face's side a/b) and its number: "ext_1/l3".
+Keys follow the model, so they survive rebuilds that leave that feature's edges alone.
+A dimension point is a node ("A"), a member end ("leg_a.start" / ".end"), a hole feature ("hole_1"), a side of the
+view ("@left", "@right" for horizontal dimensions; "@bottom", "@top" for vertical), or a GeoRef point of its view. Dimensions
+are never in a view at an angle (iso). What every annotation reads is measured; none takes a value. The drawing never blocks
+the part: an annotation whose member, node, hole, weld or edge is gone is a drawing problem (the drawing's checks), not an error.
 
 ## properties (the part's number, description, revision ...)
 "properties": { "partNumber": "BR-1001", "description": "Base bracket, 6 mm plate", "revision": "B", "author": "J. Smith",
@@ -540,9 +560,10 @@ setProperties(patch) - the part's properties (partNumber, description, revision,
 setCutList(patch) - the cut list's text (itemText, members), stock bars, kerf and tolerance (reference: cutList). cutList - the items, totals and nesting. exportCutList(format: "csv" | "xlsx" | "plan", columns?, file?) - written to the output folder.
 importStep(path, newBody?, at?, rotate?) - a STEP file read from disk into the part as an import feature (its solids become bodies).
 exportDxf(what: "sketch" | "face" | "plates", sketch?, face?, file?, version?) - DXF written to the output folder (plates: a ZIP).
-newDrawing(date?) - code plans the sheet: front, top, right and iso views, the overall size, every hole, a balloon per cut list item, the tables.
-setSheet(patch), setView(id, view | null), setAnnotation(id, annotation | null) - edit the drawing; a view takes its annotations with it.
-drawing - the composed sheet: each view's scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.
-exportDrawing(format: "pdf" | "svg", file?) - the sheet, written to the output folder.
+newDrawing(date?) - code plans an ISO sheet: front (a section when the part has insides), top and right projected from it, iso, a detail of small crowded features, the overall size, every hole, centre marks, a balloon per cut list item, the tables.
+setSheet(patch, sheet?), addSheet(id?, sheet?, index?), renameSheet(id, name), deleteSheet(id), moveSheet(id, index), setDrawingOptions(patch) - the sheets and the drawing's settings.
+setView(id, view | null, sheet?), moveView(id, at?, sheet?), setAnnotation(id, annotation | null, sheet?), setTable(id, table | null, sheet?) - edit the drawing; a view takes its annotations and the views made from it with it.
+drawing - every composed sheet: each view's kind, scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks. geoRefs(view) - what a view offers to attach to.
+exportDrawing(format: "pdf" | "svg" | "dxf", file?, sheet?) - a PDF of every sheet (font embedded), or one sheet as SVG or DXF (a layer per kind of line).
 undo, redo.
 `;
