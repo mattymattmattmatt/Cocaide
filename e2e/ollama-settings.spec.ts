@@ -175,3 +175,24 @@ test("an ask through Ollama: the same tools, a proposal you accept", async ({ pa
   const second = stub.chats.filter((c) => c.tools)[1] as { messages: { role: string; tool_name?: string }[] };
   expect(second.messages.at(-1)).toMatchObject({ role: "tool", tool_name: "updateFeature" });
 });
+
+test("an attached PDF goes to a local model as its text layer and its pages as images", async ({ page }) => {
+  const stub = await stubOllama(page, [{ content: "The drawing is the 80 × 40 bracket." }]);
+  await openAssistant(page);
+  await page.getByTestId("ask-provider").selectOption("ollama");
+  await page.getByTestId("ask-ollama-model").selectOption("qwen3.5:9b");
+  await page.getByTestId("ask-settings-save").click();
+  await page.getByTestId("feature-ext_1").locator(".feature-row").click({ button: "right" });
+  await page.getByTestId("ctx-ask").click();
+  await page.getByTestId("ask-attach-input").setInputFiles("examples/drawings/bracket.pdf");
+  await expect(page.getByTestId("ask-attachment-0")).toContainText("bracket.pdf");
+  await page.getByTestId("ask-input").fill("What does the drawing show?");
+  await page.getByTestId("ask-input").press("Enter");
+  await expect(page.getByTestId("ask-text")).toHaveText("The drawing is the 80 × 40 bracket.");
+  const chat = stub.chats.find((c) => c.tools) as { messages: { role: string; content: string; images?: string[] }[] };
+  const user = chat.messages[1];
+  expect(user.images?.length).toBeGreaterThan(0);
+  expect(user.images![0]).toMatch(/^iVBOR/);
+  expect(user.content).toContain("Attached PDF bracket.pdf");
+  expect(user.content).toContain("Its text layer:");
+});
