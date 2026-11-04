@@ -17,6 +17,8 @@ import { scopeProblem, type WriteScope } from "./scope";
 import { ENTITY_PREFIX, nextEntityId, removeEntities } from "./sketch";
 import { annotationTargetProblem, dependentViews, drawingTargets, migrateDrawing, migrateView, nextSheetId, nextViewLabel, rawAnnotations, rawDrawing, renameInDrawing, viewKind, type RawSheet } from "./drawing";
 import { checkCutList, mergeCutList } from "./cutListSettings";
+import { setTableIn } from "../drafting/tables/validate";
+import type { DrawingTable } from "../drafting/tables/types";
 import {
   BODY_NAME,
   DEFAULT_BODY,
@@ -134,6 +136,8 @@ export type Command =
   | { type: "setView"; id: string; view: DrawingView | Record<string, unknown> | null; sheet?: string }
   /** Moves a view: to `at` on its sheet (null: back to its automatic place), and/or to another sheet with its annotations. */
   | { type: "moveView"; id: string; at?: Vec2 | null; sheet?: string }
+  /** Adds or replaces a table (cut list, BOM, holes, welds, revisions, general, stock) on a sheet (`sheet`, else the one holding it, else the first) by id, or removes it (null). */
+  | { type: "setTable"; id: string; table: Record<string, unknown> | null; sheet?: string }
   /** Adds or replaces an annotation by id (on its view's sheet; a note or table on `sheet`, else the first), or removes it. What it points at must be in the part. */
   | { type: "setAnnotation"; id: string; annotation: Annotation | Record<string, unknown> | null; sheet?: string }
   /** Gives a body its own material, or puts it back on the part's (null). */
@@ -555,6 +559,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
     case "setDrawingOptions":
     case "setView":
     case "moveView":
+    case "setTable":
     case "setAnnotation": {
       const r = drawingCommand(doc, cmd);
       if (r) return { ok: false, error: r };
@@ -768,7 +773,7 @@ function renameBodyRefs(doc: RawDocument, renamed: Map<string, string>): void {
   }
 }
 
-type DrawingCommand = Extract<Command, { type: "setSheet" | "addSheet" | "renameSheet" | "deleteSheet" | "moveSheet" | "setDrawingOptions" | "setView" | "moveView" | "setAnnotation" }>;
+type DrawingCommand = Extract<Command, { type: "setSheet" | "addSheet" | "renameSheet" | "deleteSheet" | "moveSheet" | "setDrawingOptions" | "setView" | "moveView" | "setTable" | "setAnnotation" }>;
 
 /** The sheet commands, on the drawing migrated to sheets. Writes doc.drawing; returns an error or null. */
 function drawingCommand(doc: RawDocument, cmd: DrawingCommand): string | null {
@@ -908,6 +913,23 @@ function drawingCommand(doc: RawDocument, cmd: DrawingCommand): string | null {
         sheets[from] = { ...sheets[from], views: sheets[from].views.filter((v) => v.id !== cmd.id), annotations: sheets[from].annotations.filter((a) => a.view !== cmd.id) };
         sheets[to] = { ...sheets[to], views: [...sheets[to].views, view], annotations: [...sheets[to].annotations, ...mine] };
       }
+      break;
+    }
+    case "setTable": {
+      const tablesOf = (i: number) => (Array.isArray(sheets[i].tables) ? (sheets[i].tables as DrawingTable[]) : []);
+      const from = sheets.findIndex((_s, i) => tablesOf(i).some((x) => x.id === cmd.id));
+      if (cmd.table !== null && from < 0 && taken(cmd.id)) return `setTable: "${cmd.id}" is a view's or an annotation's id`;
+      const target = cmd.sheet !== undefined ? sheetIndex(cmd.sheet) : from >= 0 ? from : 0;
+      if (typeof target === "string") return target;
+      if (cmd.table === null && from < 0) return `setTable: no table "${cmd.id}"`;
+      if (cmd.table !== null && !isObject(cmd.table)) return `setTable: table must be an object (got ${JSON.stringify(cmd.table)})`;
+      const at = cmd.table === null ? from : target;
+      if (from >= 0 && from !== at) sheets[from] = { ...sheets[from], tables: tablesOf(from).filter((x) => x.id !== cmd.id) };
+      const r = setTableIn(from === at ? tablesOf(at) : tablesOf(at).filter((x) => x.id !== cmd.id), cmd.id, cmd.table === null ? null : structuredClone(cmd.table), { views: sheets[at].views.map((v) => String(v.id)) });
+      if (!r.ok) return `setTable: ${r.error}`;
+      const next = { ...sheets[at], tables: r.tables } as RawSheet;
+      if (!r.tables.length) delete next.tables;
+      sheets[at] = next;
       break;
     }
     case "setAnnotation": {

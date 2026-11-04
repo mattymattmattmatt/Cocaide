@@ -373,17 +373,18 @@ function ansi(ctx: FormatContext, width: number, height: number): FormatLayout {
   const y0 = frame.min[1];
   const list: Cell[] = [];
   // Left: the tolerance block, the material and finish.
-  const lw = 64;
+  const lw = 58;
   list.push({ x: x0, y: y0 + 22, w: lw, h: 30, open: true });
   list.push({ x: x0, y: y0 + 14, w: lw, h: 8, label: "MATERIAL", value: f("material") });
   list.push({ x: x0, y: y0 + 6, w: lw, h: 8, label: "FINISH", value: f("finish") });
   list.push({ x: x0, y: y0, w: lw, h: 6, value: "DO NOT SCALE DRAWING", size: TEXT.label * 1.15, centre: true, bold: true });
   // Middle: who and when.
   const mx = x0 + lw;
-  const mw = 44;
-  list.push({ x: mx, y: y0 + 46, w: 20, h: 6, open: true });
-  list.push({ x: mx + 20, y: y0 + 46, w: 14, h: 6, value: "NAME", size: TEXT.label, centre: true, bold: true });
-  list.push({ x: mx + 34, y: y0 + 46, w: 10, h: 6, value: "DATE", size: TEXT.label, centre: true, bold: true });
+  const mw = 50;
+  const [rw0, nw, dw] = [17, 15, 18];
+  list.push({ x: mx, y: y0 + 46, w: rw0, h: 6, open: true });
+  list.push({ x: mx + rw0, y: y0 + 46, w: nw, h: 6, value: "NAME", size: TEXT.label, centre: true, bold: true });
+  list.push({ x: mx + rw0 + nw, y: y0 + 46, w: dw, h: 6, value: "DATE", size: TEXT.label, centre: true, bold: true });
   const who: [string, TitleField | null, TitleField | null][] = [
     ["DRAWN", "drawnBy", "date"],
     ["CHECKED", "checkedBy", "checkedDate"],
@@ -392,9 +393,9 @@ function ansi(ctx: FormatContext, width: number, height: number): FormatLayout {
   ];
   who.forEach(([role, name, date], i) => {
     const y = y0 + 40 - i * 6;
-    list.push({ x: mx, y, w: 20, h: 6, value: role, size: TEXT.label * 1.05 });
-    list.push({ x: mx + 20, y, w: 14, h: 6, value: name ? f(name) : "", size: TEXT.label * 1.1 });
-    list.push({ x: mx + 34, y, w: 10, h: 6, value: date ? f(date) : "", size: TEXT.label * 0.95 });
+    list.push({ x: mx, y, w: rw0, h: 6, value: role, size: TEXT.label * 1.05 });
+    list.push({ x: mx + rw0, y, w: nw, h: 6, value: name ? f(name) : "", size: TEXT.label * 1.1 });
+    list.push({ x: mx + rw0 + nw, y, w: dw, h: 6, value: date ? f(date) : "", size: TEXT.label * 1.1 });
   });
   list.push({ x: mx, y: y0, w: mw, h: 22, label: "COMMENTS:" });
   // Right: the company, the title, the identification.

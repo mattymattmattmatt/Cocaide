@@ -12,6 +12,7 @@
 // the part.
 
 import { describe, isObject, validateDocument, type Checker } from "./validate";
+import { checkDrawingTables } from "../drafting/tables/validate";
 import {
   ANNOTATION_KEYS,
   ANNOTATION_TYPES,
@@ -222,6 +223,8 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
   const sheetIds = new Set<string>();
   /** Every view, by id: its raw object and the sheet it is on. */
   const views = new Map<string, { v: Record<string, unknown>; sheet: number; path: string }>();
+  /** Every view object, a duplicate id's too: each is checked. */
+  const checked: { v: Record<string, unknown>; path: string }[] = [];
   input.sheets.forEach((s, si) => {
     const sp = `drawing.sheets[${si}]`;
     if (!isObject(s)) return c.fail(sp, `must be a sheet object (got ${describe(s)})`);
@@ -233,17 +236,17 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
     checkFormat(s.format, `${sp}.format`, c);
     if (s.scale !== undefined && parseScale(s.scale) === null) c.fail(`${sp}.scale`, `must be a scale like "1:10" (got ${describe(s.scale)})`);
     if (!PROJECTIONS.includes(s.projection as never)) c.fail(`${sp}.projection`, `must be "third" or "first" (got ${describe(s.projection)})`);
-    if (s.tables !== undefined && !Array.isArray(s.tables)) c.fail(`${sp}.tables`, `must be a list of tables (got ${describe(s.tables)})`);
     if (!Array.isArray(s.views)) c.fail(`${sp}.views`, `must be a list of views (got ${describe(s.views)})`);
     else
       s.views.forEach((v, i) => {
         const at = `${sp}.views[${i}]`;
         if (!isObject(v)) return c.fail(at, `must be a view object (got ${describe(v)})`);
         id(v.id, `${at}.id`);
+        checked.push({ v, path: at });
         if (typeof v.id === "string" && !views.has(v.id)) views.set(v.id, { v, sheet: si, path: at });
       });
   });
-  for (const { v, path } of views.values()) checkView(v, path, views, c);
+  for (const { v, path } of checked) checkView(v, path, views, c);
   checkLabels(views, c);
 
   input.sheets.forEach((s, si) => {
@@ -261,7 +264,12 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
       }
       checkAnnotation(a, at, here, views, c);
     });
-    if (Array.isArray(s.tables)) s.tables.forEach((t, i) => (isObject(t) ? id(t.id, `drawing.sheets[${si}].tables[${i}].id`, "views, annotations and tables share their ids") : c.fail(`drawing.sheets[${si}].tables[${i}]`, `must be a table object (got ${describe(t)})`)));
+    if (s.tables !== undefined) {
+      // The table engine's own checks (src/drafting/tables), with the views on this sheet a hole table may name.
+      const r = checkDrawingTables(s.tables, `drawing.sheets[${si}].tables`, { views: [...here.keys()] });
+      for (const e of r.errors) c.fail("", e);
+      if (Array.isArray(s.tables)) s.tables.forEach((t, i) => isObject(t) && id(t.id, `drawing.sheets[${si}].tables[${i}].id`, "views, annotations and tables share their ids"));
+    }
   });
   return c.errors.length === before ? (input as unknown as Drawing) : null;
 }
@@ -288,7 +296,7 @@ const KIND_KEYS: Record<ViewKind, readonly string[]> = {
   detail: ["parent", "circle", "profile", "style", "label"],
   auxiliary: ["parent", "edge", "label", "flip"],
 };
-const COMMON_KEYS = ["id", "kind", "at", "scale", "display", "tangent", "threads", "breaks", "crop", "brokenOut", "bodies", "showLabel", "showScale"];
+const COMMON_KEYS = ["id", "kind", "hidden", "at", "scale", "display", "tangent", "threads", "breaks", "crop", "brokenOut", "bodies", "showLabel", "showScale"];
 const KIND_HELP: Record<ViewKind, string> = {
   model: "a model view looks at the part from a named orientation (look) or a custom one (orientation)",
   projected: "a projected view is made from a parent view and a direction",
@@ -407,6 +415,8 @@ function checkView(v: Record<string, unknown>, at: string, views: Map<string, { 
   if (v.display !== undefined && !DISPLAY_MODES.includes(v.display as never)) c.fail(`${at}.display`, `must be ${DISPLAY_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.display)})`);
   if (v.tangent !== undefined && !TANGENT_MODES.includes(v.tangent as never)) c.fail(`${at}.tangent`, `must be ${TANGENT_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.tangent)})`);
   for (const k of ["threads", "showLabel", "showScale"]) bool(k);
+  // Phase L's switch (true and false are read as display "hidden" and its default); anything else is a mistake.
+  if (v.hidden !== undefined) c.fail(`${at}.hidden`, `must be true or false (got ${describe(v.hidden)}); a view's hidden edges are now display: "hidden"`);
   if (v.breaks !== undefined) {
     if (!Array.isArray(v.breaks)) c.fail(`${at}.breaks`, `must be a list of breaks { axis, from, to } (got ${describe(v.breaks)})`);
     else

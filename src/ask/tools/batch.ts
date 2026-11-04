@@ -40,6 +40,7 @@ export const COMMAND_TOOLS = [
   "setDrawingOptions",
   "setView",
   "moveView",
+  "setTable",
   "setAnnotation",
   "setDimension",
   "renameDimension",
@@ -97,6 +98,8 @@ export function toolCommand(name: string, a: Raw): Command | string {
       return { type: "setAnnotation", id: str("id"), annotation: obj("annotation"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "setView":
       return { type: "setView", id: str("id"), view: obj("view"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
+    case "setTable":
+      return { type: "setTable", id: str("id"), table: obj("table"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "moveView":
       return { type: "moveView", id: str("id"), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as [number, number] | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "setSheet":

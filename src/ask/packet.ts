@@ -6,6 +6,7 @@
 // The write scope (spec 6.2) comes with it, and apply() enforces that scope.
 
 import { references, type RawDocument } from "../doc/commands";
+import { rawAnnotations, rawDrawing } from "../doc/drawing";
 import { documentParameters, parameterRefs, resolveExpressions } from "../doc/parameters";
 import { photoGuesses, photoOf } from "../doc/photo";
 import { constraintEntities, isConstruction } from "../doc/sketch";
@@ -201,8 +202,7 @@ export function targetLabel(doc: RawDocument, target: AskTarget, topo?: PartTopo
     case "view":
       return `view ${target.id}`;
     case "annotation": {
-      const d = doc.drawing as { annotations?: { id?: unknown; type?: unknown }[] } | undefined;
-      const a = d?.annotations?.find((x) => x.id === target.id);
+      const a = rawAnnotations(doc).find((x) => x.id === target.id);
       return a ? `${String(a.type)} ${target.id}` : target.id;
     }
     case "drawing":
@@ -388,7 +388,7 @@ export function partOutline(doc: RawDocument, check: CheckResult): Record<string
       return { ...brief(f), ok: s?.ok ?? false, ...(s?.error ? { error: s.error } : {}), ...(s?.suppressed ? { suppressed: true } : {}) };
     }),
     referenceGeometry: referenceGeometry(doc, check),
-    ...(isObject(doc.drawing) ? { drawing: { views: Array.isArray(doc.drawing.views) ? doc.drawing.views.length : 0, annotations: Array.isArray(doc.drawing.annotations) ? doc.drawing.annotations.length : 0 } } : {}),
+    ...(rawDrawing(doc) ? { drawing: { sheets: rawDrawing(doc)!.sheets.length, views: rawDrawing(doc)!.sheets.flatMap((x) => x.views).length, annotations: rawAnnotations(doc).length } } : {}),
   };
 }
 

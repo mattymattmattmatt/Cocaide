@@ -205,6 +205,10 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = "setCutList";
       allowed = has("cutList") || has("drawing");
       break;
+    case "setTable":
+      what = `setTable "${cmd.id}"`;
+      allowed = has("drawing") || has("cutList");
+      break;
     case "setView":
     case "moveView":
       what = `${cmd.type} "${cmd.id}"`;

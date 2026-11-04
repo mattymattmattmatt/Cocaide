@@ -374,6 +374,12 @@ const DRAWING_TOOLS: Anthropic.Tool[] = [
     input_schema: obj({ patch: any, sheet: { type: "string" } }, ["patch"]),
   },
   {
+    name: "setTable",
+    description:
+      'Add or replace a table on a sheet by id, or remove it (table: null): {kind: "cutList" | "bom" | "holes" | "welds" | "revisions" | "general" | "stock", title?, columns?, sort?, group?, anchor? ({corner: "aboveTitleBlock" | "topRight" | ...} or {at: [x, y]}), view and origin (holes), header and rows (general)}. Views and annotations keep clear of it.',
+    input_schema: obj({ id: { type: "string" }, table: { type: ["object", "null"] }, sheet: { type: "string" } }, ["id", "table"]),
+  },
+  {
     name: "addSheet",
     description: "Add a sheet to the drawing (after the others, or at index), its format from the sheet before it unless given in sheet.",
     input_schema: obj({ id: { type: "string" }, sheet: { type: "object" }, index: { type: "integer" } }, []),

@@ -235,6 +235,11 @@ export const TOOLS: Record<string, ToolSpec> = {
       "Add or replace an annotation by id, or remove it (annotation: null): a dimension, hole callout, balloon, weld symbol, table, note, centerMark { view, at: GeoRef } or centerline { view, between: [GeoRef, GeoRef] } (see cocaide://reference). It goes on its view's sheet. What it reads is measured on the rebuild; the result says what it reads.",
     input: { id: z.string(), annotation: obj.nullable(), sheet: z.string().optional() },
   },
+  setTable: {
+    description:
+      'Add or replace a table on a sheet by id, or remove it (table: null): { "kind": "cutList" | "bom" | "holes" | "welds" | "revisions" | "general" | "stock", "title"?, "columns"?, "sort"?, "group"?, "maxRows"?, "anchor"?: { "corner": "aboveTitleBlock" | "topRight" ... } or { "at": [x, y] }, "view" and "origin" (holes: a view and "@lowerLeft" or a GeoRef), "header"/"rows" (general) } (see cocaide://reference cutList). Views and annotations keep clear of it.',
+    input: { id: z.string(), table: obj.nullable(), sheet: z.string().optional() },
+  },
   drawing: {
     description: "The drawing as composed: every sheet's size, template, scale and projection, each view's kind, scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks.",
     readOnly: true,

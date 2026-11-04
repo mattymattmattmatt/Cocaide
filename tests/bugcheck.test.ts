@@ -2,6 +2,7 @@
 // materials follow, holes that go where their bodies go, members copied from
 // where they started, and a projection that is not redone for a sheet edit.
 
+import { viewSpecs } from "../src/drafting/specs";
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { LocalKernel } from "../src/ask/kernel";
@@ -61,7 +62,7 @@ function cutOf(doc: unknown) {
 
 async function sheetOf(doc: RawDocument) {
   const c = await kernel.check(doc);
-  const views = validateDocument(doc).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+  const views = viewSpecs(validateDocument(doc).drawing!);
   const geometry = await kernel.project(doc, views);
   const sheet = composeSheet(doc, { measurements: c.measurements, geometry })!;
   return { sheet, checks: drawingChecks(sheet, doc, c.measurements, geometry) };

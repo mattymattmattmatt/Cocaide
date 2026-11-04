@@ -174,7 +174,8 @@ export function DrawingTree({
         view = { kind: "section", parent: parent.id, line: cut === "vertical" ? [[c[0], r1(o.max[1] + m)], [c[0], r1(o.min[1] - m)]] : [[r1(o.max[0] + m), c[1]], [r1(o.min[0] - m), c[1]]] };
         prefix = "section_";
       } else {
-        view = { kind: "detail", parent: parent.id, circle: { at: c, r: r1(Math.max(1, Math.min(w, h) / 4)) } };
+        // Round the outline's top right corner: there is always an edge to see there.
+        view = { kind: "detail", parent: parent.id, circle: { at: [r1(o.max[0]), r1(o.max[1])], r: r1(Math.max(1, 0.15 * Math.max(w, h))) } };
         prefix = "detail_";
       }
     }

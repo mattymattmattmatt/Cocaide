@@ -103,6 +103,7 @@ export const EDIT_TOOLS = [
   "setDrawingOptions",
   "setView",
   "moveView",
+  "setTable",
   "setAnnotation",
   "setDimension",
   "renameDimension",
@@ -365,6 +366,8 @@ export class AgentSession {
         return this.edit({ type: "moveView", id: String(a.id), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as Vec2 | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "setAnnotation":
         return this.edit({ type: "setAnnotation", id: String(a.id), annotation: isObject(a.annotation) ? a.annotation : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
+      case "setTable":
+        return this.edit({ type: "setTable", id: String(a.id), table: isObject(a.table) ? a.table : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "drawing":
         return this.drawing();
       case "geoRefs":

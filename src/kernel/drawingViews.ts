@@ -311,6 +311,8 @@ const unit2 = (a: Vec2): Vec2 => {
 interface CutPlane {
   point: Vec3;
   normal: Vec3;
+  /** A broken-out section's outline (view mm): only cut faces inside it are its (a counterbore's floor at the same depth is not). */
+  inside?: Vec2[];
 }
 
 /**
@@ -401,10 +403,13 @@ function cutFaces(oc: OC, s: Scope, shape: TopoDS_Shape, planes: CutPlane[], f: 
     const loc = s.track(pln.Location());
     const normal: Vec3 = [d.X(), d.Y(), d.Z()];
     const point: Vec3 = [loc.X(), loc.Y(), loc.Z()];
-    const on = planes.some((p) => Math.abs(Math.abs(dot3(normal, p.normal)) - 1) < 1e-6 && Math.abs(dot3(sub(point, p.point), p.normal)) < tol);
-    if (!on) continue;
+    const onPlanes = planes.filter((p) => Math.abs(Math.abs(dot3(normal, p.normal)) - 1) < 1e-6 && Math.abs(dot3(sub(point, p.point), p.normal)) < tol);
+    if (!onPlanes.length) continue;
     const props = s.track(new oc.GProp_GProps());
     oc.BRepGProp.SurfaceProperties(face, props, false, false);
+    const cm = s.track(props.CentreOfMass());
+    const mid = inView([cm.X(), cm.Y(), cm.Z()], f);
+    if (!onPlanes.some((p) => !p.inside || insidePoly(mid, p.inside))) continue;
     const loops: Vec2[][] = [];
     const wires = s.track(new oc.TopExp_Explorer(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE));
     for (; wires.More(); wires.Next()) {
@@ -417,6 +422,16 @@ function cutFaces(oc: OC, s: Scope, shape: TopoDS_Shape, planes: CutPlane[], f: 
     if (loops.length) out.push({ body, loops, area: props.Mass(), from });
   }
   return out;
+}
+
+function insidePoly(p: Vec2, poly: Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (a[1] > p[1] !== b[1] > p[1] && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
 }
 
 /** Joins edge polylines end to end into one closed loop (the edges of a wire, in any order and direction). */
@@ -533,7 +548,7 @@ function projectOne(oc: OC, s: Scope, part: BuiltPart, spec: ViewSpec, f: ViewFr
       try {
         const tool = prismThrough(oc, s, f, ccw(b.profile), front - b.depth, front + E);
         shapes = shapes.map((sh) => (sh ? booleanOp(oc, s, "cut", sh, tool) : sh));
-        planes = [...planes, { point: toModelPoint([0, 0], f, front - b.depth), normal: f.eye }];
+        planes = [...planes, { point: toModelPoint([0, 0], f, front - b.depth), normal: f.eye, inside: b.profile }];
       } catch (e) {
         problems.push((e as Error).message);
       }

@@ -2,6 +2,7 @@
 // not), split, move and copy, delete and keep; members that stay members
 // through all of them; a material per body; a body saved as a part of its own.
 
+import { viewSpecs } from "../src/drafting/specs";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -185,7 +186,7 @@ describe("Phase M acceptance: members stay members", () => {
     const kernel = new LocalKernel(getOC);
     const c = await kernel.check(doc);
     const drawn = run(doc, { type: "setDrawing", drawing: planDrawing(doc, c.measurements, await kernel.project(doc, DEFAULT_VIEWS)) });
-    const views = validateDocument(drawn).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+    const views = viewSpecs(validateDocument(drawn).drawing!);
     const geometry = await kernel.project(drawn, views);
     const sheet = composeSheet(drawn, { measurements: c.measurements, geometry })!;
     expect(sheet.annotations.filter((a) => a.type === "balloon").map((a) => a.text)).toEqual(["1", "2", "3"]);

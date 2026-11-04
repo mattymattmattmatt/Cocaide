@@ -9,7 +9,7 @@
 // has, or that its view can't show, is not drawn: it is listed in `problems`.
 
 import type { DrawingGeometry } from "../ask/kernel";
-import { allViews, parseScale, pointRef, STANDARD_SCALES, viewKind } from "../doc/drawing";
+import { allViews, parseGeoRef, parseScale, pointRef, STANDARD_SCALES, viewKind } from "../doc/drawing";
 import {
   type Annotation,
   type AnnotationType,
@@ -43,7 +43,10 @@ import { anglesText, cutList, type CutListItem } from "../weldment/cutlist";
 import { clipOutside, clipToCircle, clipToPolygon, insidePolygon } from "./clip";
 import { drawFormat, paperSize, type FormatLayout } from "./formats";
 import { BODY_ANGLES, hatchLines, materialPattern } from "./hatch";
-import { resolveGeoRef } from "./georef";
+import { geoInView, resolveGeoRef } from "./georef";
+import { holesInView, holeTable, holeTagPrims, outlineOrigin, renderSheetTables, type DrawingTable, type HoleTableRow, type RenderedTable, type RevisionRow, type TableContext } from "./tables";
+import { cutListOf } from "../weldment/items";
+import { nestCutList } from "../weldment/nesting";
 import type { PropContext } from "./props";
 import { boxOf, centre, grow, inside, overlaps, primBox, union, type Box, type Prim } from "./sheet";
 import { projectionOf } from "./specs";
@@ -192,7 +195,7 @@ export function composeDrawing(doc: unknown, ctx: ComposeContext): ComposedDrawi
   const v = validateDocument(doc);
   if (!v.drawing) return null;
   const drawing = v.drawing;
-  const sheets = drawing.sheets.map((s, i) => new Composer(v, drawing, s, i, ctx).compose());
+  const sheets = drawing.sheets.map((s, i) => new Composer(v, drawing, s, i, ctx, doc).compose());
   return { drawing, sheets };
 }
 
@@ -202,7 +205,7 @@ export function composeSheet(doc: unknown, ctx: ComposeContext, sheet: string | 
   if (!v.drawing) return null;
   const i = typeof sheet === "number" ? sheet : v.drawing.sheets.findIndex((s) => s.id === sheet);
   const s = v.drawing.sheets[i];
-  return s ? new Composer(v, v.drawing, s, i, ctx).compose() : null;
+  return s ? new Composer(v, v.drawing, s, i, ctx, doc).compose() : null;
 }
 
 /** A point of a view (view mm, before breaks) on the sheet. */
@@ -273,6 +276,7 @@ class Composer {
     private readonly s: DrawingSheet,
     private readonly index: number,
     private readonly ctx: ComposeContext,
+    private readonly doc: unknown = null,
   ) {
     this.template = s.format.template ?? (d.standard === "ASME" ? "ansi" : "iso");
     this.allViews = new Map(allViews(d).map((x) => [x.id, x]));
@@ -327,8 +331,11 @@ class Composer {
 
   compose(): ComposedSheet {
     const tables = this.placeTables();
-    this.tableBoxes = [...tables.map((t) => t.box), ...this.notes().map((n) => n.box)];
-    const blocked = [this.titleBlock, ...(this.format?.revisionBlock ? [this.format.revisionBlock] : []), ...tables.map((t) => t.box), ...this.notes().map((n) => n.box)];
+    // The sheet's tables (src/drafting/tables): placed by their anchors before the views, which keep clear of them.
+    const sheetTables = this.renderTables();
+    const tableBoxes = sheetTables.flatMap((t) => t.rendered.boxes);
+    this.tableBoxes = [...tables.map((t) => t.box), ...this.notes().map((n) => n.box), ...tableBoxes];
+    const blocked = [this.titleBlock, ...(this.format?.revisionBlock ? [this.format.revisionBlock] : []), ...tables.map((t) => t.box), ...this.notes().map((n) => n.box), ...tableBoxes];
     this.planDimensions();
     const { scale, views } = this.layout(blocked);
     this.views = views;
@@ -341,13 +348,23 @@ class Composer {
     }
     for (const cv of views) this.drawView(cv);
     for (const cv of views) this.drawMarks(cv);
-    // Phase L's labels come first (balloons keep clear of them); a view's label otherwise goes under its dimensions.
-    if (this.template === "classic") for (const cv of views) this.drawLabel(cv, scale);
+    // Labels come first (balloons and callouts keep clear of them), under the room the view's dimensions take.
+    for (const cv of views) this.drawLabel(cv, scale);
     for (const a of this.s.annotations) this.drawAnnotation(a, tables);
-    if (this.template !== "classic") for (const cv of views) this.drawLabel(cv, scale);
+    for (const t of sheetTables) {
+      this.prims.push(...t.rendered.prims);
+      for (const p of t.rendered.problems) this.problems.push(`${t.table.id}: ${p}`);
+      // A hole table's tags beside its holes, and its origin's mark.
+      const cv = t.holes ? this.cv(t.holes.view) : undefined;
+      if (t.holes && cv) this.prims.push(...holeTagPrims(t.holes.rows, cv, t.holes.origin, t.table.id));
+    }
     if (this.template === "classic") this.drawTitleBlock(scale);
 
-    const blocks = [...tables.map((t) => ({ id: t.a.id, box: t.box })), ...this.notes().map((n) => ({ id: n.a.id, box: n.box }))];
+    const blocks = [
+      ...tables.map((t) => ({ id: t.a.id, box: t.box })),
+      ...this.notes().map((n) => ({ id: n.a.id, box: n.box })),
+      ...sheetTables.flatMap((t) => (t.rendered.box ? [{ id: t.table.id, box: t.rendered.box }] : [])),
+    ];
     return {
       id: this.s.id,
       name: this.s.name ?? `Sheet ${this.index + 1}`,
@@ -372,6 +389,52 @@ class Composer {
       cutList: this.cut,
       points: this.points,
     };
+  }
+
+  // ------------------------------------------------------------- tables (Phase Q)
+
+  /** The sheet's tables, rendered: what each says (the cut list v2, welds, revisions, a view's holes) where its anchor puts it. */
+  private renderTables(): { table: DrawingTable; rendered: RenderedTable; holes?: { view: string; rows: HoleTableRow[]; origin: Vec2 } }[] {
+    const tables = this.s.tables ?? [];
+    if (!tables.length) return [];
+    const m = this.ctx.measurements;
+    const cutList = m && this.doc ? cutListOf(this.doc, m) : null;
+    const base: TableContext = {
+      cutList,
+      welds: this.v.welds,
+      revisions: (this.d.revisions ?? []).map((r): RevisionRow => ({ rev: r.rev, ...(r.description !== undefined ? { description: r.description } : {}), ...(r.date ? { date: r.date } : {}), ...(r.by ? { by: r.by } : {}), ...(r.approved ? { approved: r.approved } : {}), ...(r.zone ? { zone: r.zone } : {}) })),
+      nesting: cutList && tables.some((t) => t.kind === "stock") ? nestCutList(cutList) : null,
+    };
+    const sf = { frame: this.frame, titleBlock: this.titleBlock };
+    const out: { table: DrawingTable; rendered: RenderedTable; holes?: { view: string; rows: HoleTableRow[]; origin: Vec2 } }[] = [];
+    const plain = tables.filter((t) => t.kind !== "holes");
+    renderSheetTables(plain, base, sf).forEach((rendered, i) => out.push({ table: plain[i], rendered }));
+    for (const t of tables.filter((x) => x.kind === "holes")) {
+      const holes = this.holeRows(t);
+      const rendered = renderSheetTables([t], { ...base, holes: holes?.rows ?? null }, sf)[0];
+      out.push({ table: t, rendered, ...(holes ? { holes } : {}) });
+    }
+    // In the sheet's order.
+    return tables.map((t) => out.find((o) => o.table === t)!);
+  }
+
+  /** A hole table's rows: the holes its view looks into, X and Y from its origin (a corner of the outline, or a GeoRef). */
+  private holeRows(t: DrawingTable): { view: string; rows: HoleTableRow[]; origin: Vec2 } | null {
+    const view = t.view ? this.here.get(t.view) : undefined;
+    const m = this.ctx.measurements;
+    if (!view || !m) return null;
+    const pv = this.pv(view);
+    const outline = this.outline(view);
+    let origin = outlineOrigin(t.origin, outline);
+    if (!origin && t.origin) {
+      const g = parseGeoRef(t.origin);
+      const r = g && pv ? geoInView({ edges: pv.edges, frame: pv.frame, outline }, g, this.points) : null;
+      origin = r?.kind === "point" ? r.p : r?.kind === "circle" ? r.c : r?.kind === "edge" && r.a ? r.a : null;
+      if (!origin) this.problems.push(`${t.id}: its origin ${t.origin} is not in ${view.id}`);
+    }
+    if (!origin) origin = outlineOrigin("@lowerLeft", outline);
+    if (!origin) return null;
+    return { view: view.id, rows: holeTable(holesInView(m.holes ?? [], this.ctx.geometry?.holes ?? [], this.frameOf(view)), origin), origin };
   }
 
   // ------------------------------------------------------------- layout
@@ -417,7 +480,7 @@ class Composer {
     for (const r of pv.sections ?? []) for (const l of r.loops) for (const piece of this.clipped([l], clip)) pts.push(...piece);
     if (!pts.length && pv.bodies.length && !clip) for (const b of pv.bodies) for (const line of [...b.visible, ...(hidden ? b.hidden : [])]) pts.push(...line);
     const box = boxOf(pts);
-    if (box && clip?.circle) {
+    if (clip?.circle && (box || viewKind(view) === "detail")) {
       // A detail is as big as its circle, whatever is in it.
       const { c, r } = clip.circle;
       return { min: [c[0] - r, c[1] - r], max: [c[0] + r, c[1] + r] };
@@ -434,9 +497,22 @@ class Composer {
 
   /** A view's breaks at scale k: the gap is paper, so it is fewer view mm at a larger scale. */
   private breaksOf(view: DrawingView, k: number): ComposedBreak[] {
-    return (view.breaks ?? [])
+    // A view lined up with a broken parent is broken the same way along the axis they share.
+    let breaks = view.breaks ?? [];
+    const d = breaks.length ? null : this.attachDir(view);
+    const parent = view.parent ? this.here.get(view.parent) : undefined;
+    if (d && parent) breaks = (this.breaksSpec(parent) ?? []).filter((b) => (d[0] !== 0 ? b.axis === "y" : b.axis === "x"));
+    return breaks
       .map((b) => ({ axis: (b.axis === "x" ? 0 : 1) as 0 | 1, from: b.from, to: b.to, gap: Math.min(b.to - b.from, (b.gap ?? 6) / k), style: b.style ?? "zigzag" }))
       .sort((a, b) => a.from - b.from);
+  }
+
+  /** The breaks a view has, its own or its parent's. */
+  private breaksSpec(view: DrawingView): DrawingView["breaks"] {
+    if (view.breaks?.length) return view.breaks;
+    const d = this.attachDir(view);
+    const parent = view.parent ? this.here.get(view.parent) : undefined;
+    return d && parent ? (this.breaksSpec(parent) ?? []).filter((b) => (d[0] !== 0 ? b.axis === "y" : b.axis === "x")) : undefined;
   }
 
   /** The view's frame, from its projection (a look's own frame before it is projected). */
@@ -534,7 +610,7 @@ class Composer {
   }
 
   /** Room each view's annotations need around it, sheet mm: [left, bottom, right, top]. */
-  private padding(view: DrawingView): [number, number, number, number] {
+  private padding(view: DrawingView, k?: number, sheetScale?: number): [number, number, number, number] {
     const pad: [number, number, number, number] = [INSET, INSET, INSET, INSET];
     const need = (i: number, mm: number) => (pad[i] = Math.max(pad[i], mm));
     const text = TEXT.dimension * CAP + 3;
@@ -557,7 +633,9 @@ class Composer {
       if (kind === "section" || kind === "auxiliary") for (let i = 0; i < 4; i++) need(i, 14);
     }
     // The label under it, below its dimensions.
-    const label = this.template === "classic" ? 0 : this.labelLines(view, 1, 1).length;
+    // At the scales known (while placing), the label it will have; else a loose view may be at a scale of its own.
+    const loose = (viewKind(view) === "model" || viewKind(view) === "projected") && !this.gridCache?.has(view.id);
+    const label = this.template === "classic" ? 0 : k !== undefined && sheetScale !== undefined ? this.labelLines(view, k, sheetScale).length : this.labelLines(view, 1, loose ? 2 : 1).length;
     if (label) pad[1] += 5 + label * TEXT.title * 0.95;
     return pad;
   }
@@ -588,21 +666,36 @@ class Composer {
     return loose ? looseScale : sheetScale;
   }
 
+  private gridCache: Map<string, Vec2> | null = null;
+
   private layout(blocked: Box[]): { scale: number; views: ComposedView[] } {
     const fixed = parseScale(this.s.scale);
     const grid = this.grid();
+    this.gridCache = grid;
     const loose = this.s.views.filter((view) => !view.at && !grid.has(view.id));
     const candidates = fixed ? [fixed] : STANDARD_SCALES.map((s) => parseScale(s)!);
     if (fixed) return { scale: fixed, views: this.place(fixed, fixed, grid, loose) };
     // Iso views placed on their own may go a step or two smaller to fit; a detail is never smaller than its parent.
     const shrinkable = loose.some((v) => viewKind(v) === "model" || viewKind(v) === "projected");
+    // The views' group starts at the frame's top left, or beside or below a table that holds that corner.
+    const top = this.frame.max[1] - INSET;
+    const left = this.frame.min[0] + INSET;
+    const corner = blocked.filter((b) => b.max[1] >= this.frame.max[1] - 1 && b.min[0] <= this.frame.min[0] + 1);
+    const starts: Vec2[] = [[left, top], ...corner.flatMap((b): Vec2[] => [[b.max[0] + GAP, top], [left, b.min[1] - GAP]])];
+    // The loose column starts under whatever holds the top right corner (a revision block, a table).
+    const right = blocked.filter((b) => b.max[1] >= this.frame.max[1] - 1 && b.max[0] >= this.frame.max[0] - 1);
+    this.looseTop = Math.min(top, ...right.map((b) => b.min[1] - GAP));
     for (let i = 0; i < candidates.length; i++) {
       for (const step of shrinkable ? [0, 1, 2] : [0]) {
         const looseScale = candidates[Math.min(i + step, candidates.length - 1)];
-        const views = this.place(candidates[i], looseScale, grid, loose);
-        if (this.fits(views, blocked)) return { scale: candidates[i], views };
+        for (const start of starts) {
+          this.start = start;
+          const views = this.place(candidates[i], looseScale, grid, loose);
+          if (this.fits(views, blocked, candidates[i])) return { scale: candidates[i], views };
+        }
       }
     }
+    this.start = [left, top];
     // Nothing fits: the smallest scale, and the checks say what overlaps.
     const smallest = candidates[candidates.length - 1];
     return { scale: smallest, views: this.place(smallest, smallest, grid, loose) };
@@ -614,8 +707,8 @@ class Composer {
    * and every other view. A view the user placed is an obstacle, not judged:
    * where it is is theirs (the checks say if it overlaps).
    */
-  private fits(views: ComposedView[], blocked: Box[]): boolean {
-    const padded = views.filter((cv) => cv.box).map((cv) => ({ cv, box: grow(cv.box!, this.padding(this.here.get(cv.id)!)) }));
+  private fits(views: ComposedView[], blocked: Box[], scale: number): boolean {
+    const padded = views.filter((cv) => cv.box).map((cv) => ({ cv, box: grow(cv.box!, this.padding(this.here.get(cv.id)!, cv.scale, scale)) }));
     const auto = padded.filter((p) => p.cv.auto);
     const held = padded.filter((p) => !p.cv.auto).map((p) => p.cv.box!);
     for (const { box } of auto) {
@@ -625,6 +718,10 @@ class Composer {
     for (let i = 0; i < auto.length; i++) for (let j = i + 1; j < auto.length; j++) if (overlaps(auto[i].box, auto[j].box)) return false;
     return true;
   }
+
+  /** Where the projection's group of views starts (its top left), and the loose column's top. */
+  private start: Vec2 | null = null;
+  private looseTop: number | null = null;
 
   private place(scale: number, looseScale: number, grid: Map<string, Vec2>, loose: DrawingView[]): ComposedView[] {
     const out = new Map<string, ComposedView>();
@@ -669,7 +766,7 @@ class Composer {
       const ext = new Map<string, { half: Vec2; pad: [number, number, number, number]; k: number }>();
       for (const view of inGrid) {
         const k = own(view, scale);
-        ext.set(view.id, { half: this.extent(view, k).half, pad: this.padding(view), k });
+        ext.set(view.id, { half: this.extent(view, k).half, pad: this.padding(view, k, scale), k });
       }
       const cols = [...new Set(inGrid.map((view) => grid.get(view.id)![0]))].sort((a, b) => a - b);
       const rows = [...new Set(inGrid.map((view) => grid.get(view.id)![1]))].sort((a, b) => b - a); // top row first
@@ -683,13 +780,13 @@ class Composer {
       });
       // The group's top left corner sits at the frame's top left (below an ASME revision block on the right is fine).
       const colX: number[] = [];
-      let x = this.frame.min[0] + INSET;
+      let x = this.start?.[0] ?? this.frame.min[0] + INSET;
       colExt.forEach((e, i) => {
         colX[i] = x + e.left;
         x += e.left + e.right + GAP;
       });
       const rowY: number[] = [];
-      let y = this.frame.max[1] - INSET;
+      let y = this.start?.[1] ?? this.frame.max[1] - INSET;
       rowExt.forEach((e, i) => {
         rowY[i] = y - e.top;
         y -= e.top + e.bottom + GAP;
@@ -707,11 +804,11 @@ class Composer {
       this.lineUp(view, out);
     }
     // The rest down the right, from the top.
-    let top = this.frame.max[1] - INSET - (this.template === "ansi" && this.format?.revisionBlock ? this.format.revisionBlock.max[1] - this.format.revisionBlock.min[1] : 0);
+    let top = this.looseTop ?? this.frame.max[1] - INSET;
     for (const view of loose) {
       const k = this.scaleFor(view, scale, looseScale, true);
       const { half } = this.extent(view, k);
-      const pad = this.padding(view);
+      const pad = this.padding(view, k, scale);
       const at: Vec2 = [this.frame.max[0] - INSET - pad[2] - half[0], top - pad[3] - half[1]];
       out.set(view.id, make(view, k, at, true));
       top = at[1] - half[1] - pad[1] - GAP;
@@ -780,7 +877,7 @@ class Composer {
         if (cv.clip?.circle && Math.hypot(mid[0] - cv.clip.circle.c[0], mid[1] - cv.clip.circle.c[1]) > cv.clip.circle.r) continue;
         if (cv.clip?.poly && !insidePolygon(mid, cv.clip.poly)) continue;
         if (cv.breaks.some((b) => mid[b.axis] > b.from && mid[b.axis] < b.to)) continue;
-        const g = Math.round(150 + 100 * t.shade);
+        const g = Math.round(105 + 130 * t.shade);
         const hex = `#${[g, g, Math.min(255, g + 8)].map((x) => Math.min(255, x).toString(16).padStart(2, "0")).join("")}`;
         this.prims.push({ k: "area", loops: [t.pts.map((q) => this.toSheet(cv, q))], fill: hex, owner: cv.id });
       }
@@ -807,6 +904,8 @@ class Composer {
       this.emit(cv, wire ? [...visible, ...hidden] : visible, { w: edgeW, layer: "VISIBLE" });
     }
     if (view.threads !== false) this.threads(cv, view, pv);
+    // A broken-out section's boundary: a thin line where the material was broken away.
+    for (const b of view.brokenOut ?? []) this.emit(cv, [[...b.profile, b.profile[0]]], { w: LINE.thin, layer: "BREAK" });
     this.breakLines(cv);
     // A detail's boundary.
     if (cv.kind === "detail" && view.style !== "noBoundary") {
@@ -831,10 +930,14 @@ class Composer {
       const i = Math.max(0, order.indexOf(r.body));
       const angle = style.angle ?? (bodies.length > 1 || order.length > 1 ? BODY_ANGLES[i % BODY_ANGLES.length] : 45);
       // ISO 128-50: wider for a big face, never finer than 1.5 mm on paper.
-      const box = boxOf(r.loops.flat())!;
+      // One spacing for all of a body's cut faces: by the size of them together.
+      const box = boxOf(regions.filter((x) => x.body === r.body).flatMap((x) => x.loops.flat()))!;
       const big = Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1]) * cv.scale;
       const spacing = style.spacing ?? Math.min(4, Math.max(1.5, big / 22));
-      if (pattern === "solid") {
+      // A thin section (a tube's wall at a small scale, under about 1 mm on paper) is filled black, as ISO 128-50 allows.
+      const perimeter = r.loops.reduce((t, l) => t + l.reduce((u, q, i) => u + Math.hypot(q[0] - l[(i + 1) % l.length][0], q[1] - l[(i + 1) % l.length][1]), 0), 0);
+      const thickness = perimeter > 0 ? (2 * r.area) / perimeter : 0;
+      if (pattern === "solid" || (!style.pattern && thickness * cv.scale < 1)) {
         this.prims.push({ k: "area", loops: r.loops.map((l) => l.map((q) => this.toSheet(cv, q))), fill: "#000000", owner: cv.id });
         continue;
       }
@@ -1133,11 +1236,7 @@ class Composer {
     }
     const lines = this.labelLines(view, cv.scale, parseScale(this.s.scale) ?? sheetScale);
     // Under the view and whatever of its annotations hangs below it (its dimensions), across its width.
-    let bottom = cv.box.min[1];
-    for (const a of this.annotations.values()) {
-      if (a.view !== cv.id || !a.box || a.box.max[0] < cv.box.min[0] - 2 || a.box.min[0] > cv.box.max[0] + 2) continue;
-      if (a.box.min[1] < bottom && a.box.max[1] <= cv.box.min[1] + 1) bottom = a.box.min[1];
-    }
+    const bottom = cv.box.min[1] - this.dimsBelow(cv.id);
     lines.forEach((t, i) => {
       const size = i === 0 ? TEXT.title : TEXT.cell;
       const y = bottom - 5 - i * (TEXT.title * 0.95) - size * CAP;
@@ -1145,6 +1244,16 @@ class Composer {
       this.prims.push(p);
       this.labels.push(grow(primBox(p, textWidth)!, 1));
     });
+  }
+
+  /** How far under a view its dimensions reach, sheet mm. */
+  private dimsBelow(id: string): number {
+    let below = 0;
+    for (const p of this.dims.values()) {
+      if (p.a.view !== id || p.dir !== "h" || p.side > 0) continue;
+      below = Math.max(below, (p.a.offset !== undefined ? Math.abs(p.a.offset) : DIM_FIRST + DIM_STEP * p.stack) + TEXT.dimension * CAP);
+    }
+    return below;
   }
 
   /** The scale most views are drawn at. */

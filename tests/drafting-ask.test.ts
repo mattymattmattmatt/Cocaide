@@ -4,6 +4,7 @@
 // judged by the drawing checks, with one correction pass. Scripted model,
 // real kernel.
 
+import { viewSpecs } from "../src/drafting/specs";
 import { readFileSync } from "node:fs";
 import type Anthropic from "@anthropic-ai/sdk";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -37,7 +38,7 @@ const packetOf = (m: ScriptedModel) => JSON.parse(firstText(m).split("Context pa
 
 async function reads(doc: RawDocument, id: string) {
   const c = await kernel.check(doc);
-  const views = validateDocument(doc).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+  const views = viewSpecs(validateDocument(doc).drawing!);
   const sheet = composeSheet(doc, { measurements: c.measurements, geometry: await kernel.project(doc, views) })!;
   return sheet.annotations.find((a) => a.id === id);
 }
@@ -53,7 +54,7 @@ describe("a right-click on the sheet", () => {
   });
 
   it("gets the drawing's tools and nothing that edits the part", () => {
-    expect(toolsFor("edit", "view").map((t) => t.name)).toEqual(["escalate", "setAnnotation", "setView", "setSheet"]);
+    expect(toolsFor("edit", "view").map((t) => t.name)).toEqual(["escalate", "setAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
     expect(toolsFor("explain", "view").map((t) => t.name)).toEqual(["escalate"]);
     expect(toolsFor("edit", "feature").map((t) => t.name)).not.toContain("setAnnotation");
   });
@@ -163,10 +164,11 @@ describe("Phase L acceptance: the leg height from a right-click on the front vie
     const accepted = applyProposal(withProps.doc, r.proposal!);
     if (!accepted.ok) throw new Error(accepted.error);
     const c = await kernel.check(accepted.doc);
-    const views = validateDocument(accepted.doc).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+    const views = viewSpecs(validateDocument(accepted.doc).drawing!);
     const sheet = composeSheet(accepted.doc, { measurements: c.measurements, geometry: await kernel.project(accepted.doc, views) })!;
     const texts = sheet.prims.flatMap((p) => (p.k === "text" && p.owner === "titleBlock" ? [p.text] : []));
-    expect(texts).toEqual(expect.arrayContaining(["PART NO.", "TF-1200", "DESCRIPTION", "Table frame", "REV", "C"]));
+    // The ISO title block: the drawing number is the part number, the title its description.
+    expect(texts).toEqual(expect.arrayContaining(["DRAWING NO.", "TF-1200", "TITLE", "Table frame", "REV", "C"]));
   });
 
   it("answers a question about an annotation without tools that write", async () => {
@@ -214,7 +216,10 @@ describe("drawings over the agent session (MCP)", () => {
     expect(existsSync(pdf.result.file as string)).toBe(true);
     const svg = await s.call("exportDrawing", { format: "svg", file: "frame" });
     expect(read(svg.result.file as string, "utf8")).toContain(">860</text>");
-    expect((await s.call("exportDrawing", { format: "dxf" })).result).toMatchObject({ ok: false, error: 'exportDrawing: format must be "pdf" or "svg"' });
+    const dxf = await s.call("exportDrawing", { format: "dxf" });
+    expect(dxf.result).toMatchObject({ ok: true, file: join(dir, "table-frame-drawing.dxf") });
+    expect(read(dxf.result.file as string, "utf8")).toContain("VISIBLE");
+    expect((await s.call("exportDrawing", { format: "png" })).result).toMatchObject({ ok: false, error: 'exportDrawing: format must be "pdf", "svg" or "dxf"' });
     const final = s.text;
     s.close();
     // The log replays to the same document, the drawing included.

@@ -3,6 +3,7 @@
 // rebuild, the sheet composed from them, the drawing checks, and the PDF and
 // SVG exports. The browser half is e2e/drafting.spec.ts.
 
+import { viewSpecs } from "../src/drafting/specs";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,7 +42,7 @@ async function withDrawing(doc: RawDocument): Promise<RawDocument> {
 
 async function sheetOf(doc: RawDocument) {
   const c = await kernel.check(doc);
-  const views = validateDocument(doc).drawing!.views.map((v) => ({ id: v.id, look: v.look }));
+  const views = viewSpecs(validateDocument(doc).drawing!);
   const geometry = await kernel.project(doc, views);
   const sheet = composeSheet(doc, { measurements: c.measurements, geometry })!;
   return { sheet, checks: drawingChecks(sheet, doc, c.measurements, geometry), measurements: c.measurements };
@@ -88,26 +89,27 @@ describe("the drawing in the document", () => {
       ],
     };
     expect(validateDocument({ ...table, drawing: bad }).drawingErrors).toEqual([
-      'document: drawing.sheet.size: must be "A4", "A3", "A2", "A1", "A0" (got "B5")',
-      'document: drawing.sheet.scale: must be a scale like "1:10" (got "ten")',
-      'document: drawing.sheet.projection: must be "third" or "first" (got "second")',
-      'document: drawing.views[0].look: must be "front", "back", "top", "bottom", "left", "right", "iso" (got "side")',
-      'document: drawing.views[1].id: duplicate id "front": views and annotations share their ids',
-      "document: drawing.views[1].hidden: must be true or false (got \"yes\")",
-      'document: drawing.annotations[0].view: no view "nowhere" (views: front)',
-      'document: drawing.annotations[0].from: must be a node ("A"), a member end ("leg_a.start"), a hole ("hole_1") or a side of the view ("@left", "@right", "@top", "@bottom") (got "@middle")',
-      "document: drawing.annotations[1]: a dimension is either between two points (from, to) or along a member, not both",
-      "document: drawing.annotations[2].member: must name a member (got 3)",
-      'document: drawing.annotations[3].text: must be the note\'s text (got "")',
-      'document: drawing.annotations[4].table: must be "cutList" or "welds" (got "bom")',
-      'document: drawing.annotations[5].type: must be "dimension", "hole", "balloon", "weld", "table", "note" (got "arrow")',
+      // A Phase L drawing is read as one sheet: its errors are the sheet's.
+      'document: drawing.sheets[0].format.size: must be "A4", "A3", "A2", "A1", "A0", "ANSI A", "ANSI B", "ANSI C", "ANSI D", "ANSI E" (got "B5")',
+      'document: drawing.sheets[0].scale: must be a scale like "1:10" (got "ten")',
+      'document: drawing.sheets[0].projection: must be "third" or "first" (got "second")',
+      'document: drawing.sheets[0].views[1].id: duplicate id "front": views and annotations share their ids',
+      'document: drawing.sheets[0].views[0].look: must be "front", "back", "top", "bottom", "left", "right", "iso", "dimetric", "trimetric" (got "side")',
+      'document: drawing.sheets[0].views[1].hidden: must be true or false (got "yes"); a view\'s hidden edges are now display: "hidden"',
+      'document: drawing.sheets[0].annotations[0].view: no view "nowhere" (views: front)',
+      'document: drawing.sheets[0].annotations[0].from: must be a node ("A"), a member end ("leg_a.start"), a hole ("hole_1"), a side of the view ("@left", "@right", "@top", "@bottom") or a point of the view\'s geometry ("front:vextrude_1/l3.0", "front:chole_1/c0") (got "@middle")',
+      "document: drawing.sheets[0].annotations[1]: a dimension is either between two points (from, to) or along a member, not both",
+      "document: drawing.sheets[0].annotations[2].member: must name a member (got 3)",
+      'document: drawing.sheets[0].annotations[3].text: must be the note\'s text (got "")',
+      'document: drawing.sheets[0].annotations[4].table: must be "cutList" or "welds" (got "bom")',
+      'document: drawing.sheets[0].annotations[5].type: must be "dimension", "hole", "balloon", "weld", "table", "note", "centerMark", "centerline" (got "arrow")',
     ]);
   });
 
   it("refuses a dimension in an iso view: it shortens every length", () => {
     const iso = { ...drawing, annotations: [{ id: "d1", type: "dimension", view: "iso", from: "A", to: "B" }] };
     expect(validateDocument({ ...table, drawing: iso }).drawingErrors).toEqual([
-      "document: drawing.annotations[0].view: iso is an iso view, which shortens every length: dimension in a view that looks square at the part",
+      "document: drawing.sheets[0].annotations[0].view: iso is an iso view, which shortens every length: dimension in a view that looks square at the part",
     ]);
   });
 
@@ -121,11 +123,12 @@ describe("the drawing in the document", () => {
   it("sets the drawing, the sheet, a view and an annotation; a view takes its annotations with it", () => {
     let doc = run(table, { type: "setDrawing", drawing });
     doc = run(doc, { type: "setSheet", patch: { scale: "1:20", title: "Bench frame", number: null } });
-    expect((doc.drawing as { sheet: unknown }).sheet).toEqual({ size: "A3", projection: "third", scale: "1:20", title: "Bench frame" });
+    // The first edit writes the drawing as sheets: the Phase L sheet's fields are the first sheet's format (the classic template keeps its look).
+    expect((doc.drawing as { sheets: unknown[] }).sheets[0]).toMatchObject({ id: "sheet1", format: { size: "A3", template: "classic", title: "Bench frame" }, projection: "third", scale: "1:20" });
     doc = run(doc, { type: "setView", id: "top", view: { look: "top", hidden: true } }, { type: "setAnnotation", id: "b1", annotation: { type: "balloon", view: "top", member: "rail_front" } });
-    expect(validateDocument(doc).drawing!.views.map((v) => v.id)).toEqual(["front", "iso", "top"]);
+    expect(validateDocument(doc).drawing!.sheets[0].views.map((v) => v.id)).toEqual(["front", "iso", "top"]);
     doc = run(doc, { type: "setView", id: "top", view: null });
-    expect(validateDocument(doc).drawing!.annotations.map((a) => a.id)).toEqual(["d1"]);
+    expect(validateDocument(doc).drawing!.sheets[0].annotations.map((a) => a.id)).toEqual(["d1"]);
     expect(apply(doc, { type: "setView", id: "d1", view: { look: "top" } })).toEqual({ ok: false, error: 'setView: "d1" is an annotation\'s id' });
     expect(apply(doc, { type: "setAnnotation", id: "front", annotation: { type: "note", text: "x", at: [0, 0] } })).toEqual({ ok: false, error: 'setAnnotation: "front" is a view\'s id' });
     expect(apply(table, { type: "setView", id: "top", view: { look: "top" } })).toEqual({ ok: false, error: "setView: the part has no drawing; make one first (setDrawing)" });
@@ -145,7 +148,7 @@ describe("the drawing in the document", () => {
     });
     expect(apply(doc, { type: "setAnnotation", id: "d2", annotation: { type: "dimension", view: "front", from: "A", to: "A" } })).toEqual({
       ok: false,
-      error: "setAnnotation rejected: document: drawing.annotations[1]: runs from A to itself",
+      error: "setAnnotation rejected: document: drawing.sheets[0].annotations[1]: runs from A to itself",
     });
   });
 
@@ -163,7 +166,7 @@ describe("the drawing in the document", () => {
       },
     });
     doc = run(doc, { type: "renameNode", from: "A", to: "TOP_A" }, { type: "updateFeature", id: "leg_a", patch: { id: "post_a" } });
-    expect(validateDocument(doc).drawing!.annotations).toEqual([
+    expect(validateDocument(doc).drawing!.sheets[0].annotations).toEqual([
       { id: "d1", type: "dimension", view: "front", from: "TOP_A", to: "E" },
       { id: "d2", type: "dimension", view: "front", member: "post_a" },
       { id: "d3", type: "dimension", view: "front", from: "post_a.start", to: "@right" },
@@ -253,7 +256,7 @@ describe("Phase L acceptance: the table frame's drawing", () => {
   it("its balloons 1–3 sit on members of cut list items 1–3, and the cut list and title block are on it", async () => {
     const doc = await withDrawing(table);
     const { sheet } = await sheetOf(doc);
-    const balloons = validateDocument(doc).drawing!.annotations.filter((a) => a.type === "balloon");
+    const balloons = validateDocument(doc).drawing!.sheets[0].annotations.filter((a) => a.type === "balloon");
     const items = balloons.map((b) => said(sheet, b.id).item);
     expect(items).toEqual([1, 2, 3]);
     for (const b of balloons) {
@@ -270,12 +273,13 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     ])
       for (const cell of row) expect(words).toContain(cell);
     // The title block: the name, the material, the mass and the scale.
-    expect(words).toEqual(expect.arrayContaining(["table-frame", "steel (default)", "23.98 kg", "1:10", "A3", "2026-10-08", "THIRD ANGLE"]));
+    // The ISO title block (and the welded frame's general tolerance, ISO 13920).
+    expect(words).toEqual(expect.arrayContaining(["table-frame", "steel (default)", "23.98 kg", "1:10", "A3", "2026-10-08", "ISO 13920-BF", "1 / 1"]));
   });
 
   it("the checks fail when a balloon is deleted, and when a view is moved onto the title block", async () => {
     const doc = await withDrawing(table);
-    const b2 = validateDocument(doc).drawing!.annotations.filter((a) => a.type === "balloon")[1];
+    const b2 = validateDocument(doc).drawing!.sheets[0].annotations.filter((a) => a.type === "balloon")[1];
     const { checks: noBalloon } = await sheetOf(run(doc, { type: "setAnnotation", id: b2.id, annotation: null }));
     expect(failed(noBalloon)).toEqual(["Every cut list item has a balloon"]);
     expect(noBalloon.find((c) => !c.ok)!.actual).toBe("no balloon for item 2 (leg_a, leg_b, leg_c, leg_d)");
@@ -300,7 +304,7 @@ describe("Phase L acceptance: the table frame's drawing", () => {
       [2, "SHS 50x50x3", 850],
       [3, "SHS 50x50x3", 600],
     ]);
-    const balloons = validateDocument(doc).drawing!.annotations.filter((a) => a.type === "balloon");
+    const balloons = validateDocument(doc).drawing!.sheets[0].annotations.filter((a) => a.type === "balloon");
     for (const b of balloons) if (b.type === "balloon") expect(after.sheet.cutList.find((i) => i.item === said(after.sheet, b.id).item)!.members).toContain(b.member);
     expect(texts(after.sheet)).toContain("850");
     expect(failed(after.checks)).toEqual([]);
@@ -365,7 +369,8 @@ describe("a weldment's welds on the sheet", () => {
       ["front", "w1: fillet 3, 160 long, all round"],
       ["front", "w2: butt 3, 40 long"],
     ]);
-    expect(sheet.scaleText).toBe("1:10");
+    // The ISO title block is taller than Phase L's: with the cut list on it and the weld table beside it, 1:20 is what fits.
+    expect(sheet.scaleText).toBe("1:20");
     const weldTable = sheet.blocks.find((b) => b.id === "weld_table")!.box;
     // Along the bottom border, left of the title block; the cut list stays above it.
     expect(weldTable.max[0]).toBeCloseTo(sheet.titleBlock.min[0], 9);
@@ -373,7 +378,7 @@ describe("a weldment's welds on the sheet", () => {
     expect(texts(sheet)).toEqual(expect.arrayContaining(["WELDS", "w1", "leg_a + rail_front", "fillet", "all round", "w2", "butt"]));
     expect(failed(checks)).toEqual([]);
     expect(checks.find((c) => c.label === "Every weld has a symbol")!.actual).toBe("2 of 2");
-    const w2 = validateDocument(doc).drawing!.annotations.find((a) => a.type === "weld" && a.weld === "w2")!;
+    const w2 = validateDocument(doc).drawing!.sheets[0].annotations.find((a) => a.type === "weld" && a.weld === "w2")!;
     const { checks: without } = await sheetOf(run(doc, { type: "setAnnotation", id: w2.id, annotation: null }));
     expect(without.filter((c) => !c.ok).map((c) => [c.label, c.actual])).toEqual([["Every weld has a symbol", "no symbol for w2"]]);
   });
@@ -390,10 +395,16 @@ describe("a plate's drawing", () => {
       ["h4", "top", "Ø6.6 THRU"],
       ["d5", "top", "70"],
       ["d6", "top", "20"],
+      // The centre line along the hole, in the right view (the top view's hole has its callout's mark).
+      ["c7", "right", "centre line"],
     ]);
     expect(sheet.scaleText).toBe("2:1");
+    // The front view is a section through the hole (the plate has insides), hatched; the right view shows it hidden.
+    const front = sheet.views.find((v) => v.id === "front")!;
+    expect([front.kind, front.label]).toEqual(["section", "A"]);
+    expect(sheet.prims.some((p) => p.owner === "front" && p.layer === "HATCH")).toBe(true);
     expect(failed(checks)).toEqual([]);
-    expect(sheet.prims.some((p) => p.owner === "front" && p.k === "line" && p.dash)).toBe(true);
+    expect(sheet.prims.some((p) => p.owner === "right" && p.k === "line" && p.dash)).toBe(true);
   });
 
   it("fails the hole check when the callout goes, and the size check when a dimension does", async () => {
