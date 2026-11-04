@@ -104,7 +104,7 @@ export function OrientationPalette({ ctx, value, onPick }: { ctx: () => DrawingT
     const c = ctx();
     if (!c.project) return;
     c.project(thumbSpecs(camera) as never).then(
-      (g) => live && setPics(new Map(g.views.map((v) => [v.id.replace("__thumb_", ""), v]))),
+      (g) => live && setPics(new Map((g?.views ?? []).map((v) => [v.id.replace("__thumb_", ""), v]))),
       () => live && setPics(new Map()),
     );
     return () => {

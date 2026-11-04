@@ -106,7 +106,7 @@ export interface DrawingToolCtx {
   /** Redraws the overlay and the panel after the session changed. */
   refresh(): void;
   /** Projects views of the part (thumbnails for the orientation palette). */
-  project?(specs: ViewSpec[]): Promise<DrawingGeometry>;
+  project?(specs: ViewSpec[]): Promise<DrawingGeometry | null>;
   /** The 3D view's orientation as it was last left, model directions: eye (toward the viewer) and up. */
   camera?(): { eye: Vec3; up: Vec3 } | null;
   /** Sheet mm per screen pixel now. */

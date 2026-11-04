@@ -52,7 +52,7 @@ export interface WorkspaceProps {
   notice(text: string, kind?: "info" | "error"): void;
   ready: boolean;
   previewing: boolean;
-  project(specs: ViewSpec[]): Promise<DrawingGeometry>;
+  project(specs: ViewSpec[]): Promise<DrawingGeometry | null>;
   newDrawing(): void;
   balloonAll(): void;
   /** Opens the assistant on what was right-clicked. */
@@ -63,6 +63,8 @@ export interface WorkspaceProps {
   docName: string | null;
   /** The part's bodies (a view shows some of them). */
   bodies: string[];
+  /** The workspace is on screen (Drawing mode, no sketch open): its keys work only then. */
+  active: boolean;
 }
 
 export type Workspace = ReturnType<typeof useDrawingWorkspace>;
@@ -289,6 +291,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
   // ------------------------------------------------------------ the keyboard on the sheet
 
   useEffect(() => {
+    if (!p.active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       const t = e.target as HTMLElement;
@@ -547,7 +550,7 @@ export function DrawingCommandBar({ ws, undoLabel, redoLabel }: { ws: Workspace;
 
 // ------------------------------------------------------------ the workspace
 
-export function DrawingMain({ ws, empty }: { ws: Workspace; empty: ReactNode }) {
+export function DrawingMain({ ws, empty, help }: { ws: Workspace; empty: ReactNode; help: ReactNode }) {
   const { p } = ws;
   const sheet = p.sheet;
   const failed = useMemo(() => (sheet ? sheet.annotations.filter((a) => a.problem).map((a) => a.id) : []), [sheet]);
@@ -606,7 +609,7 @@ export function DrawingMain({ ws, empty }: { ws: Workspace; empty: ReactNode }) 
           </div>
         )}
       </section>
-      <aside className="side right drawing-right">{p.doc && p.drawing ? <DrawingPanel ws={ws} /> : <section className="panel">{empty && null}</section>}</aside>
+      <aside className="side right drawing-right">{p.doc && p.drawing ? <DrawingPanel ws={ws} /> : <section className="panel">{help}</section>}</aside>
       {ws.menu && <ContextMenu menu={ws.menu} onClose={() => ws.setMenu(null)} />}
       {ws.dialog && p.drawing && ws.sheetDoc && <WorkspaceDialog ws={ws} />}
     </>

@@ -121,6 +121,18 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Move it to the other side", prompt: "Move this to the other side of the view.", submit: true },
         { label: "Delete it", prompt: "Delete this annotation.", submit: true },
       ];
+    case "table":
+      return [
+        { label: "What does it list?", prompt: "What does this table list, and where does each column come from?", submit: true },
+        { label: "Add a column", prompt: "Add a column to this table for ", submit: false },
+        { label: "Sort it", prompt: "Sort this table by ", submit: false },
+      ];
+    case "sheet":
+      return [
+        { label: "Fill in the title block", prompt: "Fill in this sheet's title block from the part's properties.", submit: true },
+        { label: "Check this sheet", prompt: "Does this sheet pass its checks? Do not change anything.", submit: true },
+        { label: "Change the sheet size", prompt: "Change this sheet to ", submit: false },
+      ];
     case "drawing":
       return [
         { label: "Check the drawing", prompt: "Does this drawing pass its checks? Do not change anything.", submit: true },
@@ -162,7 +174,7 @@ Rules:
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
 - Weldments: a member's size must be one of the sizes in the packet's member.sizes; never invent one. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
-- Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>") or the drawing ("drawing"); the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
+- Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>"), one table ("table:<id>", setTable on it alone) or the drawing ("drawing", also from a sheet's tab or title block: the packet's sheet is that one); the packet's "selection" lists what else the user had selected on the sheet, which "this" and "these" may mean; the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
 - Look before you write: listFaces and listEdges give a selector for every face and edge (never guess one), facePlane a face's frame, getSketch what holds a sketch, measureBetween any distance or angle, screenshot a picture. reference("<op>") gives an op's full section before you first use it.
@@ -403,7 +415,7 @@ export const BATCH_STEP_TOOLS: readonly string[] = [...FEATURE_TOOLS, ...SKETCH_
 
 const PLAN_TOOL = anthropicTool("plan");
 
-const DRAWING_KINDS = new Set<string>(["view", "annotation", "drawing"]);
+const DRAWING_KINDS = new Set<string>(["view", "annotation", "table", "sheet", "drawing"]);
 
 /**
  * Explain-only asks get no write tools. An ask from the sheet gets the
@@ -418,7 +430,7 @@ export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; d
   if (mode === "explain") return wide?.part || !drawingTarget ? read : READ_TOOLS.filter((t) => t.name === "escalate");
   if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
   // The whole sheet (its title block among it) may change the part's properties; a view or an annotation may not.
-  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...(kind === "drawing" ? [SET_PROPERTIES, SET_CUT_LIST] : [])];
+  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...(kind === "drawing" || kind === "sheet" ? [SET_PROPERTIES, SET_CUT_LIST] : [])];
   return [...read, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS];
 }
 

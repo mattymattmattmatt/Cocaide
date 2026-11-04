@@ -128,13 +128,13 @@ export function dimensionLine(sheet: ComposedSheet, id: string): { dir: "h" | "v
     return "a";
   };
   const by = { h: lines.filter((l) => orient(l) === "h"), v: lines.filter((l) => orient(l) === "v"), a: lines.filter((l) => orient(l) === "a") };
-  let dir: "h" | "v" | "a";
+  let dir: "h" | "v";
   if (by.h.length === 1 && by.v.length !== 1) dir = "h";
   else if (by.v.length === 1 && by.h.length !== 1) dir = "v";
   else if (by.h.length && !by.v.length) dir = "h";
   else if (by.v.length && !by.h.length) dir = "v";
   else dir = by.h.length <= by.v.length ? "h" : "v";
-  const pick = dir === "a" || !by[dir].length ? lines.sort((x, y) => len(y) - len(x))[0] : by[dir][0];
+  const pick = by[dir].length ? by[dir][0] : [...lines].sort((x, y) => len(y) - len(x))[0];
   const [a, b] = pick.pts;
   return { dir: by[dir].length ? dir : "a", level: dir === "h" ? a[1] : a[0], a, b };
 }
@@ -179,7 +179,7 @@ function dimensionGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
   return [{ id: "offset", at: mid, ...(along ? { along } : {}), label: "Drag the dimension line nearer or further" }];
 }
 
-const atGrip = (a: Record<string, unknown>, ctx: KindCtx): Grip[] => (ctx.said?.at ? [{ id: "at", at: ctx.said.at, label: "Drag to move it" }] : []);
+const atGrip = (_a: Record<string, unknown>, ctx: KindCtx): Grip[] => (ctx.said?.at ? [{ id: "at", at: ctx.said.at, label: "Drag to move it" }] : []);
 
 // ------------------------------------------------------------- the kinds of today
 

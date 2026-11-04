@@ -34,7 +34,7 @@ export function DrawingPanel({ ws }: { ws: Workspace }) {
         <button className="fold" onClick={() => setChecksOpen((o) => !o)} aria-expanded={checksOpen} data-testid="drawing-checks-fold">
           <Icon name="chevronRight" size={11} className={checksOpen ? "open" : ""} />
           <h2>Checks</h2>
-          <span className={failing ? "badge bad" : "badge ok"}>{failing ? `${failing} to fix` : "all pass"}</span>
+          <span className={failing ? "check-badge bad" : "check-badge ok"}>{failing ? `${failing} to fix` : "all pass"}</span>
         </button>
       </div>
       <ul className="checks" data-testid="drawing-checks" hidden={!checksOpen}>

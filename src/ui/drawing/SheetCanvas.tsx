@@ -70,6 +70,8 @@ interface Drag {
   client: Vec2;
   moved: boolean;
   hit?: SheetHit | null;
+  /** What the drag moves: the hit, or the view of an annotation that follows its geometry (a centre mark). */
+  target?: SheetHit | null;
   grip?: Grip;
   /** The ids moving with the item, for the preview. */
   moving?: string[];
@@ -80,7 +82,7 @@ interface Drag {
 }
 
 export function SheetCanvas(props: SheetCanvasProps) {
-  const { sheet, sheetDoc, drawing, selection, failed, snap, session, showGrid } = props;
+  const { sheet, sheetDoc, selection, failed, snap, session, showGrid } = props;
   const host = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<[number, number]>([0, 0]);
   const [box, setBox] = useState<ViewBox>([0, 0, sheet.width, sheet.height]);
@@ -256,7 +258,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
     delta = snapped.delta;
     const blocked = [sheet.titleBlock, ...(sheet.revisionBlock ? [sheet.revisionBlock] : []), ...sheet.blocks.map((b) => b.box)];
     delta = keepOff(cv.box, delta, blocked, sheet.frame, 2, al.axis);
-    return { delta, guides: snapped.guides.filter((g) => Math.abs((g.axis === 0 ? cv.box!.min[0] : cv.box!.min[1]) + delta[g.axis] - g.at) >= -Infinity), refused };
+    return { delta, guides: snapped.guides, refused };
   };
 
   const dropView = (id: string, delta: Vec2) => {
@@ -312,8 +314,14 @@ export function SheetCanvas(props: SheetCanvasProps) {
     if (g) return set({ ...base, kind: "grip", hit: { kind: "annotation", id: g.id }, grip: g.grip, moving: [g.id] });
     const hit = hitAt(p);
     if (!hit || hit.kind === "titleBlock") return set({ ...base, kind: "box", hit, additive: e.shiftKey || e.ctrlKey || e.metaKey });
-    const moving = hit.kind === "view" ? movingWith(hit.id) : [hit.id];
-    set({ ...base, kind: "item", hit, moving, additive: e.shiftKey || e.ctrlKey || e.metaKey });
+    // An annotation that follows its geometry (a centre mark, a centre line) drags its view.
+    let target: SheetHit = hit;
+    if (hit.kind === "annotation") {
+      const a = sheetDoc.annotations.find((x) => x.id === hit.id) as { type: string; view?: string } | undefined;
+      if (a?.view && !annotationKind(a.type)?.move) target = { kind: "view", id: a.view };
+    }
+    const moving = target.kind === "view" ? movingWith(target.id) : [target.id];
+    set({ ...base, kind: "item", hit, target, moving, additive: e.shiftKey || e.ctrlKey || e.metaKey });
   };
   const set = (d: Drag | null) => {
     dragRef.current = d;
@@ -340,8 +348,13 @@ export function SheetCanvas(props: SheetCanvasProps) {
     if (!d.moved && Math.hypot(e.clientX - d.client[0], e.clientY - d.client[1]) < 4) return;
     d.moved = true;
     const raw: Vec2 = [pt.raw[0] - d.start[0], pt.raw[1] - d.start[1]];
-    if (d.kind === "item" && d.hit?.kind === "view") {
-      const m = viewMove(d.hit.id, raw, e.altKey);
+    if (d.kind === "item" && d.target?.kind === "view") {
+      if ((sheetDoc.views.find((v) => v.id === d.target!.id) as { locked?: boolean } | undefined)?.locked) {
+        d.delta = [0, 0];
+        d.refused = true;
+        return setDrag({ ...d });
+      }
+      const m = viewMove(d.target.id, raw, e.altKey);
       d.delta = m.delta;
       d.guides = m.guides;
       d.refused = m.refused;
@@ -384,16 +397,18 @@ export function SheetCanvas(props: SheetCanvasProps) {
       return props.onSelect(ids, d.additive ?? false);
     }
     const delta = d.delta ?? [0, 0];
-    if (!d.hit) return;
-    if (d.hit.kind === "view") {
+    const t = d.target ?? d.hit;
+    if (!t) return;
+    if (t.kind === "view") {
+      const v = sheetDoc.views.find((x) => x.id === t.id);
+      if ((v as { locked?: boolean } | undefined)?.locked) return props.onNotice(`${t.id} is locked in place: unlock it in its menu to move it.`);
       if (d.refused && Math.hypot(delta[0], delta[1]) < 1e-6) {
-        const v = sheetDoc.views.find((x) => x.id === d.hit!.id);
-        return props.onNotice(`${d.hit.id} stays lined up with ${v?.parent ?? "its parent"}: it slides ${alignmentOf(v!, sheetDoc.views, sheetDoc.projection).axis === 0 ? "left and right" : "up and down"} only. Break alignment in its menu to place it freely.`);
+        return props.onNotice(`${t.id} stays lined up with ${v?.parent ?? "its parent"}: it slides ${alignmentOf(v!, sheetDoc.views, sheetDoc.projection).axis === 0 ? "left and right" : "up and down"} only. Break alignment in its menu to place it freely.`);
       }
-      return dropView(d.hit.id, delta);
+      return dropView(t.id, delta);
     }
-    if (d.hit.kind === "table") return dropTable(d.hit.id, delta);
-    return dropAnnotation(d.hit.id, delta, d.kind === "grip" ? d.grip : undefined);
+    if (t.kind === "table") return dropTable(t.id, delta);
+    return dropAnnotation(t.id, delta, d.kind === "grip" ? d.grip : undefined);
   };
 
   const onWheel = (e: React.WheelEvent) => {
