@@ -50,6 +50,8 @@ export const ANNOTATION_SCHEMAS: Record<AnnotationType, FieldSchema[]> = {
     { key: "precision", label: "Decimals", kind: "integer" },
     { key: "prefix", label: "Prefix", kind: "richText", help: 'before the value: "SR", "<MOD-DIAM>"' },
     { key: "suffix", label: "Suffix", kind: "richText", help: 'after it: "THRU"' },
+    { key: "below", label: "Text below", kind: "richText", help: 'under the dimension line: "2 PLACES"' },
+    { key: "override", label: "Override value", kind: "text", help: "written instead of the measured value: it no longer follows the model" },
     { key: "count", label: "Count (n×)", kind: "integer" },
     { key: "typ", label: "TYP", kind: "boolean" },
     { key: "inspection", label: "Inspection", kind: "boolean", help: "in an oval" },

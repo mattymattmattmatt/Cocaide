@@ -427,6 +427,10 @@ export interface DimensionAnnotation {
   prefix?: string;
   /** After it ("THRU", "TYP"). */
   suffix?: string;
+  /** A line of text under the dimension line ("2 PLACES", "AFTER PLATING"). */
+  below?: string;
+  /** Text written instead of the measured value: the dimension no longer follows the model (the editor and the checks warn). */
+  override?: string;
   /** How many alike features it stands for: "4×" before it. */
   count?: number;
   /** "TYP" after it: the same size wherever it recurs. */
@@ -883,7 +887,7 @@ export const ANNOTATION_TYPES = [
   "sketch",
 ] as const;
 export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
-  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "count", "typ", "inspection", "tolerance", "precision", "dual", "last"],
+  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "below", "override", "count", "typ", "inspection", "tolerance", "precision", "dual", "last"],
   hole: ["id", "type", "view", "hole", "on", "at", "count", "pattern", "prefix", "suffix", "tolerance"],
   balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow"],
   weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more"],

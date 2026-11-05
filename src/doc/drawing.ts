@@ -635,6 +635,8 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
       oneOf("arrows", ARROW_PLACES);
       str("prefix", 40);
       str("suffix", 80);
+      str("below", 80);
+      str("override", 40);
       count("count");
       if (a.precision !== undefined && (!Number.isInteger(a.precision) || (a.precision as number) < 0 || (a.precision as number) > 6)) c.fail(`${at}.precision`, `is decimal places, 0 to 6 (got ${describe(a.precision)})`);
       tolerance();

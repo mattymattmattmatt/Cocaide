@@ -64,7 +64,7 @@ export interface ViewInfo {
 /** What a dimension measures, in its view's mm. */
 export type Measure =
   | { kind: "linear"; p1: Vec2; p2: Vec2; dir: "h" | "v" | "a"; value: number; sides: [boolean, boolean]; near?: Side; symbol?: string }
-  | { kind: "angular"; v: Vec2; d1: Vec2; d2: Vec2; r1: number; r2: number; value: number }
+  | { kind: "angular"; v: Vec2; d1: Vec2; d2: Vec2; r1: number; r2: number; value: number; n1?: number; n2?: number }
   | { kind: "radial"; c: Vec2; r: number; value: number; diameter: boolean; arc?: [number, number]; tip?: Vec2 }
   | { kind: "arc"; c: Vec2; r: number; a0: number; a1: number; value: number }
   | { kind: "note"; tip: Vec2; dir: Vec2; text: string; value: number }
@@ -335,6 +335,16 @@ function angularFromRefs(v: ViewInfo, points: PointContext | undefined, refs: st
     const far = (l: { a: Vec2; b: Vec2 }) => (dist(l.a, vertex) > dist(l.b, vertex) ? l.a : l.b);
     e1 = far(A);
     e2 = far(B);
+    // Where each edge begins along its ray (0 when it runs from the corner; negative when it runs through it).
+    const nearOf = (l: { a: Vec2; b: Vec2 }, e: Vec2) => {
+      const d = unit(sub(e, vertex));
+      return Math.min(dot(sub(l.a, vertex), d), dot(sub(l.b, vertex), d));
+    };
+    const u1 = unit(sub(e1, vertex));
+    const u2 = unit(sub(e2, vertex));
+    let angle = deg(Math.acos(Math.max(-1, Math.min(1, dot(u1, u2)))));
+    if (major) angle = 360 - angle;
+    return { kind: "angular", v: vertex, d1: u1, d2: u2, r1: dist(e1, vertex), r2: dist(e2, vertex), value: angle, n1: nearOf(A, e1), n2: nearOf(B, e2) };
   } else if (refs.length === 3) {
     const qs = refs.map((r) => viewPoint(v, r, points));
     const bad = qs.find((q) => "problem" in q);
@@ -375,7 +385,9 @@ export function sizeText(value: number, places: number | undefined, units: "mm" 
 export function dimensionLabel(a: DimensionAnnotation, value: number, symbol: string, style: DraftStyle, drawing: Drawing, opts: { angle?: boolean; side?: "hole" | "shaft"; size?: number } = {}): { label: Label; text: string } {
   const places = placesOf(a, drawing);
   const units = drawing.units ?? "mm";
-  const num = opts.angle ? `${sizeText(value, places ?? (Number.isInteger(Math.round(value * 10) / 10) ? 0 : 1), "mm", true)}°` : sizeText(value, places, units);
+  const measured = opts.angle ? `${sizeText(value, places ?? (Number.isInteger(Math.round(value * 10) / 10) ? 0 : 1), "mm", true)}°` : sizeText(value, places, units);
+  // An overridden value is written as typed (the editor warns that it no longer follows the model).
+  const num = a.override?.trim() ? a.override.trim() : measured;
   const head = `${a.count && a.count > 1 ? `${a.count}× ` : ""}${a.prefix ? `${a.prefix}` : ""}${symbol}`;
   const size = opts.size ?? style.font;
   const t = toleranceText(value, `${head}${num}`, a.tolerance, { ...(opts.side ? { side: opts.side } : {}), ...(places !== undefined ? { places } : {}) });
@@ -395,7 +407,7 @@ export function dimensionLabel(a: DimensionAnnotation, value: number, symbol: st
     parts,
     size,
     ...(a.tolerance?.kind === "basic" ? { frame: "box" as const } : a.tolerance?.kind === "reference" ? { frame: "brackets" as const } : a.inspection ? { frame: "oval" as const } : {}),
-    ...(other ? { below: parseRich(other) } : {}),
+    ...(other || a.below ? { below: parseRich([other, a.below].filter(Boolean).join(" ")) } : {}),
   };
   let text = t.size ?? `${t.stack![1]}–${t.stack![0]}`;
   if (t.size !== null && t.stack) text += ` ${t.stack[0]}/${t.stack[1]}`;
@@ -405,6 +417,7 @@ export function dimensionLabel(a: DimensionAnnotation, value: number, symbol: st
   if (t.frame === "brackets") text = `(${text})`;
   if (t.frame === "box") text = `[${text}]`;
   if (other) text += ` ${other}`;
+  if (a.below) text += ` / ${a.below}`;
   return { label, text };
 }
 
@@ -798,8 +811,34 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
   // Sheet directions of the rays (a square view keeps its directions; breaks aside).
   const e1 = toSheet(add(m.v, mul(m.d1, m.r1)));
   const e2 = toSheet(add(m.v, mul(m.d2, m.r2)));
-  const d1 = unit(sub(e1, v));
-  const d2 = unit(sub(e2, v));
+  let d1 = unit(sub(e1, v));
+  let d2 = unit(sub(e2, v));
+  // Each edge's extent along its ray, sheet mm: the arc past it gets an extension line out to it.
+  const k = dist(e1, v) / Math.max(m.r1, 1e-9);
+  let ext1: [number, number] = [(m.n1 ?? 0) * k, dist(e1, v)];
+  let ext2: [number, number] = [(m.n2 ?? 0) * k, dist(e2, v)];
+  let value = m.value;
+  if (at && !a.major && dist(at, v) > 1e-6) {
+    // Dragged: the angle of the quadrant the text is in (two lines make four: the angle or its supplement).
+    const w = unit(sub(at, v));
+    const within = (p: Vec2, q: Vec2) => {
+      const c = p[0] * q[1] - p[1] * q[0];
+      const s1 = p[0] * w[1] - p[1] * w[0];
+      const s2 = w[0] * q[1] - w[1] * q[0];
+      return c >= 0 ? s1 >= -1e-9 && s2 >= -1e-9 : s1 <= 1e-9 && s2 <= 1e-9;
+    };
+    for (const [f1, f2] of [[1, 1], [-1, 1], [1, -1], [-1, -1]] as const) {
+      const p = mul(d1, f1);
+      const q = mul(d2, f2);
+      if (dot(p, w) + dot(q, w) < 0 || !within(p, q)) continue;
+      if (f1 < 0) ext1 = [-ext1[1], -ext1[0]];
+      if (f2 < 0) ext2 = [-ext2[1], -ext2[0]];
+      d1 = p;
+      d2 = q;
+      value = deg(Math.acos(Math.max(-1, Math.min(1, dot(p, q)))));
+      break;
+    }
+  }
   let a1 = Math.atan2(d1[1], d1[0]);
   let a2 = Math.atan2(d2[1], d2[0]);
   // Counter-clockwise from a1 to a2 over the minor angle, or the major one.
@@ -811,7 +850,7 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
   }
   const minLen = Math.min(dist(e1, v), dist(e2, v));
   const R = at ? Math.max(4, dist(at, v)) : Math.max(12, Math.min(28, minLen * 0.75));
-  const { label, text } = dimensionLabel(a, m.value, "", style, ctx.drawing, { angle: true });
+  const { label, text } = dimensionLabel(a, value, "", style, ctx.drawing, { angle: true });
   const prims: Prim[] = [];
   const arcPts: Vec2[] = [];
   const n = 32;
@@ -826,13 +865,16 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
   const t2: Vec2 = [-Math.sin(a2), Math.cos(a2)];
   prims.push(...arrowHead(p1, mul(t1, -1), style), ...arrowHead(p2, t2, style));
   // Extension lines along the rays when the arc is past an edge's end.
-  for (const [e, d, p] of [
-    [e1, d1, p1],
-    [e2, d2, p2],
+  // (along the rays: past an edge's far end, or short of its near one)
+  for (const [ext, p] of [
+    [ext1, p1],
+    [ext2, p2],
   ] as const) {
-    const reach = dist(e, v);
-    const dd = Math.abs(dot(sub(p, v), d));
-    if (dd > reach + style.gap) prims.push({ k: "line", pts: [add(e, mul(d, style.gap)), add(p, mul(d, style.over))], w: style.thin });
+    const d = unit(sub(p, v));
+    const lo = Math.min(ext[0], ext[1]);
+    const hi = Math.max(ext[0], ext[1]);
+    if (R > hi + style.gap) prims.push({ k: "line", pts: [add(v, mul(d, hi + style.gap)), add(v, mul(d, R + style.over))], w: style.thin });
+    else if (R < lo - style.gap) prims.push({ k: "line", pts: [add(v, mul(d, lo - style.gap)), add(v, mul(d, Math.max(0, R - style.over)))], w: style.thin });
   }
   const mid = a1 + span / 2;
   const mu: Vec2 = [Math.cos(mid), Math.sin(mid)];
@@ -841,7 +883,7 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
   // Horizontal text centred outside the arc's middle (ISO 129 allows it; it reads at any angle).
   const lp = labelPrims(label, [textAt[0], textAt[1] - (lm.up - lm.down) / 2 + (mu[1] < 0 ? -lm.up * 0.4 : 0)], "middle", 0, style);
   prims.push(...lp.prims);
-  return { prims, textBox: lp.box, text, value: m.value, at: textAt, grips: [{ name: "text", at: textAt, field: "at" }], place: { pts: [fromCentre(cv, p1), fromCentre(cv, p2), fromCentre(cv, arcPts[n >> 1])], text } };
+  return { prims, textBox: lp.box, text, value, at: textAt, grips: [{ name: "text", at: textAt, field: "at" }], place: { pts: [fromCentre(cv, p1), fromCentre(cv, p2), fromCentre(cv, arcPts[n >> 1])], text } };
 }
 
 /** An arc's length: an arc concentric with it, extension lines out to it, "⌒" before the value. */
