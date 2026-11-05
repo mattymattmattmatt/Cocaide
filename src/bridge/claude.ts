@@ -113,7 +113,7 @@ export async function claudeStatus(c: ClaudeCommand | null): Promise<ClaudeStatu
   if (!c) return { installed: false, loggedIn: null, problem: `Claude Code (the claude command) was not found. ${INSTALL_FIX}` };
   const v = await runBrief(c, ["--version"]);
   if (v.code !== 0) return { installed: false, loggedIn: null, problem: `claude --version failed: ${(v.err || v.out).trim().slice(0, 300) || `exit ${v.code}`}. ${INSTALL_FIX}` };
-  const version = v.out.trim().split(/\r?\n/)[0];
+  const version = v.out.trim().split(/\r?\n/)[0].replace(/\s*\(Claude Code\)$/, "");
   const a = await runBrief(c, ["auth", "status"]);
   if (a.code === null && !a.out) return { installed: true, version, loggedIn: null };
   try {
