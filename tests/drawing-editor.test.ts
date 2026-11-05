@@ -149,7 +149,7 @@ describe("the tool registry", () => {
     expect(layout.map((e) => (e.kind === "tool" ? e.tool.id : e.slot.id))).toEqual(TOOL_SLOTS.filter((s) => s.tab === "layout").map((s) => s.id));
     expect(layout.find((e) => e.kind === "coming")).toMatchObject({ slot: { id: "view.alternate" } });
     const annotation = toolGroups("annotation").flat();
-    expect(annotation.filter((e) => e.kind === "coming").map((e) => (e.kind === "coming" ? e.slot.id : ""))).toEqual(["annotation.modelItems", "annotation.surface", "annotation.gdt", "annotation.datum"]);
+    expect(annotation.filter((e) => e.kind === "coming").map((e) => (e.kind === "coming" ? e.slot.id : ""))).toEqual([]);
     expect(toolForKey("d")?.id).toBe("annotation.smartDimension");
   });
 
@@ -157,7 +157,7 @@ describe("the tool registry", () => {
     registerDrawingTool({ id: "annotation.gdt", tab: "annotation", group: "symbols", label: "GD&T", icon: "grid", title: "frames", run: () => undefined });
     registerDrawingTool({ id: "annotation.extra", tab: "annotation", group: "symbols", label: "Extra", icon: "grid", title: "more", key: "Q", run: () => undefined });
     const symbols = toolGroups("annotation").find((g) => g.some((e) => e.kind === "tool" && e.tool.id === "annotation.gdt"))!;
-    expect(symbols.map((e) => (e.kind === "tool" ? `tool:${e.tool.id}` : `coming:${e.slot.id}`))).toEqual(["coming:annotation.surface", "tool:annotation.weld", "tool:annotation.gdt", "coming:annotation.datum", "tool:annotation.extra"]);
+    expect(symbols.map((e) => (e.kind === "tool" ? `tool:${e.tool.id}` : `coming:${e.slot.id}`))).toEqual(["tool:annotation.surface", "tool:annotation.weld", "tool:annotation.gdt", "tool:annotation.datum", "tool:annotation.datumTarget", "tool:annotation.extra"]);
     expect(toolForKey("q")?.id).toBe("annotation.extra");
     unregisterDrawingTool("annotation.gdt");
     unregisterDrawingTool("annotation.extra");

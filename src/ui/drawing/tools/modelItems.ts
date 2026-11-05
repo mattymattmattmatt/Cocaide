@@ -92,7 +92,8 @@ export function modelItems(doc: RawDocument, sheet: ComposedSheet, existing: Ann
   const addRadial = (feature: string, r: number, kind: "diameter" | "radius", what: string, typ = false) => {
     const key = `${kind === "radius" ? "R" : "Ø"}${Math.round((kind === "radius" ? r : 2 * r) * 1000) / 1000}`;
     if (radialTaken(`${feature}|${key}`) || radialTaken(key)) return;
-    const hit = find((e) => e.feature === feature && endOn(e) && near(radiusOf(e), r, 0.01));
+    // The feature's own circle; else one of that size another feature took over (a chamfered rim, a hole through two extrusions).
+    const hit = find((e) => e.feature === feature && endOn(e) && near(radiusOf(e), r, 0.01)) ?? find((e) => endOn(e) && near(radiusOf(e), r, 0.01));
     if (!hit) return missed.push(`${feature}: ${what}`);
     radial.add(`${feature}|${key}`);
     usedRefs.add(hit.e.key);
