@@ -251,7 +251,7 @@ describe("editing", () => {
     const ids = cmds.map((c) => (c as { id: string }).id);
     expect(ids).toContain("d2");
     expect(ids).not.toContain("d1");
-    expect((cmds[0] as { patch: { last: { pts: number[][]; text: string } } }).patch.last.pts.length).toBeGreaterThan(1);
+    expect((cmds[0] as unknown as { patch: { last: { pts: number[][]; text: string } } }).patch.last.pts.length).toBeGreaterThan(1);
     const doc = run(d.doc, ...cmds);
     const again = await compose(doc);
     // Only the one the first edit left out is still to remember.
