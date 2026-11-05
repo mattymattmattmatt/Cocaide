@@ -177,7 +177,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
         return v ? { centre: v.centre, box: v.box, scale: v.scale, origin: v.origin } : null;
       },
       snap: (x: number, y: number) => (snap ? snapAt(snap, [x, y], 2) : null),
-      targets: (view: string, kind?: string) => (snap?.targets ?? []).filter((t) => t.view === view && (!kind || t.kind === kind)).map((t) => ({ ref: t.ref, kind: t.kind, at: t.at, feature: t.feature, label: t.label, visible: t.visible })),
+      targets: (view: string, kind?: string) => (snap?.targets ?? []).filter((t) => t.view === view && (!kind || t.kind === kind)).map((t) => ({ ref: t.ref, kind: t.kind, at: t.at, feature: t.feature, label: t.label, visible: t.visible, circle: t.circle, pts: t.pts, body: t.body })),
       table: (id: string) => sheet.blocks.find((b) => b.id === id)?.box ?? null,
       titleBlock: () => sheet.titleBlock,
     };

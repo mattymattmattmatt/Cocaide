@@ -271,7 +271,7 @@ function DimensionPanel({ a, said, write, env }: KindPanelProps) {
   const symbol = kind === "diameter" ? "Ø" : kind === "radius" ? "R" : "";
   const value = said?.value;
   const places = d.precision ?? env.drawing.precision;
-  const shown = value === undefined ? "—" : `${symbol}${angle ? `${Math.round(value * 100) / 100}°` : value.toFixed(places ?? (Number.isInteger(Math.round(value * 1000) / 1000) ? 0 : 2))}`;
+  const shown = value === undefined ? "—" : `${symbol}${angle ? `${Math.round(value * 100) / 100}°` : (places !== undefined ? value.toFixed(places) : String(Math.round(value * 1000) / 1000))}`;
   const favs = [...BUILT_IN_FAVOURITES, ...loadFavourites()];
   const put = (patch: Record<string, unknown>) => setMsg(write(patch) ?? "");
   const tolKind = d.tolerance?.kind;
