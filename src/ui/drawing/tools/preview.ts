@@ -2,16 +2,19 @@
 // engine lays it out in the context the sheet was composed in (its views,
 // its data, what is already where), so the preview that follows the pointer
 // is exactly what OK will draw: the same arrowheads, text, tolerance stack.
+// `standard` lays it out to the other standard (the weld builder's ISO/AWS
+// preview) without changing the drawing.
 
 import type { Annotation } from "../../../doc/types";
-import { layoutAnnotation, measureDimension, type AnnotationLayout } from "../../../drafting/annotate";
+import { draftStyle, layoutAnnotation, measureDimension, type AnnotationLayout } from "../../../drafting/annotate";
 import { LAYOUT_CONTEXT, type ComposedSheet } from "../../../drafting/compose";
 
 /** The annotation as it would be drawn on the sheet, or null when the sheet has no layout context (or it can't be drawn: `problem`). */
-export function previewAnnotation(sheet: ComposedSheet | null, a: Annotation): AnnotationLayout | null {
+export function previewAnnotation(sheet: ComposedSheet | null, a: Annotation, opts: { standard?: "ISO" | "ASME" } = {}): AnnotationLayout | null {
   if (!sheet) return null;
-  const ctx = LAYOUT_CONTEXT.get(sheet);
-  if (!ctx) return null;
+  const base = LAYOUT_CONTEXT.get(sheet);
+  if (!base) return null;
+  const ctx = opts.standard && opts.standard !== (base.drawing.standard ?? "ISO") ? { ...base, style: draftStyle(opts.standard, sheet.template), drawing: { ...base.drawing, standard: opts.standard } } : base;
   try {
     if (a.type === "dimension") {
       const cv = sheet.views.find((v) => v.id === a.view);
