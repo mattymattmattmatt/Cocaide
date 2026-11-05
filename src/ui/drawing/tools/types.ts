@@ -15,7 +15,7 @@ import type { DrawingGeometry } from "../../../ask/kernel";
 import type { Command, RawDocument } from "../../../doc/commands";
 import type { Drawing, DrawingSheet, Vec2, Vec3 } from "../../../doc/types";
 import type { ComposedSheet } from "../../../drafting/compose";
-import type { Box } from "../../../drafting/sheet";
+import type { Box, Prim } from "../../../drafting/sheet";
 import type { ViewSpec } from "../../../kernel/drawingViews";
 import type { Measurements } from "../../../kernel/measure";
 import type { IconName } from "../../icons";
@@ -47,7 +47,9 @@ export type OverlayShape =
   | { k: "dot"; at: Vec2; tone?: Tone }
   | { k: "label"; at: Vec2; text: string; tone?: Tone }
   /** A view or annotation drawn moved by delta (its group on the sheet, translated): a preview of a move. */
-  | { k: "move"; id: string; delta: Vec2 };
+  | { k: "move"; id: string; delta: Vec2 }
+  /** Sheet primitives as the engine lays them out (a tool's annotation before it is kept), drawn in the tone at their own weights. */
+  | { k: "prims"; prims: Prim[]; tone?: Tone };
 export type Tone = "accent" | "preview" | "warn" | "muted";
 
 /** A drawing tool's open session. Every method reads the latest context through the getter it was made with. */
@@ -113,6 +115,8 @@ export interface DrawingToolCtx {
   mmPerPx(): number;
   /** Ends the session (after OK or Cancel). */
   end(): void;
+  /** Opens a session made outside the toolbar (the format painter from a menu); cancels the one open. */
+  startSession?(s: DrawingSession): void;
   /** Opens a dialog of the workspace (insert table, sheet format, drawing properties, title block, export). */
   dialog(name: DrawingDialog, arg?: string): void;
   /** Whole-drawing actions App owns: New drawing, Balloon every item. */

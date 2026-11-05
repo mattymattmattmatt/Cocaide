@@ -10,8 +10,11 @@ import { STANDARD_SCALES } from "../../../doc/drawing";
 import { DIMENSION_DIRECTIONS, OUTLINE_SIDES, type Vec2 } from "../../../doc/types";
 import { validateDocument } from "../../../doc/validate";
 import type { ComposedAnnotation, ComposedSheet } from "../../../drafting/compose";
+import type { ReactNode } from "react";
+import type { MenuEntry } from "../../ContextMenu";
 import type { IconName } from "../../icons";
 import { tenth } from "../align";
+import type { DrawingToolCtx } from "./types";
 import type { Choice, PropSchema, SchemaEnv } from "./schema";
 
 /** A handle on a selected annotation: dragging it changes one thing (a dimension line's distance). */
@@ -22,6 +25,8 @@ export interface Grip {
   /** It moves along this sheet direction only (unit), or anywhere. */
   along?: Vec2;
   label: string;
+  /** A click on it (no drag) acts: dragGrip is called with no movement (an arrowhead flips the arrows). */
+  click?: boolean;
 }
 
 /** What a kind's drag and grips may read: the sheet as composed, and the annotation as composed. */
@@ -45,6 +50,20 @@ export interface AnnotationKindDef {
   paste?(a: Record<string, unknown>, offset: Vec2, ctx: KindCtx): Record<string, unknown>;
   /** The prefix of a new one's id ("d" → d4). */
   prefix: string;
+  /** Its own property panel, drawn above the schema's fields (which then fold under "All properties"). */
+  panel?(p: KindPanelProps): ReactNode;
+  /** Its entries in the right-click menu, before Copy. */
+  menu?(a: Record<string, unknown>, ctx: DrawingToolCtx, said?: ComposedAnnotation): MenuEntry[];
+}
+
+/** What a kind's own panel is given: the annotation as stored and as composed, and how to change it. */
+export interface KindPanelProps {
+  a: Record<string, unknown>;
+  said?: ComposedAnnotation;
+  env: SchemaEnv;
+  /** A patch (null removes a key), one undo step; the error when refused. */
+  write(patch: Record<string, unknown>): string | null;
+  ctx: () => DrawingToolCtx;
 }
 
 const kinds = new Map<string, AnnotationKindDef>();

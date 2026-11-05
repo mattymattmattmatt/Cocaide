@@ -404,20 +404,23 @@ function AnnotationPanel({ ws, a }: { ws: Workspace; a: Record<string, unknown> 
       <p className={said?.problem ? "bad" : "muted"} data-testid="prop-annotation-says">
         {said?.problem ? `⚠ ${said.problem}` : said?.text ? `Reads: ${said.text}` : ""}
       </p>
+      {k?.panel?.({ a, said, env, write, ctx: ws.ctx })}
       {k ? (
-        <SchemaForm
-          schema={k.schema}
-          value={a}
-          env={env}
-          prefix={`prop-${String(a.type)}`}
-          onPatch={write}
-          armed={ws.session?.tool === "pick.field" ? "" : null}
-          onArm={(f) => {
-            if (!f) return;
-            const s = new FieldPick(ws.ctx, a, f, write);
-            ws.setSessionDirect(s);
-          }}
-        />
+        <KindForm folded={!!k.panel}>
+          <SchemaForm
+            schema={k.schema}
+            value={a}
+            env={env}
+            prefix={`prop-${String(a.type)}`}
+            onPatch={write}
+            armed={ws.session?.tool === "pick.field" ? "" : null}
+            onArm={(f) => {
+              if (!f) return;
+              const s = new FieldPick(ws.ctx, a, f, write);
+              ws.setSessionDirect(s);
+            }}
+          />
+        </KindForm>
       ) : (
         <p className="muted small">This kind of annotation has no panel yet: edit it in the document or ask the assistant.</p>
       )}
@@ -432,6 +435,17 @@ function AnnotationPanel({ ws, a }: { ws: Workspace; a: Record<string, unknown> 
         </button>
       </div>
     </div>
+  );
+}
+
+/** The schema's fields: as they are, or folded under "All properties" below a kind's own panel. */
+function KindForm({ folded, children }: { folded: boolean; children: ReactNode }) {
+  if (!folded) return <>{children}</>;
+  return (
+    <details className="all-props" data-testid="prop-all">
+      <summary>All properties</summary>
+      {children}
+    </details>
   );
 }
 
