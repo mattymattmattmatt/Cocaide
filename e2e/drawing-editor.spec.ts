@@ -62,7 +62,7 @@ test("the workspace: tabs of tools, the tree, hover names the geometry, a sectio
   await expect(page.getByTestId("tool-view-alternate")).toBeDisabled();
   await expect(page.getByTestId("tool-view-alternate")).toHaveAttribute("title", /coming/);
   await page.getByTestId("dtab-annotation").click();
-  await expect(page.getByTestId("tool-annotation-gdt")).toBeDisabled();
+  await expect(page.getByTestId("tool-annotation-gdt")).toBeEnabled();
   await expect(page.getByTestId("tool-annotation-dimension")).toBeEnabled();
   await page.getByTestId("dtab-layout").click();
   await page.screenshot({ path: "test-results/drawing-editor-workspace.png" });
