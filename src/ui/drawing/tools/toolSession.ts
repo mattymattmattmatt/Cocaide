@@ -18,6 +18,10 @@ export abstract class ToolSession extends BaseSession {
   /** Something picked and not yet placed: Esc lets it go first. */
   abstract busy(): boolean;
   abstract reset(): void;
+  /** Redraws the overlay and the panel (an option changed). */
+  redraw(): void {
+    this.ctx().refresh();
+  }
   title() {
     return this.made.length ? `${this.name()} (${this.made.length} added)` : this.name();
   }

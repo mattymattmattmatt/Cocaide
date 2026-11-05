@@ -23,7 +23,7 @@ const gripId = (g: EngineGrip) => `${g.name}:${g.field}:${g.index ?? ""}`;
 const GRIP_WORDS: Record<string, string> = { text: "Drag the text", line: "Drag the dimension line nearer or further", knee: "Drag the text and its leader's knee", symbol: "Drag the symbol", frame: "Drag the frame", end: "Drag the end", vertex: "Drag the corner" };
 
 /** The annotation's grips as laid out: what the engine says can be dragged. */
-function engineGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
+function engineGrips(_a: Record<string, unknown>, ctx: KindCtx): Grip[] {
   return (ctx.said?.grips ?? []).map((g) => ({ id: gripId(g), at: g.at, label: GRIP_WORDS[g.name] ?? "Drag it" }));
 }
 

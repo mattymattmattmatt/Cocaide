@@ -2138,3 +2138,45 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .bridge-help ol { margin: 4px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .bridge-status.ok { color: var(--ok); }
 .bridge-status.bad { color: var(--bad); }
+
+/* Phase Q wave Q3A: the annotation tools' panels */
+.dim-panel, .tolerance-editor, .gdt-editor, .note-editor, .weld-editor, .general-notes { display: flex; flex-direction: column; gap: 6px; }
+.dim-value { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.dim-value-label { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.dim-value-number { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dim-value .badge { margin-left: auto; background: var(--ok); }
+.dim-value .badge.warn { background: var(--bad); }
+.warn-line { margin: 0; font-size: 12px; color: var(--bad); }
+.tol-fields, .dim-flags, .fav-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.tol-fields .field { flex: 0 1 auto; }
+.fit-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.fit-summary { font-family: var(--mono); font-size: 11.5px; padding: 6px 8px; border-radius: 6px; background: var(--panel-2); border-left: 3px solid var(--accent); line-height: 1.5; }
+.fit-summary.interference { border-left-color: var(--bad); }
+.fit-summary.transition { border-left-color: #b7791f; }
+.fit-summary.clearance { border-left-color: var(--ok); }
+.symbol-palette { display: flex; flex-wrap: wrap; gap: 2px; }
+.symbol-palette button { min-width: 26px; height: 26px; padding: 0 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); font-size: 14px; cursor: pointer; }
+.symbol-palette button:hover { border-color: var(--accent); color: var(--accent); }
+.prim-thumb { width: 100%; color: #111; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 4px; box-sizing: border-box; }
+.gdt-palette { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.gdt-palette button { height: 32px; font-size: 18px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; }
+.gdt-palette button.on { border-color: var(--accent); background: var(--info-bg); color: var(--accent); }
+.gdt-row { display: flex; flex-direction: column; gap: 5px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; }
+.gdt-zone, .gdt-mods, .gdt-datums { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.gdt-datum { display: inline-flex; gap: 2px; }
+.rule-checks { margin: 0; padding: 6px 8px; border-radius: 6px; font-size: 12px; list-style: none; }
+.rule-checks.bad { background: color-mix(in srgb, var(--bad) 10%, transparent); color: var(--bad); }
+.rule-checks.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok); }
+.note-toolbar { display: flex; gap: 3px; align-items: center; }
+.note-toolbar button { min-width: 28px; height: 26px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); cursor: pointer; }
+.note-toolbar button.on { border-color: var(--accent); background: var(--info-bg); color: var(--accent); }
+.note-editor textarea { font-family: var(--mono); font-size: 12.5px; }
+.general-notes ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; }
+.general-notes li { display: flex; gap: 3px; align-items: center; }
+.general-notes li input { flex: 1; min-width: 0; }
+.general-notes li button { width: 24px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); cursor: pointer; }
+.weld-side, .check-list { border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px 8px; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.weld-side legend, .check-list legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.all-props { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px; }
+.all-props summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.fold-head { border: 0; background: none; cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; }

@@ -440,7 +440,7 @@ registerDrawingTool({
               options={HOLE_TOLERANCES.map(([v, l]) => [v, l] as const)}
               onChange={(v) => {
                 tol = v;
-                s.ctx().refresh();
+                s.redraw();
               }}
               testId="hole-tol"
             />

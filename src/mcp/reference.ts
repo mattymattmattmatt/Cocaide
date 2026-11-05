@@ -428,7 +428,7 @@ Dimensions ("kind", default "linear"; every value is measured; precision = decim
   { "kind": "ordinate" | "baseline", "origin": "@left", "points": [...], "direction": "horizontal" }   values from one zero / stacked from it
   { "kind": "chain", "points": [p1, p2, p3] }   end to end in one row;   { "kind": "arcLength", "refs": [arc] };   { "kind": "chamfer", "refs": [edge] } "C2" (ASME "2 × 45°")
   { "kind": "pathLength", "refs": [edge, edge, ...] };  any: "offset", "at", "arrows": "auto"|"inside"|"outside", "flip", "prefix", "suffix",
-  "count": 4 ("4×"), "typ", "inspection" (oval), "dual" (other units), "precision", "tolerance".
+  "count": 4 ("4×"), "typ", "inspection" (oval), "dual" (other units), "precision", "tolerance", "below" (a line of text under the dimension line: "2 PLACES"), "override" (text written instead of the measured value; it stops following the model, so use it only when asked). Every annotation (not a classic table) may have "hidden": true (kept, not drawn).
 Tolerances: { "kind": "symmetric", "plus": 0.1 } ±0.1 · { "kind": "bilateral", "plus": 0.1, "minus": 0.05 } +0.1/−0.05 (minus is how far UNDER;
   g6 on Ø25 is plus −0.007, minus 0.020) · { "kind": "limit", ... } the limits stacked · { "kind": "fit", "fit": "H7" | "g6" | "H7/g6" }
   ISO 286 class (all of A–ZC / a–zc, IT01–IT18, 0–3150 mm) · "fitWithTol" adds "(+0.021/0)" · "fitLimits" adds the limits · "basic" (boxed)
