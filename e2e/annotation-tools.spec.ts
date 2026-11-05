@@ -319,10 +319,11 @@ test("a table frame with a weld: the weld symbol from the weld, Auto Balloon in 
   await page.getByTestId("dtab-annotation").click();
   const front = await viewOf(page, "front");
 
-  // The weld symbol: click the leg where the rail meets it; the builder fills from w1 (fillet both sides, z4, 135 in the tail).
+  // The weld symbol: click the leg the rail is welded to; the builder fills from w1 (fillet both sides, z4, 135 in the tail).
+  const weldsBefore = (await annotations(page)).filter((a) => a.type === "weld").length;
   await page.getByTestId("tool-annotation-weld").click();
   const legEdge = (await hook(page, (h) => h.targets("front", "edge"))).find((t) => t.body === "leg_a" && t.visible && t.pts && Math.abs(t.pts[0][0][0] - t.pts[0][t.pts[0].length - 1][0]) < 0.01)!;
-  await clickAt(page, onTarget(legEdge, 0.92));
+  await clickAt(page, onTarget(legEdge, 0.4));
   await expect(page.getByTestId("weld-from")).toHaveValue("w1");
   await expect(page.getByTestId("weld-arrow-symbol")).toHaveValue("fillet");
   await expect(page.getByTestId("weld-other-symbol")).toHaveValue("fillet");
@@ -338,8 +339,8 @@ test("a table frame with a weld: the weld symbol from the weld, Auto Balloon in 
   await shot(page, "weld-builder");
   await clickAt(page, knee);
   await page.keyboard.press("Escape");
-  await expect.poll(async () => (await annotations(page)).filter((a) => a.type === "weld" && a.weld === "w1").length).toBe(1);
-  const weld = (await annotations(page)).find((a) => a.type === "weld" && a.weld === "w1")!;
+  await expect.poll(async () => (await annotations(page)).filter((a) => a.type === "weld").length).toBe(weldsBefore + 1);
+  const weld = (await annotations(page)).filter((a) => a.type === "weld").pop()!;
   // Drawn as the table has it: it keeps up with the weld; only what was added by hand is its own.
   expect(weld).toMatchObject({ view: "front", weld: "w1", field: true });
   expect(weld.arrowSide).toBeUndefined();

@@ -839,10 +839,12 @@ class WeldSession extends ToolSession {
     const c = this.ctx();
     if (!this.target) {
       if (!p.snap) return c.notice(this.prompt(), "error");
-      // A welded body: the symbol takes its weld (the first not yet shown in this view).
-      if (!this.spec.weld && p.snap.body) {
+      // A welded body: the symbol takes its weld (the first not yet shown in this view, else the first).
+      const body = p.snap.body ?? p.snap.feature;
+      if (!this.spec.weld && body) {
         const shown = new Set(c.sheetDoc.annotations.flatMap((a) => (a.type === "weld" && a.view === p.snap!.view && a.weld ? [a.weld] : [])));
-        const w = this.welds().find((x) => x.between.includes(p.snap!.body!) && !shown.has(x.id));
+        const mine = this.welds().filter((x) => x.between.includes(body));
+        const w = mine.find((x) => !shown.has(x.id)) ?? mine[0];
         if (w) this.spec = weldSpecFrom(w, this.standard === "ASME" ? "ASME" : "ISO");
       }
       this.target = p.snap;
