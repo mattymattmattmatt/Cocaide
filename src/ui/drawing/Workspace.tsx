@@ -30,6 +30,7 @@ import { SheetTabs } from "./SheetTabs";
 import { snapIndex, type SnapIndex } from "./snap";
 import "./tools";
 import { runAutoDimension } from "./tools/annotationTools";
+import { annotationKey, annotationMenu } from "./tools/editing";
 import { annotationKind } from "./tools/kinds";
 import { drawingTool, onToolsChanged, toolForKey, toolGroups } from "./tools/registry";
 import { DRAWING_TABS, type DrawingDialog, type DrawingSession, type DrawingTab, type DrawingToolCtx, type SheetHit } from "./tools/types";
@@ -150,6 +151,8 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     }
   }, [p.d.transaction, session]);
 
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const live = useRef({ p, selection, snap, sheetDoc });
   live.current = { p, selection, snap, sheetDoc };
   const ctx = useCallback(
@@ -204,6 +207,12 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         end: () => {
           setSession(null);
           setTick((n) => n + 1);
+        },
+        startSession: (s) => {
+          const cur = sessionRef.current;
+          if (cur && cur !== s) cur.cancel();
+          setSession(s);
+          setMenu(null);
         },
         dialog: (name, arg) => setDialog({ name, arg }),
         actions: { newDrawing: p.newDrawing, balloonAll: p.balloonAll },
@@ -297,6 +306,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable]") || document.querySelector(".modal-backdrop, .context-menu, .drawing-dialog")) return;
       if (session?.key?.(e)) return e.preventDefault();
+      if (!session && annotationKey(e, ctx())) return e.preventDefault();
       const mod = e.ctrlKey || e.metaKey;
       if (e.key === "Escape") {
         if (session) {
@@ -376,7 +386,11 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
       const a = p.drawing.sheets.flatMap((s) => s.annotations).find((x) => x.id === hit.id);
       if (!a) return;
       title = `${annotationKind(a.type)?.label ?? a.type} ${a.id}`;
+      const said = p.sheet?.annotations.find((x) => x.id === a.id);
       items = [
+        ...(annotationKind(a.type)?.menu?.(a as unknown as Record<string, unknown>, ctx(), said) ?? []),
+        ...annotationMenu(a, ctx, said),
+        "sep",
         { label: "Copy", icon: "copy", shortcut: "Ctrl+C", onClick: copy, testId: "ctx-copy-annotation" },
         ...(clipboard.current.length ? [{ label: "Paste", icon: "paste", shortcut: "Ctrl+V", onClick: paste } as MenuEntry] : []),
         ...("at" in a && a.at && a.type !== "note" ? [{ label: "Place automatically", icon: "examples", onClick: () => run({ type: "setAnnotation", id: a.id, annotation: withoutAt(a) }) } as MenuEntry] : []),

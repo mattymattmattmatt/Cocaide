@@ -540,6 +540,7 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
   const bool = (key: string) => {
     if (a[key] !== undefined && typeof a[key] !== "boolean") c.fail(`${at}.${key}`, `must be true or false (got ${describe(a[key])})`);
   };
+  bool("hidden");
   const str = (key: string, max = 200, required = false) => {
     if (a[key] === undefined) {
       if (required) c.fail(`${at}.${key}`, "is required");

@@ -7,6 +7,13 @@ import "./viewTools";
 import "./annotationTools";
 import "./sheetTools";
 import "./annotationKinds";
+// Phase Q wave Q3A: the annotation tools (they replace Q2B's basic ones by id) and their panels.
+import "./annotationKindsQ3";
+import "./dimensionTools";
+import "./symbolTools";
+import "./noteTools";
+import "./sketchTools";
+import "./editing";
 
 export * from "./registry";
 export * from "./kinds";

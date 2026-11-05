@@ -846,7 +846,8 @@ export interface TableAnnotation {
   at?: Vec2;
 }
 
-export type Annotation =
+/** Every annotation but a table may be hidden: kept in the document and the tree, not drawn on the sheet or in exports. */
+export type Annotation = (
   | DimensionAnnotation
   | HoleAnnotation
   | BalloonAnnotation
@@ -864,7 +865,8 @@ export type Annotation =
   | LeaderAnnotation
   | TextAnnotation
   | LineAnnotation
-  | SketchAnnotation;
+  | SketchAnnotation
+) & { hidden?: boolean };
 export type AnnotationType = Annotation["type"];
 export const ANNOTATION_TYPES = [
   "dimension",
@@ -887,24 +889,24 @@ export const ANNOTATION_TYPES = [
   "sketch",
 ] as const;
 export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
-  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "below", "override", "count", "typ", "inspection", "tolerance", "precision", "dual", "last"],
-  hole: ["id", "type", "view", "hole", "on", "at", "count", "pattern", "prefix", "suffix", "tolerance"],
-  balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow"],
-  weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more"],
+  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "below", "override", "count", "typ", "inspection", "tolerance", "precision", "dual", "last", "hidden"],
+  hole: ["id", "type", "view", "hole", "on", "at", "count", "pattern", "prefix", "suffix", "tolerance", "hidden"],
+  balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow", "hidden"],
+  weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more", "hidden"],
   table: ["id", "type", "table", "at"],
-  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle"],
-  centerMark: ["id", "type", "view", "at", "extend", "style"],
-  centerline: ["id", "type", "view", "between", "extend"],
-  gdt: ["id", "type", "view", "rows", "composite", "on", "dimension", "extension", "at", "count", "above", "below", "arrow"],
-  datum: ["id", "type", "view", "label", "on", "dimension", "gdt", "at", "open"],
-  datumTarget: ["id", "type", "view", "label", "target", "on", "size", "length", "at"],
-  surface: ["id", "type", "view", "symbol", "values", "process", "lay", "allowance", "allAround", "on", "dimension", "extension", "at", "general"],
-  cosmeticThread: ["id", "type", "view", "hole", "on", "at"],
-  revisionCloud: ["id", "type", "pts", "view", "rev", "at", "arc"],
-  leader: ["id", "type", "view", "to", "at", "text", "via", "arrow", "spline"],
-  text: ["id", "type", "text", "at", "view", "height", "angle", "anchor", "bold"],
-  line: ["id", "type", "view", "pts", "line"],
-  sketch: ["id", "type", "view", "items"],
+  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle", "hidden"],
+  centerMark: ["id", "type", "view", "at", "extend", "style", "hidden"],
+  centerline: ["id", "type", "view", "between", "extend", "hidden"],
+  gdt: ["id", "type", "view", "rows", "composite", "on", "dimension", "extension", "at", "count", "above", "below", "arrow", "hidden"],
+  datum: ["id", "type", "view", "label", "on", "dimension", "gdt", "at", "open", "hidden"],
+  datumTarget: ["id", "type", "view", "label", "target", "on", "size", "length", "at", "hidden"],
+  surface: ["id", "type", "view", "symbol", "values", "process", "lay", "allowance", "allAround", "on", "dimension", "extension", "at", "general", "hidden"],
+  cosmeticThread: ["id", "type", "view", "hole", "on", "at", "hidden"],
+  revisionCloud: ["id", "type", "pts", "view", "rev", "at", "arc", "hidden"],
+  leader: ["id", "type", "view", "to", "at", "text", "via", "arrow", "spline", "hidden"],
+  text: ["id", "type", "text", "at", "view", "height", "angle", "anchor", "bold", "hidden"],
+  line: ["id", "type", "view", "pts", "line", "hidden"],
+  sketch: ["id", "type", "view", "items", "hidden"],
 };
 /** The annotations that must sit in a view (the others may, or are the sheet's). */
 export const VIEW_ANNOTATIONS: readonly AnnotationType[] = ["dimension", "hole", "balloon", "weld", "centerMark", "centerline", "gdt", "datum", "datumTarget", "cosmeticThread"];

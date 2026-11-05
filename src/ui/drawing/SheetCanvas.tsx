@@ -14,8 +14,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { Command } from "../../doc/commands";
 import type { Drawing, DrawingSheet, Vec2 } from "../../doc/types";
 import type { ComposedSheet } from "../../drafting/compose";
-import type { Box } from "../../drafting/sheet";
-import { sheetSVG } from "../../drafting/svg";
+import type { Box, Prim } from "../../drafting/sheet";
+import { SHEET_FONT, sheetSVG } from "../../drafting/svg";
 import { wheelZoom } from "../input";
 import { alignmentOf, constrain, followers, keepOff, pulledOff, snapToViews, tenth, type Guide } from "./align";
 import { snapAt, type SnapIndex, type SnapKind, type SnapTarget } from "./snap";
@@ -383,6 +383,8 @@ export function SheetCanvas(props: SheetCanvasProps) {
       if (pt && session && !d.moved) session.click?.(pt);
       return;
     }
+    // A grip that acts on a click (an arrowhead: the arrows flip).
+    if (d.kind === "grip" && !d.moved && d.grip?.click && d.hit) return dropAnnotation(d.hit.id, [0, 0], d.grip);
     if (!d.moved) {
       if (d.kind === "box" && !d.hit) return props.onSelect([], d.additive ?? false);
       if (d.hit) props.onSelect(d.hit.kind === "titleBlock" ? [] : [d.hit.id], d.additive ?? false);
@@ -468,6 +470,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
   const tone = (t?: Tone) => TONE[t ?? "accent"];
   const draw = (s: OverlayShape, i: number | string) => {
     if (s.k === "move") return;
+    if (s.k === "prims") return shapes.push(<PrimsPreview key={i} prims={s.prims} colour={tone(s.tone ?? "preview")} H={H} />);
     if (s.k === "line") {
       const props2 = { points: s.pts.map(pt).join(" "), fill: "none", stroke: tone(s.tone), strokeWidth: (s.w ?? 1.5) * k, strokeDasharray: s.dash ? `${6 * k} ${4 * k}` : undefined };
       shapes.push(s.closed ? <polygon key={i} {...props2} /> : <polyline key={i} {...props2} />);
@@ -587,6 +590,29 @@ export function SheetCanvas(props: SheetCanvasProps) {
       )}
       {drag?.refused && drag.moved && hover && <div className="sheet-tip refused" style={{ left: toClient(hover.raw)[0] - host.current!.getBoundingClientRect().left + 14, top: toClient(hover.raw)[1] - host.current!.getBoundingClientRect().top + 16 }}>Stays lined up with its parent</div>}
     </div>
+  );
+}
+
+/** A tool's annotation as the engine lays it out, drawn in the preview colour at its true line weights and text. */
+function PrimsPreview({ prims, colour, H }: { prims: Prim[]; colour: string; H: number }) {
+  const y = (v: number) => H - v;
+  return (
+    <g className="prims-preview" color={colour} stroke="currentColor" fill="none" strokeLinecap="round" strokeLinejoin="round" data-testid="sheet-preview">
+      {prims.map((p, i) => {
+        if (p.k === "line") {
+          const pts = p.pts.map((q) => `${q[0]},${y(q[1])}`).join(" ");
+          const common = { strokeWidth: Math.max(p.w, 0.18), strokeDasharray: p.dash?.join(" "), fill: p.fill ? "currentColor" : "none" };
+          return p.closed || p.fill ? <polygon key={i} points={pts} {...common} /> : <polyline key={i} points={pts} {...common} />;
+        }
+        if (p.k === "circle") return <circle key={i} cx={p.c[0]} cy={y(p.c[1])} r={p.r} strokeWidth={Math.max(p.w, 0.18)} fill={p.fill ? "currentColor" : "none"} />;
+        if (p.k === "area") return null;
+        return (
+          <text key={i} x={p.at[0]} y={y(p.at[1])} fontSize={p.size} textAnchor={p.anchor} fontWeight={p.bold ? "bold" : undefined} fontStyle={p.italic ? "italic" : undefined} transform={p.angle ? `rotate(${-p.angle} ${p.at[0]} ${y(p.at[1])})` : undefined} fill="currentColor" stroke="none" fontFamily={SHEET_FONT}>
+            {p.text}
+          </text>
+        );
+      })}
+    </g>
   );
 }
 

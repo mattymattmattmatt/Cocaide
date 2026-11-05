@@ -118,6 +118,8 @@ export interface ComposedAnnotation {
   grips?: Grip[];
   /** Where it is now, from its view's centre: what rememberPlaces keeps as its `last`. */
   place?: { pts: Vec2[]; text: string };
+  /** Hidden: kept, not drawn. */
+  hidden?: boolean;
 }
 
 /** What the Phase L points of a view are made from: nodes, members, holes. */
@@ -195,6 +197,13 @@ export function composeDrawing(doc: unknown, ctx: ComposeContext): ComposedDrawi
   const sheets = drawing.sheets.map((s, i) => new Composer(v, drawing, s, i, ctx, doc).compose());
   return { drawing, sheets };
 }
+
+/**
+ * The annotation context each composed sheet was laid out in (its views, its
+ * data, what is already where): the sheet editor lays a tool's annotation out
+ * in it for a live preview that is exactly what will be drawn.
+ */
+export const LAYOUT_CONTEXT = new WeakMap<ComposedSheet, AnnotationContext>();
 
 /** One sheet of the document's drawing (by id or place; default the first), composed. Null when it has no valid drawing or no such sheet. */
 export function composeSheet(doc: unknown, ctx: ComposeContext, sheet: string | number = 0): ComposedSheet | null {
@@ -354,7 +363,7 @@ class Composer {
       ...this.notes().map((n) => ({ id: n.a.id, box: n.box })),
       ...sheetTables.flatMap((t) => (t.rendered.box ? [{ id: t.table.id, box: t.rendered.box }] : [])),
     ];
-    return {
+    const sheet: ComposedSheet = {
       id: this.s.id,
       name: this.s.name ?? `Sheet ${this.index + 1}`,
       number: this.index + 1,
@@ -378,6 +387,8 @@ class Composer {
       cutList: this.cut,
       points: this.points,
     };
+    if (this.annotationCtx) LAYOUT_CONTEXT.set(sheet, this.annotationCtx);
+    return sheet;
   }
 
   // ------------------------------------------------------------- tables (Phase Q)
@@ -1365,6 +1376,11 @@ class Composer {
       }
       const l = layouts.get(a.id)!;
       const layer = a.type === "dimension" ? "DIMENSION" : a.type === "centerMark" || a.type === "centerline" ? "CENTER" : a.type === "note" || a.type === "text" ? "TEXT" : "ANNOTATION";
+      // A hidden annotation is laid out (what hangs on it still finds it) but not drawn.
+      if (a.hidden) {
+        this.annotations.set(a.id, { id: a.id, type: a.type, ...("view" in a && a.view ? { view: a.view } : {}), text: l.text, ...(l.value !== undefined ? { value: l.value } : {}), box: null, hidden: true });
+        continue;
+      }
       for (const p of l.prims) this.prims.push({ ...p, owner: a.id, layer: p.layer ?? layer });
       if (l.problem) this.problems.push(`${a.id}: ${l.problem}`);
       this.annotations.set(a.id, {
