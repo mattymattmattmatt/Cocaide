@@ -110,14 +110,14 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   await newDrawing(page, "bracket", "18,994.728");
   const top = await viewOf(page, "top");
   const hole = await target(page, "top", "top:ehole_1/c1");
-  await zoomTo(page, hole.circle!.c, 220);
+  await zoomTo(page, hole.circle!.c, 160);
 
   // Smart Dimension (D): the hole's circle, then where the text goes: Ø, the preview following the pointer.
   await page.keyboard.press("d");
   await expect(page.getByTestId("sheet-prompt")).toContainText("Click an edge, a circle");
   await clickTarget(page, "top", "top:ehole_1/c1");
   // Right of the plate, clear of its edges.
-  const place: V2 = [hole.circle!.c[0] + 30, hole.circle!.c[1] - 32];
+  const place: V2 = [hole.circle!.c[0] + 34, hole.circle!.c[1] - 50];
   await hover(page, place);
   await expect(page.getByTestId("sheet-preview")).toBeVisible();
   await expect(page.getByTestId("sheet-preview").locator("text")).toContainText(["Ø6.6"]);
@@ -177,7 +177,7 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   await page.getByTestId("tool-annotation-datum").click();
   await expect(page.getByTestId("datum-label")).toHaveValue("D");
   await clickTarget(page, "top", "top:eext_1/l10", 0.75);
-  await clickAt(page, [top.box.max[0] + 12, top.box.min[1] + 12]);
+  await clickAt(page, [top.box.max[0] + 12, top.box.max[1] - 6]);
   await page.keyboard.press("Escape");
   await expect.poll(async () => (await annotations(page)).find((a) => a.type === "datum" && a.label === "D")).toMatchObject({ id: "datum_D", on: "top:eext_1/l10" });
 
