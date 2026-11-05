@@ -12,6 +12,8 @@ import type { RawDocument } from "../../doc/commands";
 import type { SketchFeature } from "../../doc/types";
 import type { LibraryEntry } from "../../weldment/library";
 import type { Attachment } from "../../ask/attachments";
+import type { LiveState } from "../../ask/bridge/run";
+import { formatDocument } from "../../doc/format";
 import { addHistory, clearHistory, docKey, earlierOf, entryOf, historyOf, loadDraft, saveDraft, threadOf, updateHistory, type HistoryEntry } from "./history";
 import { logAsk, updateAsk } from "./log";
 import { canAsk, loadSettings, modelFor, saveSettings, type AskSettings } from "./settings";
@@ -38,7 +40,15 @@ export interface AskContext {
 
 export type AskState =
   | { phase: "menu"; ctx: AskContext; draft: string; /** The history entry this request follows up. */ followUp?: string }
-  | { phase: "running"; ctx: AskContext; prompt: string; applyNow: boolean; steps: string[] }
+  | {
+      phase: "running";
+      ctx: AskContext;
+      prompt: string;
+      applyNow: boolean;
+      steps: string[];
+      /** Claude Code through the bridge: its live steps, words and working copy of the part. */
+      live?: LiveState;
+    }
   | {
       phase: "done";
       ctx: AskContext;
@@ -159,17 +169,51 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       };
       // The text is sent: it is no longer a draft.
       saveDraft(dk, ctx.target, "");
-      const model = await modelFor(settings);
       const more = { ...(attachments.length ? { attachments } : {}), ...(earlier.length ? { earlier } : {}) };
-      // The part-level prompt (intent schema, planner) loads on first use.
-      const result: PartAskResult =
-        ctx.target.kind === "part"
-          ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, library, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e), ...more })
-          : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, reach, signal: controller.signal, onEvent, ...more });
+      let result: PartAskResult;
+      let bridgeSession: string | undefined;
+      if (settings.provider === "claude-code") {
+        // Claude Code runs the whole ask through the bridge; a follow-up continues its session.
+        const thread = extra.followUp ? threadOf(historyOf(dk), extra.followUp) : [];
+        const resume = [...thread].reverse().find((e) => e.bridgeSession)?.bridgeSession;
+        const { runBridgeAsk } = await import("../../ask/bridge/run");
+        // A dropped drawing or photo goes as files Claude Code reads: each rendered page (and the text layer), or the photo.
+        const dropped: Attachment[] = [
+          ...(ctx.drawing && !ctx.photo
+            ? [
+                ...ctx.drawing.pages.map((pg, i): Attachment => ({ id: `drawing-${i}`, name: `${ctx.drawing!.name}-page${i + 1}.png`, kind: "image", mediaType: "image/png", size: pg.png.length, data: pg.png })),
+                ...(ctx.drawing.text ? [{ id: "drawing-text", name: `${ctx.drawing.name} (text layer)`, kind: "text" as const, mediaType: "text/plain", size: ctx.drawing.text.length, text: ctx.drawing.text }] : []),
+              ]
+            : []),
+          ...(ctx.photo ? [{ id: "photo", name: ctx.photo.name.replace(/\.\w+$/, "") + ".jpg", kind: "image" as const, mediaType: ctx.photo.mediaType, size: ctx.photo.data.length, data: ctx.photo.data }] : []),
+        ];
+        const r = await runBridgeAsk({
+          doc: ctx.doc,
+          target: ctx.target,
+          text,
+          reach,
+          kernel,
+          bridge: settings.bridge,
+          signal: controller.signal,
+          ...more,
+          ...(dropped.length ? { attachments: [...attachments, ...dropped] } : {}),
+          ...(resume ? { resume } : {}),
+          onLive: (live) => !controller.signal.aborted && setState({ phase: "running", ctx, prompt: text, applyNow, steps: [], live }),
+        });
+        bridgeSession = r.sessionId;
+        result = r;
+      } else {
+        const model = await modelFor(settings);
+        // The part-level prompt (intent schema, planner) loads on first use.
+        result =
+          ctx.target.kind === "part"
+            ? await (await import("../../ask/part")).runPartAsk({ doc: ctx.doc, text, drawing: ctx.drawing, photo: ctx.photo, model, kernel, library, signal: controller.signal, onEvent: (e) => e.type !== "intent" && onEvent(e), ...more })
+            : await runAsk({ doc: ctx.doc, target: ctx.target, text, model, kernel, reach, signal: controller.signal, onEvent, ...more });
+      }
       if (controller.signal.aborted) return;
       const recordId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
       const names = [...attachments.map((a) => a.name), ...(ctx.drawing && !ctx.photo ? [ctx.drawing.name] : []), ...(ctx.photo ? [ctx.photo.name] : [])];
-      addHistory(dk, entryOf(result, { id: recordId, at: new Date().toISOString(), label: ctx.label, target: ctx.target, prompt: text, attachments: names, ...(extra.followUp ? { followUpOf: extra.followUp } : {}) }));
+      addHistory(dk, { ...entryOf(result, { id: recordId, at: new Date().toISOString(), label: ctx.label, target: ctx.target, prompt: text, attachments: names, ...(extra.followUp ? { followUpOf: extra.followUp } : {}) }), ...(bridgeSession ? { bridgeSession } : {}) });
       touchHistory();
       logAsk({
         id: recordId,
@@ -253,8 +297,30 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
     });
   }, [doc, state]);
 
-  /** The document to show while a proposal is open and previewed. */
-  const previewDoc = state?.phase === "done" && state.preview && !state.accepted && !state.ctx.sketch ? (state.result.proposal?.doc ?? null) : null;
+  // While Claude Code works the user's edits wait (the app locks them); one that gets through anyway stops the ask.
+  useEffect(() => {
+    if (!doc || state?.phase !== "running" || !state.live || state.ctx.sketch || doc === state.ctx.doc) return;
+    if (formatDocument(doc) === formatDocument(state.ctx.doc)) return;
+    abort.current?.abort();
+    setState({
+      phase: "done",
+      ctx: state.ctx,
+      prompt: state.prompt,
+      applyNow: false,
+      result: { outcome: "failed", text: "", mode: "edit", visual: false, packet: null, proposal: null, calls: [], model: "Claude Code", turns: 0 },
+      recordId: "",
+      preview: false,
+      accepted: false,
+      error: "You changed the part while Claude Code was working, so the ask was stopped and its changes were not kept. Your prompt is kept: use Ask again.",
+    });
+  }, [doc, state]);
+
+  /** Claude Code's working copy while it works (shown live), or an open proposal while it is previewed. */
+  const liveDoc = state?.phase === "running" && !state.ctx.sketch ? (state.live?.doc ?? null) : null;
+  /** The document to show while a proposal is open and previewed, or while Claude Code works on it. */
+  const previewDoc = liveDoc ?? (state?.phase === "done" && state.preview && !state.accepted && !state.ctx.sketch ? (state.result.proposal?.doc ?? null) : null);
+  /** Claude Code is working through the bridge: the user's edits wait. */
+  const busy = state?.phase === "running" && !!state.live;
 
   /** The AI history of a document, and clearing it. */
   const history = useCallback((doc: RawDocument) => (void historyVersion, historyOf(docKey(doc))), [historyVersion]);
@@ -268,5 +334,5 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
   /** Keeps the unsent text of the open ask. */
   const keepDraft = useCallback((ctx: AskContext, text: string) => saveDraft(docKey(ctx.doc), ctx.target, text), []);
 
-  return { state, open, close, submit, answer, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen, history, clearHistory: clear, keepDraft };
+  return { busy, liveDoc, state, open, close, submit, answer, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen, history, clearHistory: clear, keepDraft };
 }

@@ -17,6 +17,8 @@ import type { useAsk } from "./useAsk";
 import { canAsk } from "./settings";
 import { Icon } from "../icons";
 import { changeLines, threadOf, type HistoryEntry } from "./history";
+import type { LiveState } from "../../ask/bridge/run";
+import { BRIDGE_MODELS } from "../../bridge/protocol";
 
 type Ask = ReturnType<typeof useAsk>;
 
@@ -114,7 +116,9 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const model =
     ask.settings.provider === "ollama"
       ? `${ask.settings.ollama.model} (local, Ollama)`
-      : (MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model);
+      : ask.settings.provider === "claude-code"
+        ? `Claude subscription via Claude Code (${BRIDGE_MODELS.find((m) => m.id === ask.settings.bridge.model)?.label ?? ask.settings.bridge.model})`
+        : (MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model);
   const part = ctx.target.kind === "part";
   const asPhoto = !!ctx.photo && readAs === "photo";
   const dropped = !!ctx.drawing || !!ctx.photo;
@@ -369,14 +373,20 @@ export function AskPopover({ ask }: { ask: Ask }) {
       {s.phase === "running" && (
         <div className="ask-body">
           <blockquote className="ask-prompt">{s.prompt}</blockquote>
-          <ol className="ask-steps" data-testid="ask-steps">
-            {s.steps.map((step, i) => (
-              <li key={i}>{step}</li>
-            ))}
-          </ol>
+          {s.live ? (
+            <LiveSteps live={s.live} />
+          ) : (
+            <ol className="ask-steps" data-testid="ask-steps">
+              {s.steps.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          )}
           <div className="ask-buttons">
             <span className="spinner" aria-hidden />
-            <button onClick={ask.close}>Cancel</button>
+            <button onClick={ask.close} data-testid="ask-cancel">
+              {s.live ? "Stop" : "Cancel"}
+            </button>
           </div>
         </div>
       )}
@@ -410,7 +420,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
               {n}
             </div>
           ))}
-          {s.result.proposal && !s.result.proposal.replace && (
+          {s.result.proposal && (!s.result.proposal.replace || s.result.proposal.bridge) && (
             <div className="ask-proposal" data-testid="ask-proposal">
               <ul className="ask-changes">
                 {s.result.proposal.changes.flatMap((c) => changeLines(c)).map((line, i) => (
@@ -438,7 +448,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
             {s.result.proposal && !s.accepted ? (
               <>
                 <button className="primary" onClick={() => ask.accept(s)} data-testid="ask-accept">
-                  {s.result.proposal.replace && s.result.proposal.base.features.length ? "Accept: replace the part" : "Accept"}
+                  {s.result.proposal.replace && !s.result.proposal.bridge && s.result.proposal.base.features.length ? "Accept: replace the part" : "Accept"}
                 </button>
                 <button onClick={ask.discard} data-testid="ask-discard">
                   Discard
@@ -466,6 +476,45 @@ export function AskPopover({ ask }: { ask: Ask }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const STEP_ICON: Record<LiveState["steps"][number]["status"], string> = { running: "…", ok: "✓", error: "✗" };
+
+/** Claude Code at work: each tool call with its state, what it is saying now, and how many versions of the part came back. */
+function LiveSteps({ live }: { live: LiveState }) {
+  const end = useRef<HTMLLIElement>(null);
+  useEffect(() => end.current?.scrollIntoView?.({ block: "nearest" }), [live.steps.length]);
+  return (
+    <div className="ask-live" data-testid="ask-live">
+      <div className="muted small" data-testid="ask-live-status">
+        {live.phase === "connecting" ? "Connecting to the bridge…" : `Claude Code is working${live.model ? ` (${live.model})` : ""}`}
+        {live.updates > 0 ? ` · the view shows its work (${live.updates} update${live.updates === 1 ? "" : "s"}); your edits wait until it finishes` : ""}
+      </div>
+      <ol className="ask-live-steps" data-testid="ask-live-steps">
+        {live.steps.map((st) => (
+          <li key={st.id} className={`ask-live-step ${st.status}`} title={st.error ?? st.args} data-testid="ask-live-step">
+            <span className="ask-live-icon" aria-label={st.status}>
+              {STEP_ICON[st.status]}
+            </span>{" "}
+            <span className="ask-live-name">{st.name}</span>
+            {st.args && <span className="ask-live-args"> {st.args}</span>}
+            {st.error && <div className="ask-live-error">{st.error}</div>}
+          </li>
+        ))}
+        <li ref={end} className="ask-live-end" aria-hidden />
+      </ol>
+      {live.text.trim() && (
+        <div className="ask-text ask-live-text" data-testid="ask-live-text">
+          {live.text}
+        </div>
+      )}
+      {live.notices.map((n, i) => (
+        <div key={i} className="ask-note">
+          {n}
+        </div>
+      ))}
     </div>
   );
 }

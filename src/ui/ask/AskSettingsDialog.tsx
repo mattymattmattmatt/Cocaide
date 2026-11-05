@@ -11,6 +11,7 @@ import { loadSpin, saveSpin } from "../sketcher/modify";
 import { MAX_ROTATE_SPEED, MIN_ROTATE_SPEED, resetViewPrefs, setViewPrefs, useViewPrefs } from "../viewport/viewPrefs";
 import { HAS_PROXY, type AskSettings, type Provider } from "./settings";
 import { OllamaSettingsPanel } from "./OllamaSettings";
+import { ClaudeCodeSettingsPanel } from "./ClaudeCodeSettings";
 
 export type SettingsTab = "units" | "mouse" | "keyboard" | "assistant";
 const TABS: [SettingsTab, string][] = [
@@ -25,9 +26,11 @@ interface Props {
   onSave(s: AskSettings): void;
   onClose(): void;
   tab?: SettingsTab;
+  /** Live link: follow a part file through the bridge (the settings as typed, not yet saved). */
+  onFollow?(path: string, bridge: AskSettings["bridge"]): void;
 }
 
-export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "assistant" }: Props) {
+export function AskSettingsDialog({ settings, onSave, onClose, onFollow, tab: initial = "assistant" }: Props) {
   const [s, setS] = useState(settings);
   const [tab, setTab] = useState<SettingsTab>(initial);
   const effort = MODELS.find((m) => m.id === s.model)?.effort ?? false;
@@ -76,10 +79,12 @@ export function AskSettingsDialog({ settings, onSave, onClose, tab: initial = "a
                 <select value={s.provider} onChange={(e) => setS({ ...s, provider: e.target.value as Provider })} data-testid="ask-provider">
                   <option value="anthropic">Anthropic Claude</option>
                   <option value="ollama">Ollama (local)</option>
+                  <option value="claude-code">Claude subscription (Claude Code, local bridge)</option>
                 </select>
               </label>
               {s.provider === "ollama" && <OllamaSettingsPanel value={s.ollama} onChange={(ollama) => setS({ ...s, ollama })} />}
-              {s.provider !== "ollama" && (
+              {s.provider === "claude-code" && <ClaudeCodeSettingsPanel value={s.bridge} onChange={(bridge) => setS({ ...s, bridge })} onFollow={onFollow} />}
+              {s.provider === "anthropic" && (
                 <>
                   <label className="field">
                     <span className="field-label">Model</span>

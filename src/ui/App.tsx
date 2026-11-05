@@ -34,6 +34,7 @@ import { CutListPanel } from "./CutListPanel";
 import type { FrameActions } from "./FrameProps";
 import { NodesPanel, type PathRequest, type SizeChoice } from "./NodesPanel";
 import { useAsk } from "./ask/useAsk";
+import { useFollow } from "./ask/useFollow";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
@@ -344,10 +345,16 @@ export function App() {
   const params = useMemo(() => documentParameters(doc), [doc]);
   // An accepted proposal waits for an open feature session to be finished (OK or Cancel, asked first): it never lands inside one.
   const ask = useAsk({ kernel: kernel.port, doc, replaceDoc: (next) => void sessionApi.finishFirst("put the proposal in", () => d.replaceDoc(next)), library });
+  /** Live link: a part file on this computer followed through the bridge, shown read-only. */
+  const follow = useFollow();
+  /** What the view shows instead of the document: a followed file, Claude Code's work in progress, or an open proposal. */
+  const previewDoc = follow.doc ?? ask.previewDoc;
+  /** The user's edits wait: Claude Code is working on the part, or a file is followed. */
+  const locked = ask.busy || follow.active;
   /** In the sketcher: replaces the draft with an accepted ask's sketch. */
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
-  const shown = useMemo(() => ask.previewDoc ?? (parsed.ok ? parsed.value : null), [ask.previewDoc, parsed]);
+  const shown = useMemo(() => previewDoc ?? (parsed.ok ? parsed.value : null), [previewDoc, parsed]);
   /**
    * What the 3D view rebuilds: in the model, the part as far as the rollback bar; with a handle's drag shown
    * live. The drawing, export and the assistant work on the whole part.
@@ -467,7 +474,7 @@ export function App() {
   // Rebuild whenever the document text parses; the newest request wins. A handle's drag rebuilds at once.
   // In a feature session the preview comes with it: the part before the feature, and what the feature adds and removes.
   // (An assistant's proposal shown instead of the document has no session in it: the view shows the proposal alone meanwhile.)
-  const sessionFeature = ask.previewDoc ? null : (session?.id ?? null);
+  const sessionFeature = previewDoc ? null : (session?.id ?? null);
   /** The session the last rebuild was asked for: one opening or closing rebuilds at once (its preview, or the part as it was), not after the typing pause. */
   const rebuiltFor = useRef<string | null>(null);
   useEffect(() => {
@@ -772,7 +779,7 @@ export function App() {
   const resolvedLive = useMemo(() => (preview ? resolved.map((f) => (f.id === preview.id ? mergePatch(f, preview.patch) : f)) : resolved), [resolved, preview]);
   /** The handles shown: the selected feature's (an extrude's depth, an offset plane's distance), else those of the extrude whose end face is selected. */
   const handles = useMemo<HandleSpec[]>(() => {
-    if (!view || mode !== "model" || ask.previewDoc) return [];
+    if (!view || mode !== "model" || previewDoc) return [];
     // In a session: the open feature's handles, on the part before it (its own datums, as the newest rebuild has them).
     if (session) {
       const f = resolvedLive.find((g) => g.id === session.id);
@@ -796,7 +803,7 @@ export function App() {
       if (owner) return of(owner.feature);
     }
     return [];
-  }, [view, mode, ask.previewDoc, resolvedLive, features, bar, selectedFeature, selection, measuring, session, pickView]);
+  }, [view, mode, previewDoc, resolvedLive, features, bar, selectedFeature, selection, measuring, session, pickView]);
   /** A session's preview as the view draws it; a failure is marked at the feature (its handle, else what it acts on, else the part's middle). */
   const previewLook = useMemo<PreviewLook | null>(() => {
     if (!session || !effect || effect.feature !== session.id) return null;
@@ -1187,7 +1194,7 @@ export function App() {
     batch,
     notice: (text, kind = "info") => setNotice({ kind, text }),
     ready: kernelState.phase === "ready",
-    previewing: !!ask.previewDoc,
+    previewing: !!previewDoc,
     project: (specs) => kernel.port.project(doc ?? {}, specs),
     newDrawing: () => void newDrawing(),
     balloonAll,
@@ -1204,7 +1211,9 @@ export function App() {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
     // The assistant works on the part as it is: an open feature session is finished first (asked).
     if (sessionRef.current) return void sessionApi.finishFirst("ask the assistant", () => setTimeout(() => openAskRef.current(target, x, y, draftSketch, dropped), 0));
-    if (ask.previewDoc && (target.kind === "face" || target.kind === "edge" || target.kind === "part")) {
+    if (follow.active) return setNotice({ kind: "error", text: "Stop following the file first (the view shows the followed part, read-only)." });
+    if (ask.busy) return setNotice({ kind: "error", text: "Claude Code is still working: wait for it, or Stop it in the AI window." });
+    if (previewDoc && (target.kind === "face" || target.kind === "edge" || target.kind === "part")) {
       return setNotice({ kind: "error", text: "Accept or discard the open proposal first: the viewport is showing it." });
     }
     // In the sketcher the ask sees the draft, and accepting updates the draft.
@@ -1904,7 +1913,7 @@ export function App() {
   };
 
   /** Every error and warning, with its fixes; the row shown (its ghost in the view). */
-  const problems = useMemo(() => diagnose(doc, ask.previewDoc ? null : view), [doc, view, ask.previewDoc]);
+  const problems = useMemo(() => diagnose(doc, previewDoc ? null : view), [doc, view, previewDoc]);
   const showProblem = (p: Problem) => {
     setShownProblem(p.key);
     if (p.feature) {
@@ -2272,7 +2281,7 @@ export function App() {
     <ParametersContext.Provider value={params}>
       <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
       <div
-        className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}`}
+        className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}${locked ? " bridge-locked" : ""}`}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
@@ -2416,7 +2425,7 @@ export function App() {
           <>
           <aside className="side left">
             <FeatureTree
-              doc={doc}
+              doc={follow.doc ?? ask.liveDoc ?? doc}
               view={view}
               selectedId={selectedFeature}
               onSelect={(id) => {
@@ -2490,10 +2499,10 @@ export function App() {
                 {sketch && <div className="sketch-top" ref={setSketchTop} />}
                 <Viewport
                   // In a feature session: the part as it stands before the feature, its active field's items lit up, and the preview over it.
-                  view={(!ask.previewDoc && pickView) || view}
+                  view={(!previewDoc && pickView) || view}
                   fitToken={fitToken}
-                  selection={(!ask.previewDoc && sessionSelection) || selection}
-                  preview={ask.previewDoc ? null : previewLook}
+                  selection={(!previewDoc && sessionSelection) || selection}
+                  preview={previewDoc ? null : previewLook}
                   // What a click would do, and whose face or edge it is ("the face fillet_2 made").
                   pickHint={session ? (t) => withMaker(pickRouter.current?.hint(t) ?? null, t) : null}
                   pickReach={session ? (t) => pickRouter.current?.reach(t) ?? null : null}
@@ -2559,7 +2568,7 @@ export function App() {
                     <span className="session-keys">Enter OK · Esc Cancel</span>
                   </div>
                 )}
-                {rolledCount > 0 && !ask.previewDoc && (
+                {rolledCount > 0 && !previewDoc && (
                   <div className="rollback-banner" data-testid="rollback-banner" role="status">
                     <Icon name="rollback" />
                     <span>
@@ -2579,12 +2588,47 @@ export function App() {
                   </div>
                 )}
               </div>}
-              {!sketch && ask.previewDoc && (
+              {!sketch && follow.state && (
+                <div className="bridge-banner" role="status" data-testid="follow-banner">
+                  <span>
+                    {follow.state.status === "connecting"
+                      ? "Connecting to the bridge…"
+                      : follow.state.status === "problem" && !follow.doc
+                        ? `Live link: ${follow.state.message ?? "no answer"}`
+                        : `Following ${follow.state.path} (read-only, ${follow.state.updates} update${follow.state.updates === 1 ? "" : "s"})${follow.state.message ? ` · ${follow.state.message}` : ""}`}
+                  </span>
+                  {follow.state.text && (
+                    <button
+                      onClick={() => {
+                        const text = follow.state!.text;
+                        follow.stop();
+                        replaceDocument(text, "Opened a copy of the followed file");
+                      }}
+                      data-testid="follow-copy"
+                      title="Make the followed part your document (Ctrl+Z brings back the one you had)"
+                    >
+                      Open a copy
+                    </button>
+                  )}
+                  <button onClick={follow.stop} data-testid="follow-stop">
+                    Stop following
+                  </button>
+                </div>
+              )}
+              {!sketch && !follow.active && ask.busy && (
+                <div className="bridge-banner" role="status" data-testid="bridge-banner">
+                  <span>Claude Code is working on the part: your edits wait until it finishes</span>
+                  <button onClick={ask.close} data-testid="bridge-stop">
+                    Stop
+                  </button>
+                </div>
+              )}
+              {!sketch && !follow.active && !ask.busy && previewDoc && (
                 <div className="preview-banner" data-testid="preview-banner">
                   Previewing the proposal
                 </div>
               )}
-              {!sketch && !ask.previewDoc && shownPhoto && doc && (
+              {!sketch && !previewDoc && shownPhoto && doc && (
                 <PhotoBar
                   photo={shownPhoto}
                   stored={!photoImage || photoImage.sha256 !== photoSha ? "loading" : photoShown ? "shown" : "missing"}
@@ -2875,6 +2919,11 @@ export function App() {
           <AskSettingsDialog
             settings={ask.settings}
             onSave={ask.setSettings}
+            onFollow={(path, bridge) => {
+              ask.setSettings({ ...ask.settings, bridge: { ...bridge, followPath: path } });
+              ask.setSettingsOpen(false);
+              void follow.start(path, bridge);
+            }}
             tab={settingsTab}
             onClose={() => {
               ask.setSettingsOpen(false);

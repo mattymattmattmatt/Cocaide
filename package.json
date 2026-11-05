@@ -18,6 +18,7 @@
     "verify:freecad": "tsx scripts/verify-freecad.ts",
     "test:e2e": "playwright test",
     "mcp": "tsx src/mcp/server.ts",
+    "bridge": "tsx src/bridge/main.ts",
     "replay": "tsx scripts/replay.ts"
   },
   "dependencies": {

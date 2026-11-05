@@ -1,0 +1,2928 @@
+diff --git a/src/doc/drawing.ts b/src/doc/drawing.ts
+index f6d439d..758c73b 100644
+--- a/src/doc/drawing.ts
++++ b/src/doc/drawing.ts
+@@ -540,6 +540,7 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
+   const bool = (key: string) => {
+     if (a[key] !== undefined && typeof a[key] !== "boolean") c.fail(`${at}.${key}`, `must be true or false (got ${describe(a[key])})`);
+   };
++  bool("hidden");
+   const str = (key: string, max = 200, required = false) => {
+     if (a[key] === undefined) {
+       if (required) c.fail(`${at}.${key}`, "is required");
+@@ -635,6 +636,8 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
+       oneOf("arrows", ARROW_PLACES);
+       str("prefix", 40);
+       str("suffix", 80);
++      str("below", 80);
++      str("override", 40);
+       count("count");
+       if (a.precision !== undefined && (!Number.isInteger(a.precision) || (a.precision as number) < 0 || (a.precision as number) > 6)) c.fail(`${at}.precision`, `is decimal places, 0 to 6 (got ${describe(a.precision)})`);
+       tolerance();
+diff --git a/src/doc/types.ts b/src/doc/types.ts
+index 18057f7..87d86c4 100644
+--- a/src/doc/types.ts
++++ b/src/doc/types.ts
+@@ -427,6 +427,10 @@ export interface DimensionAnnotation {
+   prefix?: string;
+   /** After it ("THRU", "TYP"). */
+   suffix?: string;
++  /** A line of text under the dimension line ("2 PLACES", "AFTER PLATING"). */
++  below?: string;
++  /** Text written instead of the measured value: the dimension no longer follows the model (the editor and the checks warn). */
++  override?: string;
+   /** How many alike features it stands for: "4×" before it. */
+   count?: number;
+   /** "TYP" after it: the same size wherever it recurs. */
+@@ -842,7 +846,8 @@ export interface TableAnnotation {
+   at?: Vec2;
+ }
+ 
+-export type Annotation =
++/** Every annotation but a table may be hidden: kept in the document and the tree, not drawn on the sheet or in exports. */
++export type Annotation = (
+   | DimensionAnnotation
+   | HoleAnnotation
+   | BalloonAnnotation
+@@ -860,7 +865,8 @@ export type Annotation =
+   | LeaderAnnotation
+   | TextAnnotation
+   | LineAnnotation
+-  | SketchAnnotation;
++  | SketchAnnotation
++) & { hidden?: boolean };
+ export type AnnotationType = Annotation["type"];
+ export const ANNOTATION_TYPES = [
+   "dimension",
+@@ -883,24 +889,24 @@ export const ANNOTATION_TYPES = [
+   "sketch",
+ ] as const;
+ export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
+-  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "count", "typ", "inspection", "tolerance", "precision", "dual", "last"],
+-  hole: ["id", "type", "view", "hole", "on", "at", "count", "pattern", "prefix", "suffix", "tolerance"],
+-  balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow"],
+-  weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more"],
++  dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "below", "override", "count", "typ", "inspection", "tolerance", "precision", "dual", "last", "hidden"],
++  hole: ["id", "type", "view", "hole", "on", "at", "count", "pattern", "prefix", "suffix", "tolerance", "hidden"],
++  balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow", "hidden"],
++  weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more", "hidden"],
+   table: ["id", "type", "table", "at"],
+-  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle"],
+-  centerMark: ["id", "type", "view", "at", "extend", "style"],
+-  centerline: ["id", "type", "view", "between", "extend"],
+-  gdt: ["id", "type", "view", "rows", "composite", "on", "dimension", "extension", "at", "count", "above", "below", "arrow"],
+-  datum: ["id", "type", "view", "label", "on", "dimension", "gdt", "at", "open"],
+-  datumTarget: ["id", "type", "view", "label", "target", "on", "size", "length", "at"],
+-  surface: ["id", "type", "view", "symbol", "values", "process", "lay", "allowance", "allAround", "on", "dimension", "extension", "at", "general"],
+-  cosmeticThread: ["id", "type", "view", "hole", "on", "at"],
+-  revisionCloud: ["id", "type", "pts", "view", "rev", "at", "arc"],
+-  leader: ["id", "type", "view", "to", "at", "text", "via", "arrow", "spline"],
+-  text: ["id", "type", "text", "at", "view", "height", "angle", "anchor", "bold"],
+-  line: ["id", "type", "view", "pts", "line"],
+-  sketch: ["id", "type", "view", "items"],
++  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle", "hidden"],
++  centerMark: ["id", "type", "view", "at", "extend", "style", "hidden"],
++  centerline: ["id", "type", "view", "between", "extend", "hidden"],
++  gdt: ["id", "type", "view", "rows", "composite", "on", "dimension", "extension", "at", "count", "above", "below", "arrow", "hidden"],
++  datum: ["id", "type", "view", "label", "on", "dimension", "gdt", "at", "open", "hidden"],
++  datumTarget: ["id", "type", "view", "label", "target", "on", "size", "length", "at", "hidden"],
++  surface: ["id", "type", "view", "symbol", "values", "process", "lay", "allowance", "allAround", "on", "dimension", "extension", "at", "general", "hidden"],
++  cosmeticThread: ["id", "type", "view", "hole", "on", "at", "hidden"],
++  revisionCloud: ["id", "type", "pts", "view", "rev", "at", "arc", "hidden"],
++  leader: ["id", "type", "view", "to", "at", "text", "via", "arrow", "spline", "hidden"],
++  text: ["id", "type", "text", "at", "view", "height", "angle", "anchor", "bold", "hidden"],
++  line: ["id", "type", "view", "pts", "line", "hidden"],
++  sketch: ["id", "type", "view", "items", "hidden"],
+ };
+ /** The annotations that must sit in a view (the others may, or are the sheet's). */
+ export const VIEW_ANNOTATIONS: readonly AnnotationType[] = ["dimension", "hole", "balloon", "weld", "centerMark", "centerline", "gdt", "datum", "datumTarget", "cosmeticThread"];
+diff --git a/src/drafting/annotate/dimension.ts b/src/drafting/annotate/dimension.ts
+index b27a9c0..a10e79e 100644
+--- a/src/drafting/annotate/dimension.ts
++++ b/src/drafting/annotate/dimension.ts
+@@ -64,7 +64,7 @@ export interface ViewInfo {
+ /** What a dimension measures, in its view's mm. */
+ export type Measure =
+   | { kind: "linear"; p1: Vec2; p2: Vec2; dir: "h" | "v" | "a"; value: number; sides: [boolean, boolean]; near?: Side; symbol?: string }
+-  | { kind: "angular"; v: Vec2; d1: Vec2; d2: Vec2; r1: number; r2: number; value: number }
++  | { kind: "angular"; v: Vec2; d1: Vec2; d2: Vec2; r1: number; r2: number; value: number; n1?: number; n2?: number }
+   | { kind: "radial"; c: Vec2; r: number; value: number; diameter: boolean; arc?: [number, number]; tip?: Vec2 }
+   | { kind: "arc"; c: Vec2; r: number; a0: number; a1: number; value: number }
+   | { kind: "note"; tip: Vec2; dir: Vec2; text: string; value: number }
+@@ -335,6 +335,16 @@ function angularFromRefs(v: ViewInfo, points: PointContext | undefined, refs: st
+     const far = (l: { a: Vec2; b: Vec2 }) => (dist(l.a, vertex) > dist(l.b, vertex) ? l.a : l.b);
+     e1 = far(A);
+     e2 = far(B);
++    // Where each edge begins along its ray (0 when it runs from the corner; negative when it runs through it).
++    const nearOf = (l: { a: Vec2; b: Vec2 }, e: Vec2) => {
++      const d = unit(sub(e, vertex));
++      return Math.min(dot(sub(l.a, vertex), d), dot(sub(l.b, vertex), d));
++    };
++    const u1 = unit(sub(e1, vertex));
++    const u2 = unit(sub(e2, vertex));
++    let angle = deg(Math.acos(Math.max(-1, Math.min(1, dot(u1, u2)))));
++    if (major) angle = 360 - angle;
++    return { kind: "angular", v: vertex, d1: u1, d2: u2, r1: dist(e1, vertex), r2: dist(e2, vertex), value: angle, n1: nearOf(A, e1), n2: nearOf(B, e2) };
+   } else if (refs.length === 3) {
+     const qs = refs.map((r) => viewPoint(v, r, points));
+     const bad = qs.find((q) => "problem" in q);
+@@ -375,7 +385,9 @@ export function sizeText(value: number, places: number | undefined, units: "mm"
+ export function dimensionLabel(a: DimensionAnnotation, value: number, symbol: string, style: DraftStyle, drawing: Drawing, opts: { angle?: boolean; side?: "hole" | "shaft"; size?: number } = {}): { label: Label; text: string } {
+   const places = placesOf(a, drawing);
+   const units = drawing.units ?? "mm";
+-  const num = opts.angle ? `${sizeText(value, places ?? (Number.isInteger(Math.round(value * 10) / 10) ? 0 : 1), "mm", true)}°` : sizeText(value, places, units);
++  const measured = opts.angle ? `${sizeText(value, places ?? (Number.isInteger(Math.round(value * 10) / 10) ? 0 : 1), "mm", true)}°` : sizeText(value, places, units);
++  // An overridden value is written as typed (the editor warns that it no longer follows the model).
++  const num = a.override?.trim() ? a.override.trim() : measured;
+   const head = `${a.count && a.count > 1 ? `${a.count}× ` : ""}${a.prefix ? `${a.prefix}` : ""}${symbol}`;
+   const size = opts.size ?? style.font;
+   const t = toleranceText(value, `${head}${num}`, a.tolerance, { ...(opts.side ? { side: opts.side } : {}), ...(places !== undefined ? { places } : {}) });
+@@ -395,7 +407,7 @@ export function dimensionLabel(a: DimensionAnnotation, value: number, symbol: st
+     parts,
+     size,
+     ...(a.tolerance?.kind === "basic" ? { frame: "box" as const } : a.tolerance?.kind === "reference" ? { frame: "brackets" as const } : a.inspection ? { frame: "oval" as const } : {}),
+-    ...(other ? { below: parseRich(other) } : {}),
++    ...(other || a.below ? { below: parseRich([other, a.below].filter(Boolean).join(" ")) } : {}),
+   };
+   let text = t.size ?? `${t.stack![1]}–${t.stack![0]}`;
+   if (t.size !== null && t.stack) text += ` ${t.stack[0]}/${t.stack[1]}`;
+@@ -405,6 +417,7 @@ export function dimensionLabel(a: DimensionAnnotation, value: number, symbol: st
+   if (t.frame === "brackets") text = `(${text})`;
+   if (t.frame === "box") text = `[${text}]`;
+   if (other) text += ` ${other}`;
++  if (a.below) text += ` / ${a.below}`;
+   return { label, text };
+ }
+ 
+@@ -798,8 +811,34 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
+   // Sheet directions of the rays (a square view keeps its directions; breaks aside).
+   const e1 = toSheet(add(m.v, mul(m.d1, m.r1)));
+   const e2 = toSheet(add(m.v, mul(m.d2, m.r2)));
+-  const d1 = unit(sub(e1, v));
+-  const d2 = unit(sub(e2, v));
++  let d1 = unit(sub(e1, v));
++  let d2 = unit(sub(e2, v));
++  // Each edge's extent along its ray, sheet mm: the arc past it gets an extension line out to it.
++  const k = dist(e1, v) / Math.max(m.r1, 1e-9);
++  let ext1: [number, number] = [(m.n1 ?? 0) * k, dist(e1, v)];
++  let ext2: [number, number] = [(m.n2 ?? 0) * k, dist(e2, v)];
++  let value = m.value;
++  if (at && !a.major && dist(at, v) > 1e-6) {
++    // Dragged: the angle of the quadrant the text is in (two lines make four: the angle or its supplement).
++    const w = unit(sub(at, v));
++    const within = (p: Vec2, q: Vec2) => {
++      const c = p[0] * q[1] - p[1] * q[0];
++      const s1 = p[0] * w[1] - p[1] * w[0];
++      const s2 = w[0] * q[1] - w[1] * q[0];
++      return c >= 0 ? s1 >= -1e-9 && s2 >= -1e-9 : s1 <= 1e-9 && s2 <= 1e-9;
++    };
++    for (const [f1, f2] of [[1, 1], [-1, 1], [1, -1], [-1, -1]] as const) {
++      const p = mul(d1, f1);
++      const q = mul(d2, f2);
++      if (dot(p, w) + dot(q, w) < 0 || !within(p, q)) continue;
++      if (f1 < 0) ext1 = [-ext1[1], -ext1[0]];
++      if (f2 < 0) ext2 = [-ext2[1], -ext2[0]];
++      d1 = p;
++      d2 = q;
++      value = deg(Math.acos(Math.max(-1, Math.min(1, dot(p, q)))));
++      break;
++    }
++  }
+   let a1 = Math.atan2(d1[1], d1[0]);
+   let a2 = Math.atan2(d2[1], d2[0]);
+   // Counter-clockwise from a1 to a2 over the minor angle, or the major one.
+@@ -811,7 +850,7 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
+   }
+   const minLen = Math.min(dist(e1, v), dist(e2, v));
+   const R = at ? Math.max(4, dist(at, v)) : Math.max(12, Math.min(28, minLen * 0.75));
+-  const { label, text } = dimensionLabel(a, m.value, "", style, ctx.drawing, { angle: true });
++  const { label, text } = dimensionLabel(a, value, "", style, ctx.drawing, { angle: true });
+   const prims: Prim[] = [];
+   const arcPts: Vec2[] = [];
+   const n = 32;
+@@ -826,13 +865,16 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
+   const t2: Vec2 = [-Math.sin(a2), Math.cos(a2)];
+   prims.push(...arrowHead(p1, mul(t1, -1), style), ...arrowHead(p2, t2, style));
+   // Extension lines along the rays when the arc is past an edge's end.
+-  for (const [e, d, p] of [
+-    [e1, d1, p1],
+-    [e2, d2, p2],
++  // (along the rays: past an edge's far end, or short of its near one)
++  for (const [ext, p] of [
++    [ext1, p1],
++    [ext2, p2],
+   ] as const) {
+-    const reach = dist(e, v);
+-    const dd = Math.abs(dot(sub(p, v), d));
+-    if (dd > reach + style.gap) prims.push({ k: "line", pts: [add(e, mul(d, style.gap)), add(p, mul(d, style.over))], w: style.thin });
++    const d = unit(sub(p, v));
++    const lo = Math.min(ext[0], ext[1]);
++    const hi = Math.max(ext[0], ext[1]);
++    if (R > hi + style.gap) prims.push({ k: "line", pts: [add(v, mul(d, hi + style.gap)), add(v, mul(d, R + style.over))], w: style.thin });
++    else if (R < lo - style.gap) prims.push({ k: "line", pts: [add(v, mul(d, lo - style.gap)), add(v, mul(d, Math.max(0, R - style.over)))], w: style.thin });
+   }
+   const mid = a1 + span / 2;
+   const mu: Vec2 = [Math.cos(mid), Math.sin(mid)];
+@@ -841,7 +883,7 @@ function angular(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
+   // Horizontal text centred outside the arc's middle (ISO 129 allows it; it reads at any angle).
+   const lp = labelPrims(label, [textAt[0], textAt[1] - (lm.up - lm.down) / 2 + (mu[1] < 0 ? -lm.up * 0.4 : 0)], "middle", 0, style);
+   prims.push(...lp.prims);
+-  return { prims, textBox: lp.box, text, value: m.value, at: textAt, grips: [{ name: "text", at: textAt, field: "at" }], place: { pts: [fromCentre(cv, p1), fromCentre(cv, p2), fromCentre(cv, arcPts[n >> 1])], text } };
++  return { prims, textBox: lp.box, text, value, at: textAt, grips: [{ name: "text", at: textAt, field: "at" }], place: { pts: [fromCentre(cv, p1), fromCentre(cv, p2), fromCentre(cv, arcPts[n >> 1])], text } };
+ }
+ 
+ /** An arc's length: an arc concentric with it, extension lines out to it, "⌒" before the value. */
+diff --git a/src/drafting/annotate/schema.ts b/src/drafting/annotate/schema.ts
+index c55ec3f..95a1338 100644
+--- a/src/drafting/annotate/schema.ts
++++ b/src/drafting/annotate/schema.ts
+@@ -50,6 +50,8 @@ export const ANNOTATION_SCHEMAS: Record<AnnotationType, FieldSchema[]> = {
+     { key: "precision", label: "Decimals", kind: "integer" },
+     { key: "prefix", label: "Prefix", kind: "richText", help: 'before the value: "SR", "<MOD-DIAM>"' },
+     { key: "suffix", label: "Suffix", kind: "richText", help: 'after it: "THRU"' },
++    { key: "below", label: "Text below", kind: "richText", help: 'under the dimension line: "2 PLACES"' },
++    { key: "override", label: "Override value", kind: "text", help: "written instead of the measured value: it no longer follows the model" },
+     { key: "count", label: "Count (n×)", kind: "integer" },
+     { key: "typ", label: "TYP", kind: "boolean" },
+     { key: "inspection", label: "Inspection", kind: "boolean", help: "in an oval" },
+diff --git a/src/drafting/compose.ts b/src/drafting/compose.ts
+index 43855d5..b729b95 100644
+--- a/src/drafting/compose.ts
++++ b/src/drafting/compose.ts
+@@ -118,6 +118,8 @@ export interface ComposedAnnotation {
+   grips?: Grip[];
+   /** Where it is now, from its view's centre: what rememberPlaces keeps as its `last`. */
+   place?: { pts: Vec2[]; text: string };
++  /** Hidden: kept, not drawn. */
++  hidden?: boolean;
+ }
+ 
+ /** What the Phase L points of a view are made from: nodes, members, holes. */
+@@ -196,6 +198,13 @@ export function composeDrawing(doc: unknown, ctx: ComposeContext): ComposedDrawi
+   return { drawing, sheets };
+ }
+ 
++/**
++ * The annotation context each composed sheet was laid out in (its views, its
++ * data, what is already where): the sheet editor lays a tool's annotation out
++ * in it for a live preview that is exactly what will be drawn.
++ */
++export const LAYOUT_CONTEXT = new WeakMap<ComposedSheet, AnnotationContext>();
++
+ /** One sheet of the document's drawing (by id or place; default the first), composed. Null when it has no valid drawing or no such sheet. */
+ export function composeSheet(doc: unknown, ctx: ComposeContext, sheet: string | number = 0): ComposedSheet | null {
+   const v = validateDocument(doc);
+@@ -354,7 +363,7 @@ class Composer {
+       ...this.notes().map((n) => ({ id: n.a.id, box: n.box })),
+       ...sheetTables.flatMap((t) => (t.rendered.box ? [{ id: t.table.id, box: t.rendered.box }] : [])),
+     ];
+-    return {
++    const sheet: ComposedSheet = {
+       id: this.s.id,
+       name: this.s.name ?? `Sheet ${this.index + 1}`,
+       number: this.index + 1,
+@@ -378,6 +387,8 @@ class Composer {
+       cutList: this.cut,
+       points: this.points,
+     };
++    if (this.annotationCtx) LAYOUT_CONTEXT.set(sheet, this.annotationCtx);
++    return sheet;
+   }
+ 
+   // ------------------------------------------------------------- tables (Phase Q)
+@@ -1365,6 +1376,11 @@ class Composer {
+       }
+       const l = layouts.get(a.id)!;
+       const layer = a.type === "dimension" ? "DIMENSION" : a.type === "centerMark" || a.type === "centerline" ? "CENTER" : a.type === "note" || a.type === "text" ? "TEXT" : "ANNOTATION";
++      // A hidden annotation is laid out (what hangs on it still finds it) but not drawn.
++      if (a.hidden) {
++        this.annotations.set(a.id, { id: a.id, type: a.type, ...("view" in a && a.view ? { view: a.view } : {}), text: l.text, ...(l.value !== undefined ? { value: l.value } : {}), box: null, hidden: true });
++        continue;
++      }
+       for (const p of l.prims) this.prims.push({ ...p, owner: a.id, layer: p.layer ?? layer });
+       if (l.problem) this.problems.push(`${a.id}: ${l.problem}`);
+       this.annotations.set(a.id, {
+diff --git a/src/ui/drawing/Panels.tsx b/src/ui/drawing/Panels.tsx
+index fe62e87..f603cfb 100644
+--- a/src/ui/drawing/Panels.tsx
++++ b/src/ui/drawing/Panels.tsx
+@@ -404,20 +404,23 @@ function AnnotationPanel({ ws, a }: { ws: Workspace; a: Record<string, unknown>
+       <p className={said?.problem ? "bad" : "muted"} data-testid="prop-annotation-says">
+         {said?.problem ? `⚠ ${said.problem}` : said?.text ? `Reads: ${said.text}` : ""}
+       </p>
++      {k?.panel?.({ a, said, env, write, ctx: ws.ctx })}
+       {k ? (
+-        <SchemaForm
+-          schema={k.schema}
+-          value={a}
+-          env={env}
+-          prefix={`prop-${String(a.type)}`}
+-          onPatch={write}
+-          armed={ws.session?.tool === "pick.field" ? "" : null}
+-          onArm={(f) => {
+-            if (!f) return;
+-            const s = new FieldPick(ws.ctx, a, f, write);
+-            ws.setSessionDirect(s);
+-          }}
+-        />
++        <KindForm folded={!!k.panel}>
++          <SchemaForm
++            schema={k.schema}
++            value={a}
++            env={env}
++            prefix={`prop-${String(a.type)}`}
++            onPatch={write}
++            armed={ws.session?.tool === "pick.field" ? "" : null}
++            onArm={(f) => {
++              if (!f) return;
++              const s = new FieldPick(ws.ctx, a, f, write);
++              ws.setSessionDirect(s);
++            }}
++          />
++        </KindForm>
+       ) : (
+         <p className="muted small">This kind of annotation has no panel yet: edit it in the document or ask the assistant.</p>
+       )}
+@@ -435,6 +438,17 @@ function AnnotationPanel({ ws, a }: { ws: Workspace; a: Record<string, unknown>
+   );
+ }
+ 
++/** The schema's fields: as they are, or folded under "All properties" below a kind's own panel. */
++function KindForm({ folded, children }: { folded: boolean; children: ReactNode }) {
++  if (!folded) return <>{children}</>;
++  return (
++    <details className="all-props" data-testid="prop-all">
++      <summary>All properties</summary>
++      {children}
++    </details>
++  );
++}
++
+ // ------------------------------------------------------------ a table
+ 
+ export function TablePanel({ ws, table }: { ws: Workspace; table: DrawingTable }) {
+diff --git a/src/ui/drawing/SheetCanvas.tsx b/src/ui/drawing/SheetCanvas.tsx
+index b435342..b259ad0 100644
+--- a/src/ui/drawing/SheetCanvas.tsx
++++ b/src/ui/drawing/SheetCanvas.tsx
+@@ -14,8 +14,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
+ import type { Command } from "../../doc/commands";
+ import type { Drawing, DrawingSheet, Vec2 } from "../../doc/types";
+ import type { ComposedSheet } from "../../drafting/compose";
+-import type { Box } from "../../drafting/sheet";
+-import { sheetSVG } from "../../drafting/svg";
++import type { Box, Prim } from "../../drafting/sheet";
++import { SHEET_FONT, sheetSVG } from "../../drafting/svg";
+ import { wheelZoom } from "../input";
+ import { alignmentOf, constrain, followers, keepOff, pulledOff, snapToViews, tenth, type Guide } from "./align";
+ import { snapAt, type SnapIndex, type SnapKind, type SnapTarget } from "./snap";
+@@ -383,6 +383,8 @@ export function SheetCanvas(props: SheetCanvasProps) {
+       if (pt && session && !d.moved) session.click?.(pt);
+       return;
+     }
++    // A grip that acts on a click (an arrowhead: the arrows flip).
++    if (d.kind === "grip" && !d.moved && d.grip?.click && d.hit) return dropAnnotation(d.hit.id, [0, 0], d.grip);
+     if (!d.moved) {
+       if (d.kind === "box" && !d.hit) return props.onSelect([], d.additive ?? false);
+       if (d.hit) props.onSelect(d.hit.kind === "titleBlock" ? [] : [d.hit.id], d.additive ?? false);
+@@ -468,6 +470,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
+   const tone = (t?: Tone) => TONE[t ?? "accent"];
+   const draw = (s: OverlayShape, i: number | string) => {
+     if (s.k === "move") return;
++    if (s.k === "prims") return shapes.push(<PrimsPreview key={i} prims={s.prims} colour={tone(s.tone ?? "preview")} H={H} />);
+     if (s.k === "line") {
+       const props2 = { points: s.pts.map(pt).join(" "), fill: "none", stroke: tone(s.tone), strokeWidth: (s.w ?? 1.5) * k, strokeDasharray: s.dash ? `${6 * k} ${4 * k}` : undefined };
+       shapes.push(s.closed ? <polygon key={i} {...props2} /> : <polyline key={i} {...props2} />);
+@@ -590,6 +593,29 @@ export function SheetCanvas(props: SheetCanvasProps) {
+   );
+ }
+ 
++/** A tool's annotation as the engine lays it out, drawn in the preview colour at its true line weights and text. */
++function PrimsPreview({ prims, colour, H }: { prims: Prim[]; colour: string; H: number }) {
++  const y = (v: number) => H - v;
++  return (
++    <g className="prims-preview" color={colour} stroke="currentColor" fill="none" strokeLinecap="round" strokeLinejoin="round" data-testid="sheet-preview">
++      {prims.map((p, i) => {
++        if (p.k === "line") {
++          const pts = p.pts.map((q) => `${q[0]},${y(q[1])}`).join(" ");
++          const common = { strokeWidth: Math.max(p.w, 0.18), strokeDasharray: p.dash?.join(" "), fill: p.fill ? "currentColor" : "none" };
++          return p.closed || p.fill ? <polygon key={i} points={pts} {...common} /> : <polyline key={i} points={pts} {...common} />;
++        }
++        if (p.k === "circle") return <circle key={i} cx={p.c[0]} cy={y(p.c[1])} r={p.r} strokeWidth={Math.max(p.w, 0.18)} fill={p.fill ? "currentColor" : "none"} />;
++        if (p.k === "area") return null;
++        return (
++          <text key={i} x={p.at[0]} y={y(p.at[1])} fontSize={p.size} textAnchor={p.anchor} fontWeight={p.bold ? "bold" : undefined} fontStyle={p.italic ? "italic" : undefined} transform={p.angle ? `rotate(${-p.angle} ${p.at[0]} ${y(p.at[1])})` : undefined} fill="currentColor" stroke="none" fontFamily={SHEET_FONT}>
++            {p.text}
++          </text>
++        );
++      })}
++    </g>
++  );
++}
++
+ /** The glyph of what the pointer snaps to: a square on a vertex, a cross in a centre, a diamond on a quadrant, a triangle on a midpoint, a ring on an edge. Pixels, at any zoom. */
+ function SnapGlyph({ kind, at, k }: { kind: SnapKind; at: Vec2; k: number }) {
+   const s = 5 * k;
+diff --git a/src/ui/drawing/Workspace.tsx b/src/ui/drawing/Workspace.tsx
+index 31b7cb9..dff47d1 100644
+--- a/src/ui/drawing/Workspace.tsx
++++ b/src/ui/drawing/Workspace.tsx
+@@ -30,6 +30,7 @@ import { SheetTabs } from "./SheetTabs";
+ import { snapIndex, type SnapIndex } from "./snap";
+ import "./tools";
+ import { runAutoDimension } from "./tools/annotationTools";
++import { annotationKey, annotationMenu } from "./tools/editing";
+ import { annotationKind } from "./tools/kinds";
+ import { drawingTool, onToolsChanged, toolForKey, toolGroups } from "./tools/registry";
+ import { DRAWING_TABS, type DrawingDialog, type DrawingSession, type DrawingTab, type DrawingToolCtx, type SheetHit } from "./tools/types";
+@@ -150,6 +151,8 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
+     }
+   }, [p.d.transaction, session]);
+ 
++  const sessionRef = useRef(session);
++  sessionRef.current = session;
+   const live = useRef({ p, selection, snap, sheetDoc });
+   live.current = { p, selection, snap, sheetDoc };
+   const ctx = useCallback(
+@@ -205,6 +208,12 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
+           setSession(null);
+           setTick((n) => n + 1);
+         },
++        startSession: (s) => {
++          const cur = sessionRef.current;
++          if (cur && cur !== s) cur.cancel();
++          setSession(s);
++          setMenu(null);
++        },
+         dialog: (name, arg) => setDialog({ name, arg }),
+         actions: { newDrawing: p.newDrawing, balloonAll: p.balloonAll },
+       };
+@@ -297,6 +306,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
+       const t = e.target as HTMLElement;
+       if (t.closest("input, textarea, select, [contenteditable]") || document.querySelector(".modal-backdrop, .context-menu, .drawing-dialog")) return;
+       if (session?.key?.(e)) return e.preventDefault();
++      if (!session && annotationKey(e, ctx())) return e.preventDefault();
+       const mod = e.ctrlKey || e.metaKey;
+       if (e.key === "Escape") {
+         if (session) {
+@@ -376,7 +386,11 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
+       const a = p.drawing.sheets.flatMap((s) => s.annotations).find((x) => x.id === hit.id);
+       if (!a) return;
+       title = `${annotationKind(a.type)?.label ?? a.type} ${a.id}`;
++      const said = p.sheet?.annotations.find((x) => x.id === a.id);
+       items = [
++        ...(annotationKind(a.type)?.menu?.(a as unknown as Record<string, unknown>, ctx(), said) ?? []),
++        ...annotationMenu(a, ctx, said),
++        "sep",
+         { label: "Copy", icon: "copy", shortcut: "Ctrl+C", onClick: copy, testId: "ctx-copy-annotation" },
+         ...(clipboard.current.length ? [{ label: "Paste", icon: "paste", shortcut: "Ctrl+V", onClick: paste } as MenuEntry] : []),
+         ...("at" in a && a.at && a.type !== "note" ? [{ label: "Place automatically", icon: "examples", onClick: () => run({ type: "setAnnotation", id: a.id, annotation: withoutAt(a) }) } as MenuEntry] : []),
+diff --git a/src/ui/drawing/tools/annotationKindsQ3.tsx b/src/ui/drawing/tools/annotationKindsQ3.tsx
+new file mode 100644
+index 0000000..a5be461
+--- /dev/null
++++ b/src/ui/drawing/tools/annotationKindsQ3.tsx
+@@ -0,0 +1,413 @@
++// The annotation kinds' panels and handles of wave Q3A: the Dimension panel
++// (its value, driven by the model, overridden with a warning; text before,
++// after and below; n× and TYP; decimals; the tolerance with its fields and
++// the ISO 286 fit editor showing the limits live; dual units; arrows; basic,
++// reference, inspection; favourites), the hole callout's bore tolerance, and
++// the grips every kind gets from the engine's layout (its text, its knee, a
++// leader's bends, a cloud's corners) plus a dimension's arrowheads, which flip
++// the arrows when clicked.
++
++import { useState } from "react";
++import type { Annotation, DimensionAnnotation, Vec2 } from "../../../doc/types";
++import { dragGrip as engineDrag, type Grip as EngineGrip } from "../../../drafting/annotate";
++import type { ComposedSheet } from "../../../drafting/compose";
++import { TOLERANCE_KINDS, type Tolerance, type ToleranceKind } from "../../../drafting/tolerance";
++import { parseFit } from "../../../drafting/fits";
++import { annotationKind, annotationKinds, registerAnnotationKind, type Grip, type KindCtx, type KindPanelProps } from "./kinds";
++import { applyFavourite, classChoices, COMMON_FITS, favouriteFrom, fitSummary, loadFavourites, storeFavourites, BUILT_IN_FAVOURITES } from "./styles";
++import { Commit, numberOf, Row, Segmented, SymbolPalette } from "./ui";
++
++// ------------------------------------------------------------ grips from the engine's layout
++
++const gripId = (g: EngineGrip) => `${g.name}:${g.field}:${g.index ?? ""}`;
++const GRIP_WORDS: Record<string, string> = { text: "Drag the text", line: "Drag the dimension line nearer or further", knee: "Drag the text and its leader's knee", symbol: "Drag the symbol", frame: "Drag the frame", end: "Drag the end", vertex: "Drag the corner" };
++
++/** The annotation's grips as laid out: what the engine says can be dragged. */
++function engineGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
++  return (ctx.said?.grips ?? []).map((g) => ({ id: gripId(g), at: g.at, label: GRIP_WORDS[g.name] ?? "Drag it" }));
++}
++
++/** The patch a dragged engine grip makes: the annotation as the engine moves it (keys it drops come back as null). */
++function engineDragPatch(a: Record<string, unknown>, grip: Grip, delta: Vec2, ctx: KindCtx): Record<string, unknown> | null {
++  const g = (ctx.said?.grips ?? []).find((x) => gripId(x) === grip.id);
++  if (!g) return null;
++  const next = engineDrag(a as unknown as Annotation, g, [g.at[0] + delta[0], g.at[1] + delta[1]], ctx.sheet) as unknown as Record<string, unknown>;
++  const patch: Record<string, unknown> = { ...next };
++  for (const k of Object.keys(a)) if (!(k in next)) patch[k] = null;
++  delete patch.id;
++  return patch;
++}
++
++/** A linear dimension's arrowheads (the two ends of its line): a click flips the arrows inside or outside. */
++function arrowGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
++  const place = ctx.said?.place;
++  const cv = ctx.sheet.views.find((v) => v.id === a.view);
++  if (!place || place.pts.length !== 4 || !cv) return [];
++  return [2, 3].map((i) => ({ id: `arrow:${i}`, at: [cv.centre[0] + place.pts[i][0], cv.centre[1] + place.pts[i][1]] as Vec2, label: "Click: arrows inside or outside", click: true }));
++}
++
++const dimension = annotationKind("dimension")!;
++const oldGrips = dimension.grips;
++const oldDrag = dimension.dragGrip;
++
++registerAnnotationKind({
++  ...dimension,
++  grips: (a, ctx) => {
++    const text = engineGrips(a, ctx).filter((g) => !g.id.startsWith("line:"));
++    const line = (oldGrips?.(a, ctx) ?? []).map((g) => ({ ...g, id: "offset" }));
++    return [...line, ...text, ...arrowGrips(a, ctx)];
++  },
++  dragGrip: (a, grip, delta, ctx) => {
++    if (grip.id.startsWith("arrow:")) {
++      const now = (a.arrows as string | undefined) ?? "auto";
++      return { arrows: now === "outside" ? "inside" : "outside" };
++    }
++    if (grip.id === "offset") return oldDrag?.(a, grip, delta, ctx) ?? null;
++    return engineDragPatch(a, grip, delta, ctx);
++  },
++  panel: (p) => <DimensionPanel {...p} />,
++});
++
++// Every other kind: the engine's grips, unless it has its own.
++for (const k of annotationKinds()) {
++  if (k.type === "dimension" || k.type === "table" || k.type === "centerMark" || k.type === "centerline") continue;
++  const own = k.grips;
++  registerAnnotationKind({
++    ...k,
++    grips: (a, ctx) => {
++      const g = engineGrips(a, ctx);
++      const extra = k.type === "note" ? leaderGrips(a, ctx) : [];
++      return g.length ? [...g, ...extra] : [...(own?.(a, ctx) ?? []), ...extra];
++    },
++    dragGrip: (a, grip, delta, ctx) => {
++      if (grip.id.startsWith("leader:")) return dragLeader(a, grip, delta);
++      if (grip.id.includes(":")) return engineDragPatch(a, grip, delta, ctx);
++      return k.dragGrip?.(a, grip, delta, ctx) ?? null;
++    },
++  });
++}
++
++// ------------------------------------------------------------ a note's leaders
++
++type LeaderData = { to: string | Vec2; via?: Vec2[]; arrow?: string; spline?: boolean };
++
++/** A note's leaders' bends and free ends (sheet points; in a view, from its centre). */
++function leaderGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
++  const leaders = (a.leaders as LeaderData[] | undefined) ?? [];
++  const cv = typeof a.view === "string" ? ctx.sheet.views.find((v) => v.id === a.view) : undefined;
++  const o: Vec2 = cv ? cv.centre : [0, 0];
++  const out: Grip[] = [];
++  leaders.forEach((l, i) => {
++    (l.via ?? []).forEach((p, j) => out.push({ id: `leader:${i}:via:${j}`, at: [o[0] + p[0], o[1] + p[1]], label: "Drag the leader's bend" }));
++    if (Array.isArray(l.to)) out.push({ id: `leader:${i}:to`, at: [o[0] + l.to[0], o[1] + l.to[1]], label: "Drag the leader's end" });
++  });
++  return out;
++}
++
++function dragLeader(a: Record<string, unknown>, grip: Grip, delta: Vec2): Record<string, unknown> | null {
++  const [, i, what, j] = grip.id.split(":");
++  const leaders = [...((a.leaders as LeaderData[] | undefined) ?? [])].map((l) => ({ ...l }));
++  const l = leaders[Number(i)];
++  if (!l) return null;
++  const mv = (p: Vec2): Vec2 => [Math.round((p[0] + delta[0]) * 10) / 10, Math.round((p[1] + delta[1]) * 10) / 10];
++  if (what === "via" && l.via) l.via = l.via.map((p, k) => (k === Number(j) ? mv(p) : p));
++  else if (what === "to" && Array.isArray(l.to)) l.to = mv(l.to);
++  return { leaders };
++}
++
++// ------------------------------------------------------------ the tolerance editor
++
++const KIND_WORDS: Record<ToleranceKind, string> = {
++  symmetric: "± symmetric",
++  bilateral: "+/− deviations",
++  limit: "Limits (max over min)",
++  fit: "Fit (class only)",
++  fitWithTol: "Fit with deviations",
++  fitLimits: "Fit with limits",
++  basic: "Basic (boxed)",
++  reference: "Reference (in brackets)",
++  min: "MIN",
++  max: "MAX",
++};
++
++/** A tolerance: its kind, its numbers or its ISO 286 class with the limits it gives at this size. */
++export function ToleranceEditor({ value, size, symbol, onChange, prefix, angle }: { value: Tolerance | undefined; size: number | undefined; symbol: string; onChange(t: Tolerance | null): string | null; prefix: string; angle?: boolean }) {
++  const [error, setError] = useState("");
++  const set = (t: Tolerance | null) => setError(onChange(t) ?? "");
++  const kind = value?.kind;
++  const fit = value?.fit ? parseFit(value.fit) : null;
++  const holeClass = fit?.hole ? `${fit.hole.letter}${fit.hole.grade}` : "";
++  const shaftClass = fit?.shaft ? `${fit.shaft.letter}${fit.shaft.grade}` : "";
++  const isFit = kind === "fit" || kind === "fitWithTol" || kind === "fitLimits";
++  const setFit = (hole: string, shaft: string) => {
++    const code = hole && shaft ? `${hole}/${shaft}` : hole || shaft;
++    if (!code) return set(null);
++    set({ kind: isFit ? kind! : "fitWithTol", fit: code, ...(value?.precision !== undefined ? { precision: value.precision } : {}) });
++  };
++  const num = (k: "plus" | "minus", s: string) => {
++    const n = numberOf(s);
++    if (n !== undefined && !Number.isFinite(n)) return setError(`${k === "plus" ? "Plus" : "Minus"} must be a number (got "${s}")`);
++    set({ ...(value ?? { kind: "symmetric" }), [k]: n } as Tolerance);
++  };
++  const summary = size && value?.fit && isFit ? fitSummary(size, value.fit, symbol) : null;
++  const kinds = TOLERANCE_KINDS.filter((k) => !angle || !k.startsWith("fit"));
++  return (
++    <div className="tolerance-editor" data-testid={`${prefix}-tolerance`}>
++      <Row label="Tolerance">
++        <select
++          value={kind ?? ""}
++          onChange={(e) => {
++            const k = e.target.value as ToleranceKind | "";
++            if (!k) return set(null);
++            if (k === "symmetric") return set({ kind: k, plus: value?.plus && value.plus > 0 ? value.plus : 0.1 });
++            if (k === "bilateral" || k === "limit") return set({ kind: k, plus: value?.plus ?? 0.1, minus: value?.minus ?? 0 });
++            if (k === "fit" || k === "fitWithTol" || k === "fitLimits") return set({ kind: k, fit: value?.fit ?? (symbol === "Ø" ? "H7" : "H7") });
++            set({ kind: k });
++          }}
++          data-testid={`${prefix}-tol-kind`}
++        >
++          <option value="">none (the general tolerance)</option>
++          {kinds.map((k) => (
++            <option key={k} value={k}>
++              {KIND_WORDS[k]}
++            </option>
++          ))}
++        </select>
++      </Row>
++      {(kind === "symmetric" || kind === "bilateral" || kind === "limit") && (
++        <div className="tol-fields">
++          <Row label={kind === "symmetric" ? "±" : "Plus"}>
++            <Commit value={value?.plus !== undefined ? String(value.plus) : ""} onCommit={(s) => num("plus", s)} testId={`${prefix}-tol-plus`} numeric width={80} />
++          </Row>
++          {kind !== "symmetric" && (
++            <Row label="Minus" hint="How far under the size it may be (0: none under)">
++              <Commit value={value?.minus !== undefined ? String(value.minus) : ""} onCommit={(s) => num("minus", s)} testId={`${prefix}-tol-minus`} numeric width={80} />
++            </Row>
++          )}
++        </div>
++      )}
++      {isFit && (
++        <>
++          <div className="tol-fields">
++            <Row label="Hole" hint="ISO 286 hole class: its deviations at this size">
++              <select value={holeClass} onChange={(e) => setFit(e.target.value, shaftClass)} data-testid={`${prefix}-fit-hole`}>
++                <option value="">—</option>
++                {(size ? classChoices(size, "hole") : []).map((c) => (
++                  <option key={c.value} value={c.value}>
++                    {c.label}
++                  </option>
++                ))}
++                {holeClass && size && !classChoices(size, "hole").some((c) => c.value === holeClass) && <option value={holeClass}>{holeClass}</option>}
++              </select>
++            </Row>
++            <Row label="Shaft" hint="ISO 286 shaft class: its deviations at this size">
++              <select value={shaftClass} onChange={(e) => setFit(holeClass, e.target.value)} data-testid={`${prefix}-fit-shaft`}>
++                <option value="">—</option>
++                {(size ? classChoices(size, "shaft") : []).map((c) => (
++                  <option key={c.value} value={c.value}>
++                    {c.label}
++                  </option>
++                ))}
++                {shaftClass && size && !classChoices(size, "shaft").some((c) => c.value === shaftClass) && <option value={shaftClass}>{shaftClass}</option>}
++              </select>
++            </Row>
++          </div>
++          <div className="fit-chips" role="group" aria-label="Common fits">
++            {COMMON_FITS.map((f) => (
++              <button key={f} type="button" className={`chip${value?.fit === f ? " on" : ""}`} onClick={() => set({ kind: kind!, fit: f })} data-testid={`${prefix}-fit-${f.replace("/", "-")}`}>
++                {f}
++              </button>
++            ))}
++          </div>
++          {summary && (
++            <div className={`fit-summary ${summary.type ?? ""}`} data-testid={`${prefix}-fit-summary`}>
++              {summary.lines.map((l) => (
++                <div key={l}>{l}</div>
++              ))}
++            </div>
++          )}
++        </>
++      )}
++      {kind && kind !== "basic" && kind !== "reference" && kind !== "min" && kind !== "max" && kind !== "fit" && (
++        <Row label="Deviation decimals">
++          <select
++            value={value?.precision ?? ""}
++            onChange={(e) => {
++              const p = e.target.value === "" ? undefined : Number(e.target.value);
++              const next = { ...value! } as Tolerance;
++              if (p === undefined) delete next.precision;
++              else next.precision = p;
++              set(next);
++            }}
++            data-testid={`${prefix}-tol-precision`}
++          >
++            <option value="">as needed</option>
++            {[1, 2, 3, 4].map((n) => (
++              <option key={n} value={n}>
++                {n}
++              </option>
++            ))}
++          </select>
++        </Row>
++      )}
++      {error && (
++        <p className="field-error" role="alert">
++          {error}
++        </p>
++      )}
++    </div>
++  );
++}
++
++// ------------------------------------------------------------ the Dimension panel
++
++function DimensionPanel({ a, said, write, env }: KindPanelProps) {
++  const d = a as unknown as DimensionAnnotation;
++  const [favName, setFavName] = useState("");
++  const [msg, setMsg] = useState("");
++  const kind = d.kind ?? "linear";
++  const angle = kind === "angular";
++  const radial = kind === "diameter" || kind === "radius";
++  const symbol = kind === "diameter" ? "Ø" : kind === "radius" ? "R" : "";
++  const value = said?.value;
++  const places = d.precision ?? env.drawing.precision;
++  const shown = value === undefined ? "—" : `${symbol}${angle ? `${Math.round(value * 100) / 100}°` : value.toFixed(places ?? (Number.isInteger(Math.round(value * 1000) / 1000) ? 0 : 2))}`;
++  const favs = [...BUILT_IN_FAVOURITES, ...loadFavourites()];
++  const put = (patch: Record<string, unknown>) => setMsg(write(patch) ?? "");
++  const tolKind = d.tolerance?.kind;
++  return (
++    <div className="dim-panel" data-testid="dim-panel">
++      <div className="dim-value">
++        <span className="dim-value-label">Value</span>
++        <span className="dim-value-number mono" data-testid="dim-value">
++          {shown}
++        </span>
++        <span className={`badge${d.override ? " warn" : ""}`}>{d.override ? "overridden" : "driven by the model"}</span>
++      </div>
++      <Row label="Override" hint="Text written instead of the measured value: it no longer follows the model">
++        <Commit value={d.override ?? ""} placeholder="the measured value" onCommit={(s) => put({ override: s.trim() || null })} testId="dim-override" />
++      </Row>
++      {d.override && (
++        <p className="warn-line" role="alert" data-testid="dim-override-warning">
++          ⚠ The model measures {shown}; this dimension shows “{d.override}” and won't follow changes. Clear the override to drive it again.
++        </p>
++      )}
++      <Row label="Favourite">
++        <span className="fav-row">
++          <select
++            value=""
++            onChange={(e) => {
++              const f = favs.find((x) => x.name === e.target.value);
++              if (!f) return;
++              const p = applyFavourite(d, f);
++              if (typeof p === "string") return setMsg(p);
++              put(p);
++            }}
++            data-testid="dim-fav"
++          >
++            <option value="">apply…</option>
++            {favs.map((f) => (
++              <option key={f.name} value={f.name}>
++                {f.name}
++              </option>
++            ))}
++          </select>
++          <input value={favName} placeholder="name" onChange={(e) => setFavName(e.target.value)} onKeyDown={(e) => e.stopPropagation()} style={{ width: 80 }} data-testid="dim-fav-name" />
++          <button
++            type="button"
++            onClick={() => {
++              const f = favouriteFrom(favName, d);
++              if (typeof f === "string") return setMsg(f);
++              storeFavourites([...loadFavourites().filter((x) => x.name !== f.name), f]);
++              setFavName("");
++              setMsg(`Saved “${f.name}”: it is in the list of favourites and in Smart Dimension's styles.`);
++            }}
++            data-testid="dim-fav-save"
++          >
++            Save
++          </button>
++        </span>
++      </Row>
++      <ToleranceEditor value={d.tolerance} size={value} symbol={symbol} angle={angle} prefix="dim" onChange={(t) => write({ tolerance: t })} />
++      <div className="dim-text">
++        <Row label="Before">
++          <Commit value={d.prefix ?? ""} placeholder="Ø, SR, 4×" onCommit={(s) => put({ prefix: s || null })} testId="dim-prefix" />
++        </Row>
++        <SymbolPalette testId="dim-symbols" onPick={(ch) => put({ prefix: `${d.prefix ?? ""}${ch}` })} />
++        <Row label="After">
++          <Commit value={d.suffix ?? ""} placeholder="THRU" onCommit={(s) => put({ suffix: s || null })} testId="dim-suffix" />
++        </Row>
++        <Row label="Below">
++          <Commit value={d.below ?? ""} placeholder="2 PLACES" onCommit={(s) => put({ below: s || null })} testId="dim-below" />
++        </Row>
++        <div className="tol-fields">
++          <Row label="Count n×">
++            <Commit value={d.count ? String(d.count) : ""} placeholder="1" numeric width={56} onCommit={(s) => {
++              const n = numberOf(s);
++              if (n !== undefined && (!Number.isInteger(n) || n < 1)) return setMsg(`Count is how many alike features, a whole number (got "${s}")`);
++              put({ count: n && n > 1 ? n : null });
++            }} testId="dim-count" />
++          </Row>
++          <label className="check">
++            <input type="checkbox" checked={!!d.typ} onChange={(e) => put({ typ: e.target.checked || null })} data-testid="dim-typ" /> TYP
++          </label>
++        </div>
++      </div>
++      <div className="tol-fields">
++        <Row label="Decimals">
++          <select value={d.precision ?? ""} onChange={(e) => put({ precision: e.target.value === "" ? null : Number(e.target.value) })} data-testid="dim-precision">
++            <option value="">drawing's ({env.drawing.precision ?? "as needed"})</option>
++            {[0, 1, 2, 3, 4].map((n) => (
++              <option key={n} value={n}>
++                {n === 0 ? "12" : `12.${"0".repeat(n)}`}
++              </option>
++            ))}
++          </select>
++        </Row>
++        <label className="check" title="The other unit too, in brackets">
++          <input type="checkbox" checked={d.dual ?? env.drawing.dualUnits ?? false} onChange={(e) => put({ dual: e.target.checked })} data-testid="dim-dual" /> Dual units
++        </label>
++      </div>
++      {radial && d.refs?.length === 1 && (
++        <Row label="Display as">
++          <Segmented label="Display as" value={kind as "diameter" | "radius"} options={[["diameter", "Ø diameter"], ["radius", "R radius"]]} onChange={(k) => put({ kind: k })} testId="dim-as" />
++        </Row>
++      )}
++      <Row label="Arrows" hint="Click an arrowhead on the sheet to flip them">
++        <Segmented label="Arrows" value={d.arrows ?? "auto"} options={[["auto", "Auto"], ["inside", "Inside"], ["outside", "Outside"]]} onChange={(v) => put({ arrows: v === "auto" ? null : v })} testId="dim-arrows" />
++      </Row>
++      <div className="dim-flags">
++        <label className="check">
++          <input type="checkbox" checked={!!d.flip} onChange={(e) => put({ flip: e.target.checked || null })} data-testid="dim-flip" /> Flip
++        </label>
++        <label className="check" title="The theoretically exact size, boxed (GD&T)">
++          <input type="checkbox" checked={tolKind === "basic"} onChange={(e) => put({ tolerance: e.target.checked ? { kind: "basic" } : null })} data-testid="dim-basic" /> Basic
++        </label>
++        <label className="check" title="For information, in brackets">
++          <input type="checkbox" checked={tolKind === "reference"} onChange={(e) => put({ tolerance: e.target.checked ? { kind: "reference" } : null })} data-testid="dim-reference" /> Reference
++        </label>
++        <label className="check" title="Checked at inspection: in an oval">
++          <input type="checkbox" checked={!!d.inspection} onChange={(e) => put({ inspection: e.target.checked || null })} data-testid="dim-inspection" /> Inspection
++        </label>
++      </div>
++      {msg && (
++        <p className={msg.startsWith("Saved") ? "muted small" : "field-error"} role="status">
++          {msg}
++        </p>
++      )}
++    </div>
++  );
++}
++
++// ------------------------------------------------------------ the hole callout's bore tolerance
++
++const hole = annotationKind("hole")!;
++registerAnnotationKind({
++  ...annotationKind("hole")!,
++  panel: ({ a, write, env }) => {
++    const sheet = env.sheet as ComposedSheet | null;
++    const rec = sheet?.points.holes.get(String(a.hole));
++    return <ToleranceEditor value={a.tolerance as Tolerance | undefined} size={rec?.diameter} symbol="Ø" prefix="hole" onChange={(t) => write({ tolerance: t })} />;
++  },
++});
++void hole;
+diff --git a/src/ui/drawing/tools/balloons.ts b/src/ui/drawing/tools/balloons.ts
+new file mode 100644
+index 0000000..1df948a
+--- /dev/null
++++ b/src/ui/drawing/tools/balloons.ts
+@@ -0,0 +1,101 @@
++// Auto Balloon (Phase Q wave Q3A): a balloon for every cut list (or BOM)
++// item that a view shows and that has none yet, each on the member or body
++// it numbers, arranged by a layout: round the view where each one is free
++// (the engine places them), or in a row above or below it, a column to its
++// left or right, or square round it, in the order their parts are, so the
++// leaders don't cross. Pure.
++
++import type { Annotation, BalloonAnnotation, Vec2 } from "../../../doc/types";
++import { visibleAnchor } from "../../../drafting/annotate";
++import type { ComposedSheet, ComposedView } from "../../../drafting/compose";
++import { viewToSheet } from "../../../drafting/compose";
++
++export const BALLOON_LAYOUTS = ["around", "top", "bottom", "left", "right", "square"] as const;
++export type BalloonLayout = (typeof BALLOON_LAYOUTS)[number];
++
++export interface AutoBalloonOptions {
++  /** The views to balloon (default: every view on the sheet), the first that shows an item gets it. */
++  views?: string[];
++  layout?: BalloonLayout;
++  /** Distance of a row or column from the view, sheet mm (default 14). */
++  gap?: number;
++}
++
++/** The balloons to add (without ids), and the items no view shows. */
++export function autoBalloons(sheet: ComposedSheet, existing: Annotation[], opts: AutoBalloonOptions = {}): { balloons: Omit<BalloonAnnotation, "id">[]; unseen: number[] } {
++  const layout = opts.layout ?? "around";
++  const gap = opts.gap ?? 14;
++  const views = (opts.views ?? sheet.views.map((v) => v.id)).map((id) => sheet.views.find((v) => v.id === id)).filter((v): v is ComposedView => !!v?.box);
++  const said = new Map(sheet.annotations.map((a) => [a.id, a]));
++  const done = new Set<number>();
++  for (const a of existing) {
++    if (a.type !== "balloon") continue;
++    const item = a.item ?? said.get(a.id)?.item;
++    if (item !== undefined) done.add(item);
++  }
++  const memberBody = new Map(sheet.points.members.map((m) => [m.id, m.body]));
++  const picks = new Map<string, { view: ComposedView; member: string; at: Vec2 }[]>();
++  const unseen: number[] = [];
++  for (const item of sheet.cutList) {
++    if (done.has(item.item)) continue;
++    let placed = false;
++    for (const cv of views) {
++      // The member of the item that shows most in this view.
++      let best: { member: string; at: Vec2; length: number } | null = null;
++      for (const m of item.members) {
++        const body = memberBody.get(m);
++        const anchor = body ? visibleAnchor(cv, body) : null;
++        if (anchor && (!best || anchor.length > best.length)) best = { member: m, at: viewToSheet(cv, anchor.at), length: anchor.length };
++      }
++      if (!best) continue;
++      picks.set(cv.id, [...(picks.get(cv.id) ?? []), { view: cv, member: best.member, at: best.at }]);
++      placed = true;
++      break;
++    }
++    if (!placed) unseen.push(item.item);
++  }
++  const balloons: Omit<BalloonAnnotation, "id">[] = [];
++  for (const list of picks.values()) {
++    const cv = list[0].view;
++    const b = cv.box!;
++    const rel = (p: Vec2): Vec2 => [Math.round((p[0] - cv.centre[0]) * 10) / 10 + 0, Math.round((p[1] - cv.centre[1]) * 10) / 10 + 0];
++    const spread = (n: number, lo: number, hi: number, i: number) => (n === 1 ? (lo + hi) / 2 : lo + ((hi - lo) * i) / (n - 1));
++    if (layout === "around") {
++      for (const x of list) balloons.push({ type: "balloon", view: cv.id, member: x.member });
++      continue;
++    }
++    if (layout === "top" || layout === "bottom") {
++      const sorted = [...list].sort((p, q) => p.at[0] - q.at[0]);
++      const y = layout === "top" ? b.max[1] + gap : b.min[1] - gap;
++      const w = Math.max(b.max[0] - b.min[0], 12 * (sorted.length - 1));
++      const mid = (b.min[0] + b.max[0]) / 2;
++      sorted.forEach((x, i) => balloons.push({ type: "balloon", view: cv.id, member: x.member, at: rel([spread(sorted.length, mid - w / 2, mid + w / 2, i), y]) }));
++      continue;
++    }
++    if (layout === "left" || layout === "right") {
++      const sorted = [...list].sort((p, q) => q.at[1] - p.at[1]);
++      const x0 = layout === "right" ? b.max[0] + gap : b.min[0] - gap;
++      const h = Math.max(b.max[1] - b.min[1], 12 * (sorted.length - 1));
++      const mid = (b.min[1] + b.max[1]) / 2;
++      sorted.forEach((x, i) => balloons.push({ type: "balloon", view: cv.id, member: x.member, at: rel([x0, spread(sorted.length, mid + h / 2, mid - h / 2, i)]) }));
++      continue;
++    }
++    // Square: each on the box round the view, in the direction of its part from the view's middle, in angle order.
++    const c: Vec2 = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2];
++    const hw = (b.max[0] - b.min[0]) / 2 + gap;
++    const hh = (b.max[1] - b.min[1]) / 2 + gap;
++    const onBox = (ang: number): Vec2 => {
++      const d: Vec2 = [Math.cos(ang), Math.sin(ang)];
++      const t = Math.min(Math.abs(d[0]) > 1e-9 ? hw / Math.abs(d[0]) : Infinity, Math.abs(d[1]) > 1e-9 ? hh / Math.abs(d[1]) : Infinity);
++      return [c[0] + d[0] * t, c[1] + d[1] * t];
++    };
++    const angles = list.map((x) => Math.atan2(x.at[1] - c[1], x.at[0] - c[0]));
++    const order = list.map((_, i) => i).sort((i, j) => angles[i] - angles[j]);
++    // Keep neighbours at least 12 mm apart along the box: spread their angles out where they bunch.
++    const minStep = (2 * Math.PI) / Math.max(order.length, 1) / 2;
++    const placed = order.map((i) => angles[i]);
++    for (let k = 1; k < placed.length; k++) placed[k] = Math.max(placed[k], placed[k - 1] + Math.min(minStep, 0.35));
++    order.forEach((i, k) => balloons.push({ type: "balloon", view: cv.id, member: list[i].member, at: rel(onBox(placed[k])) }));
++  }
++  return { balloons, unseen };
++}
+diff --git a/src/ui/drawing/tools/dimensionTools.tsx b/src/ui/drawing/tools/dimensionTools.tsx
+new file mode 100644
+index 0000000..fde5b64
+--- /dev/null
++++ b/src/ui/drawing/tools/dimensionTools.tsx
+@@ -0,0 +1,774 @@
++// The dimensioning tools (Phase Q wave Q3A): Smart Dimension (D) inferred
++// from what is picked, its preview following the pointer exactly as it will
++// be drawn; chain, baseline and ordinate sets; the chamfer dimension; the
++// hole callout; centre marks (one, a row, a bolt circle) and centre lines
++// (two edges, two centres, or one side of a cylinder); Model Items (the
++// part's own dimensions brought into chosen views). Each replaces or fills
++// the slot Q2B named, by id.
++
++import type { ReactNode } from "react";
++import type { Command } from "../../../doc/commands";
++import type { DimensionDirection, Vec2 } from "../../../doc/types";
++import { validateDocument } from "../../../doc/validate";
++import { centerlineFromPicks, centerMarkFromPick, holeFromPick } from "../../../drafting/annotate";
++import type { SnapKind, SnapTarget } from "../snap";
++import { keep } from "./editing";
++import { centreRef, inferDimension, setFromPicks, type DimPick, type InferOptions } from "./inference";
++import { modelItems } from "./modelItems";
++import { registerDrawingTool } from "./registry";
++import { BUILT_IN_FAVOURITES, applyFavourite, loadFavourites, type DimFavourite } from "./styles";
++import { ToolSession, noViews } from "./toolSession";
++import type { DrawingToolCtx, OverlayShape, SheetPointer } from "./types";
++import { Row, Segmented } from "./ui";
++
++const POINTS: SnapKind[] = ["vertex", "centre", "midpoint", "quadrant"];
++const ALL: SnapKind[] = [...POINTS, "edge", "circle", "arc"];
++const square = (c: DrawingToolCtx, view: string) => c.sheet?.views.find((v) => v.id === view)?.square ?? false;
++const pickOf = (s: SnapTarget): DimPick => ({ ref: s.ref, kind: s.kind, view: s.view, at: s.at });
++const favourites = (): DimFavourite[] => [...BUILT_IN_FAVOURITES, ...loadFavourites()];
++
++// ------------------------------------------------------------ Smart Dimension
++
++export class SmartDimensionSession extends ToolSession {
++  picks: SnapTarget[] = [];
++  radial: InferOptions["radial"];
++  lock: DimensionDirection | undefined;
++  /** A favourite every new dimension gets ("±0.1", "H7"). */
++  style: string = "";
++  constructor(get: () => DrawingToolCtx) {
++    super("annotation.smartDimension", get);
++  }
++  name() {
++    return "Smart Dimension";
++  }
++  busy() {
++    return this.picks.length > 0;
++  }
++  reset() {
++    this.picks = [];
++  }
++  prompt() {
++    if (!this.picks.length) return "Click an edge, a circle, an arc or a point (two for a distance or an angle)";
++    const p = this.picks[0];
++    if (this.picks.length === 1 && POINTS.includes(p.kind)) return "Click a second point or an edge";
++    if (this.picks.length === 1) return "Click where the dimension goes, or a second item (an edge for an angle or a distance)";
++    return "Click where the dimension goes (where the pointer is picks across, up, along, or the angle's quadrant)";
++  }
++  snaps() {
++    return this.picks.length < 2 ? { kinds: ALL, view: this.picks[0]?.view ?? null } : { kinds: [] as SnapKind[] };
++  }
++  opts(): InferOptions {
++    return { ...(this.radial ? { radial: this.radial } : {}), ...(this.lock ? { direction: this.lock } : {}) };
++  }
++  /** The dimension the picks (and a candidate) make with the text at `at`. */
++  infer(picks: SnapTarget[], at: Vec2) {
++    const sheet = this.ctx().sheet;
++    if (!sheet) return "The sheet is still being drawn";
++    return inferDimension(sheet, picks.map(pickOf), at, this.opts());
++  }
++  /** A hovered item that would be a good second pick. */
++  candidate(p: SheetPointer | null): SnapTarget | null {
++    const s = p?.snap;
++    if (!s || this.picks.length !== 1 || this.picks.some((x) => x.ref === s.ref) || s.view !== this.picks[0].view) return null;
++    return typeof this.infer([...this.picks, s], p!.raw) === "string" ? null : s;
++  }
++  click(p: SheetPointer) {
++    const c = this.ctx();
++    const s = p.snap;
++    if (!this.picks.length) {
++      if (!s) return c.notice("Click an edge, a circle or a point of a view.", "error");
++      if (!square(c, s.view)) return c.notice(`${s.view} looks at the part at an angle, which shortens every length: dimension in a front, top, side or section view.`, "error");
++      this.picks = [s];
++      return c.refresh();
++    }
++    if (s && this.picks.length === 1 && !this.picks.some((x) => x.ref === s.ref)) {
++      if (this.candidate(p)) {
++        this.picks.push(s);
++        return c.refresh();
++      }
++      if (POINTS.includes(this.picks[0].kind)) return c.notice(String(this.infer([...this.picks, s], p.raw)), "error");
++    }
++    this.place(p.raw);
++  }
++  place(at: Vec2) {
++    const c = this.ctx();
++    const d = this.infer(this.picks, at);
++    if (typeof d === "string") return c.notice(d, "error");
++    const fav = favourites().find((f) => f.name === this.style);
++    const extra = fav ? applyFavourite({ id: "", ...d }, fav) : {};
++    if (typeof extra === "string") c.notice(extra);
++    if (this.add({ ...d, ...(typeof extra === "string" ? {} : extra) })) this.picks = [];
++    c.refresh();
++  }
++  key(e: KeyboardEvent) {
++    const k = e.key.toLowerCase();
++    if (e.key === "Backspace" && this.picks.length) {
++      this.picks.pop();
++      this.ctx().refresh();
++      return true;
++    }
++    if (k === "r" && !e.ctrlKey) {
++      this.radial = this.radial === "diameter" ? "radius" : this.radial === "radius" ? undefined : "diameter";
++      this.ctx().refresh();
++      return true;
++    }
++    const locks: Record<string, DimensionDirection> = { h: "horizontal", v: "vertical", a: "aligned" };
++    if (locks[k] && !e.ctrlKey) {
++      this.lock = this.lock === locks[k] ? undefined : locks[k];
++      this.ctx().refresh();
++      return true;
++    }
++    return false;
++  }
++  overlay(): OverlayShape[] {
++    const out: OverlayShape[] = this.picks.flatMap((t) => this.highlight(t));
++    const h = this.hover;
++    if (!this.picks.length || !h) return out;
++    const cand = this.candidate(h);
++    if (cand) out.push(...this.highlight(cand, "preview"));
++    const picks = cand ? [...this.picks, cand] : this.picks;
++    if (picks.length === 1 && POINTS.includes(picks[0].kind)) return out;
++    return [...out, ...this.preview(this.infer(picks, h.raw), h.raw)];
++  }
++  panel(): ReactNode {
++    const set = (f: () => void) => {
++      f();
++      this.ctx().refresh();
++    };
++    return (
++      <div className="session-options">
++        <Row label="Circles and arcs" hint="R toggles">
++          <Segmented
++            label="Circles and arcs"
++            value={this.radial ?? "auto"}
++            options={[
++              ["auto", "Auto", "A circle by its diameter, an arc by its radius"],
++              ["diameter", "Ø", "Diameter"],
++              ["radius", "R", "Radius"],
++            ]}
++            onChange={(v) => set(() => (this.radial = v === "auto" ? undefined : v))}
++            testId="dim-radial"
++          />
++        </Row>
++        <Row label="Direction" hint="H, V, A lock it">
++          <Segmented
++            label="Direction"
++            value={this.lock ?? "auto"}
++            options={[
++              ["auto", "Pointer", "Across, up or along by where the pointer is"],
++              ["horizontal", "H", "Horizontal"],
++              ["vertical", "V", "Vertical"],
++              ["aligned", "Along", "Aligned with the points"],
++            ]}
++            onChange={(v) => set(() => (this.lock = v === "auto" ? undefined : v))}
++            testId="dim-lock"
++          />
++        </Row>
++        <Row label="New dimensions get" hint="A favourite style each new dimension takes">
++          <select value={this.style} onChange={(e) => set(() => (this.style = e.target.value))} data-testid="dim-style">
++            <option value="">no tolerance</option>
++            {favourites().map((f) => (
++              <option key={f.name} value={f.name}>
++                {f.name}
++              </option>
++            ))}
++          </select>
++        </Row>
++        <div className="drawing-buttons">
++          {(["chain", "baseline", "ordinate"] as const).map((m) => (
++            <button key={m} type="button" onClick={() => this.ctx().startSession?.(new SetSession(this.ctx, m))} data-testid={`dim-mode-${m}`} title={`${m[0].toUpperCase()}${m.slice(1)} dimensions: an origin, then points`}>
++              {m[0].toUpperCase() + m.slice(1)}
++            </button>
++          ))}
++        </div>
++        <p className="muted small">Two edges at an angle: the angle, of the quadrant the pointer is in. A point and an edge: the distance square from it. A cylinder's two sides: Ø. Backspace drops the last pick; Esc lets go.</p>
++      </div>
++    );
++  }
++}
++
++registerDrawingTool({
++  id: "annotation.smartDimension",
++  tab: "annotation",
++  group: "dimension",
++  label: "Smart Dimension",
++  icon: "smartDimension",
++  title: "Dimension what you pick: an edge's length, a circle's Ø, an arc's R, two points, two edges' distance or angle, a cylinder's Ø; the preview follows the pointer",
++  key: "D",
++  testId: "tool-annotation-dimension",
++  disabled: noViews,
++  run: (get) => new SmartDimensionSession(get),
++});
++
++// ------------------------------------------------------------ chain, baseline, ordinate
++
++type SetMode = "chain" | "baseline" | "ordinate";
++
++export class SetSession extends ToolSession {
++  origin: SnapTarget | null = null;
++  points: SnapTarget[] = [];
++  constructor(
++    get: () => DrawingToolCtx,
++    public mode: SetMode,
++  ) {
++    super(`annotation.${mode}Dimension`, get);
++  }
++  name() {
++    return `${this.mode[0].toUpperCase()}${this.mode.slice(1)} dimensions`;
++  }
++  busy() {
++    return !!this.origin;
++  }
++  reset() {
++    this.origin = null;
++    this.points = [];
++  }
++  prompt() {
++    if (!this.origin) return this.mode === "chain" ? "Click the chain's first point" : "Click the origin (a corner, an edge's end, a hole's centre)";
++    return this.points.length ? "Click more points; click off the part (or double-click) to place the set" : "Click the points to measure";
++  }
++  snaps() {
++    return { kinds: [...POINTS, "circle", "arc"] as SnapKind[], view: this.origin?.view ?? null };
++  }
++  refOf(s: SnapTarget): string {
++    return s.kind === "circle" || s.kind === "arc" ? centreRef(s.ref) : s.ref;
++  }
++  set(at: Vec2, extra?: SnapTarget) {
++    const sheet = this.ctx().sheet;
++    if (!sheet || !this.origin) return "Click the origin first";
++    return setFromPicks(sheet, this.mode, this.refOf(this.origin), [...this.points, ...(extra ? [extra] : [])].map((s) => this.refOf(s)), at);
++  }
++  click(p: SheetPointer) {
++    const c = this.ctx();
++    const s = p.snap;
++    if (s) {
++      if (!this.origin) {
++        if (!square(c, s.view)) return c.notice(`${s.view} looks at the part at an angle: dimension in a square view.`, "error");
++        this.origin = s;
++        return c.refresh();
++      }
++      if (s.view === this.origin.view && ![this.origin, ...this.points].some((x) => this.refOf(x) === this.refOf(s))) {
++        this.points.push(s);
++        return c.refresh();
++      }
++    }
++    this.place(p.raw);
++  }
++  doubleClick(p: SheetPointer) {
++    this.place(p.raw);
++  }
++  place(at: Vec2) {
++    const c = this.ctx();
++    if (!this.origin || !this.points.length) return c.notice(this.prompt(), "error");
++    const d = this.set(at);
++    if (typeof d === "string") return c.notice(d, "error");
++    if (this.add(d)) this.reset();
++    c.refresh();
++  }
++  key(e: KeyboardEvent) {
++    if (e.key === "Backspace" && this.origin) {
++      if (this.points.length) this.points.pop();
++      else this.origin = null;
++      this.ctx().refresh();
++      return true;
++    }
++    return false;
++  }
++  overlay(): OverlayShape[] {
++    const out: OverlayShape[] = [this.origin, ...this.points].flatMap((t) => (t ? [{ k: "dot", at: t.circle?.c ?? t.at, tone: "accent" } as OverlayShape] : []));
++    const h = this.hover;
++    if (!h || !this.origin) return out;
++    const extra = h.snap && h.snap.view === this.origin.view ? h.snap : undefined;
++    if (!this.points.length && !extra) return out;
++    return [...out, ...this.preview(this.set(h.raw, extra), h.raw)];
++  }
++  panel(): ReactNode {
++    return (
++      <div className="session-options">
++        <Row label="Kind">
++          <Segmented
++            label="Kind of set"
++            value={this.mode}
++            options={[
++              ["chain", "Chain", "Each from the one before, on one line"],
++              ["baseline", "Baseline", "Each from the origin, stacked outward"],
++              ["ordinate", "Ordinate", "Each point's distance from the origin, on its own extension line"],
++            ]}
++            onChange={(m) => {
++              this.mode = m;
++              this.ctx().refresh();
++            }}
++            testId="set-mode"
++          />
++        </Row>
++        <p className="muted small" data-testid="set-picked">
++          {this.origin ? `Origin ${this.origin.label}; ${this.points.length} point${this.points.length === 1 ? "" : "s"}` : "Nothing picked yet"}
++        </p>
++      </div>
++    );
++  }
++}
++
++for (const [mode, label, title] of [
++  ["chain", "Chain Dimension", "Dimensions in a row, each from the one before: click the first point, the next ones, then where the line goes"],
++  ["baseline", "Baseline Dimension", "Dimensions from one origin, stacked outward: click the origin, the points, then where they go"],
++  ["ordinate", "Ordinate Dimension", "Each point's distance from an origin, on its own extension line: click the origin, the points, then where they go"],
++] as const) {
++  registerDrawingTool({ id: `annotation.${mode}Dimension`, tab: "annotation", group: "dimension", label, icon: mode === "ordinate" ? "linearPattern" : mode === "chain" ? "horizontal" : "dimension", title, testId: `tool-annotation-${mode}`, disabled: noViews, run: (get) => new SetSession(get, mode) });
++}
++
++// ------------------------------------------------------------ chamfer, hole callout
++
++/** Pick something, then click where its text goes. */
++class PickPlaceSession extends ToolSession {
++  target: SnapTarget | null = null;
++  constructor(
++    tool: string,
++    get: () => DrawingToolCtx,
++    readonly what: string,
++    readonly kinds: SnapKind[],
++    readonly ask: string,
++    readonly make: (t: SnapTarget, at: Vec2, c: DrawingToolCtx) => Record<string, unknown> | string,
++    readonly options?: (s: PickPlaceSession) => ReactNode,
++  ) {
++    super(tool, get);
++  }
++  name() {
++    return this.what;
++  }
++  busy() {
++    return !!this.target;
++  }
++  reset() {
++    this.target = null;
++  }
++  prompt() {
++    return this.target ? "Click where the text goes" : this.ask;
++  }
++  snaps() {
++    return this.target ? { kinds: [] as SnapKind[] } : { kinds: this.kinds };
++  }
++  click(p: SheetPointer) {
++    const c = this.ctx();
++    if (!this.target) {
++      if (!p.snap) return c.notice(this.ask, "error");
++      const r = this.make(p.snap, p.raw, c);
++      if (typeof r === "string") return c.notice(r, "error");
++      this.target = p.snap;
++      return c.refresh();
++    }
++    const r = this.make(this.target, p.raw, c);
++    if (typeof r === "string") return c.notice(r, "error");
++    if (this.add(r as Record<string, unknown> & { type: string })) this.target = null;
++    c.refresh();
++  }
++  overlay(): OverlayShape[] {
++    const h = this.hover;
++    if (!this.target) return h?.snap ? this.highlight(h.snap, "preview") : [];
++    return [...this.highlight(this.target), ...(h ? this.preview(this.make(this.target, h.raw, this.ctx()), h.raw) : [])];
++  }
++  panel(): ReactNode {
++    return this.options?.(this) ?? null;
++  }
++}
++
++registerDrawingTool({
++  id: "annotation.chamfer",
++  tab: "annotation",
++  group: "dimension",
++  label: "Chamfer Dimension",
++  icon: "chamfer",
++  title: "A chamfer's size and angle (C2, or 2 × 45°): click the chamfer's slanted edge, then where the text goes",
++  testId: "tool-annotation-chamfer",
++  disabled: noViews,
++  run: (get) =>
++    new PickPlaceSession("annotation.chamfer", get, "Chamfer dimension", ["edge"], "Click a chamfer's slanted edge", (t, at, c) => {
++      const pts = t.pts?.flat() ?? [];
++      const a = pts[0];
++      const b = pts[pts.length - 1];
++      if (!a || !b || Math.abs(a[0] - b[0]) < 1e-6 || Math.abs(a[1] - b[1]) < 1e-6) return "A chamfer is seen as a slanted edge: click one";
++      if (!square(c, t.view)) return `${t.view} is at an angle to the part`;
++      return { type: "dimension", view: t.view, kind: "chamfer", refs: [t.ref], at: rel(c, t.view, at) };
++    }),
++});
++
++function rel(c: DrawingToolCtx, view: string, p: Vec2): Vec2 {
++  const cv = c.sheet?.views.find((v) => v.id === view);
++  const o = cv ? cv.centre : [0, 0];
++  return [Math.round((p[0] - o[0]) * 10) / 10 + 0, Math.round((p[1] - o[1]) * 10) / 10 + 0];
++}
++
++const HOLE_TOLERANCES: [string, string][] = [
++  ["", "none"],
++  ["H7", "H7"],
++  ["H8", "H8"],
++  ["H11", "H11"],
++  ["±0.1", "±0.1"],
++];
++
++registerDrawingTool({
++  id: "annotation.hole",
++  tab: "annotation",
++  group: "notes",
++  label: "Hole Callout",
++  icon: "hole",
++  title: "Call out a hole from its feature (Ø, depth ↧, counterbore ⌴, countersink ⌵, thread, n×): click its circle, then where the text goes",
++  testId: "tool-annotation-hole",
++  disabled: noViews,
++  run: (get) => {
++    let tol = "";
++    return new PickPlaceSession(
++      "annotation.hole",
++      get,
++      "Hole callout",
++      ["circle", "centre"],
++      "Click a hole's circle (where the view looks into it)",
++      (t, at, c) => {
++        if (!c.sheet) return "The sheet is still being drawn";
++        const h = holeFromPick(c.sheet, t.kind === "centre" ? t.ref : t.ref, at);
++        if (typeof h === "string") return h.charAt(0).toUpperCase() + h.slice(1);
++        if (c.sheetDoc.annotations.some((a) => a.type === "hole" && a.view === h.view && a.hole === h.hole)) return `${h.hole} is called out in ${h.view} already`;
++        const tolerance = tol === "±0.1" ? { kind: "symmetric", plus: 0.1 } : tol ? { kind: "fitWithTol", fit: tol } : undefined;
++        return { ...h, ...(tolerance ? { tolerance } : {}) };
++      },
++      (s) => (
++        <div className="session-options">
++          <Row label="Bore tolerance">
++            <Segmented
++              label="Bore tolerance"
++              value={tol}
++              options={HOLE_TOLERANCES.map(([v, l]) => [v, l] as const)}
++              onChange={(v) => {
++                tol = v;
++                s.ctx().refresh();
++              }}
++              testId="hole-tol"
++            />
++          </Row>
++        </div>
++      ),
++    );
++  },
++});
++
++// ------------------------------------------------------------ centre marks and centre lines
++
++type MarkMode = "single" | "linear" | "circular";
++
++class CentreMarkSession extends ToolSession {
++  mode: MarkMode = "single";
++  constructor(get: () => DrawingToolCtx) {
++    super("annotation.centerMark", get);
++  }
++  name() {
++    return "Centre mark";
++  }
++  busy() {
++    return false;
++  }
++  reset() {}
++  prompt() {
++    return this.mode === "single" ? "Click a circle or an arc" : this.mode === "linear" ? "Click a circle of a row: every alike circle in line gets a mark, joined by a centre line" : "Click a circle of a bolt circle: every alike circle gets a mark on the pitch circle";
++  }
++  snaps() {
++    return { kinds: ["circle", "arc", "centre"] as SnapKind[] };
++  }
++  /** The alike circles (same feature, same size) in the view, by centre. */
++  alike(t: SnapTarget): SnapTarget[] {
++    const s = this.ctx().snap;
++    const r = t.circle?.r;
++    if (!s || r === undefined) return [t];
++    return s.targets.filter((x) => x.view === t.view && x.kind === "circle" && x.visible && x.feature === t.feature && Math.abs((x.circle?.r ?? 0) - r) < 1e-3);
++  }
++  click(p: SheetPointer) {
++    const c = this.ctx();
++    const t = p.snap;
++    if (!t || !c.sheet) return c.notice(this.prompt(), "error");
++    const has = (ref: string) => c.sheetDoc.annotations.some((a) => a.type === "centerMark" && (a.at === ref || a.at === ref.replace(":c", ":e") || a.at === ref.replace(":e", ":c")));
++    if (this.mode === "single") {
++      const m = centerMarkFromPick(c.sheet, t.ref);
++      if (typeof m === "string") return c.notice(m, "error");
++      if (has(m.at)) return c.notice("That circle has a centre mark already", "error");
++      return void this.add(m);
++    }
++    const group = this.alike(t);
++    const cmds: Command[] = [];
++    const taken = new Set<string>();
++    const id = (prefix: string) => {
++      let n = c.nextId(prefix);
++      while (taken.has(n)) n = `${prefix}${Number(n.slice(prefix.length)) + 1}`;
++      taken.add(n);
++      return n;
++    };
++    for (const g of group) {
++      if (has(g.ref)) continue;
++      cmds.push({ type: "setAnnotation", id: id("c"), annotation: { type: "centerMark", view: g.view, at: g.ref, ...(this.mode === "circular" ? { style: "pitch" } : {}) }, sheet: c.sheetDoc.id });
++    }
++    if (this.mode === "linear" && group.length > 1) {
++      // Joined in order along the row they make.
++      const xs = group.map((g) => g.circle!.c);
++      const spreadX = Math.max(...xs.map((p) => p[0])) - Math.min(...xs.map((p) => p[0]));
++      const spreadY = Math.max(...xs.map((p) => p[1])) - Math.min(...xs.map((p) => p[1]));
++      const axis = spreadX >= spreadY ? 0 : 1;
++      const sorted = [...group].sort((a, b) => a.circle!.c[axis] - b.circle!.c[axis]);
++      const first = sorted[0];
++      const last = sorted[sorted.length - 1];
++      const line = centerlineFromPicks(c.sheet, centreRef(first.ref), centreRef(last.ref));
++      if (typeof line !== "string") cmds.push({ type: "setAnnotation", id: id("c"), annotation: line, sheet: c.sheetDoc.id });
++    }
++    if (!cmds.length) return c.notice("Those circles are marked already", "error");
++    if (!keep(c, cmds)) {
++      this.made.push(...cmds.map((x) => (x as { id: string }).id));
++      c.notice(`${cmds.length} centre mark${cmds.length === 1 ? "" : "s"}${this.mode === "linear" && group.length > 1 ? " and a centre line" : ""} added.`);
++    }
++  }
++  overlay(): OverlayShape[] {
++    const t = this.hover?.snap;
++    if (!t) return [];
++    return (this.mode === "single" ? [t] : this.alike(t)).flatMap((x) => this.highlight(x, "preview"));
++  }
++  panel(): ReactNode {
++    return (
++      <div className="session-options">
++        <Row label="Marks">
++          <Segmented
++            label="Centre marks"
++            value={this.mode}
++            options={[
++              ["single", "One", "One circle"],
++              ["linear", "Row", "A row of alike holes: each marked, joined by a centre line"],
++              ["circular", "Bolt circle", "A circular pattern: each marked on its pitch circle"],
++            ]}
++            onChange={(m) => {
++              this.mode = m;
++              this.ctx().refresh();
++            }}
++            testId="mark-mode"
++          />
++        </Row>
++      </div>
++    );
++  }
++}
++
++registerDrawingTool({
++  id: "annotation.centerMark",
++  tab: "annotation",
++  group: "marks",
++  label: "Centre Mark",
++  icon: "plus",
++  title: "Centre marks: on one circle, on a row of alike holes (joined by a centre line), or round a bolt circle",
++  testId: "tool-annotation-center-mark",
++  disabled: noViews,
++  run: (get) => new CentreMarkSession(get),
++});
++
++class CentrelineSession extends ToolSession {
++  first: SnapTarget | null = null;
++  constructor(get: () => DrawingToolCtx) {
++    super("annotation.centerline", get);
++  }
++  name() {
++    return "Centreline";
++  }
++  busy() {
++    return !!this.first;
++  }
++  reset() {
++    this.first = null;
++  }
++  prompt() {
++    return this.first ? "Click the other edge (or the other circle's centre)" : "Click a cylinder's side (its other side is found), an edge, or a circle's centre";
++  }
++  snaps() {
++    return { kinds: ["edge", "centre", "circle"] as SnapKind[], view: this.first?.view ?? null };
++  }
++  /** A cylinder's other outline: "…s0a" ↔ "…s0b". */
++  partner(t: SnapTarget): SnapTarget | null {
++    const m = /^(.*s\d+)([ab])$/.exec(t.ref);
++    if (!m) return null;
++    const other = `${m[1]}${m[2] === "a" ? "b" : "a"}`;
++    return this.ctx().snap?.targets.find((x) => x.ref === other) ?? null;
++  }
++  click(p: SheetPointer) {
++    const c = this.ctx();
++    const t = p.snap;
++    if (!t || !c.sheet) return c.notice(this.prompt(), "error");
++    const ref = t.kind === "circle" ? centreRef(t.ref) : t.ref;
++    if (!this.first) {
++      const other = this.partner(t);
++      if (other) {
++        const l = centerlineFromPicks(c.sheet, t.ref, other.ref);
++        if (typeof l === "string") return c.notice(l, "error");
++        return void this.add(l);
++      }
++      this.first = { ...t, ref };
++      return c.refresh();
++    }
++    if (ref === this.first.ref) return;
++    const l = centerlineFromPicks(c.sheet, this.first.ref, ref);
++    if (typeof l === "string") return c.notice(l, "error");
++    if (this.add(l)) this.first = null;
++  }
++  overlay(): OverlayShape[] {
++    const h = this.hover?.snap;
++    const other = h && !this.first ? this.partner(h) : null;
++    return [...this.highlight(this.first), ...this.highlight(h, "preview"), ...this.highlight(other, "preview")];
++  }
++}
++
++registerDrawingTool({
++  id: "annotation.centerline",
++  tab: "annotation",
++  group: "marks",
++  label: "Centreline",
++  icon: "centerline",
++  title: "A centre line: click one side of a cylinder (the other is found), or two edges, or two circles' centres",
++  testId: "tool-annotation-centerline",
++  disabled: noViews,
++  run: (get) => new CentrelineSession(get),
++});
++
++// ------------------------------------------------------------ Model Items
++
++class ModelItemsSession extends ToolSession {
++  source = "";
++  views: string[] = [];
++  sketch = true;
++  feature = true;
++  holes = true;
++  constructor(get: () => DrawingToolCtx) {
++    super("annotation.modelItems", get);
++    const c = get();
++    const chosen = c.selection.filter((id) => c.sheetDoc.views.some((v) => v.id === id));
++    this.views = chosen.length ? chosen : (c.sheet?.views ?? []).filter((v) => v.square && v.kind !== "detail").map((v) => v.id);
++  }
++  name() {
++    return "Model items";
++  }
++  busy() {
++    return false;
++  }
++  reset() {}
++  prompt() {
++    return "Choose what to bring in and the views (click a view to add or take it away), then Import";
++  }
++  picksViews() {
++    return true;
++  }
++  click(p: SheetPointer) {
++    const v = p.view;
++    if (!v) return;
++    this.views = this.views.includes(v) ? this.views.filter((x) => x !== v) : [...this.views, v];
++    this.ctx().refresh();
++  }
++  features(): { id: string; op: string }[] {
++    return validateDocument(this.ctx().doc).features.flatMap((f) => (f.feature && f.feature.op !== "sketch" && !(f.feature as { suppressed?: boolean }).suppressed ? [{ id: f.feature.id, op: f.feature.op }] : []));
++  }
++  run(): string | null {
++    const c = this.ctx();
++    if (!c.sheet) return "The sheet is still being drawn";
++    if (!this.views.length) return "Choose a view to put them in";
++    const r = modelItems(c.doc, c.sheet, c.sheetDoc.annotations, { views: this.views, sketch: this.sketch, feature: this.feature, holes: this.holes, ...(this.source ? { features: [this.source] } : {}) });
++    if (!r.items.length) return r.missed.length ? `Nothing to bring in that a chosen view shows true size (${r.missed.slice(0, 3).join("; ")})` : "Every model dimension is on the sheet already";
++    const taken = new Set<string>();
++    const cmds: Command[] = r.items.map((a) => {
++      const prefix = a.type === "hole" ? "h" : "d";
++      let id = c.nextId(prefix);
++      while (taken.has(id)) id = `${prefix}${Number(id.slice(prefix.length)) + 1}`;
++      taken.add(id);
++      return { type: "setAnnotation", id, annotation: a, sheet: c.sheetDoc.id };
++    });
++    if (keep(c, cmds)) return "refused";
++    this.made.push(...cmds.map((x) => (x as { id: string }).id));
++    c.select(this.made);
++    c.notice(`Model items: ${cmds.length} brought in${r.missed.length ? `; ${r.missed.length} not shown true size in the chosen views` : ""}. Ctrl+Z takes them away.`);
++    return null;
++  }
++  ok(): string | null {
++    if (!this.made.length) {
++      const why = this.run();
++      if (why) return why;
++    }
++    this.ctx().end();
++    return null;
++  }
++  overlay(): OverlayShape[] {
++    const s = this.ctx().sheet;
++    return this.views.flatMap((id) => {
++      const b = s?.views.find((v) => v.id === id)?.box;
++      return b ? [{ k: "rect", box: { min: [b.min[0] - 2, b.min[1] - 2], max: [b.max[0] + 2, b.max[1] + 2] }, tone: "accent", fill: true } as OverlayShape] : [];
++    });
++  }
++  panel(): ReactNode {
++    const c = this.ctx();
++    const set = (f: () => void) => {
++      f();
++      c.refresh();
++    };
++    return (
++      <div className="session-options">
++        <Row label="From">
++          <select value={this.source} onChange={(e) => set(() => (this.source = e.target.value))} data-testid="model-items-source">
++            <option value="">the entire model</option>
++            {this.features().map((f) => (
++              <option key={f.id} value={f.id}>
++                {f.id} ({f.op})
++              </option>
++            ))}
++          </select>
++        </Row>
++        <fieldset className="check-list">
++          <legend>Bring in</legend>
++          {(
++            [
++              ["sketch", "Sketch dimensions (radii, diameters, lengths)"],
++              ["feature", "Feature dimensions (depths, fillets, chamfers, member lengths)"],
++              ["holes", "Hole callouts"],
++            ] as const
++          ).map(([k, label]) => (
++            <label key={k} className="check">
++              <input type="checkbox" checked={this[k]} onChange={(e) => set(() => (this[k] = e.target.checked))} data-testid={`model-items-${k}`} /> {label}
++            </label>
++          ))}
++        </fieldset>
++        <fieldset className="check-list">
++          <legend>Into the views</legend>
++          {(c.sheet?.views ?? [])
++            .filter((v) => v.square)
++            .map((v) => (
++              <label key={v.id} className="check">
++                <input type="checkbox" checked={this.views.includes(v.id)} onChange={(e) => set(() => (this.views = e.target.checked ? [...this.views, v.id] : this.views.filter((x) => x !== v.id)))} data-testid={`model-items-view-${v.id}`} /> {v.id}
++              </label>
++            ))}
++        </fieldset>
++        <div className="drawing-buttons">
++          <button
++            type="button"
++            className="primary"
++            onClick={() => {
++              const why = this.run();
++              if (why) c.notice(why, "error");
++              c.refresh();
++            }}
++            data-testid="model-items-import"
++          >
++            Import
++          </button>
++        </div>
++      </div>
++    );
++  }
++}
++
++registerDrawingTool({
++  id: "annotation.modelItems",
++  tab: "annotation",
++  group: "dimension",
++  label: "Model Items",
++  icon: "drivenDimension",
++  title: "Bring the part's own dimensions into views: its sketches' sizes, depths, holes, fillets, chamfers, member lengths; each once on the sheet",
++  testId: "tool-annotation-model-items",
++  disabled: noViews,
++  run: (get) => new ModelItemsSession(get),
++});
+diff --git a/src/ui/drawing/tools/editing.tsx b/src/ui/drawing/tools/editing.tsx
+new file mode 100644
+index 0000000..817ddd4
+--- /dev/null
++++ b/src/ui/drawing/tools/editing.tsx
+@@ -0,0 +1,281 @@
++// Editing annotations on the sheet (Phase Q wave Q3A): every edit a tool
++// keeps also remembers where the sheet's dimensions are drawn (so one whose
++// geometry goes in a rebuild is drawn there, in the warning colour); the
++// arrow keys nudge what is selected; the right-click menu's quick edits
++// (tolerance picks, Ø ↔ R, linear ↔ baseline/ordinate, hide/show, copy the
++// format); Align and Arrange Dimensions; the Format Painter.
++
++import type { Command } from "../../../doc/commands";
++import type { Annotation, DimensionAnnotation, Drawing, Vec2 } from "../../../doc/types";
++import { rememberPlaces } from "../../../drafting/annotate";
++import type { ComposedAnnotation, ComposedSheet } from "../../../drafting/compose";
++import type { MenuEntry } from "../../ContextMenu";
++import { convertDimension, radialSwap } from "./inference";
++import { annotationKind, dimensionLine, offsetFor } from "./kinds";
++import { registerDrawingTool } from "./registry";
++import { BaseSession } from "./session";
++import { BUILT_IN_FAVOURITES, applyFavourite, paintPatch, styleOf } from "./styles";
++import type { DrawingToolCtx, OverlayShape, SheetPointer } from "./types";
++
++// ------------------------------------------------------------ remembering places
++
++/**
++ * The editAnnotation commands that keep each of the sheet's dimensions'
++ * place as drawn now (its `last`), leaving out what `cmds` touch (an
++ * annotation they change or delete, a view they change). Empty when nothing
++ * moved since the last time.
++ */
++export function rememberCommands(drawing: Drawing, sheet: ComposedSheet | null, cmds: Command[]): Command[] {
++  if (!sheet || cmds.some((c) => c.type === "deleteSheet" || c.type === "setDrawing")) return [];
++  const next = rememberPlaces(drawing, [sheet]);
++  if (!next) return [];
++  const ids = new Set(cmds.flatMap((c) => ("id" in c && typeof c.id === "string" ? [c.id] : [])));
++  const out: Command[] = [];
++  const before = new Map(drawing.sheets.flatMap((s) => s.annotations.map((a) => [a.id, a] as const)));
++  for (const s of next.sheets) {
++    if (s.id !== sheet.id) continue;
++    for (const a of s.annotations) {
++      if (a.type !== "dimension" || !a.last || ids.has(a.id) || ids.has(a.view)) continue;
++      const old = before.get(a.id) as DimensionAnnotation | undefined;
++      if (old && JSON.stringify(old.last) === JSON.stringify(a.last)) continue;
++      out.push({ type: "editAnnotation", id: a.id, patch: { last: a.last } });
++    }
++  }
++  return out;
++}
++
++/** Commands as one undo step, the sheet's dimensions' places remembered with them. The error when refused. */
++export function keep(c: DrawingToolCtx, cmds: Command[]): string | null {
++  if (!cmds.length) return null;
++  return c.batch([...cmds, ...rememberCommands(c.drawing, c.sheet, cmds)]);
++}
++
++/** An annotation's patch (null removes a key), as one undo step. */
++export function patchAnnotation(c: DrawingToolCtx, id: string, patch: Record<string, unknown>): string | null {
++  return keep(c, [{ type: "editAnnotation", id, patch }]);
++}
++
++// ------------------------------------------------------------ the keyboard
++
++/** The arrow keys nudge the selected annotations: 0.5 mm, Shift 5 mm. True when it took the key. */
++export function annotationKey(e: KeyboardEvent, c: DrawingToolCtx): boolean {
++  const dirs: Record<string, Vec2> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
++  const d = dirs[e.key];
++  if (!d || !c.sheet || e.ctrlKey || e.metaKey || e.altKey) return false;
++  const step = e.shiftKey ? 5 : 0.5;
++  const delta: Vec2 = [d[0] * step, d[1] * step];
++  const cmds: Command[] = [];
++  for (const id of c.selection) {
++    const a = c.sheetDoc.annotations.find((x) => x.id === id) as Record<string, unknown> | undefined;
++    const k = a && annotationKind(String(a.type));
++    if (!a || !k?.move) continue;
++    const patch = k.move(a, delta, { sheet: c.sheet, said: c.sheet.annotations.find((x) => x.id === id) });
++    if (patch) cmds.push({ type: "editAnnotation", id, patch });
++  }
++  if (!cmds.length) return false;
++  c.batch(cmds);
++  return true;
++}
++
++// ------------------------------------------------------------ the right-click menu
++
++const TOLERANCE_PICKS = BUILT_IN_FAVOURITES.filter((f) => f.style.tolerance);
++
++/** The quick edits on an annotation's right-click menu. */
++export function annotationMenu(a: Annotation, get: () => DrawingToolCtx, said?: ComposedAnnotation): MenuEntry[] {
++  const c = get();
++  const out: MenuEntry[] = [];
++  const set = (patch: Record<string, unknown>) => () => {
++    patchAnnotation(c, a.id, patch);
++  };
++  out.push({ label: "Edit properties", icon: "properties", onClick: () => c.select([a.id]), testId: "ctx-edit-annotation" });
++  if (a.type === "dimension" || a.type === "hole") {
++    out.push({ heading: "Tolerance" });
++    out.push({ label: "None", onClick: set({ tolerance: null }), testId: "ctx-tol-none", disabled: !a.tolerance });
++    for (const f of TOLERANCE_PICKS) {
++      const ok = a.type === "hole" ? f.style.tolerance! : applyFavourite(a, f);
++      out.push({ label: f.name, onClick: set({ tolerance: f.style.tolerance }), disabled: typeof ok === "string", testId: `ctx-tol-${f.name.replace(/[^A-Za-z0-9]+/g, "")}` });
++    }
++  }
++  if (a.type === "dimension") {
++    const kind = a.kind ?? "linear";
++    const radial = (["diameter", "radius"] as const).flatMap((to) => (radialSwap(a, to) && kind !== to ? [to] : []));
++    const convert = (["baseline", "ordinate", "chain", "linear"] as const).filter((to) => to !== kind && typeof convertDimension(a, to) !== "string");
++    if (radial.length || convert.length) out.push("sep");
++    for (const to of radial) out.push({ label: to === "diameter" ? "Display as diameter (Ø)" : "Display as radius (R)", icon: to === "diameter" ? "diameter" : "radius", onClick: set({ kind: to }), testId: `ctx-dim-${to}` });
++    for (const to of convert) {
++      out.push({
++        label: to === "linear" ? "Convert to a linear dimension" : `Convert to ${to}`,
++        icon: "dimension",
++        onClick: () => {
++          const next = convertDimension(a, to);
++          if (typeof next === "string") return c.notice(next, "error");
++          keep(c, [{ type: "setAnnotation", id: a.id, annotation: next }]);
++        },
++        testId: `ctx-dim-to-${to}`,
++      });
++    }
++  }
++  out.push("sep");
++  const style = styleOf(a);
++  if (style) out.push({ label: "Format painter: copy this format", icon: "palette", onClick: () => startPainter(get, a), testId: "ctx-format-painter" });
++  out.push({ label: a.hidden ? "Show" : "Hide", icon: a.hidden ? "eye" : "eyeOff", onClick: set({ hidden: a.hidden ? null : true }), testId: a.hidden ? "ctx-show" : "ctx-hide" });
++  void said;
++  return out;
++}
++
++// ------------------------------------------------------------ align and arrange
++
++/** The selected dimensions that are linear and drawn, with their lines. */
++function linearDims(c: DrawingToolCtx): { a: DimensionAnnotation; line: NonNullable<ReturnType<typeof dimensionLine>> }[] {
++  if (!c.sheet) return [];
++  const out: { a: DimensionAnnotation; line: NonNullable<ReturnType<typeof dimensionLine>> }[] = [];
++  for (const id of c.selection) {
++    const a = c.sheetDoc.annotations.find((x) => x.id === id);
++    if (a?.type !== "dimension" || !["linear", "diameter", undefined].includes(a.kind) || (a.kind === "diameter" && a.refs?.length !== 2)) continue;
++    const line = dimensionLine(c.sheet, id);
++    if (line && line.dir !== "a") out.push({ a, line });
++  }
++  return out;
++}
++
++/**
++ * Align: the selected dimensions that run the same way in one view are put on
++ * one line, the furthest out (their texts back in the middle of their lines).
++ */
++export function alignCommands(c: DrawingToolCtx): Command[] | string {
++  const dims = linearDims(c);
++  if (dims.length < 2) return "Select two or more linear dimensions that run the same way in one view";
++  const groups = new Map<string, typeof dims>();
++  for (const d of dims) {
++    const cv = c.sheet!.views.find((v) => v.id === d.a.view)!;
++    const side = d.line.level > (d.line.dir === "h" ? cv.centre[1] : cv.centre[0]) ? 1 : -1;
++    const key = `${d.a.view}|${d.line.dir}|${side}`;
++    groups.set(key, [...(groups.get(key) ?? []), d]);
++  }
++  const cmds: Command[] = [];
++  for (const [key, g] of groups) {
++    if (g.length < 2) continue;
++    const [view, dir, side] = key.split("|");
++    const cv = c.sheet!.views.find((v) => v.id === view)!;
++    const level = Number(side) > 0 ? Math.max(...g.map((d) => d.line.level)) : Math.min(...g.map((d) => d.line.level));
++    const offset = offsetFor(dir as "h" | "v", level, cv.box!);
++    for (const d of g) cmds.push({ type: "editAnnotation", id: d.a.id, patch: { offset, at: null } });
++  }
++  return cmds.length ? cmds : "The selected dimensions don't share a direction and side of a view: nothing to line up";
++}
++
++/** Arrange: the selected dimensions given back to the layout, which stacks them in rows (shortest nearest, 10 then 7 mm apart). */
++export function arrangeCommands(c: DrawingToolCtx): Command[] | string {
++  const ids = c.selection.filter((id) => c.sheetDoc.annotations.some((a) => a.id === id && a.type === "dimension"));
++  const all = ids.length ? ids : c.sheetDoc.annotations.filter((a) => a.type === "dimension" && (a.at || a.offset !== undefined)).map((a) => a.id);
++  if (!all.length) return "Nothing to arrange: select dimensions you placed by hand (or none, for all of them)";
++  return all.map((id) => ({ type: "editAnnotation", id, patch: { at: null, offset: null } }) as Command);
++}
++
++registerDrawingTool({
++  id: "annotation.alignDimensions",
++  tab: "annotation",
++  group: "arrange",
++  label: "Align",
++  icon: "horizontal",
++  title: "Line up the selected dimensions that run the same way: on one line, the furthest out",
++  testId: "tool-annotation-align",
++  disabled: (c) => (linearDims(c).length >= 2 ? undefined : "Select two or more linear dimensions"),
++  run: (get) => {
++    const c = get();
++    const r = alignCommands(c);
++    if (typeof r === "string") return c.notice(r, "error");
++    if (!keep(c, r)) c.notice(`Aligned ${r.length} dimensions.`);
++  },
++});
++
++registerDrawingTool({
++  id: "annotation.arrangeDimensions",
++  tab: "annotation",
++  group: "arrange",
++  label: "Arrange",
++  icon: "examples",
++  title: "Space the selected dimensions (or every one placed by hand) evenly: rows outward from the view, shortest nearest",
++  testId: "tool-annotation-arrange",
++  disabled: (c) => (c.sheetDoc.annotations.some((a) => a.type === "dimension") ? undefined : "No dimensions on this sheet"),
++  run: (get) => {
++    const c = get();
++    const r = arrangeCommands(c);
++    if (typeof r === "string") return c.notice(r);
++    if (!keep(c, r)) c.notice(`Arranged ${r.length} dimension${r.length === 1 ? "" : "s"}.`);
++  },
++});
++
++// ------------------------------------------------------------ the format painter
++
++class PainterSession extends BaseSession {
++  source: { id: string; style: NonNullable<ReturnType<typeof styleOf>> } | null = null;
++  painted = 0;
++  constructor(ctx: () => DrawingToolCtx, from?: Annotation) {
++    super("annotation.formatPainter", ctx);
++    const s = from && styleOf(from);
++    if (from && s) this.source = { id: from.id, style: s };
++  }
++  title() {
++    return this.painted ? `Format painter (${this.painted} painted)` : "Format painter";
++  }
++  prompt() {
++    return this.source ? `Click annotations to give them ${this.source.id}'s format (Esc: done)` : "Click the annotation whose format to copy";
++  }
++  blocked() {
++    return null;
++  }
++  ok() {
++    this.ctx().end();
++    return null;
++  }
++  cancel() {
++    this.ctx().end();
++  }
++  click(p: SheetPointer) {
++    const c = this.ctx();
++    if (p.hit?.kind !== "annotation") return c.notice(this.prompt(), "error");
++    const a = c.sheetDoc.annotations.find((x) => x.id === p.hit!.id);
++    if (!a) return;
++    if (!this.source) {
++      const s = styleOf(a);
++      if (!s) return c.notice(`A ${a.type} has no format to copy: pick a dimension, a note, a balloon, a centre mark`, "error");
++      this.source = { id: a.id, style: s };
++      return c.refresh();
++    }
++    if (a.id === this.source.id) return;
++    const patch = paintPatch(a, this.source.style);
++    if (typeof patch === "string") return c.notice(patch, "error");
++    if (!patchAnnotation(c, a.id, patch)) this.painted++;
++    c.refresh();
++  }
++  overlay(): OverlayShape[] {
++    const h = this.hover?.hit;
++    const b = h?.kind === "annotation" ? this.ctx().sheet?.annotations.find((x) => x.id === h.id)?.box : null;
++    const src = this.source ? this.ctx().sheet?.annotations.find((x) => x.id === this.source!.id)?.box : null;
++    return [...(src ? [{ k: "rect", box: src, tone: "accent", dash: true } as OverlayShape] : []), ...(b ? [{ k: "rect", box: b, tone: "preview" } as OverlayShape] : [])];
++  }
++}
++
++/** Starts the format painter with this annotation's format. */
++export function startPainter(get: () => DrawingToolCtx, from: Annotation): void {
++  get().select([from.id]);
++  get().startSession?.(new PainterSession(get, from));
++}
++
++registerDrawingTool({
++  id: "annotation.formatPainter",
++  tab: "annotation",
++  group: "arrange",
++  label: "Format Painter",
++  icon: "palette",
++  title: "Copy one annotation's format (tolerance, decimals, arrows; a note's height) onto others: click it, then them",
++  testId: "tool-annotation-format-painter",
++  disabled: (c) => (c.sheetDoc.annotations.length ? undefined : "No annotations on this sheet"),
++  run: (get) => {
++    const c = get();
++    const sel = c.selection.map((id) => c.sheetDoc.annotations.find((a) => a.id === id)).find((a) => a && styleOf(a));
++    return new PainterSession(get, sel);
++  },
++});
+diff --git a/src/ui/drawing/tools/index.ts b/src/ui/drawing/tools/index.ts
+index f22a2b2..8078247 100644
+--- a/src/ui/drawing/tools/index.ts
++++ b/src/ui/drawing/tools/index.ts
+@@ -7,6 +7,13 @@ import "./viewTools";
+ import "./annotationTools";
+ import "./sheetTools";
+ import "./annotationKinds";
++// Phase Q wave Q3A: the annotation tools (they replace Q2B's basic ones by id) and their panels.
++import "./annotationKindsQ3";
++import "./dimensionTools";
++import "./symbolTools";
++import "./noteTools";
++import "./sketchTools";
++import "./editing";
+ 
+ export * from "./registry";
+ export * from "./kinds";
+diff --git a/src/ui/drawing/tools/inference.ts b/src/ui/drawing/tools/inference.ts
+new file mode 100644
+index 0000000..d53c7cd
+--- /dev/null
++++ b/src/ui/drawing/tools/inference.ts
+@@ -0,0 +1,142 @@
++// What Smart Dimension makes of the picks (Phase Q wave Q3A): the
++// inference rules of a professional drafting package, on top of the
++// engine's dimensionFromPicks. One edge: its length (horizontal, vertical or
++// aligned by where the pointer is); a circle: its diameter, an arc: its
++// radius (the Ø/R toggle swaps them); two points or two circles' centres:
++// their distance across, up or along by the pointer; two parallel edges:
++// their distance; two edges at an angle: the angle of the quadrant the
++// pointer is in; a point and an edge: the point's distance square from it;
++// a cylinder's two outlines: its diameter. Chain, baseline and ordinate
++// sets come from an origin and points. Pure: no React, no document.
++
++import type { DimensionAnnotation, DimensionDirection, DimensionKind, GeoRef, Vec2 } from "../../../doc/types";
++import type { ComposedSheet } from "../../../drafting/compose";
++import { dimensionFromPicks } from "../../../drafting/annotate";
++import { resolveGeoRef } from "../../../drafting/georef";
++import type { SnapKind } from "../snap";
++
++/** A pick on the sheet, as the snap index gives it. */
++export interface DimPick {
++  ref: GeoRef;
++  kind: SnapKind;
++  view: string;
++  at: Vec2;
++}
++
++export type NewDimension = Omit<DimensionAnnotation, "id">;
++
++export interface InferOptions {
++  /** A circle or an arc written as a diameter or a radius (default: circle Ø, arc R). */
++  radial?: "diameter" | "radius";
++  /** Lock a linear dimension's direction (the pointer decides when unset). */
++  direction?: DimensionDirection;
++}
++
++const POINT_KINDS: SnapKind[] = ["vertex", "centre", "midpoint", "quadrant"];
++const isPoint = (p: DimPick) => POINT_KINDS.includes(p.kind);
++const isRound = (p: DimPick) => p.kind === "circle" || p.kind === "arc";
++/** A circle's or arc's centre, as a GeoRef ("front:ehole_1/c0" → "front:chole_1/c0"). */
++export const centreRef = (ref: GeoRef) => ref.replace(/:e/, ":c");
++
++/**
++ * A dimension from the picks and where the pointer is (the text goes there),
++ * or why there is none. `at` is sheet mm.
++ */
++export function inferDimension(sheet: ComposedSheet, picks: DimPick[], at: Vec2, opts: InferOptions = {}): NewDimension | string {
++  if (!picks.length) return "Click an edge, a circle or a point";
++  const views = new Set(picks.map((p) => p.view));
++  if (views.size > 1) return "Pick in one view: a dimension's ends are in the same view";
++  if (picks.length === 1) {
++    const p = picks[0];
++    if (isRound(p)) {
++      const g = resolveGeoRef([sheet], p.ref);
++      const arc = g?.kind === "edge" && !!g.arc;
++      const kind: DimensionKind = (opts.radial ?? (arc ? "radius" : "diameter")) === "radius" ? "radius" : "diameter";
++      const r = dimensionFromPicks(sheet, [p.ref], at, { kind });
++      return typeof r === "string" ? capital(r) : r;
++    }
++    if (isPoint(p)) return "Click a second point (or an edge) to dimension the distance";
++  }
++  // Two circles (or a circle and a point): centre to centre.
++  let refs = picks.map((p) => p.ref);
++  if (picks.length === 2 && picks.some(isRound) && picks.every((p) => isRound(p) || isPoint(p))) refs = picks.map((p) => (isRound(p) ? centreRef(p.ref) : p.ref));
++  const r = dimensionFromPicks(sheet, refs, at);
++  if (typeof r === "string") return capital(r);
++  if (opts.direction && (r.kind ?? "linear") === "linear") return { ...r, direction: opts.direction };
++  return r;
++}
++
++/** The view's box a pointer is outside of, and on which side: what a set's direction and side come from. */
++function sideOf(box: { min: Vec2; max: Vec2 }, p: Vec2): { dir: "horizontal" | "vertical"; sign: 1 | -1 } | null {
++  if (p[1] > box.max[1]) return { dir: "horizontal", sign: 1 };
++  if (p[1] < box.min[1]) return { dir: "horizontal", sign: -1 };
++  if (p[0] > box.max[0]) return { dir: "vertical", sign: 1 };
++  if (p[0] < box.min[0]) return { dir: "vertical", sign: -1 };
++  return null;
++}
++
++/**
++ * A chain, baseline or ordinate set: an origin (a point, or a side of the
++ * view like "@left") and the points measured from it, laid out across
++ * (dimension line above or below the view) or up (left or right) by where the
++ * pointer is; inside the view, by which way the points spread.
++ */
++export function setFromPicks(sheet: ComposedSheet, mode: "chain" | "baseline" | "ordinate", origin: string, points: string[], at: Vec2): NewDimension | string {
++  if (!points.length) return mode === "chain" ? "Click the next point of the chain" : "Click the points to measure from the origin";
++  const view = origin.includes(":") ? origin.split(":")[0] : points.find((p) => p.includes(":"))?.split(":")[0];
++  const cv = sheet.views.find((v) => v.id === view);
++  if (!cv?.box) return "Pick points in a view";
++  if (new Set([origin, ...points].filter((p) => p.includes(":")).map((p) => p.split(":")[0])).size > 1) return "Pick in one view: a set's points are in the same view";
++  const side = sideOf(cv.box, at);
++  let direction: DimensionDirection;
++  let sign: 1 | -1 = -1;
++  if (side) {
++    direction = side.dir;
++    sign = side.sign;
++  } else {
++    const pos = [origin, ...points].map((r) => (r.includes(":") ? resolveGeoRef([sheet], r) : null)).map((g) => (g?.kind === "point" ? g.at : g?.kind === "circle" ? g.c : null)).filter((p): p is Vec2 => !!p);
++    const sx = pos.length ? Math.max(...pos.map((p) => p[0])) - Math.min(...pos.map((p) => p[0])) : 1;
++    const sy = pos.length ? Math.max(...pos.map((p) => p[1])) - Math.min(...pos.map((p) => p[1])) : 0;
++    direction = sx >= sy ? "horizontal" : "vertical";
++  }
++  const axis = direction === "horizontal" ? 1 : 0;
++  const edge = sign > 0 ? cv.box.max[axis] : cv.box.min[axis];
++  const gap = Math.max(4, Math.abs(at[axis] - edge));
++  return { type: "dimension", view: view!, kind: mode, origin, points, direction, offset: Math.round(sign * gap * 10) / 10 };
++}
++
++/** A linear dimension turned into a baseline or ordinate set from its first point (or a set back into one dimension). */
++export function convertDimension(a: DimensionAnnotation, to: "linear" | "baseline" | "ordinate" | "chain"): NewDimension | string {
++  const { id: _id, ...rest } = a;
++  void _id;
++  const kind = a.kind ?? "linear";
++  if (to === kind) return rest;
++  const strip = (o: Record<string, unknown>) => {
++    for (const k of ["from", "to", "refs", "origin", "points", "member", "at", "last", "major", "jog"]) delete o[k];
++    return o;
++  };
++  if (to === "linear") {
++    if (!(kind === "baseline" || kind === "ordinate" || kind === "chain") || !a.origin || !a.points?.length) return "Only a chain, baseline or ordinate set turns back into a dimension";
++    const o = strip({ ...rest }) as NewDimension;
++    return { ...o, kind: "linear", from: a.origin, to: a.points[a.points.length - 1] };
++  }
++  if (kind === "linear" && a.from !== undefined && a.to !== undefined) {
++    const o = strip({ ...rest }) as NewDimension;
++    return { ...o, kind: to, origin: a.from, points: [a.to], ...(a.direction && a.direction !== "aligned" ? { direction: a.direction } : {}) };
++  }
++  if ((kind === "baseline" || kind === "ordinate" || kind === "chain") && a.origin && a.points) {
++    const o = strip({ ...rest }) as NewDimension;
++    return { ...o, kind: to, origin: a.origin, points: a.points, ...(a.direction && a.direction !== "aligned" ? { direction: a.direction } : {}) };
++  }
++  return "Only a dimension between two points turns into a set (an edge's or a circle's has one end)";
++}
++
++/** Ø ↔ R on a circle's or an arc's dimension: the patch, or null when it isn't one. */
++export function radialSwap(a: DimensionAnnotation, to: "diameter" | "radius"): Partial<DimensionAnnotation> | null {
++  if ((a.kind !== "diameter" && a.kind !== "radius") || a.refs?.length !== 1) return null;
++  return a.kind === to ? {} : { kind: to };
++}
++
++function capital(s: string): string {
++  return s.charAt(0).toUpperCase() + s.slice(1);
++}
+diff --git a/src/ui/drawing/tools/kinds.ts b/src/ui/drawing/tools/kinds.ts
+index bbd4570..bab472f 100644
+--- a/src/ui/drawing/tools/kinds.ts
++++ b/src/ui/drawing/tools/kinds.ts
+@@ -10,8 +10,11 @@ import { STANDARD_SCALES } from "../../../doc/drawing";
+ import { DIMENSION_DIRECTIONS, OUTLINE_SIDES, type Vec2 } from "../../../doc/types";
+ import { validateDocument } from "../../../doc/validate";
+ import type { ComposedAnnotation, ComposedSheet } from "../../../drafting/compose";
++import type { ReactNode } from "react";
++import type { MenuEntry } from "../../ContextMenu";
+ import type { IconName } from "../../icons";
+ import { tenth } from "../align";
++import type { DrawingToolCtx } from "./types";
+ import type { Choice, PropSchema, SchemaEnv } from "./schema";
+ 
+ /** A handle on a selected annotation: dragging it changes one thing (a dimension line's distance). */
+@@ -22,6 +25,8 @@ export interface Grip {
+   /** It moves along this sheet direction only (unit), or anywhere. */
+   along?: Vec2;
+   label: string;
++  /** A click on it (no drag) acts: dragGrip is called with no movement (an arrowhead flips the arrows). */
++  click?: boolean;
+ }
+ 
+ /** What a kind's drag and grips may read: the sheet as composed, and the annotation as composed. */
+@@ -45,6 +50,20 @@ export interface AnnotationKindDef {
+   paste?(a: Record<string, unknown>, offset: Vec2, ctx: KindCtx): Record<string, unknown>;
+   /** The prefix of a new one's id ("d" → d4). */
+   prefix: string;
++  /** Its own property panel, drawn above the schema's fields (which then fold under "All properties"). */
++  panel?(p: KindPanelProps): ReactNode;
++  /** Its entries in the right-click menu, before Copy. */
++  menu?(a: Record<string, unknown>, ctx: DrawingToolCtx, said?: ComposedAnnotation): MenuEntry[];
++}
++
++/** What a kind's own panel is given: the annotation as stored and as composed, and how to change it. */
++export interface KindPanelProps {
++  a: Record<string, unknown>;
++  said?: ComposedAnnotation;
++  env: SchemaEnv;
++  /** A patch (null removes a key), one undo step; the error when refused. */
++  write(patch: Record<string, unknown>): string | null;
++  ctx: () => DrawingToolCtx;
+ }
+ 
+ const kinds = new Map<string, AnnotationKindDef>();
+diff --git a/src/ui/drawing/tools/modelItems.ts b/src/ui/drawing/tools/modelItems.ts
+new file mode 100644
+index 0000000..f384b5c
+--- /dev/null
++++ b/src/ui/drawing/tools/modelItems.ts
+@@ -0,0 +1,161 @@
++// Model Items (Phase Q wave Q3A): the dimensions the part was designed with,
++// brought onto the sheet. Each feature's own numbers — its sketch's radii,
++// diameters and lengths, an extrusion's depth, a hole (as its callout), a
++// fillet's radius, a chamfer, a member's cut length — go into the first of
++// the chosen views that shows the edge true size, each once on the sheet (a
++// size dimensioned already, in any view, is not repeated). The layout
++// engine places them. Pure: the annotations to add, without ids.
++
++import type { RawDocument } from "../../../doc/commands";
++import type { Annotation, DimensionAnnotation, HoleAnnotation, Vec3 } from "../../../doc/types";
++import { validateDocument } from "../../../doc/validate";
++import type { ComposedSheet, ComposedView } from "../../../drafting/compose";
++import type { ProjectedEdge } from "../../../kernel/drawingViews";
++
++export interface ModelItemsOptions {
++  /** The features to take items from (default: every one). */
++  features?: string[];
++  /** The views to put them in, in order of preference (default: every square view on the sheet). */
++  views?: string[];
++  /** Sketch dimensions (radii, diameters, lengths), feature dimensions (depths, fillets, chamfers, member lengths), hole callouts. */
++  sketch?: boolean;
++  feature?: boolean;
++  holes?: boolean;
++}
++
++export type NewItem = Omit<DimensionAnnotation, "id"> | Omit<HoleAnnotation, "id">;
++
++export interface ModelItemsResult {
++  items: NewItem[];
++  /** Model dimensions that found no view showing them true size (said to the user). */
++  missed: string[];
++}
++
++const near = (a: number, b: number, tol = 1e-3) => Math.abs(a - b) <= Math.max(tol, Math.abs(b) * 1e-6);
++const polyLength = (e: ProjectedEdge) => e.pts.reduce((t, p, i) => (i ? t + Math.hypot(p[0] - e.pts[i - 1][0], p[1] - e.pts[i - 1][1]) : t), 0);
++const dirOf = (e: ProjectedEdge): Vec3 | null => {
++  const m = e.model;
++  if (!m || m.kind !== "line" || m.length < 1e-9) return null;
++  return [(m.end[0] - m.start[0]) / m.length, (m.end[1] - m.start[1]) / m.length, (m.end[2] - m.start[2]) / m.length];
++};
++const parallel = (a: Vec3, b: Vec3) => Math.abs(Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) - 1) < 1e-6;
++
++/** The model items for a sheet: what to add, and what found no place. */
++export function modelItems(doc: RawDocument, sheet: ComposedSheet, existing: Annotation[], opts: ModelItemsOptions = {}): ModelItemsResult {
++  const v = validateDocument(doc);
++  const want = { sketch: opts.sketch ?? true, feature: opts.feature ?? true, holes: opts.holes ?? true };
++  const views = (opts.views ?? sheet.views.filter((x) => x.square && x.kind !== "detail").map((x) => x.id)).map((id) => sheet.views.find((x) => x.id === id)).filter((x): x is ComposedView => !!x && x.square && !!x.box);
++  const items: NewItem[] = [];
++  const missed: string[] = [];
++  // What is on the sheet already: sizes by model direction, radial sizes, hole callouts, the edges dimensioned.
++  const lengths: { along: Vec3; value: number }[] = [];
++  const radial = new Set<string>();
++  const holes = new Set<string>();
++  const usedRefs = new Set<string>();
++  for (const a of existing) {
++    if (a.type === "hole") holes.add(a.hole);
++    if (a.type === "dimension") for (const r of a.refs ?? []) usedRefs.add(r.split(":")[1] ?? r);
++  }
++  for (const a of sheet.annotations) {
++    if (a.type !== "dimension" || a.value === undefined) continue;
++    if (a.along) lengths.push({ along: a.along, value: a.value });
++  }
++  for (const a of existing) {
++    if (a.type !== "dimension" || (a.kind !== "diameter" && a.kind !== "radius")) continue;
++    const said = sheet.annotations.find((x) => x.id === a.id);
++    if (said?.value !== undefined) radial.add(`${a.kind === "radius" ? "R" : "Ø"}${Math.round(said.value * 1000) / 1000}`);
++  }
++  const lengthTaken = (along: Vec3, value: number) => lengths.some((d) => near(d.value, value, 0.01) && parallel(d.along, along));
++  const radialTaken = (key: string) => radial.has(key);
++
++  /** The first chosen view with an edge that passes, visible and true size. */
++  const find = (ok: (e: ProjectedEdge, cv: ComposedView) => boolean): { cv: ComposedView; e: ProjectedEdge } | null => {
++    for (const cv of views) {
++      const e = cv.edges.find((x) => x.visible && !usedRefs.has(x.key) && ok(x, cv));
++      if (e) return { cv, e };
++    }
++    return null;
++  };
++  const trueLength = (e: ProjectedEdge) => !!e.model && e.look === "line" && near(polyLength(e), e.model.length, 0.01);
++  const endOn = (e: ProjectedEdge) => e.look === "circle" || e.look === "arc";
++  const radiusOf = (e: ProjectedEdge) => e.model?.radius ?? e.circle?.r ?? 0;
++  const ref = (cv: ComposedView, e: ProjectedEdge) => `${cv.id}:e${e.key}`;
++
++  const addLength = (feature: string, value: number, what: string) => {
++    const hit = find((e) => e.feature === feature && trueLength(e) && near(e.model!.length, value, 0.01) && !lengthTaken(dirOf(e)!, value));
++    if (!hit) return missed.push(`${feature}: ${what} ${value}`);
++    const along = dirOf(hit.e)!;
++    lengths.push({ along, value });
++    usedRefs.add(hit.e.key);
++    items.push({ type: "dimension", view: hit.cv.id, refs: [ref(hit.cv, hit.e)] });
++  };
++  const addRadial = (feature: string, r: number, kind: "diameter" | "radius", what: string, typ = false) => {
++    const key = `${kind === "radius" ? "R" : "Ø"}${Math.round((kind === "radius" ? r : 2 * r) * 1000) / 1000}`;
++    if (radialTaken(`${feature}|${key}`) || radialTaken(key)) return;
++    const hit = find((e) => e.feature === feature && endOn(e) && near(radiusOf(e), r, 0.01));
++    if (!hit) return missed.push(`${feature}: ${what}`);
++    radial.add(`${feature}|${key}`);
++    usedRefs.add(hit.e.key);
++    const many = typ && hit.cv.edges.filter((e) => e.visible && e.feature === feature && endOn(e) && near(radiusOf(e), r, 0.01)).length > 1;
++    items.push({ type: "dimension", view: hit.cv.id, kind: hit.e.look === "arc" && kind === "diameter" ? "radius" : kind, refs: [ref(hit.cv, hit.e)], ...(many ? { typ: true } : {}) });
++  };
++
++  const scope = opts.features ? new Set(opts.features) : null;
++  const sketches = new Map(v.features.flatMap((f) => (f.feature?.op === "sketch" ? [[f.feature.id, f.feature] as const] : [])));
++  /** Which feature's edges a sketch's entities became (the extrude or cut that uses it). */
++  for (const vf of v.features) {
++    const f = vf.feature as unknown as Record<string, unknown> & { id: string; op: string; suppressed?: boolean };
++    if (!f || f.suppressed) continue;
++    const id = f.id;
++    if (scope && !scope.has(id) && !(typeof f.sketch === "string" && scope.has(f.sketch))) continue;
++    if (f.op === "extrude" || f.op === "cut" || f.op === "revolve") {
++      const sk = typeof f.sketch === "string" ? (sketches.get(f.sketch) as unknown as { entities: { id: string; type: string }[]; constraints?: { type: string; entity?: string; value?: number }[] } | undefined) : undefined;
++      if (want.sketch && sk) {
++        for (const c of sk.constraints ?? []) {
++          if (typeof c.value !== "number") continue;
++          const ent = sk.entities.find((e) => e.id === c.entity);
++          if (c.type === "radius" || c.type === "diameter") {
++            const r = c.type === "radius" ? c.value : c.value / 2;
++            // A whole circle by its diameter (drafting practice); an arc by its radius.
++            addRadial(id, r, ent?.type === "arc" ? "radius" : "diameter", `${c.type} ${c.value}`);
++          } else if ((c.type === "distance" || c.type === "distanceX" || c.type === "distanceY") && c.entity) addLength(id, c.value, "length");
++        }
++      }
++      if (want.feature && typeof f.distance === "number" && f.op !== "revolve") addLength(id, f.distance, "depth");
++    } else if (f.op === "hole" && want.holes) {
++      if (holes.has(id)) continue;
++      const hit = find((e) => e.feature === id && e.look === "circle");
++      if (!hit) {
++        missed.push(`${id}: no view sees the hole end on`);
++        continue;
++      }
++      holes.add(id);
++      items.push({ type: "hole", view: hit.cv.id, hole: id });
++    } else if (f.op === "fillet" && want.feature && typeof f.radius === "number") addRadial(id, f.radius, "radius", `radius ${f.radius}`, true);
++    else if (f.op === "chamfer" && want.feature && typeof f.distance === "number") {
++      const hit = find((e) => e.feature === id && e.look === "line" && e.pts.length >= 2 && Math.abs(e.pts[0][0] - e.pts[e.pts.length - 1][0]) > 1e-6 && Math.abs(e.pts[0][1] - e.pts[e.pts.length - 1][1]) > 1e-6);
++      if (!hit) missed.push(`${id}: no view sees the chamfer from the side`);
++      else {
++        usedRefs.add(hit.e.key);
++        items.push({ type: "dimension", view: hit.cv.id, kind: "chamfer", refs: [ref(hit.cv, hit.e)] });
++      }
++    } else if (f.op === "member" && want.feature) {
++      const m = sheet.points.members.find((x) => x.id === id);
++      if (!m) continue;
++      const along: Vec3 = [(m.ends[1][0] - m.ends[0][0]) / m.length, (m.ends[1][1] - m.ends[0][1]) / m.length, (m.ends[1][2] - m.ends[0][2]) / m.length];
++      if (lengthTaken(along, m.length)) continue;
++      const cv = views.find((x) => {
++        const p = (q: Vec3) => [q[0] * x.frame.right[0] + q[1] * x.frame.right[1] + q[2] * x.frame.right[2], q[0] * x.frame.up[0] + q[1] * x.frame.up[1] + q[2] * x.frame.up[2]];
++        const a = p(m.ends[0]);
++        const b = p(m.ends[1]);
++        return near(Math.hypot(b[0] - a[0], b[1] - a[1]), m.length, 0.01);
++      });
++      if (!cv) missed.push(`${id}: no view sees the member lying flat`);
++      else {
++        lengths.push({ along, value: m.length });
++        items.push({ type: "dimension", view: cv.id, member: id });
++      }
++    }
++  }
++  return { items, missed };
++}
+diff --git a/src/ui/drawing/tools/preview.ts b/src/ui/drawing/tools/preview.ts
+new file mode 100644
+index 0000000..e8a3004
+--- /dev/null
++++ b/src/ui/drawing/tools/preview.ts
+@@ -0,0 +1,30 @@
++// A tool's annotation laid out before it is kept (Phase Q wave Q3A): the
++// engine lays it out in the context the sheet was composed in (its views,
++// its data, what is already where), so the preview that follows the pointer
++// is exactly what OK will draw: the same arrowheads, text, tolerance stack.
++// `standard` lays it out to the other standard (the weld builder's ISO/AWS
++// preview) without changing the drawing.
++
++import type { Annotation } from "../../../doc/types";
++import { draftStyle, layoutAnnotation, measureDimension, type AnnotationLayout } from "../../../drafting/annotate";
++import { LAYOUT_CONTEXT, type ComposedSheet } from "../../../drafting/compose";
++
++/** The annotation as it would be drawn on the sheet, or null when the sheet has no layout context (or it can't be drawn: `problem`). */
++export function previewAnnotation(sheet: ComposedSheet | null, a: Annotation, opts: { standard?: "ISO" | "ASME" } = {}): AnnotationLayout | null {
++  if (!sheet) return null;
++  const base = LAYOUT_CONTEXT.get(sheet);
++  if (!base) return null;
++  const ctx = opts.standard && opts.standard !== (base.drawing.standard ?? "ISO") ? { ...base, style: draftStyle(opts.standard, sheet.template), drawing: { ...base.drawing, standard: opts.standard } } : base;
++  try {
++    if (a.type === "dimension") {
++      const cv = sheet.views.find((v) => v.id === a.view);
++      if (!cv) return null;
++      const m = measureDimension(a, { id: cv.id, edges: cv.edges, frame: cv.frame, outline: cv.outline, square: cv.square }, sheet.points, sheet.points.members);
++      return layoutAnnotation(a, ctx, m);
++    }
++    return layoutAnnotation(a, ctx);
++  } catch {
++    // A half-made annotation the engine can't lay out yet: no preview.
++    return null;
++  }
++}
+diff --git a/src/ui/drawing/tools/styles.ts b/src/ui/drawing/tools/styles.ts
+new file mode 100644
+index 0000000..4b5c36f
+--- /dev/null
++++ b/src/ui/drawing/tools/styles.ts
+@@ -0,0 +1,175 @@
++// Annotation styles (Phase Q wave Q3A): what the Format Painter copies from
++// one annotation to others of its kind (a dimension's tolerance, decimals,
++// arrows, dual units, inspection; a note's height and weight; a balloon's
++// shape), the dimension favourites ("±0.1", "H7", saved by the user), and
++// the ISO 286 classes the fit editor offers, with their deviations at the
++// size being dimensioned. Pure.
++
++import type { Annotation, DimensionAnnotation } from "../../../doc/types";
++import { classDeviations, fitOf, parseFit, type FitType } from "../../../drafting/fits";
++import { deviationText, numberText, toleranceProblem, type Tolerance } from "../../../drafting/tolerance";
++
++// ------------------------------------------------------------ the format painter
++
++/** The keys a kind's style is made of: what the painter copies. */
++export const STYLE_KEYS: Partial<Record<Annotation["type"], string[]>> = {
++  dimension: ["tolerance", "precision", "arrows", "dual", "inspection"],
++  hole: ["tolerance"],
++  note: ["height", "bold", "italic", "underline", "frame"],
++  text: ["height", "bold"],
++  balloon: ["shape", "size", "arrow", "quantity"],
++  leader: ["arrow", "spline"],
++  centerMark: ["style", "extend"],
++  centerline: ["extend"],
++  surface: ["symbol", "values", "process", "lay"],
++  datum: ["open"],
++};
++
++/** An annotation's style: its kind and the values of its style keys (absent ones as null, so painting removes them). */
++export function styleOf(a: Annotation | Record<string, unknown>): { type: string; values: Record<string, unknown> } | null {
++  const type = String((a as { type: unknown }).type);
++  const keys = STYLE_KEYS[type as Annotation["type"]];
++  if (!keys) return null;
++  const values: Record<string, unknown> = {};
++  for (const k of keys) values[k] = (a as Record<string, unknown>)[k] ?? null;
++  return { type, values };
++}
++
++/**
++ * The patch that paints a style onto an annotation (null removes a key), or
++ * why it can't: another kind, or a value the target can't take (a fit on an
++ * angle). A dimension's tolerance goes onto a hole callout's bore too.
++ */
++export function paintPatch(target: Annotation | Record<string, unknown>, style: { type: string; values: Record<string, unknown> }): Record<string, unknown> | string {
++  const type = String((target as { type: unknown }).type);
++  const keys = STYLE_KEYS[type as Annotation["type"]];
++  if (!keys) return `A ${type} has no style to paint`;
++  const cross = style.type === "dimension" && type === "hole";
++  if (style.type !== type && !cross) return `The style is a ${style.type}'s: paint it onto a ${style.type}`;
++  const patch: Record<string, unknown> = {};
++  for (const k of keys) if (k in style.values) patch[k] = style.values[k];
++  if (type === "dimension") {
++    const kind = (target as DimensionAnnotation).kind ?? "linear";
++    const t = patch.tolerance as Tolerance | null | undefined;
++    if (t && kind === "angular" && (t.kind === "fit" || t.kind === "fitWithTol" || t.kind === "fitLimits")) delete patch.tolerance;
++  }
++  return patch;
++}
++
++// ------------------------------------------------------------ favourites
++
++/** A saved dimension style: a name and the fields it sets (only those; the rest stay). */
++export interface DimFavourite {
++  name: string;
++  style: Partial<Pick<DimensionAnnotation, "tolerance" | "precision" | "typ" | "dual" | "inspection" | "arrows" | "prefix" | "suffix" | "count">>;
++  builtIn?: boolean;
++}
++
++export const BUILT_IN_FAVOURITES: DimFavourite[] = [
++  { name: "±0.1", style: { tolerance: { kind: "symmetric", plus: 0.1 } }, builtIn: true },
++  { name: "±0.05", style: { tolerance: { kind: "symmetric", plus: 0.05 } }, builtIn: true },
++  { name: "+0.1/0", style: { tolerance: { kind: "bilateral", plus: 0.1, minus: 0 } }, builtIn: true },
++  { name: "H7", style: { tolerance: { kind: "fitWithTol", fit: "H7" } }, builtIn: true },
++  { name: "h6", style: { tolerance: { kind: "fitWithTol", fit: "h6" } }, builtIn: true },
++  { name: "H7/g6", style: { tolerance: { kind: "fit", fit: "H7/g6" } }, builtIn: true },
++  { name: "Basic", style: { tolerance: { kind: "basic" } }, builtIn: true },
++  { name: "Reference", style: { tolerance: { kind: "reference" } }, builtIn: true },
++  { name: "2 decimals", style: { precision: 2 }, builtIn: true },
++];
++
++const FAV_KEY = "cocaide.dimensionFavourites.v1";
++
++/** The user's saved favourites (browser storage; empty when it can't be read). */
++export function loadFavourites(): DimFavourite[] {
++  try {
++    const raw = JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]") as unknown;
++    return Array.isArray(raw) ? raw.filter((f): f is DimFavourite => !!f && typeof f.name === "string" && typeof f.style === "object") : [];
++  } catch {
++    return [];
++  }
++}
++
++export function storeFavourites(list: DimFavourite[]): void {
++  try {
++    localStorage.setItem(FAV_KEY, JSON.stringify(list.filter((f) => !f.builtIn)));
++  } catch {
++    // Storage refused (a private window): the favourite lasts this visit.
++  }
++}
++
++/** A favourite made from a dimension: its tolerance, decimals, display and text. */
++export function favouriteFrom(name: string, a: DimensionAnnotation): DimFavourite | string {
++  const n = name.trim();
++  if (!n) return "Name the favourite";
++  const style: DimFavourite["style"] = {};
++  for (const k of ["tolerance", "precision", "typ", "dual", "inspection", "arrows", "prefix", "suffix", "count"] as const) if (a[k] !== undefined) (style as Record<string, unknown>)[k] = a[k];
++  if (!Object.keys(style).length) return "This dimension has no tolerance, decimals or text to keep: set some first";
++  return { name: n, style };
++}
++
++/** The patch a favourite makes (only its own fields), or why it can't go on this dimension. */
++export function applyFavourite(a: DimensionAnnotation, f: DimFavourite): Record<string, unknown> | string {
++  const t = f.style.tolerance;
++  if (t) {
++    const p = toleranceProblem(t);
++    if (p) return `${f.name}: ${p}`;
++    if (a.kind === "angular" && (t.kind === "fit" || t.kind === "fitWithTol" || t.kind === "fitLimits")) return `${f.name} is a fit: an angle takes ± or limits, not a fit`;
++  }
++  return { ...f.style };
++}
++
++// ------------------------------------------------------------ ISO 286 classes for the fit editor
++
++/** The hole classes the fit editor lists (ISO 286-2's common ones), basic hole H first. */
++export const HOLE_CLASSES = ["H6", "H7", "H8", "H9", "H10", "H11", "G6", "G7", "F7", "F8", "E8", "E9", "D9", "D10", "C11", "JS6", "JS7", "K6", "K7", "M6", "M7", "N6", "N7", "P6", "P7", "R7", "S7", "U7"];
++/** The shaft classes, basic shaft h first. */
++export const SHAFT_CLASSES = ["h5", "h6", "h7", "h8", "h9", "h11", "g5", "g6", "f6", "f7", "e7", "e8", "d9", "d10", "c11", "js5", "js6", "k5", "k6", "m5", "m6", "n5", "n6", "p5", "p6", "r6", "s6", "u6"];
++/** The fits offered as one click: ISO 286-2's preferred hole-basis fits. */
++export const COMMON_FITS = ["H7/g6", "H7/h6", "H7/k6", "H7/m6", "H7/n6", "H7/p6", "H7/s6", "H8/f7", "H9/d9", "H11/c11"];
++
++export interface ClassChoice {
++  value: string;
++  /** "H7  +0.021 / 0" at the size. */
++  label: string;
++  upper: number;
++  lower: number;
++}
++
++/** A side's classes with their deviations at this size (the ones ISO 286 has there). */
++export function classChoices(size: number, side: "hole" | "shaft"): ClassChoice[] {
++  const out: ClassChoice[] = [];
++  for (const c of side === "hole" ? HOLE_CLASSES : SHAFT_CLASSES) {
++    const d = classDeviations(size, c);
++    if (!d) continue;
++    out.push({ value: c, label: `${c}  ${deviationText(d.upper, 3)} / ${deviationText(d.lower, 3)}`, upper: d.upper, lower: d.lower });
++  }
++  return out;
++}
++
++export interface FitSummary {
++  /** One line each: the hole's limits, the shaft's, and the fit. */
++  lines: string[];
++  type?: FitType;
++}
++
++/** What a fit code means at a size, in words and numbers: "Hole Ø25 H7: 25.000 – 25.021". */
++export function fitSummary(size: number, code: string, symbol = ""): FitSummary | null {
++  const f = parseFit(code);
++  if (!f) return null;
++  const lines: string[] = [];
++  const lim = (d: { upper: number; lower: number }) => `${numberText(size + d.lower, 3)} – ${numberText(size + d.upper, 3)}`;
++  for (const side of ["hole", "shaft"] as const) {
++    const c = f[side];
++    if (!c) continue;
++    const d = classDeviations(size, c);
++    if (!d) return { lines: [`${c.letter}${c.grade} is not in ISO 286 at ${numberText(size)} mm`] };
++    lines.push(`${side === "hole" ? "Hole" : "Shaft"} ${symbol}${numberText(size)} ${c.letter}${c.grade}: ${lim(d)} (${deviationText(d.upper, 3)} / ${deviationText(d.lower, 3)})`);
++  }
++  const pair = f.hole && f.shaft ? fitOf(size, f) : null;
++  if (pair) {
++    const what = (x: number) => (x >= 0 ? `clearance ${numberText(x, 3)}` : `interference ${numberText(-x, 3)}`);
++    lines.push(`${pair.type[0].toUpperCase()}${pair.type.slice(1)} fit: ${what(pair.minClearance)} to ${what(pair.maxClearance)}`);
++    return { lines, type: pair.type };
++  }
++  return { lines };
++}
+diff --git a/src/ui/drawing/tools/toolSession.ts b/src/ui/drawing/tools/toolSession.ts
+new file mode 100644
+index 0000000..336c651
+--- /dev/null
++++ b/src/ui/drawing/tools/toolSession.ts
+@@ -0,0 +1,71 @@
++// The sessions of the annotation tools (Phase Q wave Q3A): pick what the
++// annotation is on, see it drawn as it will be (the engine's layout, in the
++// preview colour) following the pointer, click to place it. Each placed
++// annotation is its own undo step and the tool stays on for the next; Esc
++// first lets go of the picks, then ends the tool; Enter ends it.
++
++import type { Annotation, Vec2 } from "../../../doc/types";
++import type { SnapTarget } from "../snap";
++import { keep } from "./editing";
++import { annotationKind } from "./kinds";
++import { previewAnnotation } from "./preview";
++import { BaseSession } from "./session";
++import type { OverlayShape } from "./types";
++
++export abstract class ToolSession extends BaseSession {
++  made: string[] = [];
++  abstract name(): string;
++  /** Something picked and not yet placed: Esc lets it go first. */
++  abstract busy(): boolean;
++  abstract reset(): void;
++  title() {
++    return this.made.length ? `${this.name()} (${this.made.length} added)` : this.name();
++  }
++  blocked(): string | null {
++    return null;
++  }
++  ok(): string | null {
++    this.ctx().end();
++    return null;
++  }
++  cancel(): void {
++    if (this.busy()) {
++      this.reset();
++      this.ctx().refresh();
++      return;
++    }
++    this.ctx().end();
++  }
++  /** Adds an annotation (one undo step, the sheet's places remembered); its id, or null when refused. */
++  protected add(a: Record<string, unknown> & { type: string }): string | null {
++    const c = this.ctx();
++    const id = c.nextId(annotationKind(a.type)?.prefix ?? "a");
++    if (keep(c, [{ type: "setAnnotation", id, annotation: a, sheet: c.sheetDoc.id }])) return null;
++    this.made.push(id);
++    c.select([id]);
++    return id;
++  }
++  /** The annotation drawn as it will be, in the preview colour; or why it can't be, by the pointer. */
++  protected preview(a: Record<string, unknown> | string, at?: Vec2): OverlayShape[] {
++    if (typeof a === "string") return at ? [{ k: "label", at: [at[0], at[1] - this.px(18)], text: a, tone: "warn" }] : [];
++    const l = previewAnnotation(this.ctx().sheet, { ...a, id: "__preview" } as unknown as Annotation);
++    if (!l) return [];
++    if (l.problem && !l.prims.length) return at ? [{ k: "label", at: [at[0], at[1] - this.px(18)], text: l.problem, tone: "warn" }] : [];
++    return [{ k: "prims", prims: l.prims, tone: "preview" }];
++  }
++  protected highlight(t: SnapTarget | null | undefined, tone: "accent" | "preview" = "accent"): OverlayShape[] {
++    if (!t) return [];
++    if (t.circle) return [{ k: "circle", c: t.circle.c, r: t.circle.r, tone, w: 3 }];
++    if (t.pts) return t.pts.map((l) => ({ k: "line", pts: l, tone, w: 3 }) as OverlayShape);
++    return [{ k: "dot", at: t.at, tone }];
++  }
++  /** A point relative to a view's centre (what `at` holds), to a tenth. */
++  protected rel(view: string, p: Vec2): Vec2 {
++    const cv = this.cv(view);
++    const c = cv ? cv.centre : [0, 0];
++    return [Math.round((p[0] - c[0]) * 10) / 10 + 0, Math.round((p[1] - c[1]) * 10) / 10 + 0];
++  }
++}
++
++/** Views a tool can annotate: there is at least one. */
++export const noViews = (c: { sheetDoc: { views: unknown[] } }) => (c.sheetDoc.views.length ? undefined : "Add a view first");
+diff --git a/src/ui/drawing/tools/types.ts b/src/ui/drawing/tools/types.ts
+index 6b555b7..feaa0c0 100644
+--- a/src/ui/drawing/tools/types.ts
++++ b/src/ui/drawing/tools/types.ts
+@@ -15,7 +15,7 @@ import type { DrawingGeometry } from "../../../ask/kernel";
+ import type { Command, RawDocument } from "../../../doc/commands";
+ import type { Drawing, DrawingSheet, Vec2, Vec3 } from "../../../doc/types";
+ import type { ComposedSheet } from "../../../drafting/compose";
+-import type { Box } from "../../../drafting/sheet";
++import type { Box, Prim } from "../../../drafting/sheet";
+ import type { ViewSpec } from "../../../kernel/drawingViews";
+ import type { Measurements } from "../../../kernel/measure";
+ import type { IconName } from "../../icons";
+@@ -47,7 +47,9 @@ export type OverlayShape =
+   | { k: "dot"; at: Vec2; tone?: Tone }
+   | { k: "label"; at: Vec2; text: string; tone?: Tone }
+   /** A view or annotation drawn moved by delta (its group on the sheet, translated): a preview of a move. */
+-  | { k: "move"; id: string; delta: Vec2 };
++  | { k: "move"; id: string; delta: Vec2 }
++  /** Sheet primitives as the engine lays them out (a tool's annotation before it is kept), drawn in the tone at their own weights. */
++  | { k: "prims"; prims: Prim[]; tone?: Tone };
+ export type Tone = "accent" | "preview" | "warn" | "muted";
+ 
+ /** A drawing tool's open session. Every method reads the latest context through the getter it was made with. */
+@@ -113,6 +115,8 @@ export interface DrawingToolCtx {
+   mmPerPx(): number;
+   /** Ends the session (after OK or Cancel). */
+   end(): void;
++  /** Opens a session made outside the toolbar (the format painter from a menu); cancels the one open. */
++  startSession?(s: DrawingSession): void;
+   /** Opens a dialog of the workspace (insert table, sheet format, drawing properties, title block, export). */
+   dialog(name: DrawingDialog, arg?: string): void;
+   /** Whole-drawing actions App owns: New drawing, Balloon every item. */
+diff --git a/src/ui/drawing/tools/ui.tsx b/src/ui/drawing/tools/ui.tsx
+new file mode 100644
+index 0000000..a5ea702
+--- /dev/null
++++ b/src/ui/drawing/tools/ui.tsx
+@@ -0,0 +1,144 @@
++// Small pieces of the annotation tools' panels (Phase Q wave Q3A): a row of
++// choices, a labelled field, a number box that commits on Enter or blur, a
++// symbol palette, and a sheet primitives thumbnail (a frame or weld symbol
++// drawn as it will be on the sheet).
++
++import { useState, type ReactNode } from "react";
++import type { Prim } from "../../../drafting/sheet";
++import { SHEET_FONT } from "../../../drafting/svg";
++
++export function Segmented<T extends string>({ value, options, onChange, testId, label }: { value: T | undefined; options: readonly (readonly [T, string, string?])[]; onChange(v: T): void; testId: string; label: string }) {
++  return (
++    <div className="segmented wrap" role="radiogroup" aria-label={label}>
++      {options.map(([v, text, title]) => (
++        <button key={v} type="button" role="radio" aria-checked={value === v} className={value === v ? "on" : ""} title={title} onClick={() => onChange(v)} data-testid={`${testId}-${v}`}>
++          {text}
++        </button>
++      ))}
++    </div>
++  );
++}
++
++export function Row({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
++  return (
++    <label className="field" title={hint}>
++      <span className="field-label">{label}</span>
++      {children}
++    </label>
++  );
++}
++
++/** A text or number box that commits on Enter or when it loses focus. */
++export function Commit({ value, onCommit, testId, placeholder, width, numeric }: { value: string; onCommit(v: string): void; testId: string; placeholder?: string; width?: number; numeric?: boolean }) {
++  return (
++    <input
++      type="text"
++      inputMode={numeric ? "decimal" : undefined}
++      defaultValue={value}
++      key={value}
++      placeholder={placeholder}
++      spellCheck={false}
++      style={width ? { width } : undefined}
++      onBlur={(e) => e.target.value !== value && onCommit(e.target.value)}
++      onKeyDown={(e) => {
++        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
++        if (e.key === "Escape") {
++          (e.target as HTMLInputElement).value = value;
++          (e.target as HTMLInputElement).blur();
++        }
++        e.stopPropagation();
++      }}
++      data-testid={testId}
++    />
++  );
++}
++
++/** A number read from a box: undefined for empty, NaN when it isn't one. */
++export function numberOf(s: string): number | undefined {
++  const t = s.trim().replace(",", ".");
++  if (!t) return undefined;
++  return Number(t);
++}
++
++/** The drafting symbols a note or a dimension's text takes, as buttons that insert them. */
++export const SYMBOLS: [string, string][] = [
++  ["Ø", "Diameter"],
++  ["±", "Plus or minus"],
++  ["°", "Degrees"],
++  ["⌴", "Counterbore"],
++  ["⌵", "Countersink"],
++  ["↧", "Depth"],
++  ["□", "Square"],
++  ["×", "Times"],
++  ["℄", "Centreline"],
++  ["⌒", "Arc length"],
++  ["Ⓜ", "Maximum material"],
++  ["Ⓛ", "Least material"],
++  ["Ⓟ", "Projected zone"],
++  ["Ⓔ", "Envelope"],
++  ["⏥", "Flatness"],
++  ["⊥", "Perpendicularity"],
++  ["∥", "Parallelism"],
++  ["⌖", "Position"],
++];
++
++export function SymbolPalette({ onPick, testId }: { onPick(ch: string): void; testId: string }) {
++  return (
++    <div className="symbol-palette" role="toolbar" aria-label="Symbols" data-testid={testId}>
++      {SYMBOLS.map(([ch, title]) => (
++        <button key={ch} type="button" title={title} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick(ch)} data-testid={`${testId}-${title.toLowerCase().replace(/[^a-z]+/g, "-")}`}>
++          {ch}
++        </button>
++      ))}
++    </div>
++  );
++}
++
++/** Sheet primitives drawn small, fitted to their box: a frame, a weld symbol, a surface symbol as the sheet will have it. */
++export function PrimThumb({ prims, testId, height = 64 }: { prims: Prim[]; testId: string; height?: number }) {
++  const pts: [number, number][] = [];
++  for (const p of prims) {
++    if (p.k === "line") pts.push(...p.pts);
++    else if (p.k === "circle") pts.push([p.c[0] - p.r, p.c[1] - p.r], [p.c[0] + p.r, p.c[1] + p.r]);
++    else if (p.k === "text") pts.push([p.at[0] - (p.anchor === "start" ? 0 : p.size * p.text.length * 0.6), p.at[1] - p.size * 0.3], [p.at[0] + p.size * p.text.length * 0.6, p.at[1] + p.size]);
++  }
++  if (!pts.length) return <div className="prim-thumb empty" data-testid={testId} />;
++  const xs = pts.map((p) => p[0]);
++  const ys = pts.map((p) => p[1]);
++  const pad = 1.5;
++  const x0 = Math.min(...xs) - pad;
++  const x1 = Math.max(...xs) + pad;
++  const y0 = Math.min(...ys) - pad;
++  const y1 = Math.max(...ys) + pad;
++  const y = (v: number) => -v;
++  return (
++    <svg className="prim-thumb" viewBox={`${x0} ${-y1} ${x1 - x0} ${y1 - y0}`} style={{ height }} preserveAspectRatio="xMidYMid meet" stroke="currentColor" fill="none" strokeLinecap="round" strokeLinejoin="round" data-testid={testId} role="img" aria-label="Preview">
++      {prims.map((p, i) => {
++        if (p.k === "line") {
++          const s = p.pts.map((q) => `${q[0]},${y(q[1])}`).join(" ");
++          return p.closed || p.fill ? <polygon key={i} points={s} strokeWidth={p.w} fill={p.fill ? "currentColor" : "none"} strokeDasharray={p.dash?.join(" ")} /> : <polyline key={i} points={s} strokeWidth={p.w} strokeDasharray={p.dash?.join(" ")} />;
++        }
++        if (p.k === "circle") return <circle key={i} cx={p.c[0]} cy={y(p.c[1])} r={p.r} strokeWidth={p.w} fill={p.fill ? "currentColor" : "none"} />;
++        if (p.k === "area") return null;
++        return (
++          <text key={i} x={p.at[0]} y={y(p.at[1])} fontSize={p.size} textAnchor={p.anchor} fontWeight={p.bold ? "bold" : undefined} fontStyle={p.italic ? "italic" : undefined} transform={p.angle ? `rotate(${-p.angle} ${p.at[0]} ${y(p.at[1])})` : undefined} fill="currentColor" stroke="none" fontFamily={SHEET_FONT}>
++            {p.text}
++          </text>
++        );
++      })}
++    </svg>
++  );
++}
++
++/** A disclosure with its open state kept while the panel redraws. */
++export function Fold({ title, children, open: start = false, testId }: { title: string; children: ReactNode; open?: boolean; testId?: string }) {
++  const [open, setOpen] = useState(start);
++  return (
++    <div className={`fold-section${open ? " open" : ""}`}>
++      <button type="button" className="fold-head" aria-expanded={open} onClick={() => setOpen(!open)} data-testid={testId}>
++        <span className="fold-caret">{open ? "▾" : "▸"}</span> {title}
++      </button>
++      {open && <div className="fold-body">{children}</div>}
++    </div>
++  );
++}
