@@ -38,7 +38,12 @@ interface SheetHook {
 }
 type Doc = { drawing: { sheets: { annotations: Record<string, unknown>[] }[] } };
 
-const hook = <T,>(page: Page, f: (h: SheetHook, arg: unknown) => T, arg?: unknown) => page.evaluate(([src, a]) => new Function("h", "a", `return (${src})(h, a)`)((window as unknown as { __cocaideSheet: SheetHook }).__cocaideSheet, a), [f.toString(), arg] as const) as Promise<T>;
+/** Runs f on the sheet's automation hook in the page (null until the sheet is on screen). */
+const hook = <T,>(page: Page, f: (h: SheetHook, arg: unknown) => T, arg?: unknown) =>
+  page.evaluate(([src, a]) => {
+    const h = (window as unknown as { __cocaideSheet?: SheetHook }).__cocaideSheet;
+    return h ? new Function("h", "a", `return (${src})(h, a)`)(h, a) : null;
+  }, [f.toString(), arg] as const) as Promise<T>;
 const screen = (page: Page, p: V2) => hook(page, (h, a) => h.toScreen((a as V2)[0], (a as V2)[1]), p);
 const target = async (page: Page, view: string, ref: string): Promise<Target> => {
   await expect.poll(() => hook(page, (h, a) => h.targets((a as string[])[0]).some((t) => t.ref === (a as string[])[1]), [view, ref])).toBe(true);
@@ -111,7 +116,7 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   await page.keyboard.press("d");
   await expect(page.getByTestId("sheet-prompt")).toContainText("Click an edge, a circle");
   await clickTarget(page, "top", "top:ehole_1/c1");
-  const place: V2 = [hole.circle!.c[0] + 22, hole.circle!.c[1] + 16];
+  const place: V2 = [hole.circle!.c[0] - 14, hole.circle!.c[1] + 13];
   await hover(page, place);
   await expect(page.getByTestId("sheet-preview")).toBeVisible();
   await expect(page.getByTestId("sheet-preview").locator("text")).toContainText(["Ø6.6"]);
@@ -182,9 +187,10 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   await expect(page.getByTestId("gdt-datum-0-1")).toHaveValue("B");
   await expect(page.getByTestId("gdt-datum-0-2")).toHaveValue("C");
   await expect(page.getByTestId("gdt-ok")).toBeVisible();
-  // A rule broken shows at once: flatness takes no datum.
+  // A rule broken shows at once: flatness takes no Ⓜ.
   await page.getByTestId("gdt-char-flatness").click();
-  await expect(page.getByTestId("gdt-problems")).toBeVisible();
+  await page.getByTestId("gdt-mat-0").selectOption("M");
+  await expect(page.getByTestId("gdt-problems")).toContainText("features of size only");
   await page.getByTestId("gdt-char-position").click();
   await page.getByTestId("gdt-dia-0").click();
   await page.getByTestId("gdt-mat-0").selectOption("M");

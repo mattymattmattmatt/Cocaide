@@ -41,7 +41,8 @@ export function nextLetter(used: Iterable<string>): string {
 type Target = { ref?: string; dimension?: string; view: string; size?: boolean; at: Vec2 };
 
 function targetAt(c: DrawingToolCtx, p: SheetPointer, dimensions = true): Target | null {
-  if (dimensions && p.hit?.kind === "annotation") {
+  // Geometry under the pointer first (a dimension's extension lines run over the part); else a dimension.
+  if (dimensions && !p.snap && p.hit?.kind === "annotation") {
     const a = c.sheetDoc.annotations.find((x) => x.id === p.hit!.id);
     if (a?.type === "dimension") return { dimension: a.id, view: a.view, size: true, at: p.raw };
   }

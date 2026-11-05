@@ -151,6 +151,10 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     }
   }, [p.d.transaction, session]);
 
+  const nextIdRef = useRef(nextId);
+  nextIdRef.current = nextId;
+  const batchRef = useRef(batch);
+  batchRef.current = batch;
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const live = useRef({ p, selection, snap, sheetDoc });
@@ -167,7 +171,8 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         snap,
         selection,
         run,
-        batch,
+        // The latest batch (it reads the document as it is now, not as it was when the context was made).
+        batch: (cmds) => batchRef.current(cmds),
         begin: (label) => {
           const problem = p.d.begin(label);
           if (!problem) opened.current = true;
@@ -183,7 +188,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
           p.d.rollback();
         },
         inTransaction: () => !!live.current.p.d.transaction,
-        nextId: (prefix) => nextId(prefix),
+        nextId: (prefix) => nextIdRef.current(prefix),
         select: (ids) => setSelection(ids),
         notice: (text, kind = "info") => p.notice(text, kind),
         refresh: () => setTick((n) => n + 1),

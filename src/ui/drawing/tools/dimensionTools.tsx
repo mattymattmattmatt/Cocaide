@@ -66,10 +66,15 @@ export class SmartDimensionSession extends ToolSession {
     if (!sheet) return "The sheet is still being drawn";
     return inferDimension(sheet, picks.map(pickOf), at, this.opts());
   }
+  /** True when a sheet point is on a view (inside its lines' box). */
+  onView(view: string, p: Vec2): boolean {
+    const b = this.cv(view)?.box;
+    return !!b && p[0] >= b.min[0] - 0.5 && p[0] <= b.max[0] + 0.5 && p[1] >= b.min[1] - 0.5 && p[1] <= b.max[1] + 0.5;
+  }
   /** A hovered item that would be a good second pick. */
   candidate(p: SheetPointer | null): SnapTarget | null {
     const s = p?.snap;
-    if (!s || this.picks.length !== 1 || this.picks.some((x) => x.ref === s.ref) || s.view !== this.picks[0].view) return null;
+    if (!s || this.picks.length !== 1 || this.picks.some((x) => x.ref === s.ref) || s.view !== this.picks[0].view || !this.onView(s.view, p!.raw)) return null;
     return typeof this.infer([...this.picks, s], p!.raw) === "string" ? null : s;
   }
   click(p: SheetPointer) {
@@ -81,7 +86,8 @@ export class SmartDimensionSession extends ToolSession {
       this.picks = [s];
       return c.refresh();
     }
-    if (s && this.picks.length === 1 && !this.picks.some((x) => x.ref === s.ref)) {
+    // A click off the view places the dimension, whatever is under the pointer; on it, it may be a second pick.
+    if (s && this.picks.length === 1 && !this.picks.some((x) => x.ref === s.ref) && this.onView(this.picks[0].view, p.raw)) {
       if (this.candidate(p)) {
         this.picks.push(s);
         return c.refresh();
@@ -240,7 +246,10 @@ export class SetSession extends ToolSession {
   }
   click(p: SheetPointer) {
     const c = this.ctx();
-    const s = p.snap;
+    const b = this.origin ? this.cv(this.origin.view)?.box : null;
+    const off = !!b && (p.raw[0] < b.min[0] - 0.5 || p.raw[0] > b.max[0] + 0.5 || p.raw[1] < b.min[1] - 0.5 || p.raw[1] > b.max[1] + 0.5);
+    // Off the view: the set is placed there, whatever is under the pointer.
+    const s = off && this.points.length ? null : p.snap;
     if (s) {
       if (!this.origin) {
         if (!square(c, s.view)) return c.notice(`${s.view} looks at the part at an angle: dimension in a square view.`, "error");
@@ -278,7 +287,9 @@ export class SetSession extends ToolSession {
     const out: OverlayShape[] = [this.origin, ...this.points].flatMap((t) => (t ? [{ k: "dot", at: t.circle?.c ?? t.at, tone: "accent" } as OverlayShape] : []));
     const h = this.hover;
     if (!h || !this.origin) return out;
-    const extra = h.snap && h.snap.view === this.origin.view ? h.snap : undefined;
+    const b = this.cv(this.origin.view)?.box;
+    const off = !!b && (h.raw[0] < b.min[0] - 0.5 || h.raw[0] > b.max[0] + 0.5 || h.raw[1] < b.min[1] - 0.5 || h.raw[1] > b.max[1] + 0.5);
+    const extra = h.snap && h.snap.view === this.origin.view && !off ? h.snap : undefined;
     if (!this.points.length && !extra) return out;
     return [...out, ...this.preview(this.set(h.raw, extra), h.raw)];
   }
