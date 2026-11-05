@@ -102,6 +102,8 @@ ANTHROPIC_API_KEY=sk-ant-... npm run dev     # the dev server proxies /anthropic
 
 Or run it on a local model with Ollama, no key at all: **Settings → Assistant → AI provider: Ollama (local)** (see [Local models (Ollama)](#local-models-ollama)).
 
+Or use your Claude subscription, no key either: **Settings → Assistant → AI provider: Claude subscription (Claude Code, local bridge)** with `npm run bridge` running (see [Use your Claude subscription (Claude Code bridge)](#use-your-claude-subscription-claude-code-bridge)).
+
 Headless, same document and kernel as the browser:
 
 ```sh
@@ -637,6 +639,42 @@ OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=qwen3.5:9b npx vitest run tests/o
 ```
 
 It has not been run yet: the environment this was built in cannot reach the Ollama registry to download a model.
+
+## Use your Claude subscription (Claude Code bridge)
+
+If you have a Claude subscription (Pro or Max) and no API key, the AI window can drive **Claude Code** on your computer, logged in as you, with Cocaide's MCP tools. You watch the part being built in the 3D view as it happens, then accept or discard the result like any other ask.
+
+**What runs where.** The app (hosted page or `npm run dev`) talks over a WebSocket to a small **bridge** on your computer (`npm run bridge`, `http://127.0.0.1:8787`). For each ask the bridge writes the part to a working file (`~/.cocaide-bridge/sessions/<id>/part.cocaide.json`), starts `claude -p` headless with the Cocaide MCP server on that file, and streams back its words, each tool call and each new version of the part. Claude Code gets **only Cocaide's tools**: no shell, no file editing, no web; Read only for the files you attached to that ask. Everything stays on your computer except what Claude Code itself sends to Anthropic, exactly as when you use it in a terminal.
+
+**Set it up (Windows, Git Bash; the same on macOS and Linux)**
+
+```sh
+npm install -g @anthropic-ai/claude-code   # once
+claude                                     # once: log in with your Claude subscription, then /exit
+cd /g/Cocaide                              # your clone of this repository
+npm install                                # once
+npm run bridge                             # leave this window open
+```
+
+The bridge prints a **pairing token**. In the app: **Settings → Assistant → AI provider: Claude subscription (Claude Code, local bridge)**, paste the token (kept in that browser), choose the model (Claude Code's default, Sonnet or Opus), press **Test** (it should show the bridge paired, Claude Code installed and logged in), then **Save**. Only the hosted app and `http://localhost` pages can use the bridge, and only with the token. `npm run bridge -- --new-token` makes a new one; `--port 8800` uses another port (change the address in Settings too).
+
+**Asking.** Right-click as usual and ask. While Claude Code works, the AI window lists its steps (each tool call, ✓ or ✗) and what it says, the 3D view and the feature tree show each change as it lands, and your own edits wait (the panels are locked; **Stop** ends the run and leaves the part as it was). When it finishes, the changes are a proposal: **Accept** keeps them as one undo step, **Discard** leaves the part as it was. **Follow up** continues the same Claude Code session. The AI history records these asks like any others.
+
+**Live link.** If you run `claude` yourself in a terminal with the cocaide MCP server on a file, the app can follow that file: **Settings → Assistant → Claude subscription → Live link**, give its full path (for example `G:/CocaideParts/part.cocaide.json`) and **Follow this file**. The view shows each saved change, read-only; **Open a copy** makes it your document, **Stop following** brings yours back. Adding the server in Git Bash needs `MSYS_NO_PATHCONV=1` so `/c` is not turned into a path:
+
+```sh
+MSYS_NO_PATHCONV=1 claude mcp add cocaide -- cmd /c npx tsx src/mcp/server.ts --doc G:/CocaideParts/part.cocaide.json
+```
+
+**Troubleshooting**
+
+- *The bridge is not answering*: is `npm run bridge` running, on the address in Settings? Chrome may ask whether the site may reach devices on your local network: allow it (the bridge is on 127.0.0.1). Safari does not let an https page reach a local `ws://` address; use Chrome, Edge or Firefox, or `npm run dev`.
+- *The pairing token does not match*: copy it again from the bridge's window (it is also in `~/.cocaide-bridge/token`).
+- *Claude Code was not found*: install it (above); with a non-standard install start the bridge with `--claude <path to claude>` or set `COCAIDE_CLAUDE`.
+- *Not logged in*: run `claude` and log in (or `claude auth login`), then Test again.
+- *Usage limit reached*: Claude Code's own message is shown as it is; wait for the reset or choose another model.
+- *Port in use*: another bridge is running; stop it or use `--port`.
+- Runs stop after 30 minutes, or 10 minutes without any output (`--timeout-minutes`). Each session's files stay in `~/.cocaide-bridge/sessions` for you to look at; delete them whenever you like.
 
 ## The part-level prompt
 
