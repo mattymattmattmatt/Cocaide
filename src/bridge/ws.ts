@@ -74,7 +74,7 @@ export function decodeFrames(buf: Buffer, requireMask = true): { frames: Frame[]
 }
 
 export class WsConnection {
-  private buf = Buffer.alloc(0);
+  private buf: Buffer = Buffer.alloc(0);
   private parts: Buffer[] = [];
   private partsLen = 0;
   private closed = false;

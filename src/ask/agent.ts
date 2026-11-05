@@ -144,6 +144,8 @@ export interface Change {
 export interface Proposal {
   /** A whole new part (from a description): accepting replaces the document. Only from empty space. */
   replace?: boolean;
+  /** Made by Claude Code through the local bridge (src/ask/bridge): the whole new document, its changes listed (replace is set too). */
+  bridge?: boolean;
   /** The critic's checks of the result against the request. */
   checks?: { label: string; ok: boolean; expected: string; actual: string }[];
   /** Things the user should know: an inch conversion, holes breaking an edge. */

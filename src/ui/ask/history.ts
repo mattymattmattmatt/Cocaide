@@ -36,6 +36,8 @@ export interface HistoryEntry {
   status: HistoryStatus;
   /** The entry this one follows up (a conversation is a chain of these). */
   followUpOf?: string;
+  /** Claude Code's session (the bridge provider): a follow-up continues it. */
+  bridgeSession?: string;
 }
 
 const KEY = "cocaide.ask.history.v1";
