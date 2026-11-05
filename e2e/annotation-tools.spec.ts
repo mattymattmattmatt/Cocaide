@@ -116,7 +116,8 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   await page.keyboard.press("d");
   await expect(page.getByTestId("sheet-prompt")).toContainText("Click an edge, a circle");
   await clickTarget(page, "top", "top:ehole_1/c1");
-  const place: V2 = [hole.circle!.c[0] - 14, hole.circle!.c[1] + 13];
+  // Right of the plate, clear of its edges.
+  const place: V2 = [hole.circle!.c[0] + 30, hole.circle!.c[1] - 32];
   await hover(page, place);
   await expect(page.getByTestId("sheet-preview")).toBeVisible();
   await expect(page.getByTestId("sheet-preview").locator("text")).toContainText(["Ø6.6"]);
@@ -172,13 +173,13 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   expect(chain).toMatchObject({ direction: "horizontal", origin: topLeft.ref, points: ["top:chole_1/c1", topRight.ref] });
   await expect.poll(() => sheetTexts(page)).toEqual(expect.arrayContaining(["70", "10"]));
 
-  // A datum: the tool counts on from A, B, C (New drawing's); D on the plate's left edge.
+  // A datum: the tool counts on from A, B, C (New drawing's); D on the plate's right edge.
   await page.getByTestId("tool-annotation-datum").click();
   await expect(page.getByTestId("datum-label")).toHaveValue("D");
-  await clickTarget(page, "top", "top:eext_1/l2", 0.6);
-  await clickAt(page, [top.box.min[0] - 10, top.centre[1] + 8]);
+  await clickTarget(page, "top", "top:eext_1/l10", 0.75);
+  await clickAt(page, [top.box.max[0] + 12, top.box.min[1] + 12]);
   await page.keyboard.press("Escape");
-  await expect.poll(async () => (await annotations(page)).find((a) => a.type === "datum" && a.label === "D")?.on).toBe("top:eext_1/l2");
+  await expect.poll(async () => (await annotations(page)).find((a) => a.type === "datum" && a.label === "D")).toMatchObject({ id: "datum_D", on: "top:eext_1/l10" });
 
   // GD&T: position Ø0.1 Ⓜ to A|B|C (offered from the datums on the sheet), under the hole's size.
   await page.getByTestId("tool-annotation-gdt").click();

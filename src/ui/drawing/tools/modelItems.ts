@@ -9,7 +9,7 @@
 import type { RawDocument } from "../../../doc/commands";
 import type { Annotation, DimensionAnnotation, HoleAnnotation, Vec3 } from "../../../doc/types";
 import { validateDocument } from "../../../doc/validate";
-import type { ComposedSheet, ComposedView } from "../../../drafting/compose";
+import { viewToSheet, type ComposedSheet, type ComposedView } from "../../../drafting/compose";
 import type { ProjectedEdge } from "../../../kernel/drawingViews";
 
 export interface ModelItemsOptions {
@@ -31,6 +31,8 @@ export interface ModelItemsResult {
   missed: string[];
 }
 
+/** The directions (degrees) concentric circles' leaders take, in turn: up and right, up and left, down and right, down and left. */
+const FAN = [50, 130, -40, -140, 80, 160];
 const near = (a: number, b: number, tol = 1e-3) => Math.abs(a - b) <= Math.max(tol, Math.abs(b) * 1e-6);
 const polyLength = (e: ProjectedEdge) => e.pts.reduce((t, p, i) => (i ? t + Math.hypot(p[0] - e.pts[i - 1][0], p[1] - e.pts[i - 1][1]) : t), 0);
 const dirOf = (e: ProjectedEdge): Vec3 | null => {
@@ -98,9 +100,21 @@ export function modelItems(doc: RawDocument, sheet: ComposedSheet, existing: Ann
     radial.add(`${feature}|${key}`);
     usedRefs.add(hit.e.key);
     const many = typ && hit.cv.edges.filter((e) => e.visible && e.feature === feature && endOn(e) && near(radiusOf(e), r, 0.01)).length > 1;
-    items.push({ type: "dimension", view: hit.cv.id, kind: hit.e.look === "arc" && kind === "diameter" ? "radius" : kind, refs: [ref(hit.cv, hit.e)], ...(many ? { typ: true } : {}) });
+    // Circles round one centre (a flange's rim, hub and bore) get their leaders fanned out, each its own way.
+    let at: [number, number] | undefined;
+    if (hit.e.look === "circle" && hit.e.circle) {
+      const c = viewToSheet(hit.cv, hit.e.circle.c);
+      const key = `${hit.cv.id}|${Math.round(c[0] * 10)}|${Math.round(c[1] * 10)}`;
+      const k = fans.get(key) ?? 0;
+      fans.set(key, k + 1);
+      const ang = (FAN[k % FAN.length] * Math.PI) / 180;
+      const d = hit.e.circle.r * hit.cv.scale + 9 + 4 * Math.floor(k / FAN.length);
+      at = [Math.round((c[0] + d * Math.cos(ang) - hit.cv.centre[0]) * 10) / 10, Math.round((c[1] + d * Math.sin(ang) - hit.cv.centre[1]) * 10) / 10];
+    }
+    items.push({ type: "dimension", view: hit.cv.id, kind: hit.e.look === "arc" && kind === "diameter" ? "radius" : kind, refs: [ref(hit.cv, hit.e)], ...(many ? { typ: true } : {}), ...(at ? { at } : {}) });
   };
 
+  const fans = new Map<string, number>();
   const scope = opts.features ? new Set(opts.features) : null;
   const sketches = new Map(v.features.flatMap((f) => (f.feature?.op === "sketch" ? [[f.feature.id, f.feature] as const] : [])));
   /** Which feature's edges a sketch's entities became (the extrude or cut that uses it). */

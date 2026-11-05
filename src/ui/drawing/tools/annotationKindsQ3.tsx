@@ -282,7 +282,7 @@ function DimensionPanel({ a, said, write, env }: KindPanelProps) {
         <span className="dim-value-number mono" data-testid="dim-value">
           {shown}
         </span>
-        <span className={`badge${d.override ? " warn" : ""}`}>{d.override ? "overridden" : "driven by the model"}</span>
+        <span className={`dim-badge${d.override ? " warn" : ""}`}>{d.override ? "overridden" : "driven"}</span>
       </div>
       <Row label="Override" hint="Text written instead of the measured value: it no longer follows the model">
         <Commit value={d.override ?? ""} placeholder="the measured value" onCommit={(s) => put({ override: s.trim() || null })} testId="dim-override" />

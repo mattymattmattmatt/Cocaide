@@ -15,6 +15,7 @@ import { validateDocument } from "../../../doc/validate";
 import { CHARACTERISTIC_INFO, datumFromPick, datumLabels, draftStyle, framePrims, gdtFromPick, gdtProblems, sidesOfWeld, surfaceFromPick, surfacePrims } from "../../../drafting/annotate";
 import { CHARACTERISTIC_CHAR, GDT_CHARACTERISTICS, type GdtCharacteristic } from "../../../drafting/symbols/glyphs";
 import type { SnapKind, SnapTarget } from "../snap";
+import { keep } from "./editing";
 import { annotationKind, registerAnnotationKind, type KindPanelProps } from "./kinds";
 import { previewAnnotation } from "./preview";
 import { registerDrawingTool } from "./registry";
@@ -352,6 +353,16 @@ class DatumSession extends ToolSession {
     const r = datumFromPick(sheet, { ...(t.ref ? { ref: t.ref } : {}), ...(t.dimension ? { dimension: t.dimension } : {}) }, this.label, at);
     if (typeof r === "string") return r.charAt(0).toUpperCase() + r.slice(1);
     return this.open ? { ...r, open: true } : r;
+  }
+  /** Datum A's id is datum_A (as New drawing names them), when free. */
+  protected add(a: Record<string, unknown> & { type: string }): string | null {
+    const c = this.ctx();
+    const id = `datum_${this.label}`;
+    if (c.drawing.sheets.some((s) => s.annotations.some((x) => x.id === id))) return super.add(a);
+    if (keep(c, [{ type: "setAnnotation", id, annotation: a, sheet: c.sheetDoc.id }])) return null;
+    this.made.push(id);
+    c.select([id]);
+    return id;
   }
   placed() {
     this.target = null;
@@ -862,7 +873,11 @@ class WeldSession extends ToolSession {
     const c = this.ctx();
     const sheet = c.sheet;
     const t = this.target;
-    const shown = t ? previewAnnotation(sheet, { ...this.make(t), id: "__weld" } as unknown as Annotation, { standard: this.standard })?.prims : undefined;
+    const laid = t ? previewAnnotation(sheet, { ...this.make(t), id: "__weld" } as unknown as Annotation, { standard: this.standard }) : null;
+    // The symbol itself (round its reference line), without the long leader to the joint.
+    const near = laid?.textBox ? { min: [laid.textBox.min[0] - 4, laid.textBox.min[1] - 4], max: [laid.textBox.max[0] + 4, laid.textBox.max[1] + 7] } : null;
+    const inside = (q: Vec2) => !near || (q[0] >= near.min[0] && q[0] <= near.max[0] && q[1] >= near.min[1] && q[1] <= near.max[1]);
+    const shown = laid?.prims.filter((p) => (p.k === "line" ? p.pts.every(inside) : p.k === "circle" ? inside(p.c) : p.k === "text" ? inside(p.at) : false));
     return (
       <WeldEditor
         value={this.spec}
