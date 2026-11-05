@@ -74,7 +74,8 @@ export interface SpawnSpec {
 
 export function spawnSpec(c: ClaudeCommand, args: string[]): SpawnSpec {
   const all = [...c.prefix, ...args];
-  return c.shell ? { command: cmdQuote(c.command), args: all.map(cmdQuote), shell: true } : { command: c.command, args: all, shell: false };
+  // cmd.exe ends a command at a line break: the system prompt goes as one line there.
+  return c.shell ? { command: cmdQuote(c.command), args: all.map((a) => cmdQuote(a.replace(/\r?\n/g, " "))), shell: true } : { command: c.command, args: all, shell: false };
 }
 
 /** Runs Claude Code briefly (--version, auth status) and gives its output. */
@@ -310,7 +311,7 @@ export class StreamReader {
         return [{ kind: "notice", text: `Claude Code rate limit: ${status || "limited"}${resets}` }];
       }
       case "result": {
-        const text = typeof j.result === "string" ? j.result : Array.isArray(j.errors) ? j.errors.map(String).join("\n") : String(j.subtype ?? "");
+        const text = typeof j.result === "string" ? j.result : Array.isArray(j.errors) ? j.errors.map(String).join("\n") : "";
         const ok = j.is_error !== true && (j.subtype === undefined || j.subtype === "success");
         const usage = isObj(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([, v]) => typeof v === "number")) as Record<string, number> : undefined;
         return [

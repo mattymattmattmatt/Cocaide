@@ -52,6 +52,17 @@ async function openAssistant(page: Page) {
   await page.getByTestId("settings-tab-assistant").click();
 }
 
+/** Types the request once the AI window is ready for it, and sends it. */
+async function ask(page: Page, text: string) {
+  const input = page.getByTestId("ask-input");
+  await expect(input).toBeVisible();
+  await page.waitForTimeout(200);
+  await input.fill(text);
+  await expect(input).toHaveValue(text);
+  await input.press("Enter");
+  await expect(page.getByTestId("ask-live")).toBeVisible();
+}
+
 async function useBridge(page: Page) {
   await openAssistant(page);
   await page.getByTestId("ask-provider").selectOption("claude-code");
@@ -96,8 +107,7 @@ test("an ask: the view and the tree change live, edits wait, then Discard restor
   await page.getByTestId("feature-hole_1").locator(".feature-row").click({ button: "right" });
   await page.getByTestId("ctx-ask").click();
   await expect(page.getByTestId("ask")).toContainText("Claude subscription via Claude Code");
-  await page.getByTestId("ask-input").fill("add a block under the bracket");
-  await page.getByTestId("ask-input").press("Enter");
+  await ask(page, "add a block under the bracket");
 
   // Live: the steps, the sketch in the tree before the block, the lock banner.
   await expect(page.getByTestId("ask-live")).toBeVisible();
@@ -127,8 +137,7 @@ test("an ask: the view and the tree change live, edits wait, then Discard restor
   // Again, and Accept: one undo step takes it back.
   await page.getByTestId("feature-hole_1").locator(".feature-row").click({ button: "right" });
   await page.getByTestId("ctx-ask").click();
-  await page.getByTestId("ask-input").fill("add a block under the bracket");
-  await page.getByTestId("ask-input").press("Enter");
+  await ask(page, "add a block under the bracket");
   await expect(page.getByTestId("ask-outcome")).toHaveText("Proposed change", { timeout: 60_000 });
   await page.getByTestId("ask-accept").click();
   await expect(page.getByTestId("ask-outcome")).toHaveText("Applied");
@@ -152,8 +161,7 @@ test("Stop ends the run and leaves the part as it was", async ({ page }) => {
   await page.getByTestId("ask-settings-save").click();
   await page.getByTestId("feature-hole_1").locator(".feature-row").click({ button: "right" });
   await page.getByTestId("ctx-ask").click();
-  await page.getByTestId("ask-input").fill("add a block");
-  await page.getByTestId("ask-input").press("Enter");
+  await ask(page, "add a block");
   await expect(page.getByTestId("feature-block_sketch")).toBeVisible();
   await page.getByTestId("bridge-stop").click();
   await expect(page.getByTestId("ask")).toHaveCount(0);

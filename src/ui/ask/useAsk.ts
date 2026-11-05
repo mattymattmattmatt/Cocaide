@@ -177,6 +177,16 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
         const thread = extra.followUp ? threadOf(historyOf(dk), extra.followUp) : [];
         const resume = [...thread].reverse().find((e) => e.bridgeSession)?.bridgeSession;
         const { runBridgeAsk } = await import("../../ask/bridge/run");
+        // A dropped drawing or photo goes as files Claude Code reads: each rendered page (and the text layer), or the photo.
+        const dropped: Attachment[] = [
+          ...(ctx.drawing && !ctx.photo
+            ? [
+                ...ctx.drawing.pages.map((pg, i): Attachment => ({ id: `drawing-${i}`, name: `${ctx.drawing!.name}-page${i + 1}.png`, kind: "image", mediaType: "image/png", size: pg.png.length, data: pg.png })),
+                ...(ctx.drawing.text ? [{ id: "drawing-text", name: `${ctx.drawing.name} (text layer)`, kind: "text" as const, mediaType: "text/plain", size: ctx.drawing.text.length, text: ctx.drawing.text }] : []),
+              ]
+            : []),
+          ...(ctx.photo ? [{ id: "photo", name: ctx.photo.name.replace(/\.\w+$/, "") + ".jpg", kind: "image" as const, mediaType: ctx.photo.mediaType, size: ctx.photo.data.length, data: ctx.photo.data }] : []),
+        ];
         const r = await runBridgeAsk({
           doc: ctx.doc,
           target: ctx.target,
@@ -186,6 +196,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
           bridge: settings.bridge,
           signal: controller.signal,
           ...more,
+          ...(dropped.length ? { attachments: [...attachments, ...dropped] } : {}),
           ...(resume ? { resume } : {}),
           onLive: (live) => !controller.signal.aborted && setState({ phase: "running", ctx, prompt: text, applyNow, steps: [], live }),
         });
