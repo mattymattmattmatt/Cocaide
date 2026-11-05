@@ -124,9 +124,9 @@ describe("bridge: an ask", () => {
     // The document after each kept change: first the sketch alone, last the extrude.
     const docs = c.messages.filter(is("doc", "a1")).map((m) => JSON.parse(m.text) as { features: { id: string }[] });
     expect(docs.length).toBeGreaterThanOrEqual(2);
-    expect(docs[0].features.map((f) => f.id)).toEqual(["sketch_1"]);
-    expect(docs.at(-1)!.features.map((f) => f.id)).toEqual(["sketch_1", "ext_1"]);
-    expect(JSON.parse(done.doc!).features.map((f: { id: string }) => f.id)).toEqual(["sketch_1", "ext_1"]);
+    expect(docs[0].features.map((f) => f.id)).toEqual(["block_sketch"]);
+    expect(docs.at(-1)!.features.map((f) => f.id)).toEqual(["block_sketch", "block"]);
+    expect(JSON.parse(done.doc!).features.map((f: { id: string }) => f.id)).toEqual(["block_sketch", "block"]);
     // Each doc arrives before the result of the call after the one that made it.
     expect(c.messages.indexOf(c.messages.find(is("doc", "a1"))!)).toBeLessThan(c.messages.indexOf(done));
 
