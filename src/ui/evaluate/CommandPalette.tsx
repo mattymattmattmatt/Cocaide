@@ -12,7 +12,9 @@ export function CommandPalette({ entries, onClose }: { entries: PaletteEntry[]; 
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const found = useMemo(() => searchPalette(entries, query), [entries, query]);
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
   useEffect(() => setAt(0), [query]);
   useEffect(() => {
     (list.current?.children[at] as HTMLElement | undefined)?.scrollIntoView?.({ block: "nearest" });

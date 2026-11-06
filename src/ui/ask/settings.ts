@@ -70,7 +70,34 @@ export const OLLAMA_DEFAULTS: OllamaSettings = {
 /** True when the dev server proxies the API with its own key. */
 export const HAS_PROXY = import.meta.env.VITE_COCAIDE_ANTHROPIC_PROXY === "1";
 
+/**
+ * The one-click launcher (start-cocaide.bat) opens the app with
+ * "#bridge=<address>&token=<pairing token>": that pairs the app with the
+ * bridge and selects it, then the fragment is wiped from the address bar so
+ * the token isn't left on screen or in the history.
+ */
+function pairFromLink(s: AskSettings): AskSettings {
+  try {
+    const hash = typeof location === "undefined" ? "" : location.hash.replace(/^#/, "");
+    if (!hash.includes("token=")) return s;
+    const q = new URLSearchParams(hash);
+    const token = q.get("token")?.trim() ?? "";
+    const url = q.get("bridge")?.trim() || s.bridge.url;
+    if (!/^[A-Za-z0-9_-]{8,200}$/.test(token) || !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(url)) return s;
+    const next: AskSettings = { ...s, provider: "claude-code", bridge: { ...s.bridge, url, token } };
+    saveSettings(next);
+    history.replaceState(null, "", location.pathname + location.search);
+    return next;
+  } catch {
+    return s;
+  }
+}
+
 export function loadSettings(): AskSettings {
+  return pairFromLink(loadStoredSettings());
+}
+
+function loadStoredSettings(): AskSettings {
   const defaults: AskSettings = { provider: "anthropic", apiKey: "", model: DEFAULT_MODEL, effort: "low", reach: "part", ollama: OLLAMA_DEFAULTS, bridge: BRIDGE_DEFAULTS };
   try {
     const raw = localStorage.getItem(KEY);

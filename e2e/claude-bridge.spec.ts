@@ -192,6 +192,15 @@ test("Live link: a file changed on disk shows in the view; Stop following brings
 });
 
 test("never a blank page: a part-wide ask, a refused call, bad output and a usage limit all end with the app still there", async ({ page }) => {
+  // Newer Chrome returns a promise from scrollIntoView; the AI window's step list once crashed on that.
+  await page.addInitScript(() => {
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element, ...args: Parameters<Element["scrollIntoView"]>) {
+      original.apply(this, args);
+      return Promise.resolve() as unknown as void;
+    };
+  });
+  await page.reload();
   await useBridge(page);
   await page.getByTestId("ask-settings-save").click();
   for (const scenario of ["box", "toolfail", "badjson", "ratelimit", "login"]) {
@@ -216,4 +225,13 @@ test("never a blank page: a part-wide ask, a refused call, bad output and a usag
     if (await dialog.count()) await dialog.getByRole("button", { name: "Close" }).first().click();
     await expect(dialog).toHaveCount(0);
   }
+});
+
+test("the one-click launcher's link pairs the app with the bridge and leaves no token in the address bar", async ({ page }) => {
+  await page.goto(`/?e2e&launch#bridge=${encodeURIComponent(url)}&token=${token}`);
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("");
+  await openAssistant(page);
+  await expect(page.getByTestId("ask-provider")).toHaveValue("claude-code");
+  await expect(page.getByTestId("bridge-url")).toHaveValue(url);
+  await expect(page.getByTestId("bridge-token")).toHaveValue(token);
 });

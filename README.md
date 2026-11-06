@@ -642,6 +642,8 @@ It has not been run yet: the environment this was built in cannot reach the Olla
 
 ## Use your Claude subscription (Claude Code bridge)
 
+**One click (Windows):** double-click `start-cocaide.bat` in the Cocaide folder (or a desktop shortcut to it). It installs what is missing on the first run (Claude Code, the app's packages; it asks you to log in to Claude Code once), starts the bridge in a minimised "Cocaide bridge" window if it isn't already running, and opens Cocaide already paired with it and set to use your subscription. Close the "Cocaide bridge" window to stop it. The pairing token travels in the link's `#` part only, which never leaves your browser, and the app wipes it from the address bar at once.
+
 If you have a Claude subscription (Pro or Max) and no API key, the AI window can drive **Claude Code** on your computer, logged in as you, with Cocaide's MCP tools. You watch the part being built in the 3D view as it happens, then accept or discard the result like any other ask.
 
 **What runs where.** The app (hosted page or `npm run dev`) talks over a WebSocket to a small **bridge** on your computer (`npm run bridge`, `http://127.0.0.1:8787`). For each ask the bridge writes the part to a working file (`~/.cocaide-bridge/sessions/<id>/part.cocaide.json`), starts `claude -p` headless with the Cocaide MCP server on that file, and streams back its words, each tool call and each new version of the part. Claude Code gets **only Cocaide's tools**: no shell, no file editing, no web; Read only for the files you attached to that ask. Everything stays on your computer except what Claude Code itself sends to Anthropic, exactly as when you use it in a terminal.

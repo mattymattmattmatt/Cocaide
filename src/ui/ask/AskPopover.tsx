@@ -485,7 +485,10 @@ const STEP_ICON: Record<LiveState["steps"][number]["status"], string> = { runnin
 /** Claude Code at work: each tool call with its state, what it is saying now, and how many versions of the part came back. */
 function LiveSteps({ live }: { live: LiveState }) {
   const end = useRef<HTMLLIElement>(null);
-  useEffect(() => end.current?.scrollIntoView?.({ block: "nearest" }), [live.steps.length]);
+  useEffect(() => {
+    // Braces: newer browsers return a promise from scrollIntoView, and an effect must return nothing or a cleanup function.
+    end.current?.scrollIntoView?.({ block: "nearest" });
+  }, [live.steps.length]);
   return (
     <div className="ask-live" data-testid="ask-live">
       <div className="muted small" data-testid="ask-live-status">

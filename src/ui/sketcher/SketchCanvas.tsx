@@ -235,7 +235,9 @@ export function SketchCanvas(props: Props) {
     setTyped(null);
     trail.current = [];
   }, [tool]);
-  useEffect(() => props.onProgress?.({ placed: clicks.length, arcNext }), [clicks.length, arcNext]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    props.onProgress?.({ placed: clicks.length, arcNext });
+  }, [clicks.length, arcNext]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** The plane on the screen: through the 3D view's camera, or (before it has reported) a flat page fitted to the sketch. */
   const map: PlaneMap = cam ? planeMap(cam, model.frame) : fitFlat(entities, model, size);

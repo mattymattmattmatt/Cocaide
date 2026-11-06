@@ -219,7 +219,9 @@ export function FeatureTree({
   }, [bar]);
   const headerErrors = view?.errors.filter((e) => e.startsWith("document:")) ?? [];
   const picked = useMemo(() => (selectedId ? [selectedId, ...extra.filter((x) => x !== selectedId)] : extra), [selectedId, extra]);
-  useEffect(() => onPicked?.(picked), [picked.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    onPicked?.(picked);
+  }, [picked.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   // A feature that is gone is not picked any more.
   useEffect(() => setExtra((x) => x.filter((id) => features.some((f) => f.id === id))), [features.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
