@@ -328,7 +328,8 @@ designation, length and mass. A part's "profiles" are copies of section-library 
 "profiles": { "SHS": { "name": "SHS", "entities": [...], "constraints": [...], "parameters": { "b": 40, "t": 3 },
   "sizes": [{ "designation": "SHS 40x40x3", "values": { "b": 40, "t": 3 } }], "anchor": "centroid", "tags": ["hollow"],
   "library": { "id": "...", "version": 1 } } }
-Use the part's profiles and sizes as they are; never invent one.
+Use the part's profiles and sizes as they are; never invent one. addLibraryProfile({ query: "SHS", sizes?: ["40x40x3"], extraSizes? }) copies a
+catalogue section from the standard section library into the part. If the part has no profile for a member, add one with addLibraryProfile. If the size the user asked for is not in the catalogue, do NOT substitute or create one on your own: change nothing, and ask the user whether to create that exact size as a non-catalogue size or use one of the nearest catalogue sizes (name them; the tool error lists them). Only after they answer, add it (extraSizes) or use their choice.
 
 ## frames: nodes, joints, end caps, gussets, welds
 "nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] } at the top of the document: named points,

@@ -1,6 +1,7 @@
 // What the right-click agent is told, and which tools it gets. The packet is
 // the prompt; this file is the fixed part around it.
 
+import { ADD_LIBRARY_PROFILE_HELP, LIBRARY_SIZE_RULE } from "../weldment/libraryTool";
 import type Anthropic from "@anthropic-ai/sdk";
 import { coreReference, opIndex, referenceSection, sectionIndex } from "../mcp/sections";
 import { anthropicTool } from "./tools/specs";
@@ -173,7 +174,7 @@ Rules:
 - Every edit is checked: the part is rebuilt and the edit is kept only if nothing newly fails. A failed edit returns the error; read it and fix the call, or stop and say why.
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
-- Weldments: a member's size must be one of the sizes in the packet's member.sizes; never invent one. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
+- Weldments: a member's size must be one of the sizes in the part's profiles; never invent one. If the part has no profile for a member, add one with addLibraryProfile. If the size the user asked for is not in the catalogue, do NOT substitute or create one on your own: change nothing, and ask the user whether to create that exact size as a non-catalogue size or use one of the nearest catalogue sizes (name them; the tool error lists them). Only after they answer, add it (extraSizes) or use their choice. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
 - Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>"), one table ("table:<id>", setTable on it alone) or the drawing ("drawing", also from a sheet's tab or title block: the packet's sheet is that one); the packet's "selection" lists what else the user had selected on the sheet, which "this" and "these" may mean; the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
@@ -288,6 +289,13 @@ const SET_CUT_LIST: Anthropic.Tool = {
   input_schema: obj({ patch: any }, ["patch"]),
 };
 
+/** A catalogue section into the part (Phase Q): what a weldment in a part with no profiles starts with. */
+const ADD_LIBRARY_PROFILE: Anthropic.Tool = {
+  name: "addLibraryProfile",
+  description: `${ADD_LIBRARY_PROFILE_HELP} ${LIBRARY_SIZE_RULE}`,
+  input_schema: obj({ query: { type: "string" }, sizes: { type: "array", items: { type: "string" } }, extraSizes: { type: "array", items: any }, name: { type: "string" } }, ["query"]),
+};
+
 const FEATURE_TOOLS: Anthropic.Tool[] = [
   {
     name: "updateFeature",
@@ -357,6 +365,7 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
   },
   SET_PROPERTIES,
   SET_CUT_LIST,
+  ADD_LIBRARY_PROFILE,
 ];
 
 const SKETCH_TOOLS: Anthropic.Tool[] = [

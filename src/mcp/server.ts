@@ -5,6 +5,7 @@
 //   tsx src/mcp/server.ts --doc part.cocaide.json [--scope hole_1,+] [--out dir] [--log file]
 //                         [--camera name=dx,dy,dz[/ux,uy,uz]]...
 
+import { ADD_LIBRARY_PROFILE_HELP, LIBRARY_SIZE_RULE } from "../weldment/libraryTool";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -173,6 +174,10 @@ export const TOOLS: Record<string, ToolSpec> = {
   setProperties: {
     description: 'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field. The drawing\'s title block, the cut list CSV, STEP export and export file names read them.',
     input: { patch: obj },
+  },
+  addLibraryProfile: {
+    description: `${ADD_LIBRARY_PROFILE_HELP} ${LIBRARY_SIZE_RULE}`,
+    input: { query: z.string(), sizes: z.array(z.string()).optional(), extraSizes: z.array(z.object({ designation: z.string(), values: z.record(z.string(), z.number()) })).optional(), name: z.string().optional() },
   },
   setCutList: {
     description: "Change the cut list's text and nesting settings (merged): { \"itemText\": [{ \"item\": 1, \"members\": [\"rail_front\", \"rail_back\"], \"description\"?, \"finish\"?, \"notes\"?, \"weldPrep\"?, \"group\"?, \"properties\"?: { \"Supplier\": \"Steel & Co\" } }] } sets text on cut list items (members from the cut list; the kept item sharing them keeps its number; \"\" or null removes a field); \"members\": { \"<member id or body>\": { ...text } } sets one member's own text (alike members with different text become separate items); \"stock\": { \"lengths\": [6000, 6100], \"kerf\": 3, \"trim\": 0, \"minOffcut\": 300, \"profiles\": { \"SHS 40x40x3\": { \"lengths\": [8000] } } } for nesting; \"tolerance\": mm within which lengths are one item (0.5). null removes a field.",

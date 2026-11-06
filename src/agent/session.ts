@@ -5,6 +5,7 @@
 //
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
+import { libraryProfileCommand } from "../weldment/libraryTool";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -123,6 +124,7 @@ export const EDIT_TOOLS = [
   "holes",
   "setProperties",
   "setCutList",
+  "addLibraryProfile",
   "importStep",
 ] as const;
 export const READ_TOOLS = [
@@ -334,6 +336,10 @@ export class AgentSession {
         return this.saveBody(String(a.body), a.file);
       case "setProperties":
         return isObject(a.patch) ? this.edit({ type: "setProperties", patch: a.patch }) : this.fail("setProperties: patch must be an object of part properties");
+      case "addLibraryProfile": {
+        const cmd = libraryProfileCommand(a);
+        return typeof cmd === "string" ? this.fail(cmd) : this.edit(cmd);
+      }
       case "setCutList":
         return isObject(a.patch) ? this.edit({ type: "setCutList", patch: a.patch }) : this.fail("setCutList: patch must be an object of cut list settings");
       case "cutList":

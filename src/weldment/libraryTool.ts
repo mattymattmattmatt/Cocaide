@@ -21,8 +21,8 @@ function norm(s: string): string {
     .toLowerCase()
     .replace(/[×*]/g, "x")
     .replace(/\s*x\s*/g, "x")
-    .replace(/(\d+\.\d*?)0+\b/g, "$1")
-    .replace(/\.(?=x|\b)/g, "")
+    .replace(/(\d)\.0+(?!\d)/g, "$1")
+    .replace(/(\.\d*?[1-9])0+(?!\d)/g, "$1")
     .trim();
 }
 
@@ -98,3 +98,7 @@ export function libraryProfileCommand(a: Raw, own: LibraryEntry[] = []): Command
 /** The tool's description, shared by the in-app AI and the MCP server. */
 export const ADD_LIBRARY_PROFILE_HELP =
   'Bring a section from the section library into the part, so members can use it (a weldment in a part with no profiles starts here). { "query": family, e.g. "SHS", "RHS", "CHS", "EA" (equal angle), "PFC", "UB", "flat bar", "MGP"; "sizes"?: catalogue sizes to keep, e.g. ["40x40x3"] (all when left out); "extraSizes"?: [{ "designation": "20x20x2.5", "values": { "b": 20, "t": 2.5 } }] only for a size the user asked for that the catalogue does not list (it is marked "(non-catalogue)"; hollow sections fill the corner radius r themselves); "name"? }. The profile is named after the family (e.g. "SHS (AS/NZS 1163)"); a member then uses { "profile": that name, "size": a designation from it }. Prefer a catalogue size; when the asked size is not catalogued, say so and offer the nearest, or add it as an extra size if the user wants that exact one.';
+
+/** What the AI must do when the asked size is not catalogued: ask, never decide. */
+export const LIBRARY_SIZE_RULE =
+  "If the part has no profile for a member, add one with addLibraryProfile. If the size the user asked for is not in the catalogue, do NOT substitute or create one on your own: change nothing, and ask the user whether to create that exact size as a non-catalogue size or use one of the nearest catalogue sizes (name them; the tool error lists them). Only after they answer, add it (extraSizes) or use their choice.";

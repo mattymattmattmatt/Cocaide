@@ -4,6 +4,7 @@
 // rebuilds the result once and keeps it only if nothing newly fails, as one
 // revision and one undo step. A dry run stops before keeping anything.
 
+import { libraryProfileCommand } from "../../weldment/libraryTool";
 import { apply, nextId, type Command, type RawDocument } from "../../doc/commands";
 import type { WriteScope } from "../../doc/scope";
 import { isObject } from "../../doc/validate";
@@ -32,6 +33,7 @@ export const COMMAND_TOOLS = [
   "setBodyMaterial",
   "setProperties",
   "setCutList",
+  "addLibraryProfile",
   "setSheet",
   "addSheet",
   "renameSheet",
@@ -119,6 +121,8 @@ export function toolCommand(name: string, a: Raw): Command | string {
       return obj("patch") ? { type: "setDrawingOptions", patch: obj("patch")! } : "setDrawingOptions: patch must be an object (standard, units, generalTolerance, properties, revisions)";
     case "setProperties":
       return obj("patch") ? { type: "setProperties", patch: obj("patch")! } : "setProperties: patch must be an object of part properties";
+    case "addLibraryProfile":
+      return libraryProfileCommand(a);
     case "setCutList":
       return obj("patch") ? { type: "setCutList", patch: obj("patch")! } : "setCutList: patch must be an object of cut list settings";
     case "setDimension":
