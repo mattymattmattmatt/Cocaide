@@ -2180,3 +2180,11 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .all-props { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 6px; }
 .all-props summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .fold-head { border: 0; background: none; cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; }
+
+/* The crash screen: shown instead of a blank page if drawing the app throws. */
+.crash-screen { position: fixed; inset: 0; overflow: auto; padding: 32px; background: #f5f6f8; color: #1d2330; font: 14px/1.5 system-ui, sans-serif; z-index: 10000; }
+.crash-screen h1 { font-size: 20px; margin: 0 0 8px; }
+.crash-screen .crash-message { background: #fff; border: 1px solid #e3b4b4; color: #8a1c1c; padding: 10px 12px; border-radius: 6px; white-space: pre-wrap; }
+.crash-screen .crash-buttons { display: flex; gap: 8px; margin: 12px 0; }
+.crash-screen button { padding: 6px 14px; border-radius: 6px; border: 1px solid #b8bfcc; background: #fff; cursor: pointer; }
+.crash-screen .crash-stack { font-size: 12px; white-space: pre-wrap; background: #fff; padding: 10px; border-radius: 6px; border: 1px solid #dde1e8; }

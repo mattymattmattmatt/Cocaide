@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./ui/App";
+import { CrashScreen } from "./ui/CrashScreen";
 import "./ui/styles.css";
 
 // The app has its own right-click menus everywhere, so the browser's menu is
@@ -15,6 +16,8 @@ document.addEventListener("contextmenu", (e) => {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <CrashScreen>
+      <App />
+    </CrashScreen>
   </StrictMode>,
 );

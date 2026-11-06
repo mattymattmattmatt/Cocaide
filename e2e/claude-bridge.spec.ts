@@ -190,3 +190,30 @@ test("Live link: a file changed on disk shows in the view; Stop following brings
   await expect(page.getByTestId("feature-hole_1")).toBeVisible();
   await expectVolume(page, "18,994.728");
 });
+
+test("never a blank page: a part-wide ask, a refused call, bad output and a usage limit all end with the app still there", async ({ page }) => {
+  await useBridge(page);
+  await page.getByTestId("ask-settings-save").click();
+  for (const scenario of ["box", "toolfail", "badjson", "ratelimit", "login"]) {
+    // Asked from empty space in the view, the way a new request usually starts.
+    await page.getByTestId("viewport").click({ button: "right", position: { x: 30, y: 30 } });
+    await page.getByTestId("ctx-ask").click();
+    const input = page.getByTestId("ask-input");
+    await expect(input).toBeVisible();
+    await page.waitForTimeout(200);
+    await input.fill(`make something SCENARIO:${scenario}`);
+    await input.press("Enter");
+    // Wait for the run to end one way or another.
+    await expect(page.getByTestId("ask-live")).toHaveCount(0, { timeout: 60_000 });
+    await expect(page.getByTestId("crash-screen")).toHaveCount(0);
+    await expect(page.getByTestId("viewport")).toBeVisible();
+    // The run's outcome (a proposal, or the error it ended with) shows a moment later.
+    await page.waitForTimeout(1500);
+    await expect(page.getByTestId("crash-screen")).toHaveCount(0);
+    const discard = page.getByTestId("ask-discard");
+    if (await discard.count()) await discard.click();
+    const dialog = page.getByRole("dialog", { name: /Ask about/ });
+    if (await dialog.count()) await dialog.getByRole("button", { name: "Close" }).first().click();
+    await expect(dialog).toHaveCount(0);
+  }
+});

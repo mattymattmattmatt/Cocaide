@@ -6,6 +6,7 @@
 
 import type { RawDocument } from "../../doc/commands";
 import { parseDocumentText, formatDocument } from "../../doc/format";
+import { validateDocument } from "../../doc/validate";
 import type { ServerMessage, BridgeAttachment, BridgeModel } from "../../bridge/protocol";
 import { diffDocs, earlierText, type AskCall, type AskReach, type AskResult, type EarlierTurn, type Proposal } from "../agent";
 import type { Attachment } from "../attachments";
@@ -168,7 +169,19 @@ export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResu
         }
         case "doc": {
           const p = parseDocumentText(m.text);
-          if (p.ok && p.value && typeof p.value === "object" && Array.isArray((p.value as RawDocument).features)) {
+          // Only a version the document checks accept is shown live: a half-written
+          // or malformed one is skipped (the next one replaces it), never drawn.
+          const value = p.ok ? p.value : null;
+          let usable = !!value && typeof value === "object" && Array.isArray((value as RawDocument).features);
+          if (usable) {
+            try {
+              usable = validateDocument(value).headerErrors.length === 0;
+            } catch {
+              usable = false;
+            }
+          }
+          if (!usable) live.notices.push("Skipped a version of the part that did not pass the document checks.");
+          if (usable && p.ok) {
             latest = m.text;
             live.doc = p.value as RawDocument;
             live.updates++;
