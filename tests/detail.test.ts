@@ -11,12 +11,13 @@ import { LocalKernel } from "../src/ask/kernel";
 import { apply, type Command, type RawDocument } from "../src/doc/commands";
 import { autoDetail, findingsOf, makePlan } from "../src/ask/detail/auto";
 import { stackUp, stacks } from "../src/ask/detail/critic";
-import { detailState } from "../src/ask/detail/execute";
+import { boxGap, collinearOverlap, crossingsOf, detailState, segmentInBox } from "../src/ask/detail/execute";
 import { clearanceFor, inferIntent } from "../src/ask/detail/intent";
 import { drawingContext, PACKET_BUDGET, packetTokens } from "../src/ask/detail/packet";
 import { activeItems, flatnessFor, planWith } from "../src/ask/detail/plan";
 import { rasterizeSheet, sheetRaster } from "../src/ask/detail/raster";
 import { DEFAULT_VIEWS, planDrawing } from "../src/drafting/plan";
+import { buildPacket } from "../src/ask/packet";
 import { toleranceOf } from "../src/drafting/tolerance";
 import { decodePNG } from "../src/render/pngDecode";
 import { getOC, loadOC } from "../src/kernel";
@@ -149,6 +150,57 @@ describe("the critic", () => {
     expect(k.ok).toBe(false);
     // And the overall 80 over that chain gives the same size twice (a closed loop): it is reported, not stacked.
     expect(findingsOf(st).find((f) => f.rule === "twice")?.ids).toEqual(["d1", "k1", "k2"]);
+  });
+});
+
+describe("readability: lines through text, lines over lines, frames off their callouts", () => {
+  it("clips segments to boxes, measures collinear overlap and box gaps (worked numbers)", () => {
+    const box = { min: [0, 0] as [number, number], max: [10, 4] as [number, number] };
+    // A diagonal from (-2,-2) to (12,6) passes through; a line along y = 5 above does not; one ending at the edge only touches.
+    expect(segmentInBox([-2, -2], [12, 6], box)).toBe(true);
+    expect(segmentInBox([-2, 5], [12, 5], box)).toBe(false);
+    expect(segmentInBox([5, -3], [5, 0], box)).toBe(false);
+    expect(segmentInBox([5, 1], [5, 3], box)).toBe(true);
+    // Two dimension lines on y = 0: 0–40 and 25–70 lie 15 mm on one another; 0.3 mm apart still counts, 0.5 does not.
+    expect(collinearOverlap([0, 0], [40, 0], [25, 0], [70, 0])).toBeCloseTo(15, 9);
+    expect(collinearOverlap([0, 0], [40, 0], [25, 0.3], [70, 0.3])).toBeCloseTo(15, 9);
+    expect(collinearOverlap([0, 0], [40, 0], [25, 0.5], [70, 0.5])).toBe(0);
+    // A vertical line crosses, it does not lie along.
+    expect(collinearOverlap([0, 0], [40, 0], [20, -5], [20, 5])).toBe(0);
+    // Gaps: side by side 3 mm apart; corner to corner 3-4-5; overlapping 0.
+    expect(boxGap(box, { min: [13, 0], max: [20, 4] })).toBeCloseTo(3, 9);
+    expect(boxGap(box, { min: [13, 8], max: [20, 9] })).toBeCloseTo(5, 9);
+    expect(boxGap(box, { min: [5, 2], max: [20, 9] })).toBe(0);
+  });
+
+  it("the critic reports a frame drawn away from its callout, and a callout's leader through a frame; Auto-detail leaves neither on the bracket", async () => {
+    const r = await autoDetail(example("bracket"), kernel, { date: "2026-11-05" });
+    const st = r.execution.state;
+    const frame = st.sheet!.annotations.find((a) => a.type === "gdt" && a.text.startsWith("position"))!;
+    expect(crossingsOf(st.sheet!, frame.id)).toEqual([]);
+    expect(r.findings.filter((f) => f.rule === "overlap")).toEqual([]);
+    // Moved 60 mm off its callout by hand: the critic says to put it back against it.
+    const away = run(r.doc, { type: "editAnnotation", id: frame.id, patch: { at: [-60, -60] } });
+    const f = findingsOf(await detailState(away, kernel));
+    expect(f.some((x) => x.rule === "overlap" && x.message.startsWith(`${frame.id} is drawn`) && x.message.includes("away from"))).toBe(true);
+  });
+
+  it("a hole on a centre line with a dimensioned hole is located that way (holes in a row share their dimension)", async () => {
+    const doc = await withDrawing(bearingPlate());
+    const f = errors(findingsOf(await detailState(doc, kernel))).filter((x) => x.rule === "located");
+    expect(f).toEqual([]);
+  });
+});
+
+describe("contextual asks", () => {
+  it("a GeoRef right-clicked in a view reaches the packet with what it is (Add a fit… on the bracket's hole)", async () => {
+    const doc = await withDrawing(example("bracket"));
+    const st = await detailState(doc, kernel);
+    const e = st.sheet!.views.find((v) => v.id === "top")!.edges.find((x) => x.look === "circle" && x.visible)!;
+    const ref = `top:e${e.key}`;
+    const p = (await buildPacket(doc, { kind: "view", id: "top", selection: [ref] }, kernel)) as unknown as { selection: Record<string, unknown>[] };
+    // The Ø6.6 clearance hole of hole_1: a circle, its diameter, its feature.
+    expect(p.selection).toEqual([{ ref, is: "geometry", what: "circle", feature: "hole_1", diameter: 6.6, visible: true }]);
   });
 });
 

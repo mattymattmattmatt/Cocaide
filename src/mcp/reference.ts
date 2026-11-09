@@ -494,7 +494,15 @@ feature is for, surface texture, welds, the general tolerance, notes, tables, ti
    "hole_1 is not located: dimension its centre from the datum edges" -> setAnnotation("d9", { "type": "dimension", "view": "top",
    "from": "@left", "to": "top:chole_1/c0" }); "d1 and d7 both give 80" -> deleteAnnotations(["d7"]); "d1 closes a loop with k1 + k2" ->
    editAnnotation("d1", { "tolerance": { "kind": "reference" } }); "the chain k1 + k2 stacks up to ±0.5" -> dimension the critical size from
-   the datum directly, or tighten a link ({ "tolerance": { "kind": "symmetric", "plus": 0.05 } }).
+   the datum directly, or tighten a link ({ "tolerance": { "kind": "symmetric", "plus": 0.05 } }); "a line of h6 runs through gdt_2" or
+   "gdt_2 is drawn 40 mm away from h5" -> editAnnotation("gdt_2", { "at": null }) hangs a frame back under its callout, or give it an "at"
+   beside the callout's text; "d3 and d4 are drawn over one another" -> move one dimension to its own row ({ "offset": 18 }). A hole on a
+   centre line with a dimensioned hole counts as located that way (holes in a row share their dimension).
+   Readability findings are warnings: look at renderSheet before moving things, and keep frames against what they tolerance.
+The user's right-click asks arrive as ordinary requests on a view with a selection: "Detail this view" (the plan for that view only),
+"Add a fit…" on a hole's circle (selection: its GeoRef, e.g. "top:ehole_1/c0": give its callout or Ø dimension the fit its purpose
+needs), "Add GD&T…" on an edge or face seen edge-on (a datum feature, flatness, perpendicularity or position on it), and on a callout
+"Add a fit…" / on a dimension "Tolerance this…". The packet's selection says what each GeoRef is (what, feature, diameter, length).
 Refining by hand: a fit { "kind": "fit", "fit": "H7" } on a hole callout or a Ø dimension; a frame under a callout
 { "type": "gdt", "view": "top", "dimension": "h4", "rows": [{ "characteristic": "position", "diameter": true, "tolerance": 0.1,
 "material": "M", "datums": [{ "label": "A" }, { "label": "B" }, { "label": "C" }] }] }; locating dimensions basic
