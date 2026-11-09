@@ -104,7 +104,7 @@ describe("a bench as a weldment, through the AI's own tools", () => {
         await ok("addFeature", { feature: { id: `mitre_${node}`, op: "joint", node, type: "mitre", members: [a, b] } });
         await ok("addFeature", { feature: { id: `gusset_${node}`, op: "gusset", node, members: [a, b], size: 100, thickness: 5 } });
       }
-      const m = (await s.call("measure")).result as { solids: number; boundingBox: { size: number[] }; bodies: { name: string; size: number[] }[] };
+      const m = (await s.call("measure")).result as unknown as { solids: number; boundingBox: { size: number[] }; bodies: { name: string; size: number[] }[] };
       // 8 members and 4 gussets, each its own body; the frame stands 900 tall on a 1500 x 900 footprint (plus half a tube each side).
       expect(m.solids).toBe(12);
       expect(m.boundingBox.size.map((v) => Math.round(v))).toEqual([W + 25, D + 25, H]);
