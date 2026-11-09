@@ -50,12 +50,13 @@ describe("a right-click on the sheet", () => {
     expect(scopeFor(drawn, { kind: "drawing" })).toEqual(["drawing"]);
     expect(describeScope(["view:front"])).toBe("view front and its annotations");
     expect(targetLabel(drawn, { kind: "annotation", id: "b4" })).toBe("balloon b4");
-    expect(scopedActions("view").map((a) => a.label)).toEqual(["Dimension the overall size", "Dimension a member's length", "Balloon what it shows", "Show hidden edges"]);
+    expect(scopedActions("view").map((a) => a.label)).toEqual(["Detail this view", "Add GD&T", "Dimension the overall size", "Dimension a member's length", "Balloon what it shows", "Show hidden edges"]);
   });
 
   it("gets the drawing's tools and nothing that edits the part", () => {
-    expect(toolsFor("edit", "view").map((t) => t.name)).toEqual(["escalate", "setAnnotation", "editAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
-    expect(toolsFor("explain", "view").map((t) => t.name)).toEqual(["escalate"]);
+    expect(toolsFor("edit", "view").map((t) => t.name)).toEqual(["escalate", "setAnnotation", "editAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions", "detailPlan", "checkDrawing", "renderSheet", "applyDetailPlan", "deleteAnnotations"]);
+    // A question gets the detailing reads (the plan, the critic, the picture) and nothing that writes (wave Q3B).
+    expect(toolsFor("explain", "view").map((t) => t.name)).toEqual(["escalate", "detailPlan", "checkDrawing", "renderSheet"]);
     expect(toolsFor("edit", "feature").map((t) => t.name)).not.toContain("setAnnotation");
   });
 
@@ -176,7 +177,7 @@ describe("Phase L acceptance: the leg height from a right-click on the front vie
     const model = new ScriptedModel([() => [say("d2 is the frame's overall height, 900, from the floor to the top of the rails.")]]);
     const r = await runAsk({ doc: drawn, target: { kind: "annotation", id: "d2" }, text: "What does this dimension show?", model, kernel });
     expect(r.outcome).toBe("answer");
-    expect(model.requests[0].tools.map((t) => t.name)).toEqual(["escalate"]);
+    expect(model.requests[0].tools.map((t) => t.name)).toEqual(["escalate", "detailPlan", "checkDrawing", "renderSheet"]);
     expect(packetOf(model).annotation).toEqual({ id: "d2", type: "dimension", view: "front", from: "@bottom", to: "@top", reads: "900" });
     expect(packetOf(model).parent.view.id).toBe("front");
   });
