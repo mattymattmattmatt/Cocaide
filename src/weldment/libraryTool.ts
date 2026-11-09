@@ -102,3 +102,7 @@ export const ADD_LIBRARY_PROFILE_HELP =
 /** What the AI must do when the asked size is not catalogued: ask, never decide. */
 export const LIBRARY_SIZE_RULE =
   "If the part has no profile for a member, add one with addLibraryProfile. If the size the user asked for is not in the catalogue, do NOT substitute or create one on your own: change nothing, and ask the user whether to create that exact size as a non-catalogue size or use one of the nearest catalogue sizes (name them; the tool error lists them). Only after they answer, add it (extraSizes) or use their choice.";
+
+/** What the AI must build when a part is made of stock sections: a weldment, never sketched tubes. */
+export const WELDMENT_RULE =
+  "Anything made from tube, pipe, box, angle, channel, beam, flat bar or other stock sections (frames, benches, tables, stands, racks, trolleys, gates, guards, trailers) is a weldment: add the section with addLibraryProfile, place nodes (setNode) at the corners, join them with member features (op \"member\": profile, size, from, to), add joint features at shared nodes (mitre or butt), gusset and endCap features where asked, plates (a top, a base plate) as ordinary extrudes, and weld notes (setWeld). Never draw tubes or sections as sketches and extrudes: only members give a cut list, end cuts and welds. Read reference(\"member\") and reference(\"joint\") first.";

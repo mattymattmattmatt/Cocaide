@@ -1,7 +1,7 @@
 // What the right-click agent is told, and which tools it gets. The packet is
 // the prompt; this file is the fixed part around it.
 
-import { ADD_LIBRARY_PROFILE_HELP, LIBRARY_SIZE_RULE } from "../weldment/libraryTool";
+import { ADD_LIBRARY_PROFILE_HELP, LIBRARY_SIZE_RULE, WELDMENT_RULE } from "../weldment/libraryTool";
 import type Anthropic from "@anthropic-ai/sdk";
 import { coreReference, opIndex, referenceSection, sectionIndex } from "../mcp/sections";
 import { anthropicTool } from "./tools/specs";
@@ -174,6 +174,7 @@ Rules:
 - Every edit is checked: the part is rebuilt and the edit is kept only if nothing newly fails. A failed edit returns the error; read it and fix the call, or stop and say why.
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
+- ${WELDMENT_RULE}
 - Weldments: a member's size must be one of the sizes in the part's profiles; never invent one. If the part has no profile for a member, add one with addLibraryProfile. If the size the user asked for is not in the catalogue, do NOT substitute or create one on your own: change nothing, and ask the user whether to create that exact size as a non-catalogue size or use one of the nearest catalogue sizes (name them; the tool error lists them). Only after they answer, add it (extraSizes) or use their choice. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
 - Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>"), one table ("table:<id>", setTable on it alone) or the drawing ("drawing", also from a sheet's tab or title block: the packet's sheet is that one); the packet's "selection" lists what else the user had selected on the sheet, which "this" and "these" may mean; the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
@@ -204,7 +205,8 @@ Rules:
 - A whole new part: call plan first, build in batches, then check with partSummary and measureBetween, and fix what disagrees.
 - Tool arguments are JSON objects that follow each tool's schema exactly.
 - Metric clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11. Inches: convert once (25.4 mm) and say so.
-- Weldment member sizes come from the packet's member.sizes only. Drawing numbers are measured, never given.
+- ${WELDMENT_RULE} ${LIBRARY_SIZE_RULE}
+- Weldment member sizes come from the part's profiles only. Drawing numbers are measured, never given.
 - Finish with one or two plain sentences: what you changed and the result, or the answer, or why you stopped.
 
 Document reference (short; the reference tool gives the rest):
@@ -495,7 +497,7 @@ export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; d
  * The tools a small-context model is offered directly: everything but the rarely used edits, which stay available
  * as batch steps (BATCH_STEP_TOOLS) with the same commands and checks. A weldment target keeps its node and weld tools.
  */
-const RARE_TOOLS = new Set(["reorderFeature", "setFolder", "suppressFolder", "renameParameter", "setNode", "setBodyMaterial", "setWeld", "setProperties", "setCutList", "renameDimension", "setDriven", "fullyDefine"]);
+const RARE_TOOLS = new Set(["reorderFeature", "setFolder", "suppressFolder", "renameParameter", "setBodyMaterial", "setProperties", "setCutList", "renameDimension", "setDriven", "fullyDefine"]);
 
 export function leanTools(tools: Anthropic.Tool[], packet?: unknown): Anthropic.Tool[] {
   const welding = /"(member|node|joint)"/.test(JSON.stringify((packet as { target?: unknown } | undefined)?.target ?? ""));

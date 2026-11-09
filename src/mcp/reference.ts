@@ -2,6 +2,7 @@
 // full document reference as a resource. Each registry op (src/features)
 // documents itself: its def's `reference` text is part of REFERENCE.
 
+import { LIBRARY_SIZE_RULE, WELDMENT_RULE } from "../weldment/libraryTool";
 import { DOC_DEFS } from "../features/docIndex";
 import { examplesText, STRATEGY } from "./examples";
 
@@ -14,6 +15,7 @@ How edits work:
 
 Start with partSummary (or listFeatures). The reference tool gives one section of the document reference at a time (reference() lists them; the resource cocaide://reference is all of it): read an op's section before you first use it. Faces and edges are chosen by selector queries (e.g. the largest planar face with normal +Z), never by index: take them from listFaces and listEdges, which give a selector for each one; facePlane gives a flat face's frame for sketches and holes.
 Build with batch: a sketch (sketchProfile makes it fully defined), the feature made from it, its holes and patterns in one transaction, kept only if everything rebuilds; dryRun tries without keeping. For a whole part: plan first, build in batches, then verify with partSummary, measureBetween and screenshot.
+Weldments: ${WELDMENT_RULE} ${LIBRARY_SIZE_RULE}
 Units are millimetres. Numeric fields may be expressions over document parameters and sketch dimensions: "=plate_t * 2", "=sketch_1.width / 2 + 1in".`;
 
 export const REFERENCE = `# Cocaide document reference
