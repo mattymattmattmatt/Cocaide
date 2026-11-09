@@ -15,6 +15,9 @@ import { DetailPlanCard } from "../../ask/DetailPlanCard";
 import { registerDrawingTool, registerMenuEntries } from "./registry";
 import { BaseSession } from "./session";
 import type { DrawingToolCtx, OverlayShape } from "./types";
+import type { MenuEntry } from "../../ContextMenu";
+import type { Vec2 } from "../../../doc/types";
+import { snapAt, type SnapTarget } from "../snap";
 
 registerDrawingTool({
   id: "ai.detail",
@@ -147,19 +150,42 @@ class AutoDetailSession extends BaseSession {
 
 // ------------------------------------------------------------ right-click entries
 
-registerMenuEntries("ai", (hit, ctx) => {
+registerMenuEntries("ai", (hit, ctx, at) => {
   const ask = ctx.actions.ask;
   if (!ask) return [];
   if (hit.kind === "view") {
-    return [
-      { label: "Detail this view", icon: "ask", hint: "Size, locate and tolerance what this view shows", onClick: () => ask({ kind: "view", id: hit.id }, "Fully detail this view: every feature it shows sized and located once, the fits, GD&T and surface texture its features need.", true), testId: "ctx-ai-detail-view" },
-      { label: "Add GD&T…", icon: "grid", onClick: () => ask({ kind: "view", id: hit.id }, "Add the geometric tolerances this view needs (datums, position of hole patterns, flatness of mating faces): ", false), testId: "ctx-ai-gdt" },
-    ];
+    const entries: MenuEntry[] = [{ label: "Detail this view", icon: "ask", hint: "Size, locate and tolerance what this view shows", onClick: () => ask({ kind: "view", id: hit.id }, DETAIL_VIEW_PROMPT, true), testId: "ctx-ai-detail-view" }];
+    // What was right-clicked in the view: a circle (a hole or bore) gets "Add a fit…", an edge or face seen edge-on "Add GD&T…".
+    const geo = at ? geometryAt(ctx, hit.id, at) : null;
+    if (geo && (geo.kind === "circle" || geo.kind === "arc") && geo.visible) {
+      entries.push({ label: "Add a fit…", icon: "ask", hint: `ISO 286 fit for ${geo.label}`, onClick: () => ask({ kind: "view", id: hit.id, selection: [geo.ref] }, fitPrompt(geo.ref), false), testId: "ctx-ai-fit-geo" });
+    }
+    entries.push({
+      label: "Add GD&T…",
+      icon: "grid",
+      hint: geo ? `A feature control frame on ${geo.label}` : "Datums and geometric tolerances this view needs",
+      onClick: () => (geo ? ask({ kind: "view", id: hit.id, selection: [geo.ref] }, gdtPrompt(geo.ref), false) : ask({ kind: "view", id: hit.id }, GDT_VIEW_PROMPT, false)),
+      testId: "ctx-ai-gdt",
+    });
+    return entries;
   }
   if (hit.kind === "annotation") {
     const a = ctx.drawing.sheets.flatMap((s) => s.annotations).find((x) => x.id === hit.id);
-    if (a?.type === "hole") return [{ label: "Add a fit…", icon: "ask", onClick: () => ask({ kind: "annotation", id: a.id }, "Give this hole the ISO 286 fit ", false), testId: "ctx-ai-fit" }];
-    if (a?.type === "dimension") return [{ label: "Tolerance this…", icon: "ask", onClick: () => ask({ kind: "annotation", id: a.id }, "Tolerance this dimension: ", false), testId: "ctx-ai-tolerance" }];
+    if (a?.type === "hole") return [{ label: "Add a fit…", icon: "ask", hint: "An ISO 286 fit by what goes in the hole", onClick: () => ask({ kind: "annotation", id: a.id }, `Give hole callout ${a.id} the ISO 286 fit its purpose needs (bearing seat H7, dowel H7 for an m6 dowel, sliding H7/g6): `, false), testId: "ctx-ai-fit" }];
+    if (a?.type === "dimension") return [{ label: "Tolerance this…", icon: "ask", hint: "A tolerance or fit by what the size is for", onClick: () => ask({ kind: "annotation", id: a.id }, `Tolerance dimension ${a.id} by what it is for (a fit, ± limits, basic or reference): `, false), testId: "ctx-ai-tolerance" }];
   }
   return [];
 });
+
+export const DETAIL_VIEW_PROMPT = "Fully detail this view: every feature it shows sized and located once, the fits, GD&T and surface texture its features need.";
+export const GDT_VIEW_PROMPT = "Add the geometric tolerances this view needs (datums, position of hole patterns, flatness of mating faces): ";
+export const fitPrompt = (ref: string) => `Give the hole or bore at ${ref} the ISO 286 fit its purpose needs (a Ø dimension or its callout toleranced): `;
+export const gdtPrompt = (ref: string) => `Add a geometric tolerance on ${ref} (a datum feature, flatness, perpendicularity or position to the datums): `;
+
+/** The geometry under a right-click in a view (a few screen pixels round it). */
+function geometryAt(ctx: DrawingToolCtx, view: string, at: Vec2): SnapTarget | null {
+  if (!ctx.snap) return null;
+  const tol = 6 * ctx.mmPerPx();
+  // An edge or circle, not a point on it (the GD&T goes on the feature).
+  return snapAt(ctx.snap, at, tol, { view, kinds: ["circle", "arc", "edge"] });
+}

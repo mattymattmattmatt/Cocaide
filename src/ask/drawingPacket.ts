@@ -81,7 +81,11 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     const a = findAnnotation(drawing, sid);
     if (a) return [{ ...reads(a), is: "annotation" }];
     const t = drawing.sheets.flatMap((x) => x.tables ?? []).find((x) => x.id === sid);
-    return t ? [{ id: sid, is: "table", kind: t.kind }] : [];
+    if (t) return [{ id: sid, is: "table", kind: t.kind }];
+    // A GeoRef right-clicked in a view (wave Q3B: "Add GD&T…", "Add a fit…" on an edge or a circle).
+    const viewId = sid.includes(":") ? sid.slice(0, sid.indexOf(":")) : null;
+    const g = viewId ? listGeoRefs(sheet, viewId).find((r) => r.ref === sid) : undefined;
+    return g ? [{ ref: sid, is: "geometry", what: g.what, ...(g.feature ? { feature: g.feature } : {}), ...(g.radius !== undefined ? { diameter: r1(2 * g.radius) } : {}), ...(g.length !== undefined ? { length: r1(g.length) } : {}), visible: g.visible }] : [];
   });
   // Packet v2 (wave Q3B): the part's design intent and features, each view's GeoRefs in a line, annotations with their effective tolerances, the critic.
   const detailing = target.kind === "drawing" || target.kind === "sheet" || target.kind === "view" ? await detailingOf(doc, kernel, check, sheet.id, target.kind === "view" ? target.id : undefined, !!opts.compact) : null;

@@ -362,7 +362,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
   };
   const askEntry = (target: AskTarget, x: number, y: number): MenuEntry => ({ label: "Ask AI…", icon: "ask", hint: "Ask the assistant about this, or to change it", onClick: () => ask(target, x, y), testId: "ctx-ask" });
 
-  const menuFor = (hit: SheetHit | null, x: number, y: number, from: "sheet" | "tree" = "sheet") => {
+  const menuFor = (hit: SheetHit | null, x: number, y: number, from: "sheet" | "tree" = "sheet", at?: Vec2) => {
     if (!p.drawing || !sheetDoc) return;
     if (hit && hit.kind !== "titleBlock" && !selection.includes(hit.id)) setSelection([hit.id]);
     let title = "Drawing";
@@ -388,7 +388,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         "sep",
         { label: "Delete view", icon: "trash", shortcut: "Del", onClick: () => deleteIds([v.id]), testId: "ctx-delete-view" },
       ];
-      items.push("sep", ...menuEntriesFor(hit, ctx()), askEntry({ kind: "view", id: v.id }, x, y));
+      items.push("sep", ...menuEntriesFor(hit, ctx(), at), askEntry({ kind: "view", id: v.id }, x, y));
     } else if (hit?.kind === "annotation") {
       const a = p.drawing.sheets.flatMap((s) => s.annotations).find((x) => x.id === hit.id);
       if (!a) return;
@@ -404,7 +404,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         "sep",
         { label: "Delete", icon: "trash", shortcut: "Del", onClick: () => deleteIds([a.id]), testId: "ctx-delete-annotation" },
         "sep",
-        ...menuEntriesFor(hit, ctx()),
+        ...menuEntriesFor(hit, ctx(), at),
         askEntry({ kind: "annotation", id: a.id }, x, y),
       ];
     } else if (hit?.kind === "table") {
@@ -603,7 +603,7 @@ export function DrawingMain({ ws, empty, help }: { ws: Workspace; empty: ReactNo
               fitToken={ws.fitToken}
               zoomAreaToken={ws.zoomAreaToken}
               onSelect={(ids, add) => ws.select(ids, add)}
-              onContext={(hit, x, y) => ws.menuFor(hit, x, y)}
+              onContext={(hit, x, y, at) => ws.menuFor(hit, x, y, "sheet", at)}
               onCommands={(cmds) => ws.batch(cmds)}
               onNotice={(t, k) => p.notice(t, k)}
               onStatus={ws.setStatus}

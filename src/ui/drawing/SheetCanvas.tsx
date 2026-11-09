@@ -45,7 +45,7 @@ export interface SheetCanvasProps {
   fitToken: number;
   zoomAreaToken: number;
   onSelect(ids: string[], add: boolean): void;
-  onContext(hit: SheetHit | null, x: number, y: number): void;
+  onContext(hit: SheetHit | null, x: number, y: number, at?: Vec2): void;
   /** Several commands as one undo step; the error when refused. */
   onCommands(cmds: Command[]): string | null;
   onNotice(text: string, kind?: "info" | "error"): void;
@@ -565,7 +565,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
       onContextMenu={(e) => {
         e.preventDefault();
         const p = toSheet(e.clientX, e.clientY);
-        props.onContext(p ? hitAt(p) : null, e.clientX, e.clientY);
+        props.onContext(p ? hitAt(p) : null, e.clientX, e.clientY, p ?? undefined);
       }}
     >
       {showGrid && (
