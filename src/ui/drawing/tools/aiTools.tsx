@@ -153,24 +153,33 @@ class AutoDetailSession extends BaseSession {
 registerMenuEntries("ai", (hit, ctx, at) => {
   const ask = ctx.actions.ask;
   if (!ask) return [];
-  if (hit.kind === "view") {
-    const entries: MenuEntry[] = [{ label: "Detail this view", icon: "ask", hint: "Size, locate and tolerance what this view shows", onClick: () => ask({ kind: "view", id: hit.id }, DETAIL_VIEW_PROMPT, true), testId: "ctx-ai-detail-view" }];
-    // What was right-clicked in the view: a circle (a hole or bore) gets "Add a fit…", an edge or face seen edge-on "Add GD&T…".
-    const geo = at ? geometryAt(ctx, hit.id, at) : null;
+  // What was right-clicked in a view: a circle (a hole or bore) gets "Add a fit…", an edge or face seen edge-on "Add GD&T…".
+  const geometryEntries = (view: string, geo: SnapTarget | null, gdtAlways: boolean): MenuEntry[] => {
+    const out: MenuEntry[] = [];
     if (geo && (geo.kind === "circle" || geo.kind === "arc") && geo.visible) {
-      entries.push({ label: "Add a fit…", icon: "ask", hint: `ISO 286 fit for ${geo.label}`, onClick: () => ask({ kind: "view", id: hit.id, selection: [geo.ref] }, fitPrompt(geo.ref), false), testId: "ctx-ai-fit-geo" });
+      out.push({ label: "Add a fit…", icon: "ask", hint: `ISO 286 fit for ${geo.label}`, onClick: () => ask({ kind: "view", id: view, selection: [geo.ref] }, fitPrompt(geo.ref), false), testId: "ctx-ai-fit-geo" });
     }
-    entries.push({
-      label: "Add GD&T…",
-      icon: "grid",
-      hint: geo ? `A feature control frame on ${geo.label}` : "Datums and geometric tolerances this view needs",
-      onClick: () => (geo ? ask({ kind: "view", id: hit.id, selection: [geo.ref] }, gdtPrompt(geo.ref), false) : ask({ kind: "view", id: hit.id }, GDT_VIEW_PROMPT, false)),
-      testId: "ctx-ai-gdt",
-    });
-    return entries;
+    if (geo || gdtAlways)
+      out.push({
+        label: "Add GD&T…",
+        icon: "grid",
+        hint: geo ? `A feature control frame on ${geo.label}` : "Datums and geometric tolerances this view needs",
+        onClick: () => (geo ? ask({ kind: "view", id: view, selection: [geo.ref] }, gdtPrompt(geo.ref), false) : ask({ kind: "view", id: view }, GDT_VIEW_PROMPT, false)),
+        testId: "ctx-ai-gdt",
+      });
+    return out;
+  };
+  if (hit.kind === "view") {
+    const geo = at ? geometryAt(ctx, hit.id, at) : null;
+    return [{ label: "Detail this view", icon: "ask", hint: "Size, locate and tolerance what this view shows", onClick: () => ask({ kind: "view", id: hit.id }, DETAIL_VIEW_PROMPT, true), testId: "ctx-ai-detail-view" }, ...geometryEntries(hit.id, geo, true)];
   }
   if (hit.kind === "annotation") {
     const a = ctx.drawing.sheets.flatMap((s) => s.annotations).find((x) => x.id === hit.id);
+    // A centre mark or centre line covers its hole: the right-click is on the hole as much as on the mark.
+    if ((a?.type === "centerMark" || a?.type === "centerline") && at) {
+      const geo = geometryAt(ctx, a.view, at);
+      return geometryEntries(a.view, geo, false);
+    }
     if (a?.type === "hole") return [{ label: "Add a fit…", icon: "ask", hint: "An ISO 286 fit by what goes in the hole", onClick: () => ask({ kind: "annotation", id: a.id }, `Give hole callout ${a.id} the ISO 286 fit its purpose needs (bearing seat H7, dowel H7 for an m6 dowel, sliding H7/g6): `, false), testId: "ctx-ai-fit" }];
     if (a?.type === "dimension") return [{ label: "Tolerance this…", icon: "ask", hint: "A tolerance or fit by what the size is for", onClick: () => ask({ kind: "annotation", id: a.id }, `Tolerance dimension ${a.id} by what it is for (a fit, ± limits, basic or reference): `, false), testId: "ctx-ai-tolerance" }];
   }

@@ -84,4 +84,41 @@ test("Auto-detail by rules: the plan in the tool's panel, applied on the sheet, 
   await page.getByTestId("drawing-item-top").click({ button: "right" });
   await expect(page.getByTestId("ctx-ai-detail-view")).toBeVisible();
   await expect(page.getByTestId("ctx-ai-gdt")).toBeVisible();
+  await page.keyboard.press("Escape");
+});
+
+type V2 = [number, number];
+type Target = { ref: string; kind: string; at: V2; feature?: string; visible: boolean; circle?: { c: V2; r: number } };
+const hook = <T,>(page: Page, f: (h: { toScreen(x: number, y: number): V2; targets(view: string, kind?: string): Target[] }, arg: unknown) => T, arg?: unknown) =>
+  page.evaluate(([src, a]) => {
+    const h = (window as unknown as { __cocaideSheet?: unknown }).__cocaideSheet;
+    return h ? new Function("h", "a", `return (${src})(h, a)`)(h, a) : null;
+  }, [f.toString(), arg] as const) as Promise<T>;
+
+test("contextual asks: right-click a hole's circle in a view: Add a fit… opens the AI on it; a callout: Add a fit…, a dimension: Tolerance this…", async ({ page }) => {
+  await useKey(page);
+  await bracketDrawing(page);
+  // The bracket's hole, seen round in the top view.
+  await expect.poll(() => hook(page, (h) => h.targets("top", "circle").filter((t) => t.visible && t.circle).length)).toBeGreaterThan(0);
+  const hole = (await hook(page, (h) => h.targets("top", "circle").find((t) => t.visible && t.circle)!))!;
+  // At 45° on the circle: off the centre mark's lines.
+  const edge = [hole.circle!.c[0] + hole.circle!.r * Math.SQRT1_2, hole.circle!.c[1] + hole.circle!.r * Math.SQRT1_2] as V2;
+  const [x, y] = await hook(page, (h, a) => h.toScreen((a as V2)[0], (a as V2)[1]), edge);
+  await page.mouse.click(x, y, { button: "right" });
+  await expect(page.getByTestId("ctx-ai-fit-geo")).toBeVisible();
+  await page.getByTestId("ctx-ai-fit-geo").click();
+  // The ask opens on the view with the circle selected and the prompt to finish (nothing sent yet).
+  await expect(page.getByTestId("ask-input")).toHaveValue(/ISO 286 fit/);
+  expect(await page.getByTestId("ask-input").inputValue()).toContain(hole.ref);
+  await page.keyboard.press("Escape");
+  // A hole callout and a dimension in the tree.
+  const doc = (await savedDocument(page)).drawing as { sheets: { annotations: { id: string; type: string }[] }[] };
+  const anns = doc.sheets.flatMap((s) => s.annotations);
+  const callout = anns.find((a) => a.type === "hole")!;
+  const dim = anns.find((a) => a.type === "dimension")!;
+  await page.getByTestId(`drawing-item-${callout.id}`).click({ button: "right" });
+  await expect(page.getByTestId("ctx-ai-fit")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.getByTestId(`drawing-item-${dim.id}`).click({ button: "right" });
+  await expect(page.getByTestId("ctx-ai-tolerance")).toBeVisible();
 });
