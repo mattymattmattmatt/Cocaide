@@ -132,9 +132,44 @@ export async function executePlan(plan: DetailPlan, base: DetailState, kernel: K
       state = onSheet.state;
       if (!onSheet.commands.length) break;
     }
+    const kept = await keepWithHosts(state, kernel, scope);
+    commands.push(...kept.commands);
+    state = kept.state;
     doc = state.doc;
   }
   return { doc, commands, results, state };
+}
+
+/** The gap between two boxes, mm (0 when they touch or overlap). */
+export function boxGap(a: Box, b: Box): number {
+  const dx = Math.max(0, a.min[0] - b.max[0], b.min[0] - a.max[0]);
+  const dy = Math.max(0, a.min[1] - b.max[1], b.min[1] - a.max[1]);
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * A frame or datum hung on a callout or dimension and placed by hand that has come away from its host (the
+ * host moved after it was placed): back to where the engine hangs it, under its host.
+ */
+export async function keepWithHosts(state: DetailState, kernel: KernelPort, scope: string[]): Promise<{ state: DetailState; commands: Command[] }> {
+  const sheet = state.sheet;
+  const drawing = validateDocument(state.doc).drawing;
+  if (!sheet || !drawing) return { state, commands: [] };
+  const commands: Command[] = [];
+  let doc = state.doc;
+  for (const a of allAnnotations(drawing)) {
+    const host = a.type === "gdt" && typeof a.dimension === "string" ? a.dimension : null;
+    if (!host || !(a as { at?: Vec2 }).at) continue;
+    const mine = sheet.annotations.find((x) => x.id === a.id)?.textBox;
+    const theirs = sheet.annotations.find((x) => x.id === host)?.textBox;
+    if (!mine || !theirs || boxGap(mine, theirs) <= 4) continue;
+    const cmd: Command = { type: "editAnnotation", id: a.id, patch: { at: null } };
+    const r = apply(doc, cmd, { writeScope: scope });
+    if (!r.ok) continue;
+    doc = r.doc;
+    commands.push(cmd);
+  }
+  return commands.length ? { state: await restate(state, doc, kernel), commands } : { state, commands };
 }
 
 /** What runs off the sheet (weighs 3; 1 when it can be moved by its place) or into a table, the notes or the title block (1), as "id: why". */
@@ -326,6 +361,134 @@ export function overlapsOf(sheet: ComposedSheet, id: string): { with: string; ar
   return out;
 }
 
+/** Whether segment p–q crosses (or runs inside) box b. */
+export function segmentInBox(p: Vec2, q: Vec2, b: Box): boolean {
+  // Liang–Barsky clip of the segment against the box.
+  let t0 = 0;
+  let t1 = 1;
+  const d = [q[0] - p[0], q[1] - p[1]];
+  for (const [pk, qk] of [
+    [-d[0], p[0] - b.min[0]],
+    [d[0], b.max[0] - p[0]],
+    [-d[1], p[1] - b.min[1]],
+    [d[1], b.max[1] - p[1]],
+  ]) {
+    if (Math.abs(pk) < 1e-12) {
+      if (qk < 0) return false;
+      continue;
+    }
+    const t = qk / pk;
+    if (pk < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return t1 - t0 > 1e-9;
+}
+
+/**
+ * The other annotations whose lines (a leader, an extension or dimension line) run through this
+ * annotation's text: a callout's leader through the frame hung under it, a dimension line through a
+ * symbol. Its own lines and centre lines are not counted; the text box is shrunk by `inset` mm.
+ */
+export function crossingsOf(sheet: ComposedSheet, id: string, inset = 1.2): string[] {
+  const a = sheet.annotations.find((x) => x.id === id);
+  if (!a?.textBox) return [];
+  const b: Box = { min: [a.textBox.min[0] + inset, a.textBox.min[1] + inset], max: [a.textBox.max[0] - inset, a.textBox.max[1] - inset] };
+  if (b.min[0] >= b.max[0] || b.min[1] >= b.max[1]) return [];
+  const skip = new Set(sheet.annotations.filter((x) => x.type === "centerMark" || x.type === "centerline" || x.type === "table" || x.type === "note").map((x) => x.id));
+  const out = new Set<string>();
+  for (const pr of sheet.prims) {
+    if (pr.k !== "line" || pr.fill || !pr.owner || pr.owner === id || skip.has(pr.owner) || out.has(pr.owner)) continue;
+    if (!sheet.annotations.some((x) => x.id === pr.owner)) continue;
+    const n = pr.pts.length;
+    for (let i = 0; i + 1 < n + (pr.closed ? 1 : 0); i++) {
+      if (segmentInBox(pr.pts[i], pr.pts[(i + 1) % n], b)) {
+        out.add(pr.owner);
+        break;
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
+ * What this annotation's own lines run into: other annotations' text they cross (a leader through a
+ * callout), and other annotations' lines they lie along (one dimension line drawn over another).
+ */
+export function lineConflictsOf(sheet: ComposedSheet, id: string): { through: string[]; along: string[] } {
+  const skip = new Set(sheet.annotations.filter((x) => x.type === "centerMark" || x.type === "centerline" || x.type === "table" || x.type === "note").map((x) => x.id));
+  if (skip.has(id)) return { through: [], along: [] };
+  const all = (owner: string) => sheet.prims.flatMap((pr) => (pr.k === "line" && !pr.fill && pr.owner === owner ? pr.pts.slice(1).map((q, i) => [pr.pts[i], q] as [Vec2, Vec2]) : []));
+  // A dimension's own line runs along its text (its extension lines across it, and those may be shared on purpose).
+  const segs = (owner: string) => {
+    const a = sheet.annotations.find((x) => x.id === owner);
+    const list = all(owner);
+    if (a?.type !== "dimension" || !a.textBox) return list;
+    const wide = a.textBox.max[0] - a.textBox.min[0] >= a.textBox.max[1] - a.textBox.min[1];
+    return list.filter(([p, q]) => (wide ? Math.abs(q[0] - p[0]) > 3 * Math.abs(q[1] - p[1]) : Math.abs(q[1] - p[1]) > 3 * Math.abs(q[0] - p[0])));
+  };
+  const mine = all(id);
+  const mineAlong = segs(id);
+  if (!mine.length) return { through: [], along: [] };
+  const through = new Set<string>();
+  const along = new Set<string>();
+  const links = attachedIds.get(id);
+  for (const b of sheet.annotations) {
+    if (b.id === id || skip.has(b.id) || links?.has(b.id) || attachedIds.get(b.id)?.has(id)) continue;
+    if (b.textBox) {
+      const t: Box = { min: [b.textBox.min[0] + 1.2, b.textBox.min[1] + 1.2], max: [b.textBox.max[0] - 1.2, b.textBox.max[1] - 1.2] };
+      if (t.min[0] < t.max[0] && t.min[1] < t.max[1] && mine.some(([p, q]) => segmentInBox(p, q, t))) through.add(b.id);
+    }
+    for (const [p, q] of segs(b.id)) {
+      if (mineAlong.some(([u, v]) => collinearOverlap(u, v, p, q) > 1)) {
+        along.add(b.id);
+        break;
+      }
+    }
+  }
+  return { through: [...through], along: [...along] };
+}
+
+/** How far two segments lie on one another (parallel, within 0.4 mm), mm along them; 0 when they don't. */
+export function collinearOverlap(a: Vec2, b: Vec2, c: Vec2, d: Vec2): number {
+  const ux = b[0] - a[0];
+  const uy = b[1] - a[1];
+  const L = Math.hypot(ux, uy);
+  if (L < 1e-9) return 0;
+  const n: Vec2 = [ux / L, uy / L];
+  const off = (p: Vec2) => Math.abs((p[0] - a[0]) * n[1] - (p[1] - a[1]) * n[0]);
+  if (off(c) > 0.4 || off(d) > 0.4) return 0;
+  const t = (p: Vec2) => (p[0] - a[0]) * n[0] + (p[1] - a[1]) * n[1];
+  const lo = Math.max(0, Math.min(t(c), t(d)));
+  const hi = Math.min(L, Math.max(t(c), t(d)));
+  return Math.max(0, hi - lo);
+}
+
+/** How many of the views' own lines (the part's edges, hatching, cutting-plane lines and labels) run through a box. */
+export function viewLinesThrough(sheet: ComposedSheet, box: Box, inset = 0.8): number {
+  const views = new Set(sheet.views.map((v) => v.id));
+  const b: Box = { min: [box.min[0] + inset, box.min[1] + inset], max: [box.max[0] - inset, box.max[1] - inset] };
+  if (b.min[0] >= b.max[0] || b.min[1] >= b.max[1]) return 0;
+  let n = 0;
+  for (const pr of sheet.prims) {
+    if (!pr.owner || !views.has(pr.owner)) continue;
+    if (pr.k === "line") {
+      for (let i = 1; i < pr.pts.length; i++) if (segmentInBox(pr.pts[i - 1], pr.pts[i], b)) n++;
+    } else if (pr.k === "text") {
+      const p = pr.at;
+      if (p[0] > b.min[0] - 3 && p[0] < b.max[0] + 3 && p[1] > b.min[1] - 3 && p[1] < b.max[1] + 3) n += 2;
+    }
+  }
+  return n;
+}
+
+/** Whether an annotation runs into anything: text over text, a line through its text, its lines over another's. */
+function troubled(sheet: ComposedSheet, id: string): boolean {
+  // Its own lines running through or along others' weigh in its badness (where it may go) but do not set it moving:
+  // chasing them moves whole dimension rows about.
+  return overlapsOf(sheet, id).length > 0 || crossingsOf(sheet, id).length > 0;
+}
+
 /** A frame and its dimension, a datum and its frame or dimension: drawn together on purpose. */
 function attached(sheet: ComposedSheet, a: string, b: string): boolean {
   void sheet;
@@ -347,13 +510,17 @@ function noteAttachments(doc: RawDocument): void {
 function badness(sheet: ComposedSheet, id: string): number {
   const a = sheet.annotations.find((x) => x.id === id);
   if (!a?.textBox) return 0;
-  let s = overlapsOf(sheet, id).reduce((t, o) => t + 10 + o.area, 0);
+  let s = overlapsOf(sheet, id).reduce((t, o) => t + 10 + o.area, 0) + 15 * crossingsOf(sheet, id).length;
+  const lines = lineConflictsOf(sheet, id);
+  s += 15 * lines.through.length + 25 * lines.along.length;
   for (const v of sheet.views) {
     if (!v.box) continue;
     const b = v.box;
     const ov = Math.max(0, Math.min(a.textBox.max[0], b.max[0]) - Math.max(a.textBox.min[0], b.min[0])) * Math.max(0, Math.min(a.textBox.max[1], b.max[1]) - Math.max(a.textBox.min[1], b.min[1]));
-    s += ov * 0.6;
+    // Over a view's empty room costs little; over the part's own lines (and the cutting-plane lines and labels) much more.
+    s += ov * 0.08;
   }
+  s += 12 * viewLinesThrough(sheet, a.textBox);
   const f = sheet.frame;
   if (a.textBox.min[0] < f.min[0] || a.textBox.min[1] < f.min[1] || a.textBox.max[0] > f.max[0] || a.textBox.max[1] > f.max[1]) s += 1000;
   return s;
@@ -371,43 +538,89 @@ export async function clearOverlaps(state: DetailState, kernel: KernelPort, scop
   const rings: Vec2[] = [];
   for (const r of [5, 10, 16, 24]) for (let k = 0; k < 8; k++) rings.push([r * Math.cos((k * Math.PI) / 4), r * Math.sin((k * Math.PI) / 4)]);
   // Each try composes the sheet again (tens of ms): a budget keeps a crowded sheet from taking long.
-  let budget = 40;
-  for (let round = 0; round < rounds; round++) {
+  let budget = 80;
+  let hungBudget = 30;
+  // Callouts, dimensions and symbols first, in rounds; the frames and datums hung on a callout or dimension last, in one
+  // pass once their hosts have stopped moving (a host the engine places moves when what is round it moves).
+  const hung = (id: string) => attachedIds.has(id);
+  for (let round = 0; round <= rounds; round++) {
+    const last = round === rounds;
     const sheet = state.sheet;
     if (!sheet) break;
-    const bad = sheet.annotations.filter((a) => mine(a.id) && a.textBox && a.grips?.some((g) => g.field === "at") && overlapsOf(sheet, a.id).length > 0);
-    if (!bad.length) break;
+    const bad = sheet.annotations.filter((a) => mine(a.id) && hung(a.id) === last && a.textBox && a.grips?.some((g) => g.field === "at") && troubled(sheet, a.id));
+    if (!bad.length) {
+      if (last) break;
+      round = rounds - 1;
+      continue;
+    }
     let moved = false;
-    for (const ca of bad) {
+    for (const stale of bad) {
+      // Where it is now (an earlier move this round may have moved its host, or it).
+      const ca = state.sheet?.annotations.find((x) => x.id === stale.id);
+      if (!ca?.textBox || !ca.grips?.some((g) => g.field === "at")) continue;
+      if (!troubled(state.sheet!, ca.id)) continue;
       const drawing = validateDocument(doc).drawing;
       const ann = drawing ? allAnnotations(drawing).find((x) => x.id === ca.id) : undefined;
       const grip = ca.grips!.find((g) => g.field === "at")!;
       if (!ann || !state.composed) continue;
       const now = badness(state.sheet!, ca.id);
-      let best: { cmd: Command; doc: RawDocument; score: number } | null = null;
-      for (const d of rings) {
-        if (budget-- <= 0) break;
+      let best: { cmd: Command; doc: RawDocument; score: number; cmds?: Command[] } | null = null;
+      // Besides the rings: a whole size of the text over (a frame from under its callout to above it or beside it), nearest first.
+      const w = ca.textBox!.max[0] - ca.textBox!.min[0];
+      const h = ca.textBox!.max[1] - ca.textBox!.min[1];
+      const jumps: Vec2[] = [[0, h + 9], [0, -(h + 2)], [-(w + 2), 0], [w + 2, 0], [0, 2 * h + 9], [-(w + 2), -(h + 2)], [w + 2, -(h + 2)]];
+      // A frame hung on a callout or dimension stays with it: only under it (where it is) or just above its text.
+      const host = "dimension" in ann && typeof ann.dimension === "string" ? state.sheet!.annotations.find((x) => x.id === (ann as { dimension: string }).dimension) : undefined;
+      const tries = host?.textBox
+        ? ([
+            // Under its text (centred, then flush left or right), above it, beside it.
+            [(host.textBox.min[0] + host.textBox.max[0]) / 2 - w / 2 - ca.textBox!.min[0], host.textBox.min[1] - 0.8 - h - ca.textBox!.min[1]],
+            [host.textBox.min[0] - ca.textBox!.min[0], host.textBox.min[1] - 0.8 - h - ca.textBox!.min[1]],
+            [host.textBox.max[0] - w - ca.textBox!.min[0], host.textBox.min[1] - 0.8 - h - ca.textBox!.min[1]],
+            [0, host.textBox.max[1] + 1 - ca.textBox!.min[1]],
+            // Beside its text, on its line (right, then left).
+            [host.textBox.max[0] + 1.5 - ca.textBox!.min[0], host.textBox.min[1] - ca.textBox!.min[1]],
+            [host.textBox.min[0] - 1.5 - ca.textBox!.max[0], host.textBox.min[1] - ca.textBox!.min[1]],
+          ] as Vec2[])
+        : [...rings, ...jumps].sort((p, q) => Math.hypot(p[0], p[1]) - Math.hypot(q[0], q[1]));
+      // A frame placed by hand beside a host the engine places would be left behind when the host moves: pin the host where it is.
+      let base = doc;
+      let pin: Command | null = null;
+      const hostDoc = host && drawing ? (allAnnotations(drawing).find((x) => x.id === host.id) as (Annotation & { at?: Vec2 }) | undefined) : undefined;
+      const hostGrip = host?.grips?.find((g) => g.field === "at");
+      if (host && hostDoc && !hostDoc.at && hostGrip) {
+        const held = dragGrip(hostDoc, hostGrip, hostGrip.at, state.composed) as Annotation & { at?: Vec2 };
+        if (held.at) {
+          pin = { type: "editAnnotation", id: host.id, patch: { at: [r1(held.at[0]), r1(held.at[1])] } };
+          const r = apply(doc, pin, { writeScope: scope });
+          if (r.ok) base = r.doc;
+          else pin = null;
+        }
+      }
+      for (const d of tries) {
+        if (last ? hungBudget-- <= 0 : budget-- <= 0) break;
         const next = dragGrip(ann, grip, [grip.at[0] + d[0], grip.at[1] + d[1]], state.composed) as Annotation & { at?: Vec2 };
         if (!next.at) continue;
         const cmd: Command = { type: "editAnnotation", id: ca.id, patch: { at: [r1(next.at[0]), r1(next.at[1])] } };
-        const r = apply(doc, cmd, { writeScope: scope });
+        const r = apply(base, cmd, { writeScope: scope });
         if (!r.ok) continue;
         const c = composeDrawing(r.doc, { measurements: state.check.measurements, geometry: state.geometry });
         const s = c?.sheets.find((x) => x.id === state.sheet!.id);
         if (!s || s.annotations.find((x) => x.id === ca.id)?.problem) continue;
-        const score = badness(s, ca.id) + Math.hypot(d[0], d[1]) * 0.3;
-        if (!best || score < best.score) best = { cmd, doc: r.doc, score };
+        // Nearer is better, but a hung frame's places are all beside its host.
+        const score = badness(s, ca.id) + (host ? 0 : Math.hypot(d[0], d[1]) * 0.3);
+        if (!best || score < best.score) best = { cmd, doc: r.doc, score, ...(pin ? { cmds: [pin, cmd] } : {}) };
         // The nearest place clear of everything will do.
-        if (overlapsOf(s, ca.id).length === 0 && badness(s, ca.id) < now) break;
+        if (!troubled(s, ca.id) && badness(s, ca.id) < now) break;
       }
       if (best && best.score < now - 1e-6) {
         doc = best.doc;
-        commands.push(best.cmd);
+        commands.push(...(best.cmds ?? [best.cmd]));
         state = await restate(state, doc, kernel);
         moved = true;
       }
     }
-    if (!moved) break;
+    if (!moved && !last) round = rounds - 1;
   }
   return { state, commands };
 }

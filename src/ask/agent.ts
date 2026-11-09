@@ -252,6 +252,8 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   let judged = false;
   /** Critic rounds of a detailing ask. */
   let rounds = 0;
+  /** Whether the readability-only critic round was had. */
+  let overlapRound = false;
   let reviewed = false;
   /** Whether the agent has looked at the part since its last kept edit. */
   let looked = true;
@@ -273,7 +275,11 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
         // A detailing ask is judged by the critic, in up to three rounds, with a picture of the sheet for a model that can see.
         if (detail && rounds < 3 && turn < MAX_TURNS && sandbox.commands.length) {
           rounds++;
-          const findings = (await sandbox.detailFindings()).filter((f) => f.severity === "error" || f.rule === "overlap");
+          // Errors get up to three rounds; readability warnings (what runs into what) one, and only for a model that can see the sheet.
+          const all = await sandbox.detailFindings();
+          const errors = all.filter((f) => f.severity === "error");
+          const findings = errors.length ? [...errors, ...(compact ? [] : all.filter((f) => f.rule === "overlap"))] : !compact && !overlapRound ? all.filter((f) => f.rule === "overlap") : [];
+          if (!errors.length && findings.length) overlapRound = true;
           if (findings.length) {
             const shot = compact ? null : await sandbox.sheetPicture();
             messages.push({

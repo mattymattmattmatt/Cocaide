@@ -24,7 +24,7 @@ import { resolveGeoRef } from "../../drafting/georef";
 import { parseGeneralTolerance, toleranceOf, type EffectiveTolerance } from "../../drafting/tolerance";
 import type { Measurements } from "../../kernel/measure";
 import type { DrawingGeometry } from "../kernel";
-import { overlapsOf } from "./execute";
+import { boxGap, crossingsOf, lineConflictsOf, overlapsOf } from "./execute";
 import type { DesignIntent } from "./intent";
 import { activeItems, type DetailPlan } from "./plan";
 
@@ -154,7 +154,23 @@ export function critique(input: CriticInput): Finding[] {
         seen.add(key);
         out.push({ rule: "overlap", severity: "warning", message: `${a.id} (${short(a)}) runs into ${o.with}: move one of them (editAnnotation "at").`, ids: [a.id, o.with] });
       }
+      for (const w of lineConflictsOf(sh, a.id).along) {
+        const key = [a.id, w].sort().join("~");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ rule: "overlap", severity: "warning", message: `${a.id} and ${w} are drawn over one another (their lines lie along each other): move one to its own row (editAnnotation "at").`, ids: [a.id, w] });
+      }
+      for (const w of crossingsOf(sh, a.id)) out.push({ rule: "overlap", severity: "warning", message: `a line of ${w} runs through ${a.id} (${short(a)}): move ${a.id} clear of it (editAnnotation "at").`, ids: [a.id, w] });
     }
+  }
+
+  // A frame or datum on a callout or dimension drawn away from it reads as belonging to nothing.
+  for (const a of anns) {
+    const host = "dimension" in a && typeof a.dimension === "string" ? a.dimension : null;
+    if (!host || a.type !== "gdt") continue;
+    const mine = byId.get(a.id)?.textBox;
+    const theirs = byId.get(host)?.textBox;
+    if (mine && theirs && boxGap(mine, theirs) > 4) out.push({ rule: "overlap", severity: "warning", message: `${a.id} is drawn ${Math.round(boxGap(mine, theirs))} mm away from ${host}, which it is attached to: put it against it (editAnnotation "at": null hangs it under ${host}).`, ids: [a.id, host] });
   }
 
   // ---- standards
@@ -191,8 +207,33 @@ function isCircle(sheets: ComposedSheet[], ref: string): boolean {
   return !!g && (g.kind === "circle" || (g.kind === "edge" && "circle" in g && !!(g as { circle?: unknown }).circle));
 }
 
-/** Where a hole is located from: a dimension to it, its pattern's pitch circle, the part's symmetry, or a position frame. */
+/** Where a hole is located from: a dimension to it, its pattern's pitch circle, the part's symmetry, a centre line it shares with a located hole, or a position frame. */
 function locationOf(input: CriticInput, feature: string, makers: Set<string>): string | null {
+  const anns = allAnnotations(input.drawing);
+  const composed = new Map(input.sheets.flatMap((s) => s.annotations).map((a) => [a.id, a]));
+  // A circular pattern's callout places it by its pitch circle.
+  const callout = composed.get(anns.find((a) => a.type === "hole" && a.hole === feature)?.id ?? "");
+  if (callout?.text.includes("PCD")) return "PCD";
+  const h = input.geometry?.holes.find((x) => x.feature === feature);
+  const bb = input.measurements?.boundingBox;
+  const direct = directions(input, feature, makers);
+  if (!h || !bb) return direct.size ? "dimensions" : null;
+  // On the part's middle both ways (a round part's bore, a centred hole), or located each way: by a dimension to it, by
+  // the middle, or on a centre line with a hole that is dimensioned that way (holes in a row share their dimension).
+  const mid = bb.min.map((v, i) => (v + bb.max[i]) / 2);
+  const axis = h.axis.map(Math.abs);
+  const across = [0, 1, 2].filter((i) => axis[i] < 0.5);
+  const centred = across.filter((i) => Math.abs(h.entry[i] - mid[i]) < 1e-3);
+  if (centred.length === across.length) return "symmetry";
+  const others = (input.geometry?.holes ?? []).filter((g) => g.feature !== feature && Math.abs(Math.abs(g.axis[0] * h.axis[0] + g.axis[1] * h.axis[1] + g.axis[2] * h.axis[2]) - 1) < 1e-6);
+  const shared = (i: number) =>
+    others.some((g) => Math.abs(g.entry[i] - h.entry[i]) < 1e-3 && directions(input, g.feature, new Set([g.feature, ...(input.intent?.holes.find((x) => x.features.includes(g.feature))?.makers ?? [])])).has(i));
+  if (across.every((i) => centred.includes(i) || direct.has(i) || shared(i))) return "dimensions";
+  return null;
+}
+
+/** The model axes (0 x, 1 y, 2 z) a hole's centre is dimensioned along, directly (a dimension to its edge or centre). */
+function directions(input: CriticInput, feature: string, makers: Set<string>): Set<number> {
   const anns = allAnnotations(input.drawing);
   const composed = new Map(input.sheets.flatMap((s) => s.annotations).map((a) => [a.id, a]));
   const ok = (a: Annotation) => !composed.get(a.id)?.problem;
@@ -203,28 +244,13 @@ function locationOf(input: CriticInput, feature: string, makers: Set<string>): s
     return !!g && (g.form === "c" || g.form === "e") && edgeFeature(input.sheets, p, makers);
   };
   const dims = anns.filter((a): a is DimensionAnnotation => a.type === "dimension" && ok(a) && (a.kind === undefined || a.kind === "linear" || a.kind === "ordinate" || a.kind === "baseline" || a.kind === "chain"));
-  const located = dims.filter((a) => [a.from, a.to, ...(a.points ?? []), ...(a.kind === undefined || a.kind === "linear" ? [] : a.refs ?? [])].some(toHole));
-  // A circular pattern's callout places it by its pitch circle.
-  const callout = composed.get(anns.find((a) => a.type === "hole" && a.hole === feature)?.id ?? "");
-  if (callout?.text.includes("PCD")) return "PCD";
-  // On the part's middle both ways (a round part's bore, a centred hole), or located one way and centred the other.
-  const h = input.geometry?.holes.find((x) => x.feature === feature);
-  const bb = input.measurements?.boundingBox;
-  if (h && bb) {
-    const mid = bb.min.map((v, i) => (v + bb.max[i]) / 2);
-    const axis = h.axis.map(Math.abs);
-    const across = [0, 1, 2].filter((i) => axis[i] < 0.5);
-    const centred = across.filter((i) => Math.abs(h.entry[i] - mid[i]) < 1e-3);
-    if (centred.length === across.length) return "symmetry";
-    const viewsLocated = new Set<number>();
-    for (const d of located) {
-      const along = input.sheets.flatMap((s) => s.annotations).find((x) => x.id === d.id)?.along;
-      if (along) for (const i of across) if (Math.abs(along[i]) > 0.999) viewsLocated.add(i);
-    }
-    if (across.every((i) => centred.includes(i) || viewsLocated.has(i))) return "dimensions";
-    return null;
+  const out = new Set<number>();
+  for (const d of dims) {
+    if (![d.from, d.to, d.origin, ...(d.points ?? []), ...(d.kind === undefined || d.kind === "linear" ? [] : d.refs ?? [])].some(toHole)) continue;
+    const along = composed.get(d.id)?.along;
+    if (along) for (let i = 0; i < 3; i++) if (Math.abs(along[i]) > 0.999) out.add(i);
   }
-  return located.length ? "dimensions" : null;
+  return out;
 }
 
 function samePoints(a: DimensionAnnotation, b: DimensionAnnotation): boolean {
