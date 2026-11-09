@@ -224,13 +224,13 @@ export function targetLabel(doc: RawDocument, target: AskTarget, topo?: PartTopo
   }
 }
 
-export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: KernelPort): Promise<Packet> {
+export async function buildPacket(doc: RawDocument, target: AskTarget, kernel: KernelPort, opts: { compact?: boolean } = {}): Promise<Packet> {
   const params = documentParameters(doc);
   const resolved = resolveExpressions(doc, params, []) as RawDocument;
   const check = await kernel.check(doc);
   const needsTopology = target.kind === "face" || target.kind === "edge" || target.kind === "feature" || target.kind === "failed";
   if (target.kind === "part") return partPacket(doc, check, targetLabel(doc, target), scopeFor(doc, target));
-  if (isDrawingTarget(target)) return drawingPacket(doc, target, kernel, check, targetLabel(doc, target), scopeFor(doc, target));
+  if (isDrawingTarget(target)) return drawingPacket(doc, target, kernel, check, targetLabel(doc, target), scopeFor(doc, target), opts);
   const topo = needsTopology ? await kernel.topology(doc) : null;
   const label = targetLabel(doc, target, topo);
   const writeScope = scopeFor(doc, target);

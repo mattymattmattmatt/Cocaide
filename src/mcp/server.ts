@@ -18,7 +18,7 @@ import { VIEWS, type Camera } from "../render/raster";
 import { INSTRUCTIONS, REFERENCE } from "./reference";
 import { SPECS } from "../ask/tools/specs";
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 
 const obj = z.record(z.string(), z.unknown());
 const vec3 = z.array(z.number()).length(3);
@@ -263,6 +263,31 @@ export const TOOLS: Record<string, ToolSpec> = {
   exportDrawing: {
     description: "Write the drawing to the output folder: a vector PDF (every sheet a page, the font embedded; one sheet with sheet), or one sheet (the first unless named) as SVG or DXF (R2000, a layer per kind of line).",
     input: { format: z.enum(["pdf", "svg", "dxf"]), file: z.string().optional().describe("File name; default <document name>-drawing.<format>"), sheet: z.string().optional() },
+  },
+  // Detailing (wave Q3B): the plan by rules, carrying it out, the critic, the sheet as a picture.
+  detailPlan: {
+    description:
+      'The detailing plan by rules for the drawing (or one view): the part\'s design intent (each hole\'s purpose: clearance per ISO 273, tapped, dowel H7/m6, bearing seat H7/k6, sliding H7/g6; bores; a weldment\'s joints), then items by group (views, sizes and locations, datums A|B|C, fits, position Ø0.1 Ⓜ with basic locating dimensions, flatness on A, perpendicularity of fitted bores, surface texture, weld symbols, general tolerance ISO 2768-mK / ISO 13920-BF, notes, cut list and balloons, title block and revision), each with an id, what it adds and why. options: { standard, generalTolerance, position, roughness }. Read-only: applyDetailPlan carries it out. See cocaide://reference detailing.',
+    input: { view: z.string().optional(), options: obj.optional() },
+    readOnly: true,
+  },
+  applyDetailPlan: {
+    description: "Carry out the detailing plan as one revision: its items in order (views, then sizes, datums, fits, symbols, notes, tables, title block, then frames under their callouts), what it added moved clear of other text. skip: item ids to leave out; only: just these; options as detailPlan's. Returns what each item made and the critic's findings. Then fix the findings with setAnnotation / editAnnotation / deleteAnnotations and checkDrawing again.",
+    input: { skip: z.array(z.string()).optional(), only: z.array(z.string()).optional(), view: z.string().optional(), options: obj.optional() },
+  },
+  checkDrawing: {
+    description:
+      "The detailing critic on the drawing as it is now: the drawing checks, every hole sized and located once, a size given twice (or a loop of dimensions over-defining one), dimensions to hidden lines, GD&T validity against the datums on the drawing, the plan's fits and frames present, tolerance stacks of dimension chains (worst case and RSS by toleranceOf, against twice the general tolerance of the span), text running into text, a table or the title block, the general tolerance and material. Each finding says what to do.",
+    readOnly: true,
+  },
+  renderSheet: {
+    description: "A picture of a drawing sheet (PNG, about 150 dpi, the first sheet unless named): look at it for crowding, overlaps and anything that does not read like a manufacturing drawing.",
+    input: { sheet: z.string().optional() },
+    readOnly: true,
+  },
+  deleteAnnotations: {
+    description: "Delete several annotations at once, as one revision.",
+    input: { ids: z.array(z.string()) },
   },
   undo: { description: "Step back to the previous revision." },
   redo: { description: "Step forward again after undo." },

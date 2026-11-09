@@ -50,6 +50,10 @@ import { MAX_STEP_CHARS } from "../features/import/stepText";
 import { agentView, sizeText } from "../features/import/doc";
 import { selectorHealth } from "./health";
 import { LocalKernel } from "../ask/kernel";
+import { autoDetail, findingsOf, makePlan } from "../ask/detail/auto";
+import { detailState } from "../ask/detail/execute";
+import { planBrief, planWith, type DetailPlan } from "../ask/detail/plan";
+import { sheetRaster } from "../ask/detail/raster";
 import { commandMade, expandTool, planBatch } from "../ask/tools/batch";
 import { facePlane, getSketch, listDatums, listEdges, listFaces, measureBetween, partSummary } from "../ask/tools/inspect";
 import { planReply, readPlan, runChecks, type Plan } from "../ask/tools/plan";
@@ -126,6 +130,8 @@ export const EDIT_TOOLS = [
   "setCutList",
   "addLibraryProfile",
   "importStep",
+  "applyDetailPlan",
+  "deleteAnnotations",
 ] as const;
 export const READ_TOOLS = [
   "listFeatures",
@@ -152,6 +158,9 @@ export const READ_TOOLS = [
   "exportDxf",
   "cutList",
   "exportCutList",
+  "detailPlan",
+  "checkDrawing",
+  "renderSheet",
 ] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
@@ -205,6 +214,8 @@ export class AgentSession {
   private readonly inspector: LocalKernel;
   /** The agent's build plan, when it made one: partSummary runs its checks on the part as it is. */
   private plan: Plan | null = null;
+  /** The drawing's detailing plan by rules (detailPlan), for applyDetailPlan (wave Q3B). */
+  private detailing: DetailPlan | null = null;
 
   private constructor(
     private readonly opts: SessionOptions,
@@ -447,6 +458,12 @@ export class AgentSession {
         if (text) return { result: { ok: true, section, text } };
         return section ? this.fail(`reference: no section "${section}"; sections:\n${sectionIndex()}`) : { result: { ok: true, sections: sectionIndex() } };
       }
+      case "detailPlan":
+      case "applyDetailPlan":
+      case "checkDrawing":
+      case "renderSheet":
+      case "deleteAnnotations":
+        return this.detail(tool, a);
       case "plan": {
         const p = readPlan(a);
         if (typeof p === "string") return this.fail(p);
@@ -455,6 +472,48 @@ export class AgentSession {
       }
       default:
         return this.fail(`unknown tool "${tool}" (tools: ${[...EDIT_TOOLS, ...READ_TOOLS].join(", ")})`);
+    }
+  }
+
+  // ------------------------------------------------------------ detailing (wave Q3B)
+
+  /** The detailing tools: the plan by rules, carrying it out as one revision, the critic, the sheet as a picture. */
+  private async detail(tool: string, a: Record<string, unknown>): Promise<CallResult> {
+    const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
+    try {
+      switch (tool) {
+        case "detailPlan":
+        case "applyDetailPlan": {
+          const view = typeof a.view === "string" ? a.view : undefined;
+          const options = isObject(a.options) ? (a.options as never) : undefined;
+          const plan = tool === "applyDetailPlan" && this.detailing && !options && (!view || this.detailing.view === view) ? this.detailing : (await makePlan(this.doc, this.inspector, { ...(view ? { view } : {}), ...(options ? { options } : {}) })).plan;
+          this.detailing = plan;
+          if (tool === "detailPlan") return { result: { ok: true, ...planBrief(plan, false) } };
+          const scope = this.writeScope ? [...this.writeScope, ...this.owned] : ["*"];
+          const r = await autoDetail(this.doc, this.inspector, { plan: planWith(plan, { skip: strs(a.skip), only: strs(a.only) }), scope });
+          if (!r.commands.length) return { result: { ok: true, changed: false, note: "the drawing already has everything the plan adds" } };
+          const done = this.editMany(r.commands, { extra: { items: r.execution.results.map((x) => `${x.ok ? "✓" : "✗"} ${x.item}${x.error ? ` (${x.error})` : ""}`), findings: r.findings.map((f) => `${f.severity} (${f.rule}): ${f.message}`) } });
+          return done;
+        }
+        case "checkDrawing": {
+          const findings = findingsOf(await detailState(this.doc, this.inspector), this.detailing ?? undefined);
+          return { result: { ok: true, passes: !findings.some((f) => f.severity === "error"), findings: findings.map((f) => `${f.severity} (${f.rule}): ${f.message}`) } };
+        }
+        case "renderSheet": {
+          const st = await detailState(this.doc, this.inspector, typeof a.sheet === "string" ? { sheet: a.sheet } : {});
+          if (!st.sheet) return this.fail("renderSheet: the part has no drawing (newDrawing makes one)");
+          const shot = await sheetRaster(st.sheet, { side: 1800 });
+          return { result: { ok: true, sheet: st.sheet.id, width: shot.width, height: shot.height }, image: shot.png };
+        }
+        case "deleteAnnotations": {
+          const ids = strs(a.ids) ?? [];
+          if (!ids.length) return this.fail('deleteAnnotations: give "ids", the annotations to delete');
+          return this.editMany(ids.map((id) => ({ type: "setAnnotation", id, annotation: null }) as Command));
+        }
+      }
+      return this.fail(`unknown tool "${tool}"`);
+    } catch (e) {
+      return this.fail(`${tool}: ${(e as Error).message}`);
     }
   }
 

@@ -168,7 +168,8 @@ export function layoutHole(a: HoleAnnotation, ctx: AnnotationContext, cv: Compos
     prims.push({ k: "line", pts: [[t.c[0] - m, t.c[1]], [t.c[0] + m, t.c[1]]], w: ctx.style.thin, dash: [6, 1.5, 1, 1.5], layer: "CENTER" });
     prims.push({ k: "line", pts: [[t.c[0], t.c[1] - m], [t.c[0], t.c[1] + m]], w: ctx.style.thin, dash: [6, 1.5, 1, 1.5], layer: "CENTER" });
   }
-  return { prims, textBox: d.textBox, text: lines.join(" "), at: d.knee, grips: [{ name: "knee", at: d.knee, field: "at" }], place: { pts: [fromCentre(cv, d.tip), fromCentre(cv, d.knee)], text: lines.join(" ") } };
+  // `under`: a frame naming the callout (gdt.dimension) hangs under its text (ISO 1101: under the size it tolerances).
+  return { prims, textBox: d.textBox, under: [(d.textBox.min[0] + d.textBox.max[0]) / 2, d.textBox.min[1]], text: lines.join(" "), at: d.knee, grips: [{ name: "knee", at: d.knee, field: "at" }], place: { pts: [fromCentre(cv, d.tip), fromCentre(cv, d.knee)], text: lines.join(" ") } };
 }
 
 /** Phase L's callout words (the classic template keeps them). */

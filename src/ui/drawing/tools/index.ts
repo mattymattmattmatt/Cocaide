@@ -14,6 +14,8 @@ import "./symbolTools";
 import "./noteTools";
 import "./sketchTools";
 import "./editing";
+// Phase Q wave Q3B: AI detailing (Detail with AI…, Auto-detail, contextual asks).
+import "./aiTools";
 
 export * from "./registry";
 export * from "./kinds";

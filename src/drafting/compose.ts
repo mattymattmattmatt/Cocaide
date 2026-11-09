@@ -1475,7 +1475,9 @@ class Composer {
       let box: Box;
       if (a.at) box = { min: [a.at[0], a.at[1] - h], max: [a.at[0] + w, a.at[1]] };
       else if (first) {
-        box = { min: [this.frame.max[0] - w, this.titleBlock.max[1]], max: [this.frame.max[0], this.titleBlock.max[1] + h] };
+        // Above the title block, and above the revision block that grows on it.
+        const base = Math.max(this.titleBlock.max[1], this.format?.revisionBlock && this.format.revisionBlock.max[0] > this.frame.max[0] - w ? this.format.revisionBlock.max[1] : -Infinity);
+        box = { min: [this.frame.max[0] - w, base], max: [this.frame.max[0], base + h] };
         first = false;
       } else {
         box = { min: [left - w, this.frame.min[1]], max: [left, this.frame.min[1] + h] };

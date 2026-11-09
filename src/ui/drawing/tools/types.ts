@@ -11,7 +11,8 @@
 // the toolbar, the shortcuts, the tree and the property panel pick them up.
 
 import type { ReactNode } from "react";
-import type { DrawingGeometry } from "../../../ask/kernel";
+import type { DrawingGeometry, KernelPort } from "../../../ask/kernel";
+import type { AskTarget } from "../../../ask/packet";
 import type { Command, RawDocument } from "../../../doc/commands";
 import type { Drawing, DrawingSheet, Vec2, Vec3 } from "../../../doc/types";
 import type { ComposedSheet } from "../../../drafting/compose";
@@ -120,7 +121,14 @@ export interface DrawingToolCtx {
   /** Opens a dialog of the workspace (insert table, sheet format, drawing properties, title block, export). */
   dialog(name: DrawingDialog, arg?: string): void;
   /** Whole-drawing actions App owns: New drawing, Balloon every item. */
-  actions: { newDrawing(): void; balloonAll(): void };
+  actions: {
+    newDrawing(): void;
+    balloonAll(): void;
+    /** Opens the AI ask on a target with a prompt, sent at once (submit) or left to finish (wave Q3B). */
+    ask?(target: AskTarget, prompt: string, submit: boolean): void;
+    /** The kernel, for tools that compose the drawing themselves (Auto-detail). */
+    kernel?: KernelPort;
+  };
 }
 
 export type DrawingDialog = "table" | "format" | "properties" | "titleBlock" | "export";
