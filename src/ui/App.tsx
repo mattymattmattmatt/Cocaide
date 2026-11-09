@@ -1198,7 +1198,8 @@ export function App() {
     project: (specs) => kernel.port.project(doc ?? {}, specs),
     newDrawing: () => void newDrawing(),
     balloonAll,
-    openAsk: (target, x, y) => openAskRef.current(target, x, y),
+    openAsk: (target, x, y, prompt) => openAskRef.current(target, x, y, undefined, undefined, prompt),
+    kernel: kernel.port,
     exportDrawing: (kind, opts) => void exportDrawing(kind, opts),
     docName: typeof doc?.name === "string" ? doc.name : null,
     bodies: view?.bodies.map((b) => b.name) ?? [],
@@ -1207,7 +1208,7 @@ export function App() {
 
   // ------------------------------------------------------------ right-click ask
 
-  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, dropped?: { drawing: Drawing; photo?: Photo; readAs: "drawing" | "photo" }) => {
+  const openAsk = (target: AskTarget, x: number, y: number, draftSketch?: SketchFeature, dropped?: { drawing: Drawing; photo?: Photo; readAs: "drawing" | "photo" }, prompt?: { text: string; submit: boolean }) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
     // The assistant works on the part as it is: an open feature session is finished first (asked).
     if (sessionRef.current) return void sessionApi.finishFirst("ask the assistant", () => setTimeout(() => openAskRef.current(target, x, y, draftSketch, dropped), 0));
@@ -1229,7 +1230,11 @@ export function App() {
     if (isDrawingTarget(target) && !validateDocument(askDoc).drawing) return setNotice({ kind: "error", text: "Make a drawing first: New drawing." });
     const op = target.kind === "feature" ? askDoc.features.find((g) => g.id === target.id)?.op : undefined;
     const kind: PacketKind = target.kind === "feature" ? featureKind(op) : target.kind;
-    ask.open({ target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, ...dropped, x, y });
+    // From a drawing tool (Detail with AI…, a right-click entry): beside the sheet, with its prompt sent or left to finish.
+    const place = x === 0 && y === 0 ? { x: Math.round(window.innerWidth * 0.62), y: 96 } : { x, y };
+    const askCtx = { target, label: targetLabel(askDoc, target, topo), kind, doc: askDoc, sketch: sketchCtx, ...dropped, ...place };
+    ask.open(askCtx, prompt?.text ?? "");
+    if (prompt?.submit) void ask.submit(askCtx, prompt.text, false);
   };
 
   /**

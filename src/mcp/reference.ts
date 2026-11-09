@@ -472,6 +472,45 @@ New drawing dimensions a part from its design intent: overall sizes once (a roun
 callout, hole places from datums A, B, C (or centre to centre when symmetric), pockets and slots sized and placed, corner radii and
 fillets once TYP, a numbered general notes block. A dimension whose target goes stays where it was, red, listed by the checks.
 
+## detailing (fully detail a drawing: the plan by rules, carrying it out, the critic)
+"Fully detail this drawing" makes a manufacturing drawing: every feature sized and located once, a datum scheme, fits and GD&T by what each
+feature is for, surface texture, welds, the general tolerance, notes, tables, title block and revision. Work in three steps:
+1. detailPlan(view?, options?) - the plan by rules, read-only. It reads the part's design intent: a hole from the Hole Wizard is tapped
+   (its thread called out), clearance for a screw (ISO 273 fine / medium / coarse: Ø6.6 is M6 medium; a plain size under the general
+   tolerance), counterbored or countersunk; a plain hole named for a dowel or pin, or a small blind plain hole of a whole millimetre, is a
+   dowel hole (H7, the dowel m6: fit H7/m6); named for a bearing, or a rolling bearing's outside diameter, a bearing seat (H7, shaft k6); named
+   for a guide or bush, a sliding fit (H7/g6). A full round bore no hole made (a turned or extruded bore) is H7. A weldment has members,
+   joints and welds. Each item: { id, group, label, why, on }. Groups: views (a section through hidden insides), dimensions (what a view
+   lacks), datums (A the mounting face seen edge on, B and C the plan view's left and bottom edges; a round part's B its bore), fits, gdt
+   (position Ø0.1 Ⓜ to A|B|C for a pattern of bolt holes and its locating dimensions basic; Ø0.05 without Ⓜ for fitted holes, with
+   perpendicularity Ø0.02 to A for a bearing seat; flatness on A: 0.05 up to 100 mm, 0.1 up to 300, 0.2 beyond), surface (Ra 3.2 on A,
+   Ra 1.6 in fitted bores, Ra 0.8 in dowel holes, a general Ra 6.3; a weldment as fabricated), welds (from the weld table, else fillet a3
+   all round at each joint), tolerance (ISO 2768-mK; a weldment ISO 13920-BF), notes, tables (cut list and balloons), title (material,
+   revision A; a revision row "A FIRST ISSUE"). options: { "standard": "ISO" | "ASME", "generalTolerance": "ISO 2768-fH" | "ISO 2768-mK" |
+   "ISO 2768-cL" | "ISO 13920-AE" ... | "X.X ±0.5, X.XX ±0.1, ANG ±0.5°", "position": 0.1, "roughness": "Ra 6.3" | null }.
+2. applyDetailPlan(skip?, only?, view?, options?) - carries it out as one edit; returns each item's result and the critic's findings.
+   Example: applyDetailPlan({ "skip": ["surface_general"], "options": { "generalTolerance": "ISO 2768-fH" } }).
+3. checkDrawing() - the critic; renderSheet(sheet?) - the sheet as a picture. Fix each finding, then check again. A finding names what to do:
+   "hole_1 is not located: dimension its centre from the datum edges" -> setAnnotation("d9", { "type": "dimension", "view": "top",
+   "from": "@left", "to": "top:chole_1/c0" }); "d1 and d7 both give 80" -> deleteAnnotations(["d7"]); "d1 closes a loop with k1 + k2" ->
+   editAnnotation("d1", { "tolerance": { "kind": "reference" } }); "the chain k1 + k2 stacks up to ±0.5" -> dimension the critical size from
+   the datum directly, or tighten a link ({ "tolerance": { "kind": "symmetric", "plus": 0.05 } }); "a line of h6 runs through gdt_2" or
+   "gdt_2 is drawn 40 mm away from h5" -> editAnnotation("gdt_2", { "at": null }) hangs a frame back under its callout, or give it an "at"
+   beside the callout's text; "d3 and d4 are drawn over one another" -> move one dimension to its own row ({ "offset": 18 }). A hole on a
+   centre line with a dimensioned hole counts as located that way (holes in a row share their dimension).
+   Readability findings are warnings: look at renderSheet before moving things, and keep frames against what they tolerance.
+The user's right-click asks arrive as ordinary requests on a view with a selection: "Detail this view" (the plan for that view only),
+"Add a fit…" on a hole's circle (selection: its GeoRef, e.g. "top:ehole_1/c0": give its callout or Ø dimension the fit its purpose
+needs), "Add GD&T…" on an edge or face seen edge-on (a datum feature, flatness, perpendicularity or position on it), and on a callout
+"Add a fit…" / on a dimension "Tolerance this…". The packet's selection says what each GeoRef is (what, feature, diameter, length).
+Refining by hand: a fit { "kind": "fit", "fit": "H7" } on a hole callout or a Ø dimension; a frame under a callout
+{ "type": "gdt", "view": "top", "dimension": "h4", "rows": [{ "characteristic": "position", "diameter": true, "tolerance": 0.1,
+"material": "M", "datums": [{ "label": "A" }, { "label": "B" }, { "label": "C" }] }] }; locating dimensions basic
+editAnnotation("d5", { "tolerance": { "kind": "basic" } }); flatness on a face { "type": "gdt", "view": "front", "on": "front:@bottom",
+"rows": [{ "characteristic": "flatness", "tolerance": 0.05 }] }; Ra on a bore { "type": "surface", "view": "top", "symbol": "removal",
+"values": ["Ra 1.6"], "on": "top:ebore/c0" }; a fillet weld { "type": "weld", "view": "front", "on": "front:A", "arrowSide":
+{ "symbol": "fillet", "size": "a3" }, "allAround": true, "process": "135" }.
+
 ## properties (the part's number, description, revision ...)
 "properties": { "partNumber": "BR-1001", "description": "Base bracket, 6 mm plate", "revision": "B", "author": "J. Smith",
   "finish": "Hot-dip galvanised", "custom": { "Customer": "Acme Pty Ltd", "Job": "2417" } }   every field optional text
@@ -629,5 +668,6 @@ setSheet(patch, sheet?), addSheet(id?, sheet?, index?), renameSheet(id, name), d
 setView(id, view | null, sheet?), moveView(id, at?, sheet?), setAnnotation(id, annotation | null, sheet?), editAnnotation(id, patch), setTable(id, table | null, sheet?) - edit the drawing; a view takes its annotations and the views made from it with it.
 drawing - every composed sheet: each view's kind, scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks. geoRefs(view) - what a view offers to attach to.
 exportDrawing(format: "pdf" | "svg" | "dxf", file?, sheet?) - a PDF of every sheet (font embedded), or one sheet as SVG or DXF (a layer per kind of line).
+detailPlan(view?, options?), applyDetailPlan(skip?, only?, view?, options?), checkDrawing, renderSheet(sheet?), deleteAnnotations(ids) - fully detail a drawing (reference: detailing).
 undo, redo.
 `;

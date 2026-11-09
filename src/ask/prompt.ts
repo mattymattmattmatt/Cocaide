@@ -111,6 +111,8 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
       ];
     case "view":
       return [
+        { label: "Detail this view", prompt: "Fully detail this view: every feature it shows sized and located once, the fits, GD&T and surface texture its features need.", submit: true },
+        { label: "Add GD&T", prompt: "Add the geometric tolerances this view needs (datums, position of hole patterns, flatness of mating faces): ", submit: false },
         { label: "Dimension the overall size", prompt: "Dimension the overall size of the part in this view.", submit: true },
         { label: "Dimension a member's length", prompt: "Dimension the length of ", submit: false },
         { label: "Balloon what it shows", prompt: "Balloon the cut list items this view shows that have no balloon yet.", submit: true },
@@ -118,6 +120,9 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
       ];
     case "annotation":
       return [
+        { label: "Tolerance this", prompt: "Tolerance this dimension: ", submit: false },
+        { label: "Add a fit", prompt: "Give this hole or diameter the ISO 286 fit ", submit: false },
+        { label: "Add GD&T", prompt: "Add the geometric tolerance this feature needs (to the datums on the drawing): ", submit: false },
         { label: "What does it say?", prompt: "What does this annotation show, and where is it measured from?", submit: true },
         { label: "Move it to the other side", prompt: "Move this to the other side of the view.", submit: true },
         { label: "Delete it", prompt: "Delete this annotation.", submit: true },
@@ -130,12 +135,15 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
       ];
     case "sheet":
       return [
+        { label: "Fully detail this sheet", prompt: DETAIL_PROMPT, submit: true },
         { label: "Fill in the title block", prompt: "Fill in this sheet's title block from the part's properties.", submit: true },
         { label: "Check this sheet", prompt: "Does this sheet pass its checks? Do not change anything.", submit: true },
         { label: "Change the sheet size", prompt: "Change this sheet to ", submit: false },
       ];
     case "drawing":
       return [
+        { label: "Fully detail this drawing", prompt: DETAIL_PROMPT, submit: true },
+        { label: "Check the tolerance stack", prompt: "Check this drawing with checkDrawing: are any tolerance stacks over their limit, and is anything sized twice or not located? Do not change anything.", submit: true },
         { label: "Check the drawing", prompt: "Does this drawing pass its checks? Do not change anything.", submit: true },
         { label: "Balloon every item", prompt: "Add a balloon for every cut list item that has none.", submit: true },
         { label: "Change the scale", prompt: "Change the sheet's scale to ", submit: false },
@@ -158,6 +166,23 @@ export function scopedActions(kind: PacketKind | AskTarget["kind"]): ScopedActio
         { label: "Suppress it: what breaks?", prompt: "If this were suppressed, what would break? Do not change anything.", submit: true },
       ];
   }
+}
+
+/** What "Fully detail this drawing" (the chip, the toolbar's Detail with AI…) asks. */
+export const DETAIL_PROMPT = "Fully detail this drawing for manufacture: every feature sized and located once, the datum scheme, fits and GD&T by what each feature is for, surface texture, welds, the general tolerance, notes and tables.";
+
+/**
+ * How a detailing ask works (Phase Q wave Q3B), added to its user turn. The
+ * compact form is for a small local model: the same steps, fewer words.
+ */
+export function detailGuide(compact: boolean, applied: boolean): string {
+  if (compact)
+    return `Detailing: ${applied ? "the rule plan is already applied (see the packet's detailing)." : "call applyDetailPlan first (the plan by rules)."} Then call checkDrawing and fix each finding with setAnnotation / editAnnotation / deleteAnnotations (GeoRefs from the packet). Stop when checkDrawing has no errors. Never give a dimension a value: it is measured.`;
+  return `This is a detailing ask: make the drawing a complete, fully toleranced manufacturing drawing.
+1. ${applied ? "The plan by rules (the packet's detailing.plan) is already applied as your first edit." : "Read the plan by rules with detailPlan and carry it out with applyDetailPlan (skip items that do not fit this part, change options when the part needs it)."}
+2. Refine what rules cannot judge: the function of each feature (the packet's detailing.design and model features: a bearing seat H7 with a k6 shaft, a dowel hole H7 for an m6 dowel, a sliding fit H7/g6, clearance holes per ISO 273 as plain sizes, threads from the Hole Wizard), a datum scheme that matches how the part is held (A the primary mounting face, B and C locating edges or a bore), position tolerances of hole patterns to A|B|C with Ⓜ for bolted holes and their locating dimensions basic, flatness / perpendicularity on mating faces, surface texture (Ra 1.6 on fits, Ra 3.2 on mating faces, a general Ra 6.3; a weldment as fabricated), weld symbols, ISO 2768-mK or ISO 13920-BF.
+3. Check with checkDrawing (and renderSheet to look at it): every feature sized and located exactly once, nothing dimensioned twice or to a hidden line, valid GD&T, tolerance stacks within limits, nothing running into anything. Fix each finding, in as few edits as you can, then check again.
+Finish with two or three sentences: the datum scheme, the fits and tolerances you chose and why, anything left for the user.`;
 }
 
 export const SYSTEM = `You are the agent inside Cocaide, a parametric CAD program. The user right-clicked one thing in their part and typed a request about it. You get a context packet that describes that thing: the target, its parent, its direct children, its measurements, the selector for a picked face or edge, and the error if it failed. When the user lets the ask change the whole part (writeScope ["*"]), the packet also carries "part": every feature in brief, and getFeature reads any of them. Otherwise the packet is all the context there is; do not ask for the rest of the part.
@@ -466,7 +491,51 @@ const DRAWING_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS, ...BUILD_TOOLS].map((t) => t.name));
+/**
+ * Detailing a drawing (Phase Q wave Q3B): the rule plan, carrying it out, the
+ * critic, a picture of the sheet, and deleting several annotations at once.
+ */
+export const DETAIL_READ_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "detailPlan",
+    description:
+      'The detailing plan by rules for the drawing (or one view): the part\'s design intent (hole purposes, bores, weldment), then items by group (views, sizes and locations, datums A/B/C, fits such as bore H7 and dowel H7/m6, position Ø0.1 Ⓜ to A|B|C with basic locating dimensions, flatness on A, perpendicularity of fitted bores, surface texture Ra 3.2 / 1.6 and a general Ra 6.3, weld symbols, general tolerance, notes, tables, title block and revision), each with its id, what it adds and why. options: { "standard": "ISO" | "ASME", "generalTolerance": "ISO 2768-mK" | "ISO 2768-fH" | "ISO 13920-BF" | an ASME block, "position": 0.1, "roughness": "Ra 6.3" | null }. Read-only: applyDetailPlan carries it out.',
+    input_schema: obj({ view: { type: "string" }, options: any }, []),
+  },
+  {
+    name: "checkDrawing",
+    description:
+      "The detailing critic on the drawing as it is now (your edits included): the drawing checks, every hole sized and located once, sizes given twice, dimensions to hidden lines, GD&T validity with the datums on the drawing, the plan's tolerances present, tolerance stacks of dimension chains (worst case and RSS against the limit), text running into other text, the general tolerance and material. Each finding says what to do.",
+    input_schema: obj({}, []),
+  },
+  {
+    name: "renderSheet",
+    description: "A picture of the sheet as it is now (PNG, about 150 dpi): look at it for crowding, overlaps and anything that does not read like a manufacturing drawing.",
+    input_schema: obj({ sheet: { type: "string" } }, []),
+  },
+];
+
+export const DETAIL_WRITE_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "applyDetailPlan",
+    description:
+      'Carry out the detailing plan (detailPlan) on the drawing as one edit: its items in order (views, sizes, datums, fits, frames, symbols, notes, tables, title block), what was added moved clear of other text. skip: item ids to leave out; only: just these items; options as detailPlan\'s. Returns what each item made and the critic\'s findings after it. Then refine: fix the findings with setAnnotation / editAnnotation, and check again.',
+    input_schema: obj({ skip: { type: "array", items: { type: "string" } }, only: { type: "array", items: { type: "string" } }, view: { type: "string" }, options: any }, []),
+  },
+  {
+    name: "deleteAnnotations",
+    description: "Delete several annotations at once (a duplicate dimension, a frame you are replacing). One edit.",
+    input_schema: obj({ ids: { type: "array", items: { type: "string" } } }, ["ids"]),
+  },
+];
+
+/** True when a request asks for the drawing to be detailed (dimensioned and toleranced), not one change. */
+export function isDetailRequest(text: string): boolean {
+  const t = text.toLowerCase();
+  return /\b(fully|completely|properly)\s+(detail|dimension|tolerance)|\bdetail (this|the|my|it)\b|\bauto-?detail|manufacturing drawing|\b(add|apply) (all )?(the )?(tolerances|gd&?t)\b.*\b(drawing|sheet|view)\b|\btolerance (this|the) (drawing|sheet|view)\b/.test(t);
+}
+
+export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS, ...BUILD_TOOLS, ...DETAIL_WRITE_TOOLS].map((t) => t.name));
 
 /** The write tools a batch step may name in the right-click agent. */
 export const BATCH_STEP_TOOLS: readonly string[] = [...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS].map((t) => t.name).concat(["sketchProfile", "fullyDefine", "holes"]);
@@ -485,10 +554,10 @@ const DRAWING_KINDS = new Set<string>(["view", "annotation", "table", "sheet", "
 export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; drawing: boolean; build?: boolean }): Anthropic.Tool[] {
   const drawingTarget = !!kind && DRAWING_KINDS.has(kind);
   const read = [...READ_TOOLS, ...INSPECT_TOOLS];
-  if (mode === "explain") return wide?.part || !drawingTarget ? read : READ_TOOLS.filter((t) => t.name === "escalate");
-  if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? DRAWING_TOOLS : [])];
+  if (mode === "explain") return wide?.part || !drawingTarget ? [...read, ...(wide?.drawing ? DETAIL_READ_TOOLS : [])] : [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DETAIL_READ_TOOLS];
+  if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? [...DRAWING_TOOLS, ...DETAIL_READ_TOOLS, ...DETAIL_WRITE_TOOLS] : [])];
   // The whole sheet (its title block among it) may change the part's properties; a view or an annotation may not.
-  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...(kind === "drawing" || kind === "sheet" ? [SET_PROPERTIES, SET_CUT_LIST] : [])];
+  if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...DETAIL_READ_TOOLS, ...DETAIL_WRITE_TOOLS, ...(kind === "drawing" || kind === "sheet" ? [SET_PROPERTIES, SET_CUT_LIST] : [])];
   return [...read, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS];
 }
 
@@ -501,9 +570,10 @@ const RARE_TOOLS = new Set(["reorderFeature", "setFolder", "suppressFolder", "re
 
 export function leanTools(tools: Anthropic.Tool[], packet?: unknown): Anthropic.Tool[] {
   const welding = /"(member|node|joint)"/.test(JSON.stringify((packet as { target?: unknown } | undefined)?.target ?? ""));
-  const keep = tools.filter((t) => !RARE_TOOLS.has(t.name) || (welding && (t.name === "setNode" || t.name === "setWeld")));
-  // Without batch there is no other way to reach the rest: keep the list whole.
-  return keep.some((t) => t.name === "batch") ? keep : tools;
+  // A picture of the sheet is no use to a small text model (and costs its context); several deletes are a batch away.
+  const keep = tools.filter((t) => (!RARE_TOOLS.has(t.name) || (welding && (t.name === "setNode" || t.name === "setWeld"))) && t.name !== "renderSheet" && t.name !== "deleteAnnotations");
+  // Without batch there is no other way to reach the rest: keep the list whole (but for the picture).
+  return keep.some((t) => t.name === "batch") ? keep : tools.filter((t) => t.name !== "renderSheet");
 }
 
 export function userTurn(packet: Packet, text: string, mode: AskMode, image?: Uint8Array, wide = false, build = false): Anthropic.ContentBlockParam[] {

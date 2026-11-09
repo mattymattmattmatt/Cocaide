@@ -2188,3 +2188,13 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .crash-screen .crash-buttons { display: flex; gap: 8px; margin: 12px 0; }
 .crash-screen button { padding: 6px 14px; border-radius: 6px; border: 1px solid #b8bfcc; background: #fff; cursor: pointer; }
 .crash-screen .crash-stack { font-size: 12px; white-space: pre-wrap; background: #fff; padding: 10px; border-radius: 6px; border: 1px solid #dde1e8; }
+/* Phase Q wave Q3B: the detailing plan card */
+.ask.ask-done:has(.detail-card) { width: 520px; }
+.detail-card .detail-options { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; }
+.detail-card .detail-options label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+.detail-card .detail-items { max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.detail-card .detail-group { border: 1px solid var(--border, #d6dbe1); border-radius: 6px; padding: 4px 8px 6px; margin: 0; }
+.detail-card .detail-group legend { font-size: 11.5px; font-weight: 600; padding: 0 4px; }
+.detail-card .detail-item { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; padding: 2px 0; }
+.detail-card .detail-item.blocked span { color: var(--muted); text-decoration: line-through; }
+.drawing-session .detail-card .detail-items { max-height: none; }

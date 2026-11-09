@@ -18,7 +18,12 @@ import type { CheckResult, KernelPort, PartTopology } from "./kernel";
 import type { AskModel } from "./model";
 import { composeFor } from "./drawingPacket";
 import { buildPacket, extrudeMeasurements, isDrawingTarget, partOutline, type AskTarget, type Packet } from "./packet";
-import { base64, BATCH_STEP_TOOLS, classify, isVisual, leanTools, SYSTEM, SYSTEM_COMPACT, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
+import { base64, BATCH_STEP_TOOLS, classify, detailGuide, isDetailRequest, isVisual, leanTools, SYSTEM, SYSTEM_COMPACT, toolsFor, userTurn, WRITE_TOOL_NAMES, type AskMode } from "./prompt";
+import { autoDetail, findingsOf, makePlan } from "./detail/auto";
+import type { Finding } from "./detail/critic";
+import { detailState } from "./detail/execute";
+import { planBrief, planWith, type DetailPlan } from "./detail/plan";
+import { sheetRaster } from "./detail/raster";
 import type { Effort } from "./models";
 import { commandMade, expandTool, planBatch, toolCommand, type StepResult } from "./tools/batch";
 import { featureInfo, facePlane, getSketch, listDatums, listEdges, listFaces, measureBetween, partSummary, shotRequest } from "./tools/inspect";
@@ -39,7 +44,7 @@ const LOOK_TOOLS = new Set(["measure", "partSummary", "measureBetween", "screens
  * turns, at least medium effort, and a plan with a self-check at the end.
  */
 export interface Budget {
-  kind: "surgical" | "wide" | "build";
+  kind: "surgical" | "wide" | "build" | "detail";
   /** Model turns per ask. */
   maxTurns: number;
   /** Edit turns allowed after the first kept edit. */
@@ -48,7 +53,9 @@ export interface Budget {
   minEffort?: Effort;
 }
 
-export function budgetFor(opts: { target: AskTarget; reach?: AskReach; mode: AskMode; build?: boolean }): Budget {
+export function budgetFor(opts: { target: AskTarget; reach?: AskReach; mode: AskMode; build?: boolean; detail?: boolean }): Budget {
+  // Detailing a drawing: many small edits and a few critic rounds.
+  if (opts.mode === "edit" && opts.detail) return { kind: "detail", maxTurns: 30, corrections: 30, maxTokens: 12000, minEffort: "medium" };
   if (opts.mode === "edit" && (opts.build ?? opts.target.kind === "part")) return { kind: "build", maxTurns: 40, corrections: 40, maxTokens: 16000, minEffort: "medium" };
   if (opts.reach === "part") return { kind: "wide", maxTurns: 20, corrections: 8, maxTokens: 12000 };
   return { kind: "surgical", maxTurns: 8, corrections: 1, maxTokens: 8000 };
@@ -79,6 +86,11 @@ export interface AskRequest {
   attachments?: Attachment[];
   /** A follow-up: the earlier requests of this conversation, in order (from the AI history). */
   earlier?: EarlierTurn[];
+  /**
+   * Detail the drawing (wave Q3B): true, or the plan as the user left it on the card (it is applied first, then
+   * the model refines it and the critic checks it). Default: when the text asks for detailing on the sheet.
+   */
+  detail?: boolean | { plan: DetailPlan; date?: string };
 }
 
 /** One earlier request of a conversation, as a follow-up carries it: what was asked, said and changed. */
@@ -165,9 +177,11 @@ export interface Proposal {
 }
 
 export interface AskResult {
-  /** questions: a part-level request is missing numbers; nothing is built until the user gives them. */
+  /** questions: a part-level request is missing numbers, or a detailing plan waits on the card; nothing is built until the user answers. */
   outcome: "answer" | "proposal" | "refused" | "failed" | "questions";
   text: string;
+  /** A detailing ask's plan, shown as a card to untick items and change the standard or tolerance before it runs (wave Q3B). */
+  detailPlan?: DetailPlan;
   mode: AskMode;
   visual: boolean;
   packet: Packet | null;
@@ -183,7 +197,7 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   const result: AskResult = { outcome: "failed", text: "", mode, visual, packet: null, proposal: null, calls: [], model: req.model.name, turns: 0 };
   let packet: Packet;
   try {
-    packet = await buildPacket(req.doc, req.target, req.kernel);
+    packet = await buildPacket(req.doc, req.target, req.kernel, { compact: !!req.model.traits?.compactPrompt });
   } catch (e) {
     result.text = `Could not read the target: ${(e as Error).message}`;
     return result;
@@ -199,11 +213,31 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
     packet.writeScope = ["*"];
     packet.part = partOutline(req.doc, sandbox.baseCheck);
   }
-  const budget = budgetFor({ target: req.target, reach: req.reach, mode, build: req.build });
+  const detail = mode === "edit" && isDrawingTarget(req.target) && (req.detail === undefined ? isDetailRequest(req.text) : req.detail !== false);
+  const budget = budgetFor({ target: req.target, reach: req.reach, mode, build: req.build, detail });
   const build = budget.kind === "build";
   const MAX_TURNS = budget.maxTurns;
   const CORRECTIONS = budget.corrections;
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: [...leadBlocks(req), ...userTurn(packet, req.text, mode, image, wide, build)] }];
+  const compact = !!req.model.traits?.compactPrompt;
+  let applied = false;
+  if (detail) {
+    // The plan by rules: given (as the user left it on the card) it is applied first, as the ask's first edit.
+    const given = typeof req.detail === "object" ? req.detail : null;
+    try {
+      const plan = given?.plan ?? (await makePlan(req.doc, req.kernel, { ...(req.target.kind === "view" ? { view: req.target.id } : {}), ...(req.target.kind === "sheet" ? { sheet: req.target.id } : {}) })).plan;
+      sandbox.detailPlan = plan;
+      if (given) {
+        const out = await sandbox.run("applyDetailPlan", {});
+        applied = out.ok;
+        req.onEvent?.({ type: "tool", name: "applyDetailPlan", ok: out.ok, ...(out.error ? { error: out.error } : {}) });
+      }
+      packet.detailing = { ...((packet.detailing as object | undefined) ?? {}), plan: planBrief(plan, compact), ...(applied ? { applied: sandbox.lastApplied } : {}) };
+    } catch (e) {
+      packet.detailing = { ...((packet.detailing as object | undefined) ?? {}), planError: (e as Error).message };
+    }
+  }
+  const guide: Anthropic.ContentBlockParam[] = detail ? [{ type: "text", text: detailGuide(compact, applied) }] : [];
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: [...leadBlocks(req), ...userTurn(packet, req.text, mode, image, wide, build), ...guide] }];
   const whole = wide || req.target.kind === "part";
   const offered = toolsFor(mode, packet.target.kind, whole ? { part: true, drawing: wide && isObject(req.doc.drawing), build } : undefined);
   // A provider with a small context (a local model) gets the compact prompt and the lean tool list: same tools, same rules.
@@ -216,6 +250,10 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
   const texts: string[] = [];
   let corrections = 0;
   let judged = false;
+  /** Critic rounds of a detailing ask. */
+  let rounds = 0;
+  /** Whether the readability-only critic round was had. */
+  let overlapRound = false;
   let reviewed = false;
   /** Whether the agent has looked at the part since its last kept edit. */
   let looked = true;
@@ -234,6 +272,26 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
       }
       const uses = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
       if (uses.length === 0) {
+        // A detailing ask is judged by the critic, in up to three rounds, with a picture of the sheet for a model that can see.
+        if (detail && rounds < 3 && turn < MAX_TURNS && sandbox.commands.length) {
+          rounds++;
+          // Errors get up to three rounds; readability warnings (what runs into what) one, and only for a model that can see the sheet.
+          const all = await sandbox.detailFindings();
+          const errors = all.filter((f) => f.severity === "error");
+          const findings = errors.length ? [...errors, ...(compact ? [] : all.filter((f) => f.rule === "overlap"))] : !compact && !overlapRound ? all.filter((f) => f.rule === "overlap") : [];
+          if (!errors.length && findings.length) overlapRound = true;
+          if (findings.length) {
+            const shot = compact ? null : await sandbox.sheetPicture();
+            messages.push({
+              role: "user",
+              content: [
+                { type: "text", text: `The detailing critic, round ${rounds} of 3:\n${findings.map((f) => `- ${f.severity}: ${f.message}`).join("\n")}\nFix what you can (setAnnotation, editAnnotation, deleteAnnotations), or stop and say why.` },
+                ...(shot ? [{ type: "image" as const, source: { type: "base64" as const, media_type: "image/png" as const, data: base64(shot) } }] : []),
+              ],
+            });
+            continue;
+          }
+        }
         // A drawing ask is judged by the drawing checks: one that passed before and fails now gets the correction pass.
         const findings = judged ? [] : await sandbox.drawingFindings();
         judged = true;
@@ -374,6 +432,9 @@ class Sandbox {
   private baseTopology: PartTopology | null | undefined;
   /** A whole-part build's plan: its checks are run on the result before the ask ends. */
   private plan: Plan | null = null;
+  /** A detailing ask's plan by rules (wave Q3B), and what applying it made. */
+  detailPlan: DetailPlan | null = null;
+  lastApplied: { item: string; ok: boolean; error?: string; made: string[] }[] = [];
 
   private constructor(
     readonly base: RawDocument,
@@ -458,6 +519,24 @@ class Sandbox {
         const text = section ? referenceSection(section) : null;
         return text ? { ok: true, section, text } : { ok: !section, ...(section ? { error: `no section "${section}"` } : {}), sections: sectionIndex() };
       }
+      case "detailPlan": {
+        try {
+          const view = typeof a.view === "string" ? a.view : this.target.kind === "view" ? this.target.id : undefined;
+          const plan = (await makePlan(this.doc, this.kernel, { ...(view ? { view } : {}), ...(isObject(a.options) ? { options: a.options as never } : {}) })).plan;
+          this.detailPlan = plan;
+          return { ok: true, ...planBrief(plan, false) };
+        } catch (e) {
+          return { ok: false, error: (e as Error).message };
+        }
+      }
+      case "checkDrawing": {
+        const findings = await this.detailFindings();
+        return { ok: true, passes: !findings.some((f) => f.severity === "error"), findings: findings.map((f) => `${f.severity} (${f.rule}): ${f.message}`) };
+      }
+      case "renderSheet": {
+        const png = await this.sheetPicture(typeof a.sheet === "string" ? a.sheet : undefined);
+        return png ? { ok: true, png } : { ok: false, error: "there is no drawing to render" };
+      }
       case "plan": {
         const p = readPlan(a);
         if (typeof p === "string") return { ok: false, error: p };
@@ -468,6 +547,12 @@ class Sandbox {
     if (!WRITE_TOOL_NAMES.has(name)) return { ok: false, error: `unknown tool "${name}"` };
     if (this.mode === "explain") return { ok: false, error: "this ask is a question; it cannot change the part" };
     if (name === "batch") return this.batch(a.commands, a.dryRun === true);
+    if (name === "applyDetailPlan") return this.applyDetail(a);
+    if (name === "deleteAnnotations") {
+      const ids = Array.isArray(a.ids) ? a.ids.filter((x): x is string => typeof x === "string") : [];
+      if (!ids.length) return { ok: false, error: 'deleteAnnotations needs "ids": the annotations to delete' };
+      return this.editMany(ids.map((id) => ({ type: "setAnnotation", id, annotation: null }) as Command));
+    }
     if (name === "sketchProfile" || name === "fullyDefine" || name === "holes") {
       const x = await expandTool(this.doc, this.kernel, name, a);
       if (typeof x === "string") return { ok: false, error: x };
@@ -717,6 +802,48 @@ class Sandbox {
     return this.baseTopology;
   }
 
+  /** Carries out the detailing plan (the one detailPlan gave, or a new one) as one kept edit, under this ask's scope. */
+  private async applyDetail(a: Record<string, unknown>): Promise<Outcome> {
+    try {
+      const view = typeof a.view === "string" ? a.view : this.target.kind === "view" ? this.target.id : undefined;
+      const options = isObject(a.options) ? (a.options as never) : undefined;
+      const base = this.detailPlan && !options && (!view || this.detailPlan.view === view) ? this.detailPlan : (await makePlan(this.doc, this.kernel, { ...(view ? { view } : {}), ...(options ? { options } : {}) })).plan;
+      const plan = planWith(base, { skip: strings(a.skip), only: strings(a.only) });
+      this.detailPlan = plan;
+      const r = await autoDetail(this.doc, this.kernel, { plan, scope: this.scope });
+      // An item whose annotation cannot be drawn is left out, so the rest is kept.
+      const broken = new Set<string>();
+      const fresh = r.execution.state.sheet?.annotations.filter((x) => x.problem).map((x) => x.id) ?? [];
+      const before = new Set((await this.drawingNow(this.doc, this.check))?.state.sheets.flatMap((s) => s.annotations).filter((x) => x.problem).map((x) => x.id) ?? []);
+      for (const id of fresh) if (!before.has(id)) broken.add(id);
+      const commands = r.commands.filter((c) => !("id" in c && broken.has(String(c.id))));
+      this.lastApplied = r.execution.results.map((x) => (x.made.some((m) => broken.has(m)) ? { ...x, ok: false, error: `${x.made.filter((m) => broken.has(m)).join(", ")} could not be drawn` } : x));
+      if (!commands.length) return { ok: true, changed: false, items: this.lastApplied, note: "the drawing already has everything the plan adds" };
+      const out = await this.editMany(commands);
+      if (!out.ok) return out;
+      const findings = await this.detailFindings();
+      return { ok: true, items: this.lastApplied.map((x) => `${x.ok ? "✓" : "✗"} ${x.item}${x.made.length ? `: ${x.made.join(", ")}` : ""}${x.error ? ` (${x.error})` : ""}`), findings: findings.map((f) => `${f.severity} (${f.rule}): ${f.message}`) };
+    } catch (e) {
+      return { ok: false, error: `applyDetailPlan: ${(e as Error).message}` };
+    }
+  }
+
+  /** The detailing critic on the drawing as it is now. */
+  async detailFindings(): Promise<Finding[]> {
+    const state = await detailState(this.doc, this.kernel, { check: this.check });
+    return findingsOf(state, this.detailPlan ?? undefined);
+  }
+
+  /** The sheet as a picture (renderSheet; the critic's rounds show it to a model that can see). */
+  async sheetPicture(sheet?: string): Promise<Uint8Array | null> {
+    try {
+      const state = await detailState(this.doc, this.kernel, { check: this.check, ...(sheet ? { sheet } : {}) });
+      return state.sheet ? (await sheetRaster(state.sheet, { side: 1800 })).png : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** The drawing as it now stands, for an ask from the sheet. */
   private async drawingNow(doc: RawDocument, check: CheckResult) {
     const state = await composeFor(doc, this.kernel, check);
@@ -735,8 +862,11 @@ class Sandbox {
 
   async proposal(): Promise<Proposal> {
     const drawn = isDrawingTarget(this.target) ? await this.drawingNow(this.doc, this.check) : null;
+    // A detailing ask tells what the critic still finds.
+    const left = this.detailPlan ? (await this.detailFindings()).map((f) => `Critic (${f.severity}): ${f.message}`) : [];
     return {
       ...(drawn ? { checks: drawn.checks } : {}),
+      ...(left.length ? { notes: left } : {}),
       commands: this.commands,
       scope: this.scope,
       base: this.base,
@@ -777,6 +907,10 @@ function sheetFields(sh: NonNullable<ReturnType<typeof rawDrawing>>["sheets"][nu
   return rest;
 }
 
+function strings(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
+}
+
 function nextFree(doc: RawDocument, op: string): string {
   const used = new Set(doc.features.map((f) => f.id));
   for (let n = 1; ; n++) if (!used.has(`${op}_${n}`)) return `${op}_${n}`;
@@ -800,7 +934,7 @@ function items(doc: RawDocument): Map<string, string> {
   return out;
 }
 
-function touchedIds(base: RawDocument, doc: RawDocument): string[] {
+export function touchedIds(base: RawDocument, doc: RawDocument): string[] {
   const before = items(base);
   const after = items(doc);
   const ids = new Set([...before.keys(), ...after.keys()]);

@@ -5,6 +5,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent, type AskReach } from "../../ask/agent";
+import type { DetailPlan } from "../../ask/detail/plan";
+import { isDetailRequest } from "../../ask/prompt";
 import type { KernelPort } from "../../ask/kernel";
 import type { AskTarget, PacketKind } from "../../ask/packet";
 import type { Drawing, PartAskResult, Photo } from "../../ask/part";
@@ -151,7 +153,9 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       const attachments = extra.attachments ?? [];
       // A follow-up carries its thread: what was asked, said and changed before.
       const earlier = extra.followUp ? earlierOf(threadOf(historyOf(dk), extra.followUp)) : [];
-      if (!canAsk(settings)) {
+      // "Fully detail this drawing" (wave Q3B): first the plan by rules, as a card. It needs no model.
+      const planning = (ctx.target.kind === "drawing" || ctx.target.kind === "sheet" || ctx.target.kind === "view") && isDetailRequest(text) && !extra.followUp;
+      if (!planning && !canAsk(settings)) {
         setSettingsOpen(true);
         return;
       }
@@ -172,7 +176,12 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       const more = { ...(attachments.length ? { attachments } : {}), ...(earlier.length ? { earlier } : {}) };
       let result: PartAskResult;
       let bridgeSession: string | undefined;
-      if (settings.provider === "claude-code") {
+      if (planning) {
+        steps.push("Planning the detailing from the part…");
+        show();
+        const { planDetailAsk } = await import("../../ask/detail/run");
+        result = await planDetailAsk(ctx.doc, ctx.target as Parameters<typeof planDetailAsk>[1], kernel, settings.provider === "claude-code" ? "Claude Code" : settings.provider === "ollama" ? "Ollama" : "Claude");
+      } else if (settings.provider === "claude-code") {
         // Claude Code runs the whole ask through the bridge; a follow-up continues its session.
         const thread = extra.followUp ? threadOf(historyOf(dk), extra.followUp) : [];
         const resume = [...thread].reverse().find((e) => e.bridgeSession)?.bridgeSession;
@@ -269,6 +278,54 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
     [settings, kernel, library, touchHistory],
   );
 
+  /** The user left the detailing plan as they want it: carried out by the model (it refines and checks), or by rules only. */
+  const detail = useCallback(
+    async (s: Extract<AskState, { phase: "done" }>, plan: DetailPlan, how: "ai" | "rules") => {
+      if (how === "ai" && !canAsk(settings)) {
+        setSettingsOpen(true);
+        return;
+      }
+      abort.current?.abort();
+      const controller = new AbortController();
+      abort.current = controller;
+      const steps = [how === "rules" ? "Detailing by rules…" : "Detailing: the plan first, then the model refines it…"];
+      const show = () => setState({ phase: "running", ctx: s.ctx, prompt: s.prompt, applyNow: false, steps: [...steps] });
+      show();
+      const target = s.ctx.target as Parameters<typeof rulesDetailAsk>[1];
+      const { rulesDetailAsk, detailInstructions } = await import("../../ask/detail/run");
+      let result: PartAskResult;
+      if (how === "rules") result = await rulesDetailAsk(s.ctx.doc, target, kernel, plan);
+      else if (settings.provider === "claude-code") {
+        // Claude Code drives the MCP tools: the plan as the user left it goes in the prompt (applyDetailPlan's skip and options).
+        const { runBridgeAsk } = await import("../../ask/bridge/run");
+        result = await runBridgeAsk({
+          doc: s.ctx.doc,
+          target: s.ctx.target,
+          text: `${s.prompt}\n\n${detailInstructions(plan)}`,
+          kernel,
+          bridge: settings.bridge,
+          signal: controller.signal,
+          onLive: (live) => !controller.signal.aborted && setState({ phase: "running", ctx: s.ctx, prompt: s.prompt, applyNow: false, steps: [], live }),
+        });
+      } else {
+        const model = await modelFor(settings);
+        const onEvent = (e: AskEvent) => {
+          if (e.type === "thinking") steps.push(e.turn === 1 ? "Asking the model…" : "Model is checking the result…");
+          else if (e.type === "tool") steps.push(`${e.name} ${e.ok ? "✓" : `✗ ${e.error ?? ""}`}`);
+          if (!controller.signal.aborted) show();
+        };
+        result = await runAsk({ doc: s.ctx.doc, target: s.ctx.target, text: s.prompt, model, kernel, detail: { plan }, signal: controller.signal, onEvent });
+      }
+      if (controller.signal.aborted) return;
+      updateAsk(s.recordId, { outcome: result.outcome, text: result.text, calls: [...s.result.calls, ...result.calls] });
+      const e = entryOf(result, { id: s.recordId, at: new Date().toISOString(), label: s.ctx.label, target: s.ctx.target, prompt: s.prompt, attachments: s.attachments ?? [] });
+      updateHistory(docKey(s.ctx.doc), s.recordId, { outcome: e.outcome, reply: e.reply, calls: e.calls, changes: e.changes, status: e.status });
+      touchHistory();
+      setState({ ...s, result, preview: true, accepted: false, dropped: undefined, error: undefined });
+    },
+    [settings, kernel, touchHistory],
+  );
+
   const discard = useCallback(() => {
     setState((s) => {
       if (s?.phase === "done") {
@@ -334,5 +391,5 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
   /** Keeps the unsent text of the open ask. */
   const keepDraft = useCallback((ctx: AskContext, text: string) => saveDraft(docKey(ctx.doc), ctx.target, text), []);
 
-  return { busy, liveDoc, state, open, close, submit, answer, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen, history, clearHistory: clear, keepDraft };
+  return { busy, liveDoc, state, open, close, submit, answer, detail, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen, history, clearHistory: clear, keepDraft };
 }

@@ -6,7 +6,9 @@
 // never edits the toolbar itself.
 
 import type { IconName } from "../../icons";
-import type { DrawingTab, DrawingToolDef } from "./types";
+import type { MenuEntry } from "../../ContextMenu";
+import type { Vec2 } from "../../../doc/types";
+import type { DrawingTab, DrawingToolCtx, DrawingToolDef, SheetHit } from "./types";
 
 /** A slot on the toolbar: the tool that will be there, as it is named before it exists. */
 export interface ToolSlot {
@@ -116,4 +118,21 @@ export function toolGroups(tab: DrawingTab): ToolEntry[][] {
 export function toolForKey(key: string): DrawingToolDef | undefined {
   const k = key.toUpperCase();
   return [...tools.values()].find((t) => t.key?.toUpperCase() === k);
+}
+
+// ------------------------------------------------------------ right-click entries (wave Q3B)
+
+/** Entries a module adds to the sheet's right-click menu for what was hit (a view, an annotation ...). */
+export type MenuContribution = (hit: SheetHit, ctx: DrawingToolCtx, at?: Vec2) => MenuEntry[];
+const contributions = new Map<string, MenuContribution>();
+
+/** Adds (or, by the same key, replaces) right-click entries. */
+export function registerMenuEntries(key: string, f: MenuContribution): void {
+  contributions.set(key, f);
+}
+
+/** Every module's entries for a hit, in the order they registered. */
+/** `at`: where on the sheet it was right-clicked (sheet mm), when on the sheet. */
+export function menuEntriesFor(hit: SheetHit, ctx: DrawingToolCtx, at?: Vec2): MenuEntry[] {
+  return [...contributions.values()].flatMap((f) => f(hit, ctx, at));
 }

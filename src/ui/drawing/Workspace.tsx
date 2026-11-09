@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AskTarget } from "../../ask/packet";
-import type { DrawingGeometry } from "../../ask/kernel";
+import type { DrawingGeometry, KernelPort } from "../../ask/kernel";
 import type { Command, RawDocument } from "../../doc/commands";
 import { nextSheetId } from "../../doc/drawing";
 import type { Annotation, Drawing, DrawingSheet, Vec2, Vec3 } from "../../doc/types";
@@ -32,7 +32,7 @@ import "./tools";
 import { runAutoDimension } from "./tools/annotationTools";
 import { annotationKey, annotationMenu } from "./tools/editing";
 import { annotationKind } from "./tools/kinds";
-import { drawingTool, onToolsChanged, toolForKey, toolGroups } from "./tools/registry";
+import { drawingTool, menuEntriesFor, onToolsChanged, toolForKey, toolGroups } from "./tools/registry";
 import { DRAWING_TABS, type DrawingDialog, type DrawingSession, type DrawingTab, type DrawingToolCtx, type SheetHit } from "./tools/types";
 import { viewBody } from "./tools/session";
 
@@ -57,7 +57,9 @@ export interface WorkspaceProps {
   newDrawing(): void;
   balloonAll(): void;
   /** Opens the assistant on what was right-clicked. */
-  openAsk(target: AskTarget, x: number, y: number): void;
+  openAsk(target: AskTarget, x: number, y: number, prompt?: { text: string; submit: boolean }): void;
+  /** The kernel, for tools that compose the drawing themselves (Auto-detail, wave Q3B). */
+  kernel?: KernelPort;
   /** Writes an export: what the Export dialog asked for. */
   exportDrawing(kind: "pdf" | "svg" | "dxf" | "png", opts?: ExportOptions): void;
   /** The document's name, for the 3D view's orientation it left. */
@@ -220,7 +222,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
           setMenu(null);
         },
         dialog: (name, arg) => setDialog({ name, arg }),
-        actions: { newDrawing: p.newDrawing, balloonAll: p.balloonAll },
+        actions: { newDrawing: p.newDrawing, balloonAll: p.balloonAll, ask: (target, text, submit) => p.openAsk(target, 0, 0, { text, submit }), ...(p.kernel ? { kernel: p.kernel } : {}) },
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -360,7 +362,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
   };
   const askEntry = (target: AskTarget, x: number, y: number): MenuEntry => ({ label: "Ask AI…", icon: "ask", hint: "Ask the assistant about this, or to change it", onClick: () => ask(target, x, y), testId: "ctx-ask" });
 
-  const menuFor = (hit: SheetHit | null, x: number, y: number, from: "sheet" | "tree" = "sheet") => {
+  const menuFor = (hit: SheetHit | null, x: number, y: number, from: "sheet" | "tree" = "sheet", at?: Vec2) => {
     if (!p.drawing || !sheetDoc) return;
     if (hit && hit.kind !== "titleBlock" && !selection.includes(hit.id)) setSelection([hit.id]);
     let title = "Drawing";
@@ -386,7 +388,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         "sep",
         { label: "Delete view", icon: "trash", shortcut: "Del", onClick: () => deleteIds([v.id]), testId: "ctx-delete-view" },
       ];
-      items.push("sep", askEntry({ kind: "view", id: v.id }, x, y));
+      items.push("sep", ...menuEntriesFor(hit, ctx(), at), askEntry({ kind: "view", id: v.id }, x, y));
     } else if (hit?.kind === "annotation") {
       const a = p.drawing.sheets.flatMap((s) => s.annotations).find((x) => x.id === hit.id);
       if (!a) return;
@@ -402,6 +404,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         "sep",
         { label: "Delete", icon: "trash", shortcut: "Del", onClick: () => deleteIds([a.id]), testId: "ctx-delete-annotation" },
         "sep",
+        ...menuEntriesFor(hit, ctx(), at),
         askEntry({ kind: "annotation", id: a.id }, x, y),
       ];
     } else if (hit?.kind === "table") {
@@ -600,7 +603,7 @@ export function DrawingMain({ ws, empty, help }: { ws: Workspace; empty: ReactNo
               fitToken={ws.fitToken}
               zoomAreaToken={ws.zoomAreaToken}
               onSelect={(ids, add) => ws.select(ids, add)}
-              onContext={(hit, x, y) => ws.menuFor(hit, x, y)}
+              onContext={(hit, x, y, at) => ws.menuFor(hit, x, y, "sheet", at)}
               onCommands={(cmds) => ws.batch(cmds)}
               onNotice={(t, k) => p.notice(t, k)}
               onStatus={ws.setStatus}

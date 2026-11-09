@@ -13,6 +13,7 @@ import { MODELS } from "../../ask/models";
 import { describeScope, scopeFor } from "../../ask/packet";
 import { scopedActions } from "../../ask/prompt";
 import { IntentCard } from "./IntentCard";
+import { DetailPlanCard } from "./DetailPlanCard";
 import type { useAsk } from "./useAsk";
 import { canAsk } from "./settings";
 import { Icon } from "../icons";
@@ -396,7 +397,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
           <blockquote className="ask-prompt">{s.prompt}</blockquote>
           {s.attachments?.length ? <div className="muted small" data-testid="ask-sent-attachments">Attached: {s.attachments.join(", ")}</div> : null}
           <div className={`ask-outcome ${s.result.outcome}`} data-testid="ask-outcome">
-            {s.accepted ? "Applied" : s.result.outcome === "questions" && s.result.review?.ready ? "Check the reading" : OUTCOME[s.result.outcome]}
+            {s.accepted ? "Applied" : s.result.detailPlan && !s.result.proposal ? "The detailing plan" : s.result.outcome === "questions" && s.result.review?.ready ? "Check the reading" : OUTCOME[s.result.outcome]}
           </div>
           {s.result.text && (
             <div className="ask-text" data-testid="ask-text">
@@ -405,6 +406,9 @@ export function AskPopover({ ask }: { ask: Ask }) {
           )}
           {s.result.outcome === "questions" && s.result.review && (
             <IntentCard review={s.result.review} drawing={ctx.drawing} views={s.result.views} onBuild={(answers) => ask.answer(s, answers)} />
+          )}
+          {s.result.detailPlan && !s.result.proposal && !s.accepted && (
+            <DetailPlanCard plan={s.result.detailPlan} aiReady={ready} aiLabel={ask.settings.provider === "claude-code" ? "Detail with Claude Code" : "Detail with AI"} onRun={(plan, how) => ask.detail(s, plan, how)} />
           )}
           {s.result.proposal?.checks && (
             <ul className="ask-checks" data-testid="ask-checks">

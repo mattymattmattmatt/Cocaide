@@ -1,5 +1,3 @@
-Unfinished Phase Q round 3 work, saved as patches against 5b6bd8b (the Claude Code bridge merge)
-so it survives the cloud session ending. Not built or shipped. To resume: on a branch from 5b6bd8b,
-`git apply wip/<name>.patch`, finish, then delete this folder.
-- q3b-ai-detailing.patch: "Detail with AI…" planner/executor/critic, packet v2, rules-only Auto-detail, in progress.
-DRAWINGS-plan.md, brief-header.txt and api-notes-phase-q.md are the plan and API notes.
+Phase Q (drawings) notes kept with the repo because the planning folder is not tracked:
+DRAWINGS-plan.md (the plan and contract), api-notes-phase-q.md (API notes per wave), brief-header.txt (rules
+for engineers). Rounds 1–3 are merged; what remains is the round 4 review and polish.

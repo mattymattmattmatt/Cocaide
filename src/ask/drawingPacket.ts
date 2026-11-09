@@ -19,6 +19,9 @@ import { inView } from "../drafting/views";
 import { round6 } from "../kernel/inspect";
 import type { CheckResult, DrawingGeometry, KernelPort } from "./kernel";
 import type { AskTarget, Packet } from "./packet";
+import { detailState } from "./detail/execute";
+import { inferIntent } from "./detail/intent";
+import { drawingContext } from "./detail/packet";
 
 type DrawingTarget = Extract<AskTarget, { kind: "view" | "annotation" | "table" | "sheet" | "drawing" }>;
 
@@ -45,7 +48,7 @@ export async function composeFor(doc: RawDocument, kernel: KernelPort, check: Ch
   return { drawing, sheet, sheets: composed.sheets, geometry };
 }
 
-export async function drawingPacket(doc: RawDocument, target: DrawingTarget, kernel: KernelPort, check: CheckResult, label: string, writeScope: string[]): Promise<Packet> {
+export async function drawingPacket(doc: RawDocument, target: DrawingTarget, kernel: KernelPort, check: CheckResult, label: string, writeScope: string[], opts: { compact?: boolean } = {}): Promise<Packet> {
   const state = await composeFor(doc, kernel, check, target.kind === "drawing" ? undefined : target.kind === "sheet" ? undefined : target.id, target.kind === "sheet" ? target.id : undefined);
   if (!state) throw new Error("the part has no drawing: make one first (New drawing)");
   const { drawing, sheet, sheets, geometry } = state;
@@ -78,9 +81,15 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     const a = findAnnotation(drawing, sid);
     if (a) return [{ ...reads(a), is: "annotation" }];
     const t = drawing.sheets.flatMap((x) => x.tables ?? []).find((x) => x.id === sid);
-    return t ? [{ id: sid, is: "table", kind: t.kind }] : [];
+    if (t) return [{ id: sid, is: "table", kind: t.kind }];
+    // A GeoRef right-clicked in a view (wave Q3B: "Add GD&T…", "Add a fit…" on an edge or a circle).
+    const viewId = sid.includes(":") ? sid.slice(0, sid.indexOf(":")) : null;
+    const g = viewId ? listGeoRefs(sheet, viewId).find((r) => r.ref === sid) : undefined;
+    return g ? [{ ref: sid, is: "geometry", what: g.what, ...(g.feature ? { feature: g.feature } : {}), ...(g.radius !== undefined ? { diameter: r1(2 * g.radius) } : {}), ...(g.length !== undefined ? { length: r1(g.length) } : {}), visible: g.visible }] : [];
   });
-  const base = { units: "mm" as const, writeScope, checks, error: sheet.problems.length ? sheet.problems.join("; ") : null, ...(Object.keys(properties).length ? { properties } : {}), ...(selected.length ? { selection: selected } : {}) };
+  // Packet v2 (wave Q3B): the part's design intent and features, each view's GeoRefs in a line, annotations with their effective tolerances, the critic.
+  const detailing = target.kind === "drawing" || target.kind === "sheet" || target.kind === "view" ? await detailingOf(doc, kernel, check, sheet.id, target.kind === "view" ? target.id : undefined, !!opts.compact) : null;
+  const base = { units: "mm" as const, writeScope, checks, ...(detailing ? { detailing } : {}), error: sheet.problems.length ? sheet.problems.join("; ") : null, ...(Object.keys(properties).length ? { properties } : {}), ...(selected.length ? { selection: selected } : {}) };
 
   if (target.kind === "table") {
     const t = drawing.sheets.flatMap((x) => x.tables ?? []).find((x) => x.id === target.id);
@@ -127,6 +136,17 @@ export async function drawingPacket(doc: RawDocument, target: DrawingTarget, ker
     children: [],
     measurements,
   };
+}
+
+/** The v2 context (src/ask/detail/packet.ts), or nothing when the part cannot be read for it. */
+async function detailingOf(doc: RawDocument, kernel: KernelPort, check: CheckResult, sheet: string, view: string | undefined, compact: boolean) {
+  try {
+    const state = await detailState(doc, kernel, { check, sheet });
+    const intent = inferIntent(doc, check.measurements, state.geometry?.holes ?? [], state.topology);
+    return drawingContext(state, intent, { compact, ...(view ? { view } : {}) });
+  } catch {
+    return null;
+  }
 }
 
 /** A view as the agent needs it: how it looks and where things are in it on the sheet. */
