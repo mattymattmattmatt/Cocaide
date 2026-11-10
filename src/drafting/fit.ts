@@ -8,9 +8,10 @@
 
 import type { Command } from "../doc/commands";
 import { viewKind } from "../doc/drawing";
-import type { DrawingSheet, DrawingView } from "../doc/types";
+import type { DrawingSheet, DrawingView, Vec2 } from "../doc/types";
 import { composeSheet, scaleText, type ComposeContext, type ComposedSheet } from "./compose";
 import { placeFromFront } from "./views";
+import type { TableCorner } from "./tables";
 
 /** A view whose scale the layout may choose (an iso or other view placed on its own, at no scale of its own). */
 function looseModel(view: DrawingView, projection: DrawingSheet["projection"]): boolean {
@@ -22,7 +23,7 @@ function looseModel(view: DrawingView, projection: DrawingSheet["projection"]): 
  * layout chose apart from the sheet's (an iso drawn a step smaller). Null when
  * the sheet has a scale already or nothing to judge it by.
  */
-export function shownScales(sheetDoc: DrawingSheet, composed: ComposedSheet): { scale: string; views: { id: string; scale: string }[] } | null {
+export function shownScales(sheetDoc: DrawingSheet, composed: ComposedSheet): { scale: string; views: { id: string; scale: string }[]; tables: { id: string; corner: TableCorner; at?: Vec2 }[] } | null {
   if (sheetDoc.scale || !sheetDoc.views.length || composed.id !== sheetDoc.id) return null;
   // Not while a view is still being projected: what the sheet shows then isn't what it will show.
   if (composed.views.length !== sheetDoc.views.length || composed.views.some((cv) => !cv.box)) return null;
@@ -32,7 +33,31 @@ export function shownScales(sheetDoc: DrawingSheet, composed: ComposedSheet): { 
     if (!cv || view.scale || !looseModel(view, sheetDoc.projection) || Math.abs(cv.scale - composed.scale) < 1e-12) continue;
     views.push({ id: view.id, scale: cv.scaleText });
   }
-  return { scale: composed.scaleText, views };
+  return { scale: composed.scaleText, views, tables: movedTables(sheetDoc, composed) };
+}
+
+/** The tables the layout moved from their usual corner (no anchor of their own) so the views fit: to store as their anchors. */
+function movedTables(sheetDoc: DrawingSheet, composed: ComposedSheet): { id: string; corner: TableCorner; at?: Vec2 }[] {
+  return Object.entries(composed.tableCorners ?? {})
+    .filter(([id]) => (sheetDoc.tables ?? []).some((t) => t.id === id && !t.anchor) || sheetDoc.annotations.some((a) => a.id === id && a.type === "table" && !a.at))
+    .map(([id, corner]) => ({ id, corner, ...tableTopLeft(composed, id) }));
+}
+
+/** Where a table annotation (Phase L) was drawn: its top left corner, which is what its `at` stores. */
+function tableTopLeft(composed: ComposedSheet, id: string): { at?: Vec2 } {
+  const box = composed.blocks.find((b) => b.id === id)?.box;
+  return box ? { at: [box.min[0], box.max[1]] } : {};
+}
+
+/** setTable commands that anchor those tables where the layout put them. */
+function anchorTables(sheetDoc: DrawingSheet, moved: { id: string; corner: TableCorner; at?: Vec2 }[]): Command[] {
+  return moved.flatMap(({ id, corner, at }): Command[] => {
+    const legacy = sheetDoc.annotations.find((a) => a.id === id && a.type === "table");
+    if (legacy) return at ? [{ type: "editAnnotation", id, patch: { at } }] : [];
+    const { id: _id, ...body } = (sheetDoc.tables ?? []).find((t) => t.id === id)!;
+    void _id;
+    return [{ type: "setTable", id, sheet: sheetDoc.id, table: { ...body, anchor: { corner } } }];
+  });
 }
 
 /** The commands that store what a sheet shows (shownScales): to run with the first edit of a sheet stored without a scale. */
@@ -46,6 +71,7 @@ export function keepScale(sheetDoc: DrawingSheet, composed: ComposedSheet): Comm
       const { id, ...body } = view;
       return { type: "setView", id, sheet: sheetDoc.id, view: { ...body, scale: v.scale } };
     }),
+    ...anchorTables(sheetDoc, shown.tables),
   ];
 }
 
@@ -54,7 +80,15 @@ export function withShownScales(sheetDoc: DrawingSheet, composed: ComposedSheet)
   const shown = shownScales(sheetDoc, composed);
   if (!shown) return sheetDoc;
   const own = new Map(shown.views.map((v) => [v.id, v.scale]));
-  return { ...sheetDoc, scale: shown.scale, views: sheetDoc.views.map((v) => (own.has(v.id) ? { ...v, scale: own.get(v.id)! } : v)) };
+  const corner = new Map(shown.tables.map((t) => [t.id, t.corner]));
+  const at = new Map(shown.tables.flatMap((t) => (t.at ? [[t.id, t.at] as const] : [])));
+  return {
+    ...sheetDoc,
+    scale: shown.scale,
+    views: sheetDoc.views.map((v) => (own.has(v.id) ? { ...v, scale: own.get(v.id)! } : v)),
+    annotations: sheetDoc.annotations.map((a) => (a.type === "table" && at.has(a.id) ? { ...a, at: at.get(a.id)! } : a)),
+    ...(sheetDoc.tables ? { tables: sheetDoc.tables.map((t) => (corner.has(t.id) ? { ...t, anchor: { corner: corner.get(t.id)! } } : t)) } : {}),
+  };
 }
 
 /**
@@ -92,5 +126,6 @@ export function fitViews(doc: unknown, ctx: ComposeContext, sheetDoc: DrawingShe
     }
     if (JSON.stringify(next) !== JSON.stringify(body)) commands.push({ type: "setView", id, sheet: sheetDoc.id, view: next });
   }
+  commands.push(...anchorTables(sheetDoc, movedTables(sheetDoc, composed)));
   return { commands, scale: scaleText(composed.scale) };
 }

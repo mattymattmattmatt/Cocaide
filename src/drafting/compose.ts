@@ -38,7 +38,7 @@ import { clipOutside, clipToCircle, clipToPolygon, insidePolygon } from "./clip"
 import { drawFormat, paperSize, type FormatLayout } from "./formats";
 import { BODY_ANGLES, hatchLines, materialPattern } from "./hatch";
 import { geoInView, resolveGeoRef } from "./georef";
-import { holesInView, holeTable, holeTagPrims, outlineOrigin, renderSheetTables, type DrawingTable, type HoleTableRow, type RenderedTable, type RevisionRow, type TableContext } from "./tables";
+import { holesInView, holeTable, holeTagPrims, outlineOrigin, renderSheetTables, type DrawingTable, type HoleTableRow, type RenderedTable, type RevisionRow, type TableContext, type TableCorner } from "./tables";
 import { cutListOf, itemNumberFor } from "../weldment/items";
 import { draftStyle, layoutSheetAnnotations, measureDimension, Occupancy, planDimensionRows, rowDistance, type AnnotationContext, type AnnotationData, type DraftStyle, type Grip, type Measure, type ViewInfo } from "./annotate";
 import { nestCutList } from "../weldment/nesting";
@@ -159,6 +159,12 @@ export interface ComposedSheet {
   cutList: CutListItem[];
   /** For resolving GeoRefs' Phase L points. */
   points: PointContext;
+  /**
+   * Tables with no anchor of their own that the layout moved from their usual
+   * corner so the views fit at a larger scale (Phase Q Q4 polish): Fit views
+   * and New drawing store these as the tables' anchors.
+   */
+  tableCorners?: Record<string, TableCorner>;
 }
 
 export interface ComposedDrawing {
@@ -328,15 +334,24 @@ class Composer {
   private labels: Box[] = [];
 
   compose(): ComposedSheet {
-    const tables = this.placeTables();
-    // The sheet's tables (src/drafting/tables): placed by their anchors before the views, which keep clear of them.
-    const sheetTables = this.renderTables();
-    const tableBoxes = sheetTables.flatMap((t) => t.rendered.boxes);
-    this.tableBoxes = [...tables.map((t) => t.box), ...this.notes().map((n) => n.box), ...tableBoxes];
-    const blocked = [this.titleBlock, ...(this.format?.revisionBlock ? [this.format.revisionBlock] : []), ...tables.map((t) => t.box), ...this.notes().map((n) => n.box), ...tableBoxes];
     this.planDimensions();
-    const { scale, views } = this.layout(blocked);
+    // The sheet's tables (src/drafting/tables): placed by their anchors before the views, which keep clear of them.
+    // Tables with no anchor of their own may go to the top right instead when the views then fit at a larger scale
+    // (or, with the sheet's scale stored, fit at all).
+    let best: { tables: ReturnType<Composer["placeTables"]>; sheetTables: ReturnType<Composer["renderTables"]>; blocked: Box[]; scale: number; views: ComposedView[]; fitted: boolean; corners: Record<string, TableCorner> } | null = null;
+    for (const corners of this.tableVariants()) {
+      const tables = this.placeTables(corners);
+      const sheetTables = this.renderTables(corners);
+      const tableBoxes = sheetTables.flatMap((t) => t.rendered.boxes);
+      const blocked = [this.titleBlock, ...(this.format?.revisionBlock ? [this.format.revisionBlock] : []), ...tables.map((t) => t.box), ...this.notes().map((n) => n.box), ...tableBoxes];
+      const laid = this.layout(blocked);
+      const better = !best || (laid.fitted && (!best.fitted || laid.scale > best.scale + 1e-12));
+      if (better) best = { tables, sheetTables, blocked, ...laid, corners };
+      if (best!.fitted && parseScale(this.s.scale)) break;
+    }
+    const { tables, sheetTables, scale, views, corners } = best!;
     this.views = views;
+    this.tableBoxes = [...tables.map((t) => t.box), ...this.notes().map((n) => n.box), ...sheetTables.flatMap((t) => t.rendered.boxes)];
 
     if (this.template === "classic") this.border();
     else {
@@ -386,6 +401,7 @@ class Composer {
       problems: this.problems,
       cutList: this.cut,
       points: this.points,
+      ...(Object.keys(corners).length ? { tableCorners: corners } : {}),
     };
     if (this.annotationCtx) LAYOUT_CONTEXT.set(sheet, this.annotationCtx);
     return sheet;
@@ -394,8 +410,23 @@ class Composer {
   // ------------------------------------------------------------- tables (Phase Q)
 
   /** The sheet's tables, rendered: what each says (the cut list v2, welds, revisions, a view's holes) where its anchor puts it. */
-  private renderTables(): { table: DrawingTable; rendered: RenderedTable; holes?: { view: string; rows: HoleTableRow[]; origin: Vec2 } }[] {
-    const tables = this.s.tables ?? [];
+  /**
+   * The table arrangements the layout may try, as corners for tables with no
+   * anchor of their own: none moved first, then the cut list, BOM and weld
+   * tables (which sit by the title block) at the top right.
+   */
+  private tableVariants(): Record<string, TableCorner>[] {
+    const movable = (this.s.tables ?? []).filter((t) => !t.anchor && (t.kind === "cutList" || t.kind === "bom" || t.kind === "welds")).map((t) => t.id);
+    // A Phase L table annotation (the cut list or weld table New drawing puts above the title block) likewise.
+    const legacy = this.s.annotations.find((a) => a.type === "table" && !a.at);
+    if (legacy) movable.push(legacy.id);
+    const out: Record<string, TableCorner>[] = [{}];
+    if (movable.length) out.push(Object.fromEntries(movable.map((id) => [id, "topRight" as TableCorner])));
+    return out;
+  }
+
+  private renderTables(corners: Record<string, TableCorner> = {}): { table: DrawingTable; rendered: RenderedTable; holes?: { view: string; rows: HoleTableRow[]; origin: Vec2 } }[] {
+    const tables = (this.s.tables ?? []).map((t) => (corners[t.id] ? { ...t, anchor: { corner: corners[t.id] } } : t));
     if (!tables.length) return [];
     const m = this.ctx.measurements;
     const cutList = m && this.doc ? cutListOf(this.doc, m) : null;
@@ -640,6 +671,16 @@ class Composer {
 
   /** Room each view's annotations need around it, sheet mm: [left, bottom, right, top]. */
   private padding(view: DrawingView, k?: number, sheetScale?: number): [number, number, number, number] {
+    return this.paddings(view, k, sheetScale).all;
+  }
+
+  /**
+   * The room a view's annotations need ([left, bottom, right, top]): all of
+   * it, and the part that is its dimension stacks and label alone (what two
+   * views side by side can't share; the room kept for callouts and symbols,
+   * which find their own places, they can).
+   */
+  private paddings(view: DrawingView, k?: number, sheetScale?: number): { all: [number, number, number, number]; dims: [number, number, number, number] } {
     const pad: [number, number, number, number] = [INSET, INSET, INSET, INSET];
     const need = (i: number, mm: number) => (pad[i] = Math.max(pad[i], mm));
     const text = this.style.h + this.style.lift + 2.5;
@@ -654,6 +695,7 @@ class Composer {
       else if (r?.dir === "v" || (item.m.kind === "set" && item.m.dir === "v")) need(item.side < 0 ? 0 : 2, dist + text + extra);
       else for (let i = 0; i < 4; i++) need(i, this.style.first + text);
     }
+    const dims: [number, number, number, number] = [...pad];
     // Radial and angular dimensions, callouts, symbols and balloons stand out of the view where there is room.
     let room0 = 0;
     for (const a of this.s.annotations) {
@@ -672,8 +714,11 @@ class Composer {
     // At the scales known (while placing), the label it will have; else a loose view may be at a scale of its own.
     const loose = (viewKind(view) === "model" || viewKind(view) === "projected") && !this.gridCache?.has(view.id);
     const label = this.template === "classic" ? 0 : k !== undefined && sheetScale !== undefined ? this.labelLines(view, k, sheetScale).length : this.labelLines(view, 1, loose ? 2 : 1).length;
-    if (label) pad[1] += 5 + label * TEXT.title * 0.95;
-    return pad;
+    if (label) {
+      pad[1] += 5 + label * TEXT.title * 0.95;
+      dims[1] += 5 + label * TEXT.title * 0.95;
+    }
+    return { all: pad, dims };
   }
 
   /** A view's size on the sheet at scale k (breaks taken out), and what it covers before them. */
@@ -712,12 +757,12 @@ class Composer {
    * where they put it, the views lined up with it following. So moving a view
    * never changes a scale, nor where the other views are, nor any view's size.
    */
-  private layout(blocked: Box[]): { scale: number; views: ComposedView[] } {
+  private layout(blocked: Box[]): { scale: number; views: ComposedView[]; fitted: boolean } {
     const natural = this.naturalLayout(blocked);
-    return { scale: natural.scale, views: this.settle(natural.views) };
+    return { scale: natural.scale, views: this.settle(natural.views), fitted: natural.fitted };
   }
 
-  private naturalLayout(blocked: Box[]): { scale: number; views: ComposedView[] } {
+  private naturalLayout(blocked: Box[]): { scale: number; views: ComposedView[]; fitted: boolean } {
     const fixed = parseScale(this.s.scale);
     const grid = this.grid();
     this.gridCache = grid;
@@ -739,14 +784,21 @@ class Composer {
         for (const start of starts) {
           this.start = start;
           const views = this.place(candidates[i], looseScale, grid, loose);
-          if (this.fits(views, blocked, candidates[i])) return { scale: candidates[i], views };
+          if (this.fits(views, blocked, candidates[i])) return { scale: candidates[i], views, fitted: true };
         }
+      }
+      // The usual arrangement doesn't fit at this scale: the projection's group in another corner (or beside a
+      // table, above the title block), the views on their own packed into whatever room is left (Phase Q Q4 polish).
+      for (const step of shrinkable ? [0, 1, 2] : [0]) {
+        const looseScale = candidates[Math.min(i + step, candidates.length - 1)];
+        const views = this.packed(candidates[i], looseScale, grid, loose, blocked);
+        if (views) return { scale: candidates[i], views, fitted: true };
       }
     }
     this.start = [left, top];
     // Nothing fits: the sheet's scale, else the smallest; the checks say what overlaps.
     const smallest = candidates[candidates.length - 1];
-    return { scale: smallest, views: this.place(smallest, smallest, grid, loose) };
+    return { scale: smallest, views: this.place(smallest, smallest, grid, loose), fitted: false };
   }
 
   /**
@@ -790,23 +842,109 @@ class Composer {
    * and every other view. A view the user placed is an obstacle, not judged:
    * where it is is theirs (the checks say if it overlaps).
    */
-  private fits(views: ComposedView[], blocked: Box[], scale: number): boolean {
-    const padded = views.filter((cv) => cv.box).map((cv) => ({ cv, box: grow(cv.box!, this.padding(this.here.get(cv.id)!, cv.scale, scale)) }));
+  private fits(views: ComposedView[], blocked: Box[], scale: number, tight = false): boolean {
+    const padded = views.filter((cv) => cv.box).map((cv) => {
+      const p = this.paddings(this.here.get(cv.id)!, cv.scale, scale);
+      return { cv, box: grow(cv.box!, p.all), dims: grow(cv.box!, p.dims) };
+    });
     const auto = padded.filter((p) => p.cv.auto);
     const held = padded.filter((p) => !p.cv.auto).map((p) => p.cv.box!);
-    for (const { box } of auto) {
-      if (!inside(box, this.frame)) return false;
+    for (const { box, dims } of auto) {
+      if (tight ? !roomFor(box, dims, this.frame) : !inside(box, this.frame)) return false;
       if ([...blocked, ...held].some((b) => overlaps(box, b))) return false;
     }
-    for (let i = 0; i < auto.length; i++) for (let j = i + 1; j < auto.length; j++) if (overlaps(auto[i].box, auto[j].box)) return false;
+    for (let i = 0; i < auto.length; i++)
+      for (let j = i + 1; j < auto.length; j++) {
+        const [a, b] = [auto[i], auto[j]];
+        // Packed close (tight), views may share the room kept for callouts, not a view nor a dimension stack.
+        if (tight ? overlaps(a.box, b.cv.box!) || overlaps(a.cv.box!, b.box) || overlaps(a.dims, b.dims) : overlaps(a.box, b.box)) return false;
+      }
     return true;
+  }
+
+  /**
+   * Another arrangement at a scale the usual one doesn't fit (Phase Q Q4
+   * polish): the projection's group of views tried against each corner of the
+   * frame and beside each table, title block and revision block (highest and
+   * leftmost first), then each view on its own put in the highest, rightmost
+   * room left that holds it with the room its annotations need. Null when no
+   * arrangement fits.
+   */
+  private packed(scale: number, looseScale: number, grid: Map<string, Vec2>, loose: DrawingView[], blocked: Box[]): ComposedView[] | null {
+    const left = this.frame.min[0] + INSET;
+    const right = this.frame.max[0] - INSET;
+    const top = this.frame.max[1] - INSET;
+    const bottom = this.frame.min[1] + INSET;
+    this.start = [left, top];
+    const all = this.place(scale, looseScale, grid, loose, true);
+    const padded = (cv: ComposedView): Box => grow(cv.box!, this.padding(this.here.get(cv.id)!, cv.scale, scale));
+    const group = all.filter((cv) => grid.has(cv.id) && cv.box);
+    const rest = all.filter((cv) => !grid.has(cv.id) && cv.box);
+    const room: Box = { min: [left, bottom], max: [right, top] };
+    const free = (b: Box, others: Box[]) => inside(b, room) && !others.some((o) => overlaps(b, o));
+    for (const cv of rest) {
+      const p = padded(cv);
+      if (p.max[0] - p.min[0] > right - left || p.max[1] - p.min[1] > top - bottom) return null;
+    }
+    // Where the group may go: each pairing of an x and a y its box (or its dimensions' box) may line up with.
+    const shifts: Vec2[] = [[0, 0]];
+    if (group.length) {
+      const boxes = group.map((cv) => {
+        const p = this.paddings(this.here.get(cv.id)!, cv.scale, scale);
+        return { full: grow(cv.box!, p.all), dims: grow(cv.box!, p.dims) };
+      });
+      const span = (bs: Box[]): Box => ({ min: [Math.min(...bs.map((x) => x.min[0])), Math.min(...bs.map((x) => x.min[1]))], max: [Math.max(...bs.map((x) => x.max[0])), Math.max(...bs.map((x) => x.max[1]))] });
+      const g = span(boxes.map((x) => x.full));
+      const gd = span(boxes.map((x) => x.dims));
+      if (gd.max[0] - gd.min[0] > right - left || gd.max[1] - gd.min[1] > top - bottom) return null;
+      const dxs = [g, gd].flatMap((x) => [left - x.min[0], right - x.max[0], ...blocked.flatMap((o) => [o.max[0] + GAP - x.min[0], o.min[0] - GAP - x.max[0]])]);
+      const dys = [g, gd].flatMap((x) => [top - x.max[1], bottom - x.min[1], ...blocked.flatMap((o) => [o.min[1] - GAP - x.max[1], o.max[1] + GAP - x.min[1]])]);
+      const tries: Vec2[] = [];
+      for (const dx of dxs) for (const dy of dys) tries.push([dx, dy]);
+      tries.sort((p, q) => q[1] - p[1] || p[0] - q[0]);
+      shifts.length = 0;
+      for (const t of tries) {
+        if (shifts.some((x) => Math.abs(x[0] - t[0]) < 1e-6 && Math.abs(x[1] - t[1]) < 1e-6)) continue;
+        if (boxes.every((x) => roomFor(shiftBox(x.full, t), shiftBox(x.dims, t), room) && !blocked.some((o) => overlaps(shiftBox(x.full, t), o)))) shifts.push(t);
+      }
+    }
+    for (const d of shifts) {
+      const placed = new Map<string, ComposedView>();
+      for (const cv of group) placed.set(cv.id, shiftView(cv, d));
+      const obstacles = [...blocked, ...[...placed.values()].map(padded)];
+      let ok = true;
+      for (const cv of rest) {
+        const p = padded(cv);
+        const w = p.max[0] - p.min[0];
+        const h = p.max[1] - p.min[1];
+        const xs = [right - w, left, ...obstacles.flatMap((o) => [o.min[0] - GAP - w, o.max[0] + GAP])];
+        const ys = [top - h, bottom, ...obstacles.flatMap((o) => [o.min[1] - GAP - h, o.max[1] + GAP])];
+        let best: Vec2 | null = null;
+        for (const y of ys)
+          for (const x of xs) {
+            if (best && (y < best[1] - 1e-6 || (Math.abs(y - best[1]) < 1e-6 && x <= best[0]))) continue;
+            if (free({ min: [x, y], max: [x + w, y + h] }, obstacles)) best = [x, y];
+          }
+        if (!best) {
+          ok = false;
+          break;
+        }
+        const moved = shiftView(cv, [best[0] - p.min[0], best[1] - p.min[1]]);
+        placed.set(cv.id, moved);
+        obstacles.push(padded(moved));
+      }
+      if (!ok) continue;
+      const views = all.map((cv) => placed.get(cv.id) ?? cv);
+      if (this.fits(views, blocked, scale, true)) return views;
+    }
+    return null;
   }
 
   /** Where the projection's group of views starts (its top left), and the loose column's top. */
   private start: Vec2 | null = null;
   private looseTop: number | null = null;
 
-  private place(scale: number, looseScale: number, grid: Map<string, Vec2>, loose: DrawingView[]): ComposedView[] {
+  private place(scale: number, looseScale: number, grid: Map<string, Vec2>, loose: DrawingView[], tight = false): ComposedView[] {
     const out = new Map<string, ComposedView>();
     const make = (view: DrawingView, k: number, at: Vec2, auto: boolean): ComposedView => {
       const e = this.extent(view, k);
@@ -840,10 +978,11 @@ class Composer {
     // The projection: columns and rows around the front, each view's lines aligned with its neighbours'.
     const inGrid = this.s.views.filter((view) => grid.has(view.id));
     if (inGrid.length) {
-      const ext = new Map<string, { half: Vec2; pad: [number, number, number, number]; k: number }>();
+      const ext = new Map<string, { half: Vec2; pad: [number, number, number, number]; dims: [number, number, number, number]; k: number }>();
       for (const view of inGrid) {
         const k = own(view, scale);
-        ext.set(view.id, { half: this.extent(view, k).half, pad: this.padding(view, k, scale), k });
+        const p = this.paddings(view, k, scale);
+        ext.set(view.id, { half: this.extent(view, k).half, pad: p.all, dims: p.dims, k });
       }
       const cols = [...new Set(inGrid.map((view) => grid.get(view.id)![0]))].sort((a, b) => a - b);
       const rows = [...new Set(inGrid.map((view) => grid.get(view.id)![1]))].sort((a, b) => b - a); // top row first
@@ -868,6 +1007,38 @@ class Composer {
         rowY[i] = y - e.top;
         y -= e.top + e.bottom + GAP;
       });
+      if (tight) {
+        // Packed closer: a column keeps clear only of the views in the same rows as its own (and a row of those in
+        // its columns), and two views side by side share the room kept for callouts (not their dimension stacks).
+        const at = (c: number, r: number) => inGrid.find((view) => grid.get(view.id)![0] === c && grid.get(view.id)![1] === r);
+        const sep = (a: DrawingView, b: DrawingView, i: number, j: number) => {
+          const ea = ext.get(a.id)!;
+          const eb = ext.get(b.id)!;
+          return Math.max(ea.pad[i], eb.pad[j], ea.dims[i] + eb.dims[j] + GAP);
+        };
+        cols.forEach((c, j) => {
+          if (j === 0) return;
+          let want = -Infinity;
+          for (let i = 0; i < j; i++)
+            for (const r of rows) {
+              const a = at(cols[i], r);
+              const b = at(c, r);
+              if (a && b) want = Math.max(want, colX[i] + ext.get(a.id)!.half[0] + sep(a, b, 2, 0) + ext.get(b.id)!.half[0]);
+            }
+          if (want > -Infinity) colX[j] = Math.max(colX[j - 1], want);
+        });
+        rows.forEach((r, j) => {
+          if (j === 0) return;
+          let want = Infinity;
+          for (let i = 0; i < j; i++)
+            for (const c of cols) {
+              const a = at(c, rows[i]);
+              const b = at(c, r);
+              if (a && b) want = Math.min(want, rowY[i] - ext.get(a.id)!.half[1] - sep(a, b, 1, 3) - ext.get(b.id)!.half[1]);
+            }
+          if (want < Infinity) rowY[j] = Math.min(rowY[j - 1], want);
+        });
+      }
       for (const view of inGrid) {
         const g = grid.get(view.id)!;
         out.set(view.id, make(view, ext.get(view.id)!.k, [colX[cols.indexOf(g[0])], rowY[rows.indexOf(g[1])]], true));
@@ -1500,7 +1671,7 @@ class Composer {
    * along the bottom border to its left, so the column above the title block
    * stays short and the views keep their room.
    */
-  private placeTables(): { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] {
+  private placeTables(corners: Record<string, TableCorner> = {}): { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] {
     let left = this.titleBlock.min[0];
     let first = true;
     const out: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] = [];
@@ -1511,7 +1682,13 @@ class Composer {
       const h = rows.length * ROW;
       let box: Box;
       if (a.at) box = { min: [a.at[0], a.at[1] - h], max: [a.at[0] + w, a.at[1]] };
-      else if (first) {
+      else if (corners[a.id] === "topRight") {
+        // Moved to the top right so the views fit larger (below a revision block there).
+        const rev = this.format?.revisionBlock;
+        const topY = rev && rev.max[1] >= this.frame.max[1] - 1 && rev.max[0] >= this.frame.max[0] - w ? rev.min[1] : this.frame.max[1];
+        box = { min: [this.frame.max[0] - w, topY - h], max: [this.frame.max[0], topY] };
+        first = false;
+      } else if (first) {
         // Above the title block, and above the revision block that grows on it.
         const base = Math.max(this.titleBlock.max[1], this.format?.revisionBlock && this.format.revisionBlock.max[0] > this.frame.max[0] - w ? this.format.revisionBlock.max[1] : -Infinity);
         box = { min: [this.frame.max[0] - w, base], max: [this.frame.max[0], base + h] };
@@ -1678,4 +1855,23 @@ function nextScaleUp(k: number): number {
 function normalize3(v: Vec3): Vec3 {
   const n = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / n, v[1] / n, v[2] / n];
+}
+
+function shiftBox(b: Box, d: Vec2): Box {
+  return { min: [b.min[0] + d[0], b.min[1] + d[1]], max: [b.max[0] + d[0], b.max[1] + d[1]] };
+}
+
+function shiftView(cv: ComposedView, d: Vec2): ComposedView {
+  return { ...cv, centre: [cv.centre[0] + d[0], cv.centre[1] + d[1]], box: cv.box ? shiftBox(cv.box, d) : null };
+}
+
+/**
+ * True when a view packed close keeps on the sheet (room) with its dimension
+ * stacks, and the room kept round it for callouts and symbols is there on at
+ * least one side across and one side up and down (they go where there is room).
+ */
+function roomFor(full: Box, dims: Box, room: Box): boolean {
+  if (!inside(dims, room)) return false;
+  const out = (i: 0 | 1) => full.min[i] < room.min[i] - 0.01 && full.max[i] > room.max[i] + 0.01;
+  return !out(0) && !out(1);
 }

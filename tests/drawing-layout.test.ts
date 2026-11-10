@@ -67,7 +67,8 @@ async function plan(name: string): Promise<RawDocument> {
 
 describe("New drawing stores the scale it chose", () => {
   it("on the sheet, and an iso drawn smaller keeps its own", async () => {
-    const want: Record<string, [string, string | undefined]> = { bracket: ["2:1", undefined], flange: ["1:1", undefined], "mounting-plate": ["1:1", undefined], "table-frame": ["1:10", "1:20"] };
+    const want: Record<string, [string, string | undefined]> = { bracket: ["2:1", undefined], flange: ["1:1", undefined], "mounting-plate": ["2:1", "1:1"], "table-frame": ["1:10", "1:20"] };
+    // Q4 polish: the mounting plate at 2:1 (packed closer, its iso beside the group at 1:1) where it was 1:1 on a mostly empty A3.
     for (const name of EXAMPLES) {
       const s = sheetOf(await plan(name));
       expect([name, s.scale, s.views.find((v) => v.id === "iso")?.scale]).toEqual([name, ...want[name]]);

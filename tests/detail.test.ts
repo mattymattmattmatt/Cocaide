@@ -240,7 +240,8 @@ describe("Auto-detail (no model) on the bracket, flange and frame", () => {
       }
       // The sheet's scale is stored (Phase Q wave Q4): when the tables the plan adds take the views' room, the views are fitted again.
       expect(layoutProblems(st.sheet!)).toEqual([]);
-      if (name === "table-frame") expect([st.drawing!.sheets[0].scale, st.sheet!.scaleText]).toEqual(["1:20", "1:20"]);
+      // Q4 polish: the cut list goes to the top right when the views then fit at 1:10.
+      if (name === "table-frame") expect([st.drawing!.sheets[0].scale, st.sheet!.scaleText]).toEqual(["1:10", "1:10"]);
     });
   }
 
