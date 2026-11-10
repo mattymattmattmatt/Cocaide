@@ -51,6 +51,13 @@ import { DIRECTION_VECTORS, inView, isSquareFrame, leftOf, placeFromFront, sameF
 export interface ComposeContext {
   measurements: Measurements | null;
   geometry: DrawingGeometry | null;
+  /**
+   * Choosing a scale (New drawing, Fit views): try the other arrangements too
+   * (Phase Q Q4 polish: the group in other corners, packed closer, tables
+   * moved) before a smaller scale. A sheet with its scale stored always may;
+   * a sheet stored without one (made before Q4) is drawn as it always was.
+   */
+  arrange?: boolean;
 }
 
 /** A break as composed: along x (0) or y (1), view mm, with the paper it leaves as view mm. */
@@ -416,6 +423,7 @@ class Composer {
    * tables (which sit by the title block) at the top right.
    */
   private tableVariants(): Record<string, TableCorner>[] {
+    if (!this.mayArrange()) return [{}];
     const movable = (this.s.tables ?? []).filter((t) => !t.anchor && (t.kind === "cutList" || t.kind === "bom" || t.kind === "welds")).map((t) => t.id);
     // A Phase L table annotation (the cut list or weld table New drawing puts above the title block) likewise.
     const legacy = this.s.annotations.find((a) => a.type === "table" && !a.at);
@@ -791,6 +799,7 @@ class Composer {
       // table, above the title block), the views on their own packed into whatever room is left (Phase Q Q4 polish).
       for (const step of shrinkable ? [0, 1, 2] : [0]) {
         const looseScale = candidates[Math.min(i + step, candidates.length - 1)];
+        if (!this.mayArrange()) break;
         const views = this.packed(candidates[i], looseScale, grid, loose, blocked);
         if (views) return { scale: candidates[i], views, fitted: true };
       }
@@ -947,6 +956,11 @@ class Composer {
       if (this.fits(views, blocked, scale, true)) return views;
     }
     return null;
+  }
+
+  /** Whether the layout may try the other arrangements: choosing a scale, or keeping one stored (see ComposeContext.arrange). */
+  private mayArrange(): boolean {
+    return !!this.ctx.arrange || !!parseScale(this.s.scale);
   }
 
   /** Where the projection's group of views starts (its top left), and the loose column's top. */
@@ -1709,14 +1723,14 @@ class Composer {
 
   private tableRows(a: TableAnnotation): { rows: string[][]; widths: number[] } {
     if (a.table === "cutList") {
-      return {
-        widths: [14, 52, 24, 40, 16, 34],
-        rows: [
-          ["CUT LIST"],
-          ["ITEM", "SIZE", "LENGTH", "ENDS", "QTY", "KG"],
-          ...this.cut.map((i) => [String(i.item), i.designation, fmt(i.length), anglesText(i.angles), String(i.quantity), i.kgTotal.toFixed(2)]),
-        ],
-      };
+      // The cut list v2 (Phase Q wave Q1B) when it can be made: plates and gussets are items too (Q4 polish: a frame's
+      // gussets and top plate were missing from its sheet), numbered as the balloons are.
+      const m = this.ctx.measurements;
+      const v2 = m && this.doc ? cutListOf(this.doc, m) : null;
+      const rows = v2
+        ? v2.items.map((i) => [String(i.item), i.kind === "member" ? i.designation : `${i.designation}${i.width !== undefined ? ` × ${fmt(i.width)}` : ""}`, fmt(i.length), i.kind === "member" ? (i.endsText.split(",")[0] ?? "") : i.description.split(" ")[0].toLowerCase(), String(i.quantity), i.massTotal.toFixed(2)])
+        : this.cut.map((i) => [String(i.item), i.designation, fmt(i.length), anglesText(i.angles), String(i.quantity), i.kgTotal.toFixed(2)]);
+      return { widths: [14, 52, 24, 40, 16, 34], rows: [["CUT LIST"], ["ITEM", "SIZE", "LENGTH", "ENDS", "QTY", "KG"], ...rows] };
     }
     return {
       widths: [16, 70, 22, 16, 22, 34],

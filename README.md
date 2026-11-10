@@ -764,10 +764,11 @@ v1 limits: flat plates and discs, one part per photo, and the photo pinned on XY
 **Drawing** in the top bar shows the part's drawing: one sheet, made of views of the rebuilt part. **New drawing** plans it:
 - the sheet is A3, at the largest standard scale that fits, third-angle; that scale is stored on the sheet and kept (see **Scale and layout** below);
 - there are front, top and right views, lined up as the projection puts them, and an iso where there is room (a step or two smaller if it needs to be);
+- a part with hidden insides gets its front view as a section through the most holes, unless that cut would take away what the front view shows (a stand's upright standing in front of its holes): then the front stays a view and the holes show hidden;
 - the overall length, height and width are dimensioned;
 - every hole is called out where it shows as a circle ("2× Ø10 THRU", with the counterbore or countersink), and placed from the view's left and bottom edges;
-- every cut list item has a balloon;
-- the cut list and the weld table sit above the title block.
+- every cut list item has a balloon, plates and gussets included (on the view that shows them best);
+- the cut list (members, then plates and gussets with their thickness and size) and the weld table sit above the title block.
 
 Ctrl+Z puts back the drawing it replaced.
 
@@ -777,8 +778,12 @@ Ctrl+Z puts back the drawing it replaced.
 - the layout is worked out as if no view had been moved, then each view you placed goes where you put it;
 - a view lined up with its parent (a projected view, a section) goes with the parent when the parent moves, and stays on the parent's line when it is moved itself; its dimensions and callouts go with it;
 - a view dragged partly or wholly off the sheet keeps its scale and is drawn where it is, so you can drag it back; the checks say "view iso is partly off the sheet";
-- a sheet saved before the scale was stored shows the scale it always showed, and the first edit to it stores that scale, so nothing jumps.
+- a sheet saved before the scale was stored shows the scale it always showed, and the first edit to it stores that scale, so nothing jumps; an edit by the assistant (the in-app ask, the MCP server, Claude Code through the bridge) stores it the same way, before its own commands (in an ask's proposal, outside the ask's scope, since it changes nothing you see).
 Auto-detail fits the views again only when the tables it adds take the room of views nobody has moved.
+
+How New drawing and Fit views choose a scale: the largest standard scale at which the views truly fit. At each scale the usual arrangement is tried first (the projection's group from the top left, beside or below a table there, the iso down the right); when that doesn't fit, other arrangements are tried before a smaller scale: the group against each corner of the frame and beside each table and the title block, its views packed closer (two views side by side share the room kept round them for callouts; their dimension stacks never overlap, and may run to the border), the iso in whatever room is left, and a cut list or weld table with no place of its own moved to the top right. So the mounting plate is drawn at 2:1 (it was 1:1 on a mostly empty A3) and the table frame at 1:10 with its cut list (it was 1:20). A table moved like that has its place stored when Fit views or Auto-detail moves it, so it doesn't move back. A sheet saved without a stored scale (before this) is still drawn as it always was, until Fit views.
+
+**Readability.** The section's cutting-plane line keeps its arrows and letters off the dimension stacks: each end stays where it is when clear, else stops just past the outline (before the first row), else runs past the last row. Datum symbols are placed clear of other symbols, frames and dimension lines: along their surface, out from it, or on the surface's line drawn on past its end (ISO 5459), and a datum on a dimension's line goes to whichever end is clear. A callout or dimension with a frame hung under it is placed where both fit, and that room is kept for the frame. A balloon keeps off dimension lines. Leaders end where along their surface reads best.
 
 **Annotations** never take a value: what each one says is read from the rebuild when the sheet is drawn.
 - **Dimension:** between two points, horizontal, vertical or aligned. A point is a node, a member end (`leg_a.start`), a hole's centre, or a side of the view (`@left`, `@right`, `@top`, `@bottom`). Or `{ "member": "leg_a" }`: the member's cut length along it, where it lies flat in the view. Dimensions stack outside the view, away from its neighbours, and never go in an iso view.

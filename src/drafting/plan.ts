@@ -18,6 +18,7 @@ import { validateDocument } from "../doc/validate";
 import type { Measurements } from "../kernel/measure";
 import type { ViewSpec } from "../kernel/drawingViews";
 import { cutList } from "../weldment/cutlist";
+import { cutListOf } from "../weldment/items";
 import { autoDimension } from "./autodim";
 import { composeSheet } from "./compose";
 import { withShownScales } from "./fit";
@@ -108,6 +109,14 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
       .sort((a, b) => b.seen - a.seen)[0];
     annotations.push({ id: id("b"), type: "balloon", view: "iso", member: best.mid });
   }
+  // Plates and gussets (the cut list v2's other items): a balloon each, on the body of it seen best in the iso, else the front or top.
+  if (weldment && m) {
+    for (const item of cutListOf(doc, m).items) {
+      if (item.kind === "member" || !item.bodies.length) continue;
+      const best = ["iso", "front", "top"].flatMap((view) => item.bodies.map((body) => ({ view, body, seen: visibleLength(geometry, view, body) }))).sort((a, b) => b.seen - a.seen)[0];
+      if (best && best.seen > 0) annotations.push({ id: id("b"), type: "balloon", view: best.view, body: best.body });
+    }
+  }
   for (const w of v.welds) annotations.push({ id: id("w"), type: "weld", view: "front", weld: w.id });
   if (weldment) {
     // Each cut list item's length once, where a member of it lies flat in the front and its length is not an overall size.
@@ -144,7 +153,7 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
 /** The scale the sheet came out at, stored (Phase Q wave Q4): from now on only the user changes it. */
 function keepPlannedScale(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
   if (!geometry) return;
-  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry });
+  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry, arrange: true });
   if (sheet) drawing.sheets[0] = withShownScales(drawing.sheets[0], sheet);
 }
 
@@ -153,7 +162,7 @@ function placeNotes(doc: unknown, drawing: Drawing, m: Measurements | null, geom
   const s = drawing.sheets[0];
   const note = s.annotations.find((a) => a.id === "general_notes");
   if (!note || note.type !== "note") return;
-  const sheet = composeSheet({ ...(doc as object), drawing: { ...drawing, sheets: [{ ...s, annotations: s.annotations.filter((a) => a !== note) }] } }, { measurements: m, geometry });
+  const sheet = composeSheet({ ...(doc as object), drawing: { ...drawing, sheets: [{ ...s, annotations: s.annotations.filter((a) => a !== note) }] } }, { measurements: m, geometry, arrange: true });
   if (!sheet) return;
   const lines = note.text.split("\n").length;
   // In the lower left corner, above any table along the bottom border there.
@@ -171,7 +180,7 @@ function placeNotes(doc: unknown, drawing: Drawing, m: Measurements | null, geom
  */
 function addDetail(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
   if (!geometry || !m || (m.members?.length ?? 0) > 0) return;
-  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry });
+  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry, arrange: true });
   if (!sheet) return;
   const scale = sheet.scale;
   let best: { view: string; small: { c: Vec2; r: number }[] } | null = null;

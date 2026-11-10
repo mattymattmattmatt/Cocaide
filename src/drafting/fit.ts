@@ -112,7 +112,7 @@ export function fitViews(doc: unknown, ctx: ComposeContext, sheetDoc: DrawingShe
   const drawing = (doc as { drawing?: { sheets?: DrawingSheet[] } }).drawing;
   if (!drawing?.sheets) return { error: "Fit views: there is no drawing." };
   const trial = { ...(doc as object), drawing: { ...drawing, sheets: drawing.sheets.map((s) => (s.id === sheetDoc.id ? fresh : s)) } };
-  const composed = composeSheet(trial, ctx, sheetDoc.id);
+  const composed = composeSheet(trial, { ...ctx, arrange: true }, sheetDoc.id);
   if (!composed) return { error: "Fit views: the drawing could not be composed." };
   const commands: Command[] = [{ type: "setSheet", sheet: sheetDoc.id, patch: { scale: scaleText(composed.scale) } }];
   for (const view of sheetDoc.views) {
