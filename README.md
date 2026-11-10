@@ -185,7 +185,7 @@ Open the example "table frame (weldment)", switch to **Drawing** and click **New
 | It is dimensioned 1200, 600 and 900 | `d1` (front, `@left` → `@right`) reads 1200, `d2` (front, `@bottom` → `@top`) 900, `d3` (right view) 600. Each is measured on the projected part; no annotation takes a value. |
 | Its balloons 1–3 sit on members of cut list items 1–3; the cut list and title block are on it | Each balloon names a member, and its number is that member's cut list item, worked out on every rebuild. The planner puts it on the member of its item the iso shows most of, and places it on the sheet near that member, clear of the others. The cut list table (item, size, length, ends, quantity, kg) sits above the title block. The title block has the name, steel (default), 23.98 kg, 1:10, A3, the date and the third-angle symbol. |
 | The drawing checks pass | Every view shows the part. Every annotation is attached. Every cut list item has a balloon. The overall size is dimensioned in all three directions. Nothing overlaps or runs off the sheet. A part with holes adds "every hole is called out", and one with welds "every weld has a symbol". |
-| Deleting a balloon fails "every cut list item has a balloon"; moving a view onto the title block fails the overlap check | Deleting `b5` gives "no balloon for item 2 (leg_a, leg_b, leg_c, leg_d)". Dragging the top view onto the title block holds it there (its `at`), the check names it, and the other views stay placed clear of it. **Place with the others** puts it back. |
+| Deleting a balloon fails "every cut list item has a balloon"; moving a view onto the title block fails the overlap check | Deleting `b5` gives "no balloon for item 2 (leg_a, leg_b, leg_c, leg_d)". Dragging the top view onto the title block holds it there (its `at`), the check names it, and the other views and the scale stay as they were. **Place with the others** puts it back. |
 | Switching every member to SHS 50×50×3 updates the sheet | In the model, **All like it** → SHS 50x50x3. Back on the sheet, a leg's length dimension reads 850 instead of 860, the cut list reads SHS 50x50x3, 2 × 1200, 4 × 850 and 2 × 600, the balloons still number items 1–3, and the checks still pass. |
 | Right-click the front view and ask for the leg height | The scope is `view:front`, "view front and its annotations", and the model gets the drawing's tools and no others. The packet says where the view's nodes, members and holes are on the sheet, each member's cut list item, and whether it lies flat in the view. The proposal adds `{ "type": "dimension", "view": "front", "member": "leg_a" }`, previewed on the sheet with the five checks; accepted, it reads 860. An edit to a feature from that ask is refused: `writeScope: updateFeature "leg_a" is outside the scope [view:front]`. |
 | The PDF opens in a PDF reader, and its text has the title, the dimensions and the cut list | Export PDF writes one A3 page, 1190.55 × 841.89 pt, every line a vector and every word Helvetica text. Poppler's `pdfinfo` and `pdftotext` read it, and the cut list comes out row by row. Export SVG is the SVG the app shows, word for word. |
@@ -762,7 +762,7 @@ v1 limits: flat plates and discs, one part per photo, and the photo pinned on XY
 ## Drawings
 
 **Drawing** in the top bar shows the part's drawing: one sheet, made of views of the rebuilt part. **New drawing** plans it:
-- the sheet is A3, at the largest standard scale that fits, third-angle;
+- the sheet is A3, at the largest standard scale that fits, third-angle; that scale is stored on the sheet and kept (see **Scale and layout** below);
 - there are front, top and right views, lined up as the projection puts them, and an iso where there is room (a step or two smaller if it needs to be);
 - the overall length, height and width are dimensioned;
 - every hole is called out where it shows as a circle ("2× Ø10 THRU", with the counterbore or countersink), and placed from the view's left and bottom edges;
@@ -772,6 +772,13 @@ v1 limits: flat plates and discs, one part per photo, and the photo pinned on XY
 Ctrl+Z puts back the drawing it replaced.
 
 **Views** are projected by OCCT's hidden-line removal, every body at once, so one body hides another. The lines are read back per body, so a balloon knows which lines are its member's. Tick **Hidden edges** to see what's behind, dashed. A view without `at` is placed with the others; drag one to hold it where you put it, and **Place with the others** lets it go. A view can have its own scale.
+
+**Scale and layout.** A sheet's scale is chosen once and then kept: New drawing stores the scale it picked (and the iso's, when it drew the iso a step smaller), and after that the scale changes only when you change it, in the sheet's **Scale** field, a view's own scale, or with **Fit views** (View Layout tab, the sheet panel's **Fit views** button, or the sheet tab's menu). Fit views lays the views out afresh at the largest standard scale at which they fit and stores that scale; the places you dragged views to are let go (Ctrl+Z puts them back). Moving a view never changes a scale, a view's size or where the other views are:
+- the layout is worked out as if no view had been moved, then each view you placed goes where you put it;
+- a view lined up with its parent (a projected view, a section) goes with the parent when the parent moves, and stays on the parent's line when it is moved itself; its dimensions and callouts go with it;
+- a view dragged partly or wholly off the sheet keeps its scale and is drawn where it is, so you can drag it back; the checks say "view iso is partly off the sheet";
+- a sheet saved before the scale was stored shows the scale it always showed, and the first edit to it stores that scale, so nothing jumps.
+Auto-detail fits the views again only when the tables it adds take the room of views nobody has moved.
 
 **Annotations** never take a value: what each one says is read from the rebuild when the sheet is drawn.
 - **Dimension:** between two points, horizontal, vertical or aligned. A point is a node, a member end (`leg_a.start`), a hole's centre, or a side of the view (`@left`, `@right`, `@top`, `@bottom`). Or `{ "member": "leg_a" }`: the member's cut length along it, where it lies flat in the view. Dimensions stack outside the view, away from its neighbours, and never go in an iso view.
