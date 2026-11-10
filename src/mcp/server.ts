@@ -211,7 +211,7 @@ export const TOOLS: Record<string, ToolSpec> = {
   },
   setSheet: {
     description:
-      'Change a sheet (default the first): its format { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic", title-block fields "title", "subtitle", "number", "revision", "drawnBy", "date", "checkedBy", "checkedDate", "approvedBy", "approvedDate", "company", "material", "finish", "mass" (text; may link $PRP:"name") }, "scale": "1:10" (null: what fits), "projection": "third" | "first", "name". Format fields may be given flat. Merged in; null removes a field.',
+      'Change a sheet (default the first): its format { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic", title-block fields "title", "subtitle", "number", "revision", "drawnBy", "date", "checkedBy", "checkedDate", "approvedBy", "approvedDate", "company", "material", "finish", "mass" (text; may link $PRP:"name") }, "scale": "1:10" (null: what fits now; New drawing and fitViews store one, and moving views never changes it), "projection": "third" | "first", "name". Format fields may be given flat. Merged in; null removes a field.',
     input: { patch: obj, sheet: z.string().optional() },
   },
   addSheet: {
@@ -232,8 +232,13 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { id: z.string(), view: obj.nullable(), sheet: z.string().optional() },
   },
   moveView: {
-    description: "Move a view: to at [x, y] on its sheet (null: back to its automatic place; a projected view stays lined up with its parent), and/or to another sheet with its annotations.",
+    description: "Move a view: to at [x, y] on its sheet (null: back to its automatic place; a projected view stays lined up with its parent, and the views lined up with it go with it), and/or to another sheet with its annotations. Never changes a scale or where the other views are; a view off the sheet keeps its scale (the checks say it is off).",
     input: { id: z.string(), at: z.array(z.number()).length(2).nullable().optional(), sheet: z.string().optional() },
+  },
+  fitViews: {
+    description:
+      "Fit views to sheet: lay a sheet's views out afresh (the places they were moved to let go, an iso's scale chosen again) at the largest standard scale at which they fit, and store that scale on the sheet. The sheet's scale never changes otherwise, except by setSheet { scale }: moving views never changes it.",
+    input: { sheet: z.string().optional() },
   },
   setAnnotation: {
     description:

@@ -20,6 +20,7 @@ import { geometryKey } from "../doc/drawing";
 import type { Constraint, SketchEntity, Vec2, Vec3 } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
 import { composeDrawing, type ComposedSheet } from "../drafting/compose";
+import { fitViews } from "../drafting/fit";
 import { sheetDXF } from "../drafting/dxf";
 import { listGeoRefs } from "../drafting/georef";
 import { drawingPDF, type FontFile } from "../drafting/pdf";
@@ -108,6 +109,7 @@ export const EDIT_TOOLS = [
   "setDrawingOptions",
   "setView",
   "moveView",
+  "fitViews",
   "setTable",
   "setAnnotation",
   "editAnnotation",
@@ -382,6 +384,15 @@ export class AgentSession {
         return this.edit({ type: "setView", id: String(a.id), view: isObject(a.view) ? a.view : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "moveView":
         return this.edit({ type: "moveView", id: String(a.id), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as Vec2 | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
+      case "fitViews": {
+        // Fit views to sheet (Phase Q wave Q4): the views laid out afresh at the largest standard scale that fits, stored.
+        const v = validateDocument(this.doc);
+        const sheet = v.drawing?.sheets.find((x) => (typeof a.sheet === "string" ? x.id === a.sheet : true));
+        if (!v.drawing || !sheet) return this.fail(v.drawing ? `fitViews: no sheet "${String(a.sheet)}"` : "fitViews: the part has no drawing (newDrawing makes one)");
+        const geometry = this.built.solid ? this.geometry(viewSpecs(v.drawing)) : null;
+        const r = fitViews(this.doc, { measurements: this.built.measurements, geometry }, sheet);
+        return "error" in r ? this.fail(r.error) : this.editMany(r.commands);
+      }
       case "setAnnotation":
         return this.edit({ type: "setAnnotation", id: String(a.id), annotation: isObject(a.annotation) ? a.annotation : null, ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "editAnnotation":

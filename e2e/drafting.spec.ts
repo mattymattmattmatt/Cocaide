@@ -129,7 +129,7 @@ test("right-click the front view, ask for the leg height: accepted, it reads 860
 
   // The packet was the view, and the model was given the drawing's tools alone.
   const body = sent[0].body as { tools: { name: string }[]; messages: { content: { type: string; text?: string }[] }[] };
-  expect(body.tools.map((t) => t.name)).toEqual(["escalate", "setAnnotation", "editAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions"]);
+  expect(body.tools.map((t) => t.name)).toEqual(["escalate", "setAnnotation", "editAnnotation", "setView", "moveView", "setSheet", "setTable", "addSheet", "deleteSheet", "setDrawingOptions", "detailPlan", "checkDrawing", "renderSheet", "applyDetailPlan", "deleteAnnotations"]);
   const packet = body.messages[0].content.find((b) => b.type === "text")!.text!;
   expect(packet).toContain('"kind": "view"');
   expect(packet).toContain('"liesFlat": true');

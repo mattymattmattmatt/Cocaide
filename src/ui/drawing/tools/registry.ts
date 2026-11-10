@@ -28,6 +28,7 @@ export const TOOL_SLOTS: ToolSlot[] = [
   slot("layout", "views", "view.standard3", "Standard 3 View", "examples", "Front, top and right views of the part, lined up (third or first angle, as the sheet projects)"),
   slot("layout", "views", "view.model", "Model View", "view", "A view of the part from a named orientation, iso, dimetric, trimetric or the 3D view's"),
   slot("layout", "views", "view.projected", "Projected View", "viewFront", "A view projected from another, lined up with it: pick the view, then the side"),
+  slot("layout", "views", "view.fit", "Fit Views", "fit", "Lay the views out afresh at the largest standard scale that fits the sheet, and keep that scale"),
   slot("layout", "derived", "view.section", "Section View", "section", "Cut a view along a line you draw on it; place the section beside it"),
   slot("layout", "derived", "view.detail", "Detail View", "zoomArea", "Circle a part of a view; place it larger"),
   slot("layout", "derived", "view.auxiliary", "Auxiliary View", "viewIso", "A view looking square at a slanted edge: pick the edge, place the view"),

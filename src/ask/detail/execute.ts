@@ -14,6 +14,8 @@ import { allAnnotations } from "../../doc/drawing";
 import { validateDocument } from "../../doc/validate";
 import { dragGrip } from "../../drafting/annotate";
 import { composeDrawing, type ComposedDrawing, type ComposedSheet } from "../../drafting/compose";
+import { layoutProblems } from "../../drafting/checks";
+import { fitViews } from "../../drafting/fit";
 import { overlaps, type Box } from "../../drafting/sheet";
 import { viewSpecs } from "../../drafting/specs";
 import type { CheckResult, DrawingGeometry, KernelPort, PartTopology } from "../kernel";
@@ -122,6 +124,9 @@ export async function executePlan(plan: DetailPlan, base: DetailState, kernel: K
   }
   if (moves.length) state = await restate(state, doc, kernel);
   if (opts.fix !== false) {
+    const refit = await refitViews(state, kernel, scope);
+    commands.push(...refit.commands);
+    state = refit.state;
     const added = new Set(results.flatMap((r) => r.made));
     for (let pass = 0; pass < 2; pass++) {
       const fixed = await clearOverlaps(state, kernel, scope, (id) => added.has(id));
@@ -138,6 +143,31 @@ export async function executePlan(plan: DetailPlan, base: DetailState, kernel: K
     doc = state.doc;
   }
   return { doc, commands, results, state };
+}
+
+/**
+ * Views the layout placed (none moved by hand) that now run into a table, the
+ * notes or the title block (a table the plan added took their room): the
+ * views fitted to the sheet again (Phase Q wave Q4: the sheet's scale is
+ * stored, so nothing else would make room), when that leaves fewer problems.
+ */
+export async function refitViews(state: DetailState, kernel: KernelPort, scope: string[]): Promise<{ state: DetailState; commands: Command[] }> {
+  const sheet = state.sheet;
+  const sheetDoc = state.drawing?.sheets.find((x) => x.id === sheet?.id);
+  if (!sheet || !sheetDoc || sheetDoc.views.some((v) => v.at)) return { state, commands: [] };
+  const clash = (s: ComposedSheet) => layoutProblems(s).filter((p) => /^view \S+ (overlaps (?!view )|is (partly )?off)/.test(p)).length;
+  const now = clash(sheet);
+  if (!now) return { state, commands: [] };
+  const fit = fitViews(state.doc, { measurements: state.check.measurements, geometry: state.geometry }, sheetDoc);
+  if ("error" in fit) return { state, commands: [] };
+  let doc = state.doc;
+  for (const cmd of fit.commands) {
+    const r = apply(doc, cmd, { writeScope: scope });
+    if (!r.ok) return { state, commands: [] };
+    doc = r.doc;
+  }
+  const next = await restate(state, doc, kernel);
+  return next.sheet && clash(next.sheet) < now ? { state: next, commands: fit.commands } : { state, commands: [] };
 }
 
 /** The gap between two boxes, mm (0 when they touch or overlap). */
