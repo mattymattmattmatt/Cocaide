@@ -67,14 +67,21 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
       if (y <= topOutline.min[1] + 1e-6 || y >= topOutline.max[1] - 1e-6) continue;
       score.set(y, (score.get(y) ?? 0) + 1);
     }
-    const best = [...score].sort((p, q) => q[1] - p[1] || Math.abs(p[0] - mid) - Math.abs(q[0] - mid))[0];
+    // A cut that takes away what the front view shows (a stand's upright in front of its holes) loses it from the
+    // drawing (Q4 polish: its height went undimensioned): only lines that keep the whole profile.
+    const keeps = (y: number) => !profileLost(geometry, y);
+    const ranked = [...score].sort((p, q) => q[1] - p[1] || Math.abs(p[0] - mid) - Math.abs(q[0] - mid)).filter(([y]) => keeps(y));
+    const best = ranked[0];
     const y = best ? best[0] : mid;
+    // Holes all behind what would be cut away: no section (the views show them hidden), not a cut along the part's middle.
+    if (best || (!score.size && keeps(mid))) {
     const w = topOutline.max[0] - topOutline.min[0];
     const h = topOutline.max[1] - topOutline.min[1];
     const margin = Math.max(2, 0.08 * Math.max(w, h));
     // Drawn right to left, the viewer stands at the front: the section is the front view.
     views[0] = { id: "top", look: "top", ...hidden };
     views[1] = { id: "front", kind: "section", parent: "top", line: [r2([topOutline.max[0] + margin, y]), r2([topOutline.min[0] - margin, y])], label: "A" };
+    }
   }
   const generalTolerance = weldment ? "ISO 13920-BF" : "ISO 2768-mK";
   let planned = views;
@@ -221,4 +228,36 @@ export function visibleLength(g: DrawingGeometry | null, view: string, body: str
     for (const line of hidden ? b.hidden : b.visible) for (let i = 1; i < line.length; i++) total += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
   }
   return total;
+}
+
+/**
+ * True when a full section cut along the top view at depth y (the viewer at
+ * the front, what is in front of the cut taken away) would lose some of the
+ * part's height: the side view's profile in front of the cut reaches higher or
+ * lower than what is behind it.
+ */
+function profileLost(geometry: DrawingGeometry | null, y: number): boolean {
+  const side = geometry?.views.find((x) => x.id === "right");
+  if (!side) return false;
+  const top = viewFrame("top");
+  const f = side.frame;
+  // The top view's depth (its up) runs across the side view.
+  const s = top.up[0] * f.right[0] + top.up[1] * f.right[1] + top.up[2] * f.right[2];
+  if (Math.abs(Math.abs(s) - 1) > 1e-6) return false;
+  let lo = Infinity;
+  let hi = -Infinity;
+  let keptLo = Infinity;
+  let keptHi = -Infinity;
+  for (const e of side.edges) {
+    for (const p of e.pts) {
+      lo = Math.min(lo, p[1]);
+      hi = Math.max(hi, p[1]);
+      if (p[0] * s >= y - 1e-6) {
+        keptLo = Math.min(keptLo, p[1]);
+        keptHi = Math.max(keptHi, p[1]);
+      }
+    }
+  }
+  if (!Number.isFinite(lo)) return false;
+  return hi - keptHi > 0.5 || keptLo - lo > 0.5;
 }

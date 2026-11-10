@@ -21,7 +21,7 @@ import type { ProjectedEdge } from "../../kernel/drawingViews";
 import type { ComposedView, PointContext } from "../compose";
 import { viewToSheet } from "../compose";
 import { geoInView } from "../georef";
-import type { Box, Prim } from "../sheet";
+import { grow, type Box, type Prim } from "../sheet";
 import { parseRich } from "../symbols/richtext";
 import { CAP } from "../text";
 import { numberText, toleranceText } from "../tolerance";
@@ -674,7 +674,7 @@ export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, 
     let d = drawLinear({ ...spec, ...(at ? { textPoint: at } : {}) }, style);
     if (!at) {
       // Text over other text, a symbol or a view's marks: slid along its line to the nearest clear place.
-      const busy = (b: Box) => ctx.occ.overlap(withHung(ctx, owner, b), { ignore: [owner], kinds: ["text", "symbol", "label", "balloon", "table", "title"] }) + ctx.occ.linesThrough(hungBox(ctx, owner, b) ?? { min: [0, 0], max: [-1, -1] }, [owner]) * 4;
+      const busy = (b: Box) => ctx.occ.overlap(grow(withHung(ctx, owner, b), 0.8), { ignore: [owner], kinds: ["text", "symbol", "label", "balloon", "table", "title"] }) + ctx.occ.linesThrough(hungBox(ctx, owner, b) ?? { min: [0, 0], max: [-1, -1] }, [owner]) * 4;
       if (busy(d.textBox) > 0) {
         const mid = mul(add(d.line[0], d.line[1]), 0.5);
         const half = dist(d.line[0], d.line[1]) / 2;

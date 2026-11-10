@@ -130,6 +130,15 @@ function moved(prims: Prim[], by: Vec2): Prim[] {
   return prims.map((p) => (p.k === "line" ? { ...p, pts: p.pts.map(t) } : p.k === "circle" ? { ...p, c: t(p.c) } : p.k === "area" ? { ...p, loops: p.loops.map((l) => l.map(t)) } : { ...p, at: t(p.at) }));
 }
 
+/** Points along an edge a leader may end on (a fifth to four fifths of the way), for findSpot's tips: none for other refs. */
+export function edgeTips(ctx: AnnotationContext, ref: string): Vec2[] {
+  const g = ctx.resolve(ref);
+  if (!g || g.kind !== "edge" || !g.a || !g.b) return [];
+  const a = g.a;
+  const b = g.b;
+  return [0.3, 0.7, 0.2, 0.8].map((t) => add(a, mul(sub(b, a), t)));
+}
+
 /** Where a GeoRef is on the sheet for a leader's tip: an edge's nearest point to `near` (its middle by default), a circle's rim, a point. */
 export function tipOf(ctx: AnnotationContext, ref: string, near?: Vec2): { tip: Vec2; normal: Vec2; kind: "edge" | "circle" | "point"; c?: Vec2; r?: number } | null {
   const g = ctx.resolve(ref);
@@ -177,7 +186,7 @@ export function layoutGdt(a: GdtAnnotation, ctx: AnnotationContext, cv: Composed
     const target = dim && a.extension !== undefined ? extensionTip(dim, a.extension) : a.on ? tipOf(ctx, a.on)?.tip : undefined;
     if (!target) return failed(a.on ? `${a.on} is not in ${cv.id} any more` : "a frame is on a feature (on), a dimension (dimension), or placed (at)");
     const shape = (knee: Vec2, dir: 1 | -1): Box => (dir > 0 ? { min: [knee[0], knee[1] - f.h / 2 + f.bottom], max: [knee[0] + f.w, knee[1] + f.h / 2 + (f.top - f.h)] } : { min: [knee[0] - f.w, knee[1] - f.h / 2 + f.bottom], max: [knee[0], knee[1] + f.h / 2 + (f.top - f.h)] });
-    const s = findSpot(ctx.occ, { tip: target, viewBox: cv.box, shape, owner: a.id, prefer: [0.8, 0.6], rings: [8, 13, 20, 28] });
+    const s = findSpot(ctx.occ, { tip: target, viewBox: cv.box, shape, owner: a.id, prefer: [0.8, 0.6], rings: [8, 13, 20, 28], ...(a.on && !dim ? { tips: edgeTips(ctx, a.on) } : {}) });
     const knee = s?.knee ?? add(target, [10, 10]);
     const dir = s?.dir ?? 1;
     origin = dir > 0 ? [knee[0], knee[1] - f.h / 2] : [knee[0] - f.w, knee[1] - f.h / 2];

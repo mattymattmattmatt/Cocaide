@@ -542,7 +542,8 @@ function badness(sheet: ComposedSheet, id: string): number {
   if (!a?.textBox) return 0;
   let s = overlapsOf(sheet, id).reduce((t, o) => t + 10 + o.area, 0) + 15 * crossingsOf(sheet, id).length;
   const lines = lineConflictsOf(sheet, id);
-  s += 15 * lines.through.length + 25 * lines.along.length;
+  // One dimension line drawn along another reads as one (Q4 polish: never a way out of an overlap).
+  s += 15 * lines.through.length + 200 * lines.along.length;
   for (const v of sheet.views) {
     if (!v.box) continue;
     const b = v.box;
