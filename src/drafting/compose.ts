@@ -544,8 +544,9 @@ class Composer {
     const taken = new Set<string>();
     for (const view of this.s.views) {
       if (viewKind(view) !== "model" || view.orientation) continue;
+      // A view the user placed keeps its cell (Phase Q wave Q4): the others don't close up round where it was.
       const g = placeFromFront(view.look ?? "front", this.s.projection);
-      if (!g || view.at) continue;
+      if (!g) continue;
       const key = String(g);
       if (taken.has(key)) continue;
       taken.add(key);
@@ -556,7 +557,7 @@ class Composer {
     while (grew) {
       grew = false;
       for (const view of this.s.views) {
-        if (out.has(view.id) || view.at) continue;
+        if (out.has(view.id)) continue;
         const d = this.attachDir(view);
         const pg = view.parent ? out.get(view.parent) : undefined;
         if (!d || !pg) continue;
@@ -703,15 +704,27 @@ class Composer {
 
   private gridCache: Map<string, Vec2> | null = null;
 
+  /**
+   * The sheet's scale and its views' places (Phase Q wave Q4). The layout is
+   * worked out as if no view had been moved — the projection's grid, the
+   * loose column, the scale (the sheet's, else the largest standard one at
+   * which that layout fits) — and only then does each view the user placed go
+   * where they put it, the views lined up with it following. So moving a view
+   * never changes a scale, nor where the other views are, nor any view's size.
+   */
   private layout(blocked: Box[]): { scale: number; views: ComposedView[] } {
+    const natural = this.naturalLayout(blocked);
+    return { scale: natural.scale, views: this.settle(natural.views) };
+  }
+
+  private naturalLayout(blocked: Box[]): { scale: number; views: ComposedView[] } {
     const fixed = parseScale(this.s.scale);
     const grid = this.grid();
     this.gridCache = grid;
-    const loose = this.s.views.filter((view) => !view.at && !grid.has(view.id));
+    const loose = this.s.views.filter((view) => !grid.has(view.id));
     const candidates = fixed ? [fixed] : STANDARD_SCALES.map((s) => parseScale(s)!);
-    if (fixed) return { scale: fixed, views: this.place(fixed, fixed, grid, loose) };
-    // Iso views placed on their own may go a step or two smaller to fit; a detail is never smaller than its parent.
-    const shrinkable = loose.some((v) => viewKind(v) === "model" || viewKind(v) === "projected");
+    // Iso views placed on their own may go a step or two smaller to fit (never below a scale the sheet was given); a detail is never smaller than its parent.
+    const shrinkable = !fixed && loose.some((v) => viewKind(v) === "model" || viewKind(v) === "projected");
     // The views' group starts at the frame's top left, or beside or below a table that holds that corner.
     const top = this.frame.max[1] - INSET;
     const left = this.frame.min[0] + INSET;
@@ -731,9 +744,44 @@ class Composer {
       }
     }
     this.start = [left, top];
-    // Nothing fits: the smallest scale, and the checks say what overlaps.
+    // Nothing fits: the sheet's scale, else the smallest; the checks say what overlaps.
     const smallest = candidates[candidates.length - 1];
     return { scale: smallest, views: this.place(smallest, smallest, grid, loose) };
+  }
+
+  /**
+   * The views where the user put them: a view with a place of its own is
+   * there (at its natural scale and size); a view lined up with its parent is
+   * kept on the parent's line, and one with no place of its own goes with its
+   * parent by as much as the parent moved. Every other view stays put.
+   */
+  private settle(natural: ComposedView[]): ComposedView[] {
+    const byId = new Map(natural.map((cv) => [cv.id, cv]));
+    const out = new Map<string, ComposedView>();
+    const moved = (cv: ComposedView, d: Vec2): ComposedView => ({
+      ...cv,
+      centre: [cv.centre[0] + d[0], cv.centre[1] + d[1]],
+      box: cv.box ? { min: [cv.box.min[0] + d[0], cv.box.min[1] + d[1]], max: [cv.box.max[0] + d[0], cv.box.max[1] + d[1]] } : null,
+    });
+    const visit = (id: string, trail: Set<string>): ComposedView | undefined => {
+      const done = out.get(id);
+      if (done) return done;
+      const cv = byId.get(id);
+      const view = this.here.get(id);
+      if (!cv || !view) return undefined;
+      const parent = this.attachDir(view) && view.parent && byId.has(view.parent) && !trail.has(view.parent) ? view.parent : null;
+      const pNatural = parent ? byId.get(parent) : undefined;
+      const pNow = parent ? visit(parent, new Set([...trail, id])) : undefined;
+      let now: ComposedView;
+      if (view.at) now = { ...moved(cv, [view.at[0] - cv.centre[0], view.at[1] - cv.centre[1]]), auto: false };
+      else if (pNatural && pNow) now = moved(cv, [pNow.centre[0] - pNatural.centre[0], pNow.centre[1] - pNatural.centre[1]]);
+      else now = cv;
+      out.set(id, now);
+      if (pNow) this.lineUp(view, out);
+      return out.get(id);
+    };
+    for (const cv of natural) visit(cv.id, new Set());
+    return natural.map((cv) => out.get(cv.id)!);
   }
 
   /**
@@ -788,13 +836,7 @@ class Composer {
       };
     };
     const own = (view: DrawingView, fallback: number) => this.scaleFor(view, scale, fallback, false);
-    // Views with a place of their own: a view lined up with its parent keeps its line (it moves along it only).
-    const placedLater: DrawingView[] = [];
-    for (const view of this.s.views) {
-      if (!view.at) continue;
-      if (this.attachDir(view) && view.parent && !this.here.get(view.parent)?.at && grid.has(view.parent)) placedLater.push(view);
-      else out.set(view.id, make(view, own(view, scale), view.at, false));
-    }
+    // Every view where it goes when nobody has moved it (settle() then puts the ones the user placed where they are).
     // The projection: columns and rows around the front, each view's lines aligned with its neighbours'.
     const inGrid = this.s.views.filter((view) => grid.has(view.id));
     if (inGrid.length) {
@@ -832,11 +874,6 @@ class Composer {
       }
       // A view made from its neighbour lines up with it exactly: the same model point at the same place across.
       for (const view of inGrid) this.lineUp(view, out);
-    }
-    for (const view of placedLater) {
-      const cv = make(view, own(view, scale), view.at!, false);
-      out.set(view.id, cv);
-      this.lineUp(view, out);
     }
     // The rest down the right, from the top.
     let top = this.looseTop ?? this.frame.max[1] - INSET;
