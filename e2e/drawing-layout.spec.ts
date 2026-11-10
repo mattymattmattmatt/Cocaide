@@ -56,7 +56,8 @@ async function titleScale(page: Page): Promise<string> {
 /** Drags a view by its middle by (dx, dy) screen pixels; with Alt it goes exactly there (no snapping, not kept on the sheet). */
 async function drag(page: Page, id: string, dx: number, dy: number, alt = false) {
   const v = await viewOf(page, id);
-  const [x, y] = await at(page, v.centre[0], v.centre[1]);
+  // Off the middle, clear of the centre lines and marks there.
+  const [x, y] = await at(page, v.box.min[0] + 0.15 * (v.box.max[0] - v.box.min[0]), v.box.min[1] + 0.3 * (v.box.max[1] - v.box.min[1]));
   await page.mouse.move(x, y);
   if (alt) await page.keyboard.down("Alt");
   await page.mouse.down();
@@ -94,7 +95,6 @@ test("dragging views never changes the scale or a view's size; parents take thei
   for (const id of ["top", "front"]) expect((await viewOf(page, id)).centre).toEqual(before[id].centre);
   await page.screenshot({ path: "test-results/drawing-layout-off-sheet.png" });
   // The checks say where it is.
-  await page.getByTestId("drawing-checks-toggle").click().catch(() => undefined);
   await expect(page.getByTestId("drawing-checks")).toContainText(/view iso is (partly )?off the sheet/);
 
   // The top view dragged down and right: section A-A under it goes with it; the iso stays where it was put.
@@ -127,4 +127,16 @@ test("dragging views never changes the scale or a view's size; parents take thei
   // Undo puts the moved places back in one step.
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await viewOf(page, "top")).centre).toEqual(top.centre);
+  await page.keyboard.press("Control+y");
+  for (const id of views) await expect.poll(async () => (await viewOf(page, id)).centre).toEqual(before[id].centre);
+
+  // A sheet stored without a scale (as before this wave) keeps the one it shows: the first edit stores it.
+  await page.keyboard.press("Escape");
+  await page.getByTestId("sheet-scale").selectOption("");
+  await expect.poll(async () => ((await savedDocument(page)) as { drawing: { sheets: { scale?: string }[] } }).drawing.sheets[0].scale).toBeUndefined();
+  expect(await titleScale(page)).toBe(scale);
+  await drag(page, "iso", 0, 40, true);
+  await expect.poll(async () => ((await savedDocument(page)) as { drawing: { sheets: { scale?: string }[] } }).drawing.sheets[0].scale).toBe("2:1");
+  expect(await titleScale(page)).toBe(scale);
+  expect(size(await viewOf(page, "iso"))).toEqual(size(before.iso));
 });
