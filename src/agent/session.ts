@@ -20,6 +20,7 @@ import { geometryKey } from "../doc/drawing";
 import type { Constraint, SketchEntity, Vec2, Vec3 } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
 import { composeDrawing, type ComposedSheet } from "../drafting/compose";
+import { keepScales } from "../drafting/fit";
 import { fitViews } from "../drafting/fit";
 import { sheetDXF } from "../drafting/dxf";
 import { listGeoRefs } from "../drafting/georef";
@@ -543,17 +544,22 @@ export class AgentSession {
    */
   private editMany(cmds: Command[], opts: { dryRun?: boolean; extra?: Record<string, unknown> } = {}): CallResult {
     const scope = this.writeScope ? [...this.writeScope, ...this.owned] : undefined;
+    // A sheet stored without a scale (made before Phase Q wave Q4) keeps the one it shows, as the editor does it.
+    // (They store what the sheet shows, as the editor does whatever is selected: outside the write scope.)
+    const own = cmds;
+    const kept = this.keptScales(cmds);
+    cmds = [...kept, ...cmds];
     let doc = this.doc;
     let made: Record<string, unknown> = {};
     for (const cmd of cmds) {
-      const applied = apply(doc, cmd, { writeScope: scope });
+      const applied = apply(doc, cmd, kept.includes(cmd) ? {} : { writeScope: scope });
       if (!applied.ok) return this.fail(applied.error);
       // A single edit says what it made: an entity's id and solved geometry, a constraint's index.
-      if (cmds.length === 1 && cmd.type !== "addFeature") made = commandMade(doc, applied.doc, cmd);
+      if (own.length === 1 && cmd === own[0] && cmd.type !== "addFeature") made = commandMade(doc, applied.doc, cmd);
       if (cmd.type === "addFeature") scope?.push(String((cmd.feature as Record<string, unknown>).id));
       doc = applied.doc;
     }
-    const what = cmds.length === 1 ? cmds[0].type : "batch";
+    const what = own.length === 1 ? own[0].type : "batch";
     const extra = { ...made, ...opts.extra };
     if (geometryKey(doc) === geometryKey(this.doc)) {
       // Only the drawing changed: the part is as it was.
@@ -594,6 +600,16 @@ export class AgentSession {
     this.commit(doc, text, next);
     for (const cmd of cmds) if (cmd.type === "addFeature") this.owned.add(String((cmd.feature as Record<string, unknown>).id));
     return { result: { ok: true, changed: true, ...this.status(), ...extra } };
+  }
+
+  /** The commands that store the scale a sheet the edit touches shows, when it has none stored (keepScales). */
+  private keptScales(cmds: Command[]): Command[] {
+    try {
+      let c: ReturnType<AgentSession["composed"]> | undefined;
+      return keepScales(this.doc, cmds, (id) => (c === undefined ? (c = this.composed()) : c)?.sheets.find((x) => x.id === id) ?? null);
+    } catch {
+      return [];
+    }
   }
 
   /** A batch: its steps planned on a copy (see src/ask/tools/batch.ts), then one transaction. */

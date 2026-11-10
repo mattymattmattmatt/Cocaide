@@ -28,7 +28,7 @@ import { DrawingPanel } from "./Panels";
 import { SheetCanvas, type SheetStatus } from "./SheetCanvas";
 import { SheetTabs } from "./SheetTabs";
 import { snapIndex, type SnapIndex } from "./snap";
-import { fitViews, keepScale } from "../../drafting/fit";
+import { DRAWING_EDITS, fitViews, keepScale } from "../../drafting/fit";
 import "./tools";
 import { runAutoDimension } from "./tools/annotationTools";
 import { annotationKey, annotationMenu } from "./tools/editing";
@@ -78,7 +78,6 @@ export type Workspace = ReturnType<typeof useDrawingWorkspace>;
 const TAB_KEY = "cocaide.drawingTab.v1";
 
 /** The commands that edit the drawing (the first of them on a sheet stored without a scale stores the one it shows). */
-const DRAWING_EDITS = new Set<string>(["setSheet", "addSheet", "renameSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation", "editAnnotation"]);
 
 export function useDrawingWorkspace(p: WorkspaceProps) {
   const [selection, setSelection] = useState<string[]>([]);

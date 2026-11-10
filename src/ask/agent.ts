@@ -3,6 +3,7 @@
 // accepts or discards. Edits run in a sandbox copy of the document, each one
 // a checked transaction; the user's document is untouched until accept.
 
+import { DRAWING_EDITS, keepScales } from "../drafting/fit";
 import type Anthropic from "@anthropic-ai/sdk";
 import { apply, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument } from "../doc/format";
@@ -164,6 +165,12 @@ export interface Proposal {
   notes?: string[];
   /** The commands, in order. Accepting replays them on the document as it is then. */
   commands: Command[];
+  /**
+   * Run first, outside the scope: the scale each sheet the ask edited showed,
+   * stored as the editor stores it on the first edit of a sheet made before
+   * Phase Q wave Q4 (src/drafting/fit.ts keepScales).
+   */
+  keepScale?: Command[];
   /** Scope the commands ran under (with the ids the ask added). */
   scope: string[];
   /** The document the ask started from, and the proposed result. */
@@ -398,6 +405,11 @@ export async function runAsk(req: AskRequest): Promise<AskResult> {
 export function applyProposal(doc: RawDocument, p: Proposal): { ok: true; doc: RawDocument } | { ok: false; error: string } {
   if (p.replace) return { ok: true, doc: structuredClone(p.doc) };
   let current = doc;
+  // The sheets' shown scales first (none when the user stored them meanwhile: such a command is let go).
+  for (const cmd of p.keepScale ?? []) {
+    const r = apply(current, cmd);
+    if (r.ok) current = r.doc;
+  }
   for (const cmd of p.commands) {
     const r = apply(current, cmd, { writeScope: p.scope });
     if (!r.ok) return { ok: false, error: r.error };
@@ -425,6 +437,8 @@ class Sandbox {
   revision = 0;
   hash = "";
   readonly commands: Command[] = [];
+  /** Commands that stored the scale a sheet without one showed, before the first edit of it (see keepScales). */
+  readonly keptScale: Command[] = [];
   readonly owned = new Set<string>();
   escalated: string | null = null;
   private addedSketch: string | null = null;
@@ -637,7 +651,15 @@ class Sandbox {
    * dryRun the result is reported and nothing is kept.
    */
   private async editMany(cmds: Command[], opts: { dryRun?: boolean; results?: StepResult[] } = {}): Promise<Outcome> {
+    // A sheet stored without a scale (made before Phase Q wave Q4) keeps the one it shows, as the editor does it.
+    // (They store what the sheet shows, as the editor does whatever is selected: outside the ask's scope, kept apart.)
+    const kept = await this.keptScales(cmds);
+    const own = cmds.length;
     let doc = this.doc;
+    for (const k of kept) {
+      const r = apply(doc, k);
+      if (r.ok) doc = r.doc;
+    }
     const made: Record<string, unknown>[] = [];
     const addedHere: string[] = [];
     const addedFeatures: Record<string, unknown>[] = [];
@@ -659,7 +681,7 @@ class Sandbox {
       if (cmd.type === "addFeature") addedHere.push(String((cmd.feature as Record<string, unknown>).id));
       doc = applied.doc;
     }
-    const what = cmds.length === 1 ? cmds[0].type : "batch";
+    const what = own === 1 ? cmds[0].type : "batch";
     const next = await this.kernel.check(doc);
     const broke = newFailures(this.check, next);
     if (broke.length) return { ok: false, error: `${what} rolled back: ${broke.join("; ")}`, ...(opts.results ? { results: opts.results } : {}) };
@@ -688,6 +710,7 @@ class Sandbox {
     this.doc = doc;
     this.check = next;
     this.commands.push(...cmds);
+    this.keptScale.push(...kept);
     for (const cmd of cmds) {
       if (cmd.type !== "addFeature") continue;
       const f = cmd.feature as Record<string, unknown>;
@@ -710,7 +733,7 @@ class Sandbox {
     const out: Outcome = { ok: true, volume: next.measurements ? round6(next.measurements.volume) : null };
     if (next.errors.length) out.errors = next.errors;
     if (opts.results) out.results = opts.results;
-    else if (cmds.length === 1) Object.assign(out, made[0]);
+    else if (own === 1) Object.assign(out, made[0]);
     // What changed in this edit, measured: the features it touched.
     const changed = touchedIds(before, this.doc).filter((t) => !t.startsWith("drawing:"));
     out.features = changed.map((id) => ({ id, ...localMeasurements(this.doc, id, topo) }));
@@ -845,6 +868,19 @@ class Sandbox {
   }
 
   /** The drawing as it now stands, for an ask from the sheet. */
+  /** The commands that store the scale a sheet the edit touches shows, when it has none stored (keepScales). */
+  private async keptScales(cmds: Command[]): Promise<Command[]> {
+    if (!cmds.some((c) => DRAWING_EDITS.has(c.type))) return [];
+    const sheets = (this.doc as { drawing?: { sheets?: { scale?: unknown }[] } }).drawing?.sheets;
+    if (!Array.isArray(sheets) || sheets.every((x) => x.scale)) return [];
+    try {
+      const now = await this.drawingNow(this.doc, this.check);
+      return keepScales(this.doc, cmds, (id) => now?.state.sheets.find((x) => x.id === id) ?? null);
+    } catch {
+      return [];
+    }
+  }
+
   private async drawingNow(doc: RawDocument, check: CheckResult) {
     const state = await composeFor(doc, this.kernel, check);
     return state ? { state, checks: drawingChecks(state.sheets, doc, check.measurements, state.geometry) } : null;
@@ -868,6 +904,7 @@ class Sandbox {
       ...(drawn ? { checks: drawn.checks } : {}),
       ...(left.length ? { notes: left } : {}),
       commands: this.commands,
+      ...(this.keptScale.length ? { keepScale: this.keptScale } : {}),
       scope: this.scope,
       base: this.base,
       doc: this.doc,

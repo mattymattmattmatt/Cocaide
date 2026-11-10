@@ -129,3 +129,55 @@ export function fitViews(doc: unknown, ctx: ComposeContext, sheetDoc: DrawingShe
   commands.push(...anchorTables(sheetDoc, movedTables(sheetDoc, composed)));
   return { commands, scale: scaleText(composed.scale) };
 }
+
+/** The drawing edits that store a sheet's shown scale first on a sheet stored without one (the editor's, the AI's alike). */
+export const DRAWING_EDITS = new Set<string>(["setSheet", "addSheet", "renameSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation", "editAnnotation"]);
+
+/** The sheets some commands edit: a command's own sheet, else the sheet holding what it names, else the first. */
+export function sheetsTouched(doc: unknown, cmds: Command[]): string[] {
+  const sheets = (doc as { drawing?: { sheets?: DrawingSheet[] } }).drawing?.sheets;
+  if (!Array.isArray(sheets) || !sheets.length) return [];
+  const out = new Set<string>();
+  for (const c of cmds) {
+    if (!DRAWING_EDITS.has(c.type) || c.type === "addSheet" || c.type === "setDrawingOptions") continue;
+    const named = c as { sheet?: unknown; id?: unknown };
+    if (c.type === "renameSheet" || c.type === "moveSheet") {
+      if (typeof named.id === "string") out.add(named.id);
+      continue;
+    }
+    if (typeof named.sheet === "string" && sheets.some((s) => s.id === named.sheet)) {
+      out.add(named.sheet);
+      continue;
+    }
+    const id = typeof named.id === "string" ? named.id : null;
+    const holding = id ? sheets.find((s) => s.views?.some((v) => v.id === id) || s.annotations?.some((a) => a.id === id) || (s.tables ?? []).some((t) => t.id === id)) : undefined;
+    out.add((holding ?? sheets[0]).id);
+  }
+  return [...out];
+}
+
+/**
+ * What the editor does on the first edit of a sheet stored without a scale
+ * (made before Phase Q wave Q4), for any other editor (the AI agent session
+ * behind MCP and the bridge, the in-app ask): the commands that store the
+ * scale each sheet the edit touches shows, to run before it. `compose` gives
+ * a sheet as it is shown now (null when it can't be composed).
+ */
+export function keepScales(doc: unknown, cmds: Command[], compose: (sheet: string) => ComposedSheet | null): Command[] {
+  if (!cmds.some((c) => DRAWING_EDITS.has(c.type)) || cmds.some((c) => c.type === "setDrawing")) return [];
+  const sheets = (doc as { drawing?: { sheets?: DrawingSheet[] } }).drawing?.sheets ?? [];
+  const out: Command[] = [];
+  for (const id of sheetsTouched(doc, cmds)) {
+    const sheetDoc = sheets.find((s) => s.id === id);
+    if (!sheetDoc || sheetDoc.scale || !sheetDoc.views?.length) continue;
+    if (cmds.some((c) => (c.type === "setSheet" && "scale" in c.patch && (c.sheet ?? sheets[0].id) === id) || (c.type === "deleteSheet" && c.id === id))) continue;
+    const composed = compose(id);
+    if (composed) out.push(...keepScale(sheetDoc, composed));
+  }
+  return out;
+}
+
+/** The commands that store where the layout moved tables with no anchor of their own (so the views fit): none when it moved none. */
+export function anchorMovedTables(sheetDoc: DrawingSheet, composed: ComposedSheet): Command[] {
+  return anchorTables(sheetDoc, movedTables(sheetDoc, composed));
+}
