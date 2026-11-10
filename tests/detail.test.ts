@@ -16,6 +16,7 @@ import { clearanceFor, inferIntent } from "../src/ask/detail/intent";
 import { drawingContext, PACKET_BUDGET, packetTokens } from "../src/ask/detail/packet";
 import { activeItems, flatnessFor, planWith } from "../src/ask/detail/plan";
 import { rasterizeSheet, sheetRaster } from "../src/ask/detail/raster";
+import { layoutProblems } from "../src/drafting/checks";
 import { DEFAULT_VIEWS, planDrawing } from "../src/drafting/plan";
 import { buildPacket } from "../src/ask/packet";
 import { toleranceOf } from "../src/drafting/tolerance";
@@ -237,6 +238,9 @@ describe("Auto-detail (no model) on the bracket, flange and frame", () => {
         const said = st.sheet!.annotations.map((a) => a.text);
         expect(said).toEqual(expect.arrayContaining(["Ø24 H7", "position | Ø0.1Ⓜ | A | B(M)", "perpendicularity | Ø0.02 | A", "flatness | 0.05"]));
       }
+      // The sheet's scale is stored (Phase Q wave Q4): when the tables the plan adds take the views' room, the views are fitted again.
+      expect(layoutProblems(st.sheet!)).toEqual([]);
+      if (name === "table-frame") expect([st.drawing!.sheets[0].scale, st.sheet!.scaleText]).toEqual(["1:20", "1:20"]);
     });
   }
 
