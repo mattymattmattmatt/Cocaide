@@ -459,13 +459,13 @@ const DRAWING_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "moveView",
-    description: "Move a view to at [x, y] on its sheet (null: back to its automatic place), and/or to another sheet (sheet) with its annotations.",
+    description: "Move a view to at [x, y] on its sheet (null: back to its automatic place), and/or to another sheet (sheet) with its annotations. The views lined up with it go with it; it never changes a scale or the other views' places (a view off the sheet keeps its scale; the checks say so).",
     input_schema: obj({ id: { type: "string" }, at: { type: ["array", "null"], items: { type: "number" } }, sheet: { type: "string" } }, ["id"]),
   },
   {
     name: "setSheet",
     description:
-      'Change a sheet (sheet: its id; default the first): size ("A4".."A0", "ANSI A".."ANSI E"), orientation ("landscape" | "portrait"), template ("iso" | "ansi" | "minimal" | "classic"), scale ("1:10"; null for what fits), projection ("third" | "first"), name, and the title block: title, subtitle, number, revision, drawnBy, date, checkedBy, checkedDate, approvedBy, approvedDate, company, material, finish, mass (text, may link $PRP:"name"). Merged in; null removes a field.',
+      'Change a sheet (sheet: its id; default the first): size ("A4".."A0", "ANSI A".."ANSI E"), orientation ("landscape" | "portrait"), template ("iso" | "ansi" | "minimal" | "classic"), scale ("1:10"; the sheet keeps it, moving views never changes it; null for what fits now — with moveView(id, null) for every view that lays the views out afresh, like Fit views in the editor), projection ("third" | "first"), name, and the title block: title, subtitle, number, revision, drawnBy, date, checkedBy, checkedDate, approvedBy, approvedDate, company, material, finish, mass (text, may link $PRP:"name"). Merged in; null removes a field.',
     input_schema: obj({ patch: any, sheet: { type: "string" } }, ["patch"]),
   },
   {

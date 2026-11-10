@@ -378,7 +378,7 @@ gives a body its own material (setBodyMaterial); its mass and the part's follow.
     "format": { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic",
       title-block fields (text, optional; may link properties $PRP:"partNumber", $PRPMODEL:"mass", $PRPSHEET:"scale"): "title", "subtitle", "number",
       "revision", "drawnBy", "date", "checkedBy", "checkedDate", "approvedBy", "approvedDate", "company", "material", "finish", "mass" },
-    "scale": "1:10" (optional: else what fits), "projection": "third" | "first", "views": [...], "annotations": [...], "tables": [...] (see cutList) }],
+    "scale": "1:10" (optional: else the largest standard scale at which the views, laid out as if none had been moved, fit; New drawing and fitViews store it, and moving a view never changes it), "projection": "third" | "first", "views": [...], "annotations": [...], "tables": [...] (see cutList) }],
   "standard": "ISO" | "ASME", "units": "mm" | "in", "generalTolerance": "ISO 2768-mK", "properties": { "company": "Acme" },
   "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-11-04", "by": "JS", "approved": "", "zone": "C3" }] }
 A Phase L drawing ({ sheet, views, annotations }) is read as one sheet in the classic template. Ids are unique across sheets.
@@ -666,6 +666,7 @@ exportDxf(what: "sketch" | "face" | "plates", sketch?, face?, file?, version?) -
 newDrawing(date?) - code plans an ISO sheet: front (a section when the part has insides), top and right projected from it, iso, a detail of small crowded features, the overall size, every hole, centre marks, a balloon per cut list item, the tables.
 setSheet(patch, sheet?), addSheet(id?, sheet?, index?), renameSheet(id, name), deleteSheet(id), moveSheet(id, index), setDrawingOptions(patch) - the sheets and the drawing's settings.
 setView(id, view | null, sheet?), moveView(id, at?, sheet?), setAnnotation(id, annotation | null, sheet?), editAnnotation(id, patch), setTable(id, table | null, sheet?) - edit the drawing; a view takes its annotations and the views made from it with it.
+fitViews(sheet?) - lay the sheet's views out afresh at the largest standard scale that fits, and store it. A sheet keeps its scale (New drawing stores one): moving views never changes a scale or the other views' places; a view off the sheet keeps its scale and the checks say so.
 drawing - every composed sheet: each view's kind, scale and place, what each annotation reads (or why it can't be drawn), and the drawing checks. geoRefs(view) - what a view offers to attach to.
 exportDrawing(format: "pdf" | "svg" | "dxf", file?, sheet?) - a PDF of every sheet (font embedded), or one sheet as SVG or DXF (a layer per kind of line).
 detailPlan(view?, options?), applyDetailPlan(skip?, only?, view?, options?), checkDrawing, renderSheet(sheet?), deleteAnnotations(ids) - fully detail a drawing (reference: detailing).
