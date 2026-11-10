@@ -38,6 +38,7 @@ import type { ComposedSheet, ComposedView } from "../../drafting/compose";
 import { parseGeneralTolerance } from "../../drafting/tolerance";
 import type { Measurements } from "../../kernel/measure";
 import { cutList } from "../../weldment/cutlist";
+import { cutListOf } from "../../weldment/items";
 import type { DesignIntent } from "./intent";
 
 export const PLAN_GROUPS = ["views", "dimensions", "datums", "fits", "gdt", "surface", "welds", "tolerance", "notes", "tables", "title"] as const;
@@ -343,11 +344,13 @@ export function planDetail(input: PlanInput): DetailPlan {
   add({ id: "tolerance", group: "tolerance", label: `General tolerance ${options.generalTolerance}`, why: weld ? "ISO 13920 for welded constructions: B for lengths and angles, F for straightness, flatness and parallelism" : "ISO 2768: m (medium) for linear and angular sizes, K for the geometric tolerances not shown", on: true, action: { do: "tolerance" } });
   add({ id: "notes", group: "notes", label: weld ? "Notes: material, tolerances, welding (ISO 2553, ISO 5817 C), cleaning and paint, units" : "Notes: material, tolerances, surface, deburr and break edges, finish, units", why: "what the shop needs that no symbol says", on: true, action: { do: "notes", id: "general_notes" } });
   if (weld) {
-    const items = cutList(input.measurements?.members ?? []);
+    // The cut list v2's items (plates and gussets too), else the members' (Phase L).
+    const v2 = input.measurements ? cutListOf(input.doc, input.measurements).items : null;
+    const items = v2 ? v2.map((it) => ({ members: it.members, bodies: it.kind === "member" ? [] : it.bodies })) : cutList(input.measurements?.members ?? []).map((it) => ({ members: it.members, bodies: [] as string[] }));
     const iso = sheet.views.find((v) => v.look === "iso") ?? sheet.views[0];
-    const ballooned = new Set(annotations.filter((a) => a.type === "balloon").map((a) => (a.type === "balloon" ? a.member : "")));
-    const missing = items.filter((it) => !it.members.some((m) => ballooned.has(m)));
-    if (missing.length && iso) add({ id: "balloons", group: "tables", label: `Balloons for ${missing.length} cut list item${missing.length === 1 ? "" : "s"}`, why: "every cut list item numbered on the sheet", on: true, view: iso.id, action: { do: "balloons", annotations: missing.map((it) => ({ id: free("b"), type: "balloon", view: iso.id, member: it.members[0] }) as Annotation) } });
+    const ballooned = new Set(annotations.flatMap((a) => (a.type === "balloon" ? [a.member, a.body].filter((x): x is string => !!x) : [])));
+    const missing = items.filter((it) => !it.members.some((m) => ballooned.has(m)) && !it.bodies.some((b) => ballooned.has(b)) && (it.members.length || it.bodies.length));
+    if (missing.length && iso) add({ id: "balloons", group: "tables", label: `Balloons for ${missing.length} cut list item${missing.length === 1 ? "" : "s"}`, why: "every cut list item numbered on the sheet", on: true, view: iso.id, action: { do: "balloons", annotations: missing.map((it) => (it.members.length ? { id: free("b"), type: "balloon", view: iso.id, member: it.members[0] } : { id: free("b"), type: "balloon", view: iso.id, body: it.bodies[0] }) as Annotation) } });
     const hasCut = annotations.some((a) => a.type === "table" && a.table === "cutList") || drawing.sheets.some((s) => (s.tables ?? []).some((t) => t.kind === "cutList"));
     if (!hasCut) add({ id: "cut_list", group: "tables", label: "Cut list table", why: "the weldment's members: item, quantity, profile, length, angles", on: true, action: { do: "table", id: "cut_list", annotation: { id: free("cut_list"), type: "table", table: "cutList" } } });
   }

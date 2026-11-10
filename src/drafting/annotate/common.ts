@@ -105,6 +105,27 @@ export interface AnnotationContext {
   view(id: string): ComposedView | undefined;
   /** A linear dimension's planned line: its side and its row outside the view (see ./dimension planDimensionRows). */
   row(id: string): { side: -1 | 1; row: number; dir: "h" | "v" | "a" } | undefined;
+  /**
+   * The frames hung under a callout's or a dimension's text (a frame on it
+   * with no place of its own), by the host's id: their size, so the host is
+   * placed where they fit too (Q4 polish). Filled by layoutSheetAnnotations.
+   */
+  hung?: Map<string, { w: number; h: number; top: number; bottom: number }>;
+}
+
+/** Where the frames hung under a host's text (ctx.hung) will go, for a host whose text is at tb: null when none hangs there. */
+export function hungBox(ctx: AnnotationContext, id: string, tb: Box): Box | null {
+  const f = ctx.hung?.get(id);
+  if (!f) return null;
+  const cx = (tb.min[0] + tb.max[0]) / 2;
+  const y0 = tb.min[1] - 0.8 - f.h;
+  return { min: [cx - f.w / 2, y0 + f.bottom], max: [cx + f.w / 2, y0 + f.top] };
+}
+
+/** A box and the frames hung under it (hungBox), as one box. */
+export function withHung(ctx: AnnotationContext, id: string, tb: Box): Box {
+  const h = hungBox(ctx, id, tb);
+  return h ? { min: [Math.min(tb.min[0], h.min[0]), Math.min(tb.min[1], h.min[1])], max: [Math.max(tb.max[0], h.max[0]), Math.max(tb.max[1], h.max[1])] } : tb;
 }
 
 export type LayoutResult = Omit<AnnotationLayout, "id" | "type" | "view" | "box" | "grips"> & { grips?: Grip[]; box?: Box | null };

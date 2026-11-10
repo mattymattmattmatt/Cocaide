@@ -104,10 +104,13 @@ test("the workspace: tabs of tools, the tree, hover names the geometry, a sectio
   expect(s.line!.map((p) => p[0])).toEqual([30, 30]);
   expect(s.line![0][1]).toBeGreaterThan(20);
   expect(s.line![1][1]).toBeLessThan(-20);
-  // Lined up with the top view: across, at the top view's line.
+  // Lined up with the top view: across, at the top view's line. (The sheet's 2:1 has no room for a view beside the top
+  // one where the group was: the group is packed elsewhere on the sheet at the same scale, Q4 polish.)
   const sv = await viewOf(page, "section_1");
-  expect(Math.abs(sv.centre[1] - top.centre[1])).toBeLessThan(0.05);
-  expect(sv.centre[0]).toBeGreaterThan(top.box.max[0]);
+  const topNow = await viewOf(page, "top");
+  expect(Math.abs(sv.centre[1] - topNow.centre[1])).toBeLessThan(0.05);
+  expect(sv.centre[0]).toBeGreaterThan(topNow.box.max[0]);
+  expect(topNow.scale).toBe(top.scale);
   // One undo step takes the whole section away.
   await page.getByTestId("undo").click();
   await expect(page.getByTestId("drawing-item-section_1")).toHaveCount(0);

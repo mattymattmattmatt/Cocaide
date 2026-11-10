@@ -15,7 +15,7 @@ import { parseRich, richPrims, richWidth } from "../symbols/richtext";
 import { CAP } from "../text";
 import { numberText } from "../tolerance";
 import { add, arrowHead, failed, fromCentre, mul, sub, unit, type AnnotationContext, type LayoutResult } from "./common";
-import { tipOf } from "./gdt";
+import { edgeTips, tipOf } from "./gdt";
 import { findSpot } from "./placement";
 import type { DraftStyle } from "./style";
 
@@ -101,7 +101,8 @@ export function layoutSurface(a: SurfaceAnnotation, ctx: AnnotationContext, cv: 
   } else {
     // On a leader's landing, upright: the arrow on the surface.
     const shape = (knee: Vec2, dir: 1 | -1): Box => (dir > 0 ? { min: add(knee, [0, -0.5]), max: add(knee, [s.width + 2, s.box.max[1]]) } : { min: add(knee, [-s.width - 2, -0.5]), max: add(knee, [0, s.box.max[1]]) });
-    const spot = a.at ? { knee: add(cv.centre, a.at), dir: 1 as const } : findSpot(ctx.occ, { tip, viewBox: cv.box, shape, owner: a.id, prefer: [normal[0] * 0.7 + 0.3, normal[1] * 0.7 + 0.5], rings: [6, 10, 16, 24] });
+    const spot = a.at ? { knee: add(cv.centre, a.at), dir: 1 as const } : findSpot(ctx.occ, { tip, viewBox: cv.box, shape, owner: a.id, prefer: [normal[0] * 0.7 + 0.3, normal[1] * 0.7 + 0.5], rings: [6, 10, 16, 24], ...(a.on ? { tips: edgeTips(ctx, a.on) } : {}) });
+    if (spot && "tip" in spot && spot.tip) tip = spot.tip;
     const knee = spot?.knee ?? add(tip, mul(normal, 10));
     const dir = spot?.dir ?? 1;
     const landing: Vec2 = [knee[0] + dir * (s.width + 2), knee[1]];

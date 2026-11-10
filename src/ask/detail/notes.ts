@@ -24,7 +24,10 @@ export function notesFor(plan: DetailPlan, doc: RawDocument, m: Measurements | n
   out.push(`GENERAL TOLERANCES ${tolText}.`);
   if (plan.intent.kind === "weldment") {
     out.push("WELDS TO ISO 2553, QUALITY LEVEL C TO ISO 5817, PROCESS 135 (MAG).");
-    out.push("FILLET WELDS a3 ALL ROUND UNLESS OTHERWISE SHOWN.");
+    // As the symbols give it (ISO 2553): the weld list's fillets by their leg z (the size most have), else the plan's a3 throat.
+    const legs = v.welds.filter((w) => w.type === "fillet").map((w) => r2(w.size));
+    const common = legs.length ? `z${[...legs].sort((a, b) => legs.filter((x) => x === b).length - legs.filter((x) => x === a).length || a - b)[0]}` : "a3";
+    out.push(`FILLET WELDS ${common} ALL ROUND UNLESS OTHERWISE SHOWN.`);
     out.push("REMOVE SPATTER AND SLAG; DEBURR ALL CUT ENDS.");
     out.push(finish ? `FINISH: ${finish.toUpperCase()}.` : "DEGREASE AND PAINT AFTER WELDING: PRIMER AND TOP COAT, COLOUR AS ORDERED.");
     out.push("SURFACES AS FABRICATED UNLESS OTHERWISE SHOWN.");

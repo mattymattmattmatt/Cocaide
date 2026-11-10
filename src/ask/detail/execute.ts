@@ -15,7 +15,7 @@ import { validateDocument } from "../../doc/validate";
 import { dragGrip } from "../../drafting/annotate";
 import { composeDrawing, type ComposedDrawing, type ComposedSheet } from "../../drafting/compose";
 import { layoutProblems } from "../../drafting/checks";
-import { fitViews } from "../../drafting/fit";
+import { anchorMovedTables, fitViews } from "../../drafting/fit";
 import { overlaps, type Box } from "../../drafting/sheet";
 import { viewSpecs } from "../../drafting/specs";
 import type { CheckResult, DrawingGeometry, KernelPort, PartTopology } from "../kernel";
@@ -127,6 +127,22 @@ export async function executePlan(plan: DetailPlan, base: DetailState, kernel: K
     const refit = await refitViews(state, kernel, scope);
     commands.push(...refit.commands);
     state = refit.state;
+    // Tables the layout moved so the views fit (a cut list to the top right): their places stored, so nothing moves them back.
+    const sheetDoc = state.drawing?.sheets.find((x) => x.id === state.sheet?.id);
+    const anchors = sheetDoc && state.sheet ? anchorMovedTables(sheetDoc, state.sheet) : [];
+    if (anchors.length) {
+      let next = state.doc;
+      let ok = true;
+      for (const cmd of anchors) {
+        const r = apply(next, cmd, { writeScope: scope });
+        if (!r.ok) ok = false;
+        else next = r.doc;
+      }
+      if (ok) {
+        commands.push(...anchors);
+        state = await restate(state, next, kernel);
+      }
+    }
     const added = new Set(results.flatMap((r) => r.made));
     for (let pass = 0; pass < 2; pass++) {
       const fixed = await clearOverlaps(state, kernel, scope, (id) => added.has(id));
@@ -542,7 +558,8 @@ function badness(sheet: ComposedSheet, id: string): number {
   if (!a?.textBox) return 0;
   let s = overlapsOf(sheet, id).reduce((t, o) => t + 10 + o.area, 0) + 15 * crossingsOf(sheet, id).length;
   const lines = lineConflictsOf(sheet, id);
-  s += 15 * lines.through.length + 25 * lines.along.length;
+  // One dimension line drawn along another reads as one (Q4 polish: never a way out of an overlap).
+  s += 15 * lines.through.length + 200 * lines.along.length;
   for (const v of sheet.views) {
     if (!v.box) continue;
     const b = v.box;

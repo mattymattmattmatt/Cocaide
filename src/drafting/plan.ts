@@ -18,6 +18,7 @@ import { validateDocument } from "../doc/validate";
 import type { Measurements } from "../kernel/measure";
 import type { ViewSpec } from "../kernel/drawingViews";
 import { cutList } from "../weldment/cutlist";
+import { cutListOf } from "../weldment/items";
 import { autoDimension } from "./autodim";
 import { composeSheet } from "./compose";
 import { withShownScales } from "./fit";
@@ -67,14 +68,21 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
       if (y <= topOutline.min[1] + 1e-6 || y >= topOutline.max[1] - 1e-6) continue;
       score.set(y, (score.get(y) ?? 0) + 1);
     }
-    const best = [...score].sort((p, q) => q[1] - p[1] || Math.abs(p[0] - mid) - Math.abs(q[0] - mid))[0];
+    // A cut that takes away what the front view shows (a stand's upright in front of its holes) loses it from the
+    // drawing (Q4 polish: its height went undimensioned): only lines that keep the whole profile.
+    const keeps = (y: number) => !profileLost(geometry, y);
+    const ranked = [...score].sort((p, q) => q[1] - p[1] || Math.abs(p[0] - mid) - Math.abs(q[0] - mid)).filter(([y]) => keeps(y));
+    const best = ranked[0];
     const y = best ? best[0] : mid;
+    // Holes all behind what would be cut away: no section (the views show them hidden), not a cut along the part's middle.
+    if (best || (!score.size && keeps(mid))) {
     const w = topOutline.max[0] - topOutline.min[0];
     const h = topOutline.max[1] - topOutline.min[1];
     const margin = Math.max(2, 0.08 * Math.max(w, h));
     // Drawn right to left, the viewer stands at the front: the section is the front view.
     views[0] = { id: "top", look: "top", ...hidden };
     views[1] = { id: "front", kind: "section", parent: "top", line: [r2([topOutline.max[0] + margin, y]), r2([topOutline.min[0] - margin, y])], label: "A" };
+    }
   }
   const generalTolerance = weldment ? "ISO 13920-BF" : "ISO 2768-mK";
   let planned = views;
@@ -100,6 +108,14 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
       .map((mid) => ({ mid, seen: visibleLength(geometry, "iso", members.find((x) => x.id === mid)!.body) }))
       .sort((a, b) => b.seen - a.seen)[0];
     annotations.push({ id: id("b"), type: "balloon", view: "iso", member: best.mid });
+  }
+  // Plates and gussets (the cut list v2's other items): a balloon each, on the body of it seen best in the iso, else the front or top.
+  if (weldment && m) {
+    for (const item of cutListOf(doc, m).items) {
+      if (item.kind === "member" || !item.bodies.length) continue;
+      const best = ["iso", "front", "top"].flatMap((view) => item.bodies.map((body) => ({ view, body, seen: visibleLength(geometry, view, body) }))).sort((a, b) => b.seen - a.seen)[0];
+      if (best && best.seen > 0) annotations.push({ id: id("b"), type: "balloon", view: best.view, body: best.body });
+    }
   }
   for (const w of v.welds) annotations.push({ id: id("w"), type: "weld", view: "front", weld: w.id });
   if (weldment) {
@@ -137,7 +153,7 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
 /** The scale the sheet came out at, stored (Phase Q wave Q4): from now on only the user changes it. */
 function keepPlannedScale(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
   if (!geometry) return;
-  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry });
+  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry, arrange: true });
   if (sheet) drawing.sheets[0] = withShownScales(drawing.sheets[0], sheet);
 }
 
@@ -146,7 +162,7 @@ function placeNotes(doc: unknown, drawing: Drawing, m: Measurements | null, geom
   const s = drawing.sheets[0];
   const note = s.annotations.find((a) => a.id === "general_notes");
   if (!note || note.type !== "note") return;
-  const sheet = composeSheet({ ...(doc as object), drawing: { ...drawing, sheets: [{ ...s, annotations: s.annotations.filter((a) => a !== note) }] } }, { measurements: m, geometry });
+  const sheet = composeSheet({ ...(doc as object), drawing: { ...drawing, sheets: [{ ...s, annotations: s.annotations.filter((a) => a !== note) }] } }, { measurements: m, geometry, arrange: true });
   if (!sheet) return;
   const lines = note.text.split("\n").length;
   // In the lower left corner, above any table along the bottom border there.
@@ -164,7 +180,7 @@ function placeNotes(doc: unknown, drawing: Drawing, m: Measurements | null, geom
  */
 function addDetail(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
   if (!geometry || !m || (m.members?.length ?? 0) > 0) return;
-  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry });
+  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry, arrange: true });
   if (!sheet) return;
   const scale = sheet.scale;
   let best: { view: string; small: { c: Vec2; r: number }[] } | null = null;
@@ -221,4 +237,36 @@ export function visibleLength(g: DrawingGeometry | null, view: string, body: str
     for (const line of hidden ? b.hidden : b.visible) for (let i = 1; i < line.length; i++) total += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]);
   }
   return total;
+}
+
+/**
+ * True when a full section cut along the top view at depth y (the viewer at
+ * the front, what is in front of the cut taken away) would lose some of the
+ * part's height: the side view's profile in front of the cut reaches higher or
+ * lower than what is behind it.
+ */
+function profileLost(geometry: DrawingGeometry | null, y: number): boolean {
+  const side = geometry?.views.find((x) => x.id === "right");
+  if (!side) return false;
+  const top = viewFrame("top");
+  const f = side.frame;
+  // The top view's depth (its up) runs across the side view.
+  const s = top.up[0] * f.right[0] + top.up[1] * f.right[1] + top.up[2] * f.right[2];
+  if (Math.abs(Math.abs(s) - 1) > 1e-6) return false;
+  let lo = Infinity;
+  let hi = -Infinity;
+  let keptLo = Infinity;
+  let keptHi = -Infinity;
+  for (const e of side.edges) {
+    for (const p of e.pts) {
+      lo = Math.min(lo, p[1]);
+      hi = Math.max(hi, p[1]);
+      if (p[0] * s >= y - 1e-6) {
+        keptLo = Math.min(keptLo, p[1]);
+        keptHi = Math.max(keptHi, p[1]);
+      }
+    }
+  }
+  if (!Number.isFinite(lo)) return false;
+  return hi - keptHi > 0.5 || keptLo - lo > 0.5;
 }

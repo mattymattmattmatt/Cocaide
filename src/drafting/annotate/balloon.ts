@@ -109,7 +109,7 @@ export function layoutBalloon(a: BalloonAnnotation, ctx: AnnotationContext, cv: 
  * views, tables, labels and text, its leader crossing as few lines as can be.
  */
 function balloonSpot(ctx: AnnotationContext, cv: ComposedView, tip: Vec2, r: number, height: number, owner: string): Vec2 {
-  let best: { c: Vec2; cost: number } | null = null;
+  let best: { c: Vec2; cost: number; through: number } | null = null;
   const vb = cv.box!;
   for (const ring of [6 + r, 12 + r, 20 + r]) {
     for (let k = 0; k < 72; k++) {
@@ -119,10 +119,12 @@ function balloonSpot(ctx: AnnotationContext, cv: ComposedView, tip: Vec2, r: num
       if (!ctx.occ.inFrame(box)) continue;
       if (ctx.occ.overlap(box, { ignore: [owner], kinds: ["text", "symbol", "balloon", "label", "table", "title"] }) > 0) continue;
       if (ctx.occ.overlap(box, { ignore: [owner], views: true, kinds: ["view"] }) > 0) continue;
-      const cost = dist(c, tip) + ctx.occ.crossings(c, tip, [owner]) * 25 + ctx.occ.textCrossed(c, tip, [owner]) * 40 + (ring > 6 + r ? 4 : 0);
-      if (!best || cost < best.cost) best = { c, cost };
+      // A dimension or leader line through the balloon is marked by a checker (Q4 polish): a ring further out beats it.
+      const through = ctx.occ.linesThrough(box, [owner]);
+      const cost = dist(c, tip) + ctx.occ.crossings(c, tip, [owner]) * 25 + ctx.occ.textCrossed(c, tip, [owner]) * 40 + through * 40 + (ring > 6 + r ? 4 : 0);
+      if (!best || cost < best.cost) best = { c, cost, through };
     }
-    if (best) break;
+    if (best && !best.through) break;
   }
   return best?.c ?? add(tip, [r * 3, r * 3]);
 }

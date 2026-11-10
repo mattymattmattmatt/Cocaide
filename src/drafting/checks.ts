@@ -11,6 +11,7 @@ import type { Measurements } from "../kernel/measure";
 import type { ComposedDrawing, ComposedSheet } from "./compose";
 import { fmt } from "./compose";
 import { holeSignature } from "./autodim";
+import { cutListOf } from "../weldment/items";
 import { inside, overlaps, type Box } from "./sheet";
 
 const AXES = ["x", "y", "z"] as const;
@@ -32,13 +33,16 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
   add("Every annotation is attached", loose.length === 0, "all", loose.length ? loose.map((a) => `${a.id}: ${a.problem}`).join("; ") : `${annotations.length} annotation${annotations.length === 1 ? "" : "s"}`);
 
   if (cut.length) {
+    // The cut list v2's items (its plates and gussets too: Q4 polish), numbered as the balloons are.
+    const v2 = m && doc ? cutListOf(doc, m).items.map((i) => ({ item: i.item, members: i.kind === "member" ? i.members : i.bodies })) : null;
+    const items = v2 ?? cut.map((i) => ({ item: i.item, members: i.members }));
     const ballooned = new Set(drawn.filter((a) => a.type === "balloon").map((a) => a.item));
-    const missing = cut.filter((i) => !ballooned.has(i.item));
+    const missing = items.filter((i) => !ballooned.has(i.item));
     add(
       "Every cut list item has a balloon",
       missing.length === 0,
-      `items 1–${cut.length}`,
-      missing.length ? `no balloon for ${missing.map((i) => `item ${i.item} (${i.members.join(", ")})`).join(", ")}` : `${cut.length} of ${cut.length}`,
+      `items 1–${items.length}`,
+      missing.length ? `no balloon for ${missing.map((i) => `item ${i.item} (${i.members.join(", ")})`).join(", ")}` : `${items.length} of ${items.length}`,
     );
   }
 

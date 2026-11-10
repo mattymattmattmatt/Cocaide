@@ -36,8 +36,13 @@ export class Occupancy {
     if (box) this.boxes.push({ box, kind, owner });
   }
 
+  /** The views' own lines (kind "geometry"), kept apart: there are many, and only geometryThrough and geometry crossings read them. */
+  readonly geo: (Segment & { box: Box })[] = [];
+
   addSeg(a: Vec2, b: Vec2, kind: Segment["kind"], owner: string): void {
-    if (dist(a, b) > 1e-6) this.segs.push({ a, b, kind, owner });
+    if (dist(a, b) <= 1e-6) return;
+    if (kind === "geometry") this.geo.push({ a, b, kind, owner, box: { min: [Math.min(a[0], b[0]), Math.min(a[1], b[1])], max: [Math.max(a[0], b[0]), Math.max(a[1], b[1])] } });
+    else this.segs.push({ a, b, kind, owner });
   }
 
   /** An annotation's primitives: its text as boxes, its lines as leaders (or dimension lines). */
@@ -60,6 +65,12 @@ export class Occupancy {
         this.addBox({ min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] }, "text", owner);
       } else if (p.k === "line" && !p.fill) {
         for (let i = 1; i < p.pts.length; i++) this.addSeg(p.pts[i - 1], p.pts[i], lines, owner);
+      } else if (p.k === "line" && p.fill && p.pts.length) {
+        // A filled shape bigger than an arrowhead (a datum's triangle): a symbol other leaders keep off.
+        const xs = p.pts.map((q) => q[0]);
+        const ys = p.pts.map((q) => q[1]);
+        const b: Box = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
+        if (Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]) > 4) this.addBox(b, "symbol", owner);
       } else if (p.k === "circle" && p.r > 1.2) this.addBox({ min: [p.c[0] - p.r, p.c[1] - p.r], max: [p.c[0] + p.r, p.c[1] + p.r] }, "symbol", owner);
     }
   }
@@ -87,6 +98,26 @@ export class Occupancy {
       if (segmentHitsBox(s.a, s.b, box)) n++;
     }
     return n;
+  }
+
+  /** How many of the views' own lines (their visible and hidden edges, when added as "geometry") a box covers. */
+  geometryThrough(box: Box): number {
+    let n = 0;
+    for (const s of this.geo) if (overlaps(s.box, box, -0.01) && segmentHitsBox(s.a, s.b, box)) n++;
+    return n;
+  }
+
+  /** How many of the views' own lines the segment a–b crosses. */
+  geometryCrossed(a: Vec2, b: Vec2): number {
+    const box: Box = { min: [Math.min(a[0], b[0]), Math.min(a[1], b[1])], max: [Math.max(a[0], b[0]), Math.max(a[1], b[1])] };
+    let n = 0;
+    for (const s of this.geo) if (overlaps(s.box, box, -0.01) && segmentsCross(a, b, s.a, s.b)) n++;
+    return n;
+  }
+
+  /** True when the views' lines were added (a callout may then sit over a view's empty middle, at a price). */
+  get hasGeometry(): boolean {
+    return this.geo.length > 0;
   }
 
   /** How many leaders, dimension and extension lines the segment a–b crosses. */
@@ -154,6 +185,8 @@ export interface Spot {
   /** The text runs right (+1) or left (−1) from the knee. */
   dir: 1 | -1;
   cost: number;
+  /** The tip it was found for (one of `tips` when given). */
+  tip?: Vec2;
 }
 
 export interface SpotQuery {
@@ -173,6 +206,8 @@ export interface SpotQuery {
   /** Allowed over the view (a callout inside a big view's empty middle): default false. */
   overView?: boolean;
   ignore?: string[];
+  /** Other points the leader may end on instead (along the surface it points at): the best of all is taken. */
+  tips?: Vec2[];
 }
 
 /**
@@ -184,6 +219,15 @@ export interface SpotQuery {
  * are). Null when nothing fits on the sheet.
  */
 export function findSpot(occ: Occupancy, q: SpotQuery): Spot | null {
+  if (q.tips?.length) {
+    let best: Spot | null = null;
+    // The usual tip first: another wins only when clearly better.
+    for (const [i, tip] of [q.tip, ...q.tips].entries()) {
+      const s = findSpot(occ, { ...q, tip, tips: undefined });
+      if (s && (!best || s.cost + (i ? 4 : 0) < best.cost)) best = { ...s, tip, cost: s.cost + (i ? 4 : 0) };
+    }
+    return best;
+  }
   const rings = q.rings ?? [7, 12, 18, 26, 36];
   const cands: Vec2[] = [];
   const vb = q.viewBox;
@@ -206,11 +250,17 @@ export function findSpot(occ: Occupancy, q: SpotQuery): Spot | null {
       if (blocked > 0) continue;
       let cost = dist(knee, q.tip);
       const overViews = occ.overlap(box, { ignore, views: true, kinds: ["view"] });
-      if (overViews > 0) cost += q.overView ? overViews * 0.05 : 200 + overViews;
+      // Over a view: dear, and dearer for each of its lines the text would cover (Q4 polish: when the views' lines are
+      // known, text in a view's empty middle with a short leader beats text inside a dimension stack).
+      if (overViews > 0) cost += q.overView ? overViews * 0.05 : occ.hasGeometry ? 70 + occ.geometryThrough(grow(box, 0.8)) * 60 : 200 + overViews;
+      // Inside a dimension stack: each dimension or extension line through the text is another thing to read past.
+      cost += occ.linesThrough(box, ignore) * 15;
       cost += occ.linesThrough(box, ignore) * 25;
       const crossings = occ.crossings(knee, q.tip, ignore);
       cost += crossings * 30;
       cost += occ.textCrossed(knee, q.tip, ignore) * 40;
+      // A leader across the part's own lines (into a view from the far side) reads badly.
+      cost += occ.geometryCrossed(knee, q.tip) * 12;
       // The text should run away from the tip, not back over the leader.
       if ((knee[0] - q.tip[0]) * dir < -2) cost += 25;
       const d = sub(knee, q.tip);
@@ -222,7 +272,7 @@ export function findSpot(occ: Occupancy, q: SpotQuery): Spot | null {
         cost += (1 - (u[0] * q.prefer[0] + u[1] * q.prefer[1])) * 6;
       }
       if (vb && box.max[1] < vb.min[1]) cost += 18;
-      if (!best || cost < best.cost) best = { knee, dir, cost };
+      if (!best || cost < best.cost) best = { knee, dir, cost, tip: q.tip };
     }
   }
   return best;

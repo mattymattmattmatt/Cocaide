@@ -373,8 +373,9 @@ describe("a weldment's welds on the sheet", () => {
       ["front", "w1: arrow side fillet z3 all around"],
       ["front", "w2: arrow side square s3 40"],
     ]);
-    // The ISO title block is taller than Phase L's: with the cut list on it and the weld table beside it, 1:20 is what fits.
-    expect(sheet.scaleText).toBe("1:20");
+    // The ISO title block is taller than Phase L's: with the cut list on it and the weld table beside it, the usual
+    // arrangement fits at 1:20; the views packed closer (Q4 polish) fit at 1:10.
+    expect(sheet.scaleText).toBe("1:10");
     const weldTable = sheet.blocks.find((b) => b.id === "weld_table")!.box;
     // Along the bottom border, left of the title block; the cut list stays above it.
     expect(weldTable.max[0]).toBeCloseTo(sheet.titleBlock.min[0], 9);
