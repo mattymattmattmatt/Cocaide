@@ -28,6 +28,7 @@ import { DrawingPanel } from "./Panels";
 import { SheetCanvas, type SheetStatus } from "./SheetCanvas";
 import { SheetTabs } from "./SheetTabs";
 import { snapIndex, type SnapIndex } from "./snap";
+import { fitViews, keepScale } from "../../drafting/fit";
 import "./tools";
 import { runAutoDimension } from "./tools/annotationTools";
 import { annotationKey, annotationMenu } from "./tools/editing";
@@ -60,6 +61,8 @@ export interface WorkspaceProps {
   openAsk(target: AskTarget, x: number, y: number, prompt?: { text: string; submit: boolean }): void;
   /** The kernel, for tools that compose the drawing themselves (Auto-detail, wave Q3B). */
   kernel?: KernelPort;
+  /** The drawing's views as projected (Fit views composes the sheet afresh with them). */
+  geometry?: DrawingGeometry | null;
   /** Writes an export: what the Export dialog asked for. */
   exportDrawing(kind: "pdf" | "svg" | "dxf" | "png", opts?: ExportOptions): void;
   /** The document's name, for the 3D view's orientation it left. */
@@ -73,6 +76,9 @@ export interface WorkspaceProps {
 export type Workspace = ReturnType<typeof useDrawingWorkspace>;
 
 const TAB_KEY = "cocaide.drawingTab.v1";
+
+/** The commands that edit the drawing (the first of them on a sheet stored without a scale stores the one it shows). */
+const DRAWING_EDITS = new Set<string>(["setSheet", "addSheet", "renameSheet", "moveSheet", "setDrawingOptions", "setView", "moveView", "setTable", "setAnnotation", "editAnnotation"]);
 
 export function useDrawingWorkspace(p: WorkspaceProps) {
   const [selection, setSelection] = useState<string[]>([]);
@@ -115,18 +121,33 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     setSelection((s) => (s.every((id) => ids.has(id)) ? s : s.filter((id) => ids.has(id))));
   }, [p.drawing]);
 
+  /**
+   * A sheet stored without a scale (made before Phase Q wave Q4) keeps the one
+   * it shows: the first edit of it stores that scale with it (one undo step),
+   * so that from then on moving views can never change it.
+   */
+  const scaleToKeep = (cmds: Command[] | null): Command[] => {
+    const { p, sheetDoc } = live.current;
+    if (!sheetDoc || !p.sheet || p.previewing) return [];
+    if (cmds && !cmds.some((c) => DRAWING_EDITS.has(c.type))) return [];
+    if (cmds?.some((c) => c.type === "setDrawing" || (c.type === "setSheet" && "scale" in c.patch) || (c.type === "deleteSheet" && c.id === sheetDoc.id))) return [];
+    return keepScale(sheetDoc, p.sheet);
+  };
+  const keepingScale = (cmds: Command[]): Command[] => [...scaleToKeep(cmds), ...cmds];
   const run = useCallback(
     (cmd: Command): string | null => {
-      const problem = p.d.dispatch(cmd);
+      const all = keepingScale([cmd]);
+      const problem = all.length > 1 ? p.batch(all) : p.d.dispatch(cmd);
       if (problem) p.notice(problem, "error");
       return problem;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [p],
   );
   const batch = (cmds: Command[]): string | null => {
     if (!cmds.length) return null;
     if (cmds.length === 1) return run(cmds[0]);
-    const problem = p.batch(cmds);
+    const problem = p.batch(keepingScale(cmds));
     if (problem) p.notice(problem, "error");
     return problem;
   };
@@ -176,8 +197,13 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         // The latest batch (it reads the document as it is now, not as it was when the context was made).
         batch: (cmds) => batchRef.current(cmds),
         begin: (label) => {
+          const keep = scaleToKeep(null);
           const problem = p.d.begin(label);
-          if (!problem) opened.current = true;
+          if (!problem) {
+            opened.current = true;
+            // The session's edits are on a sheet that keeps the scale it showed (inside its transaction: Cancel takes it back too).
+            for (const cmd of keep) p.d.dispatch(cmd);
+          }
           return problem;
         },
         live: (cmd) => p.d.dispatch(cmd),
@@ -222,7 +248,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
           setMenu(null);
         },
         dialog: (name, arg) => setDialog({ name, arg }),
-        actions: { newDrawing: p.newDrawing, balloonAll: p.balloonAll, ask: (target, text, submit) => p.openAsk(target, 0, 0, { text, submit }), ...(p.kernel ? { kernel: p.kernel } : {}) },
+        actions: { newDrawing: p.newDrawing, balloonAll: p.balloonAll, fitViews: () => fitViewsRef.current(), ask: (target, text, submit) => p.openAsk(target, 0, 0, { text, submit }), ...(p.kernel ? { kernel: p.kernel } : {}) },
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -438,6 +464,22 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     setMenu({ x, y, title, items });
   };
 
+  /** Fit views to sheet: the views laid out afresh at the largest standard scale that fits, stored (Phase Q wave Q4). */
+  const fitViewsNow = (): string | null => {
+    const { p, sheetDoc } = live.current;
+    if (!p.doc || !sheetDoc) return null;
+    const r = fitViews(p.doc, { measurements: p.measurements, geometry: p.geometry ?? null }, sheetDoc);
+    if ("error" in r) {
+      p.notice(r.error, "error");
+      return r.error;
+    }
+    const problem = batchRef.current(r.commands);
+    if (!problem) p.notice(`Fit views: the views laid out afresh at ${r.scale}, the sheet's scale from now on.`);
+    return problem;
+  };
+  const fitViewsRef = useRef(fitViewsNow);
+  fitViewsRef.current = fitViewsNow;
+
   /** The sheet tab's menu: rename, move, delete, ask. */
   const sheetMenu = (id: string, x: number, y: number, rename: () => void) => {
     if (!p.drawing) return;
@@ -453,6 +495,8 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         { label: "Move right", icon: "chevronRight", disabled: i >= n - 1, onClick: () => run({ type: "moveSheet", id, index: i + 1 }), testId: "ctx-sheet-right" },
         { label: "Add a sheet", icon: "plus", onClick: addSheet },
         { label: "Delete sheet", icon: "trash", disabled: n < 2, onClick: () => run({ type: "deleteSheet", id }) || p.setActiveSheet(null), testId: "ctx-sheet-delete" },
+        "sep",
+        { label: "Fit views to sheet", icon: "fit", disabled: id !== sheetDoc?.id, onClick: () => void fitViewsNow(), testId: "ctx-sheet-fit" },
         "sep",
         askEntry({ kind: "sheet", id } as AskTarget, x, y),
       ],
@@ -491,6 +535,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     setMenu,
     menuFor,
     sheetMenu,
+    fitViews: fitViewsNow,
     addSheet,
     status,
     setStatus,

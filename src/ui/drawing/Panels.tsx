@@ -681,6 +681,12 @@ function SheetPanel({ ws }: { ws: Workspace }) {
       <Field label="Scale">
         <ScaleSelect value={here.scale} auto={`what fits (${p.sheet?.scaleText ?? "…"})`} onChange={(scale) => set({ scale: scale ?? null })} testId="sheet-scale" />
       </Field>
+      <div className="field">
+        <span className="field-label" />
+        <button className="small" onClick={() => void ws.fitViews()} disabled={!here.views.length} title="Lay the views out afresh at the largest standard scale that fits, and keep it (moving views never changes the scale)" data-testid="sheet-fit-views">
+          Fit views
+        </button>
+      </div>
       <Field label="Projection">
         <select value={here.projection} onChange={(e) => set({ projection: e.target.value })} data-testid="sheet-projection">
           <option value="third">third angle</option>

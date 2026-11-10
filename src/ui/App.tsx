@@ -1200,6 +1200,7 @@ export function App() {
     balloonAll,
     openAsk: (target, x, y, prompt) => openAskRef.current(target, x, y, undefined, undefined, prompt),
     kernel: kernel.port,
+    geometry: geometry?.g ?? null,
     exportDrawing: (kind, opts) => void exportDrawing(kind, opts),
     docName: typeof doc?.name === "string" ? doc.name : null,
     bodies: view?.bodies.map((b) => b.name) ?? [],

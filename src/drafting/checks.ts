@@ -92,6 +92,12 @@ export function layoutProblems(sheet: ComposedSheet): string[] {
     for (let j = i + 1; j < placed.length; j++) if (overlaps(placed[i].box, placed[j].box)) out.push(`${placed[i].name} overlaps ${placed[j].name}`);
   }
   const all = [...placed, ...sheet.annotations.filter((a) => a.box).map((a) => ({ name: a.id, box: a.box! }))];
-  for (const p of all) if (!inside(p.box, sheet.frame)) out.push(`${p.name} runs off the sheet`);
+  for (const p of all) {
+    if (inside(p.box, sheet.frame)) continue;
+    // A view keeps its scale wherever it is put (Phase Q wave Q4): the check says where it is, so it can be dragged back.
+    const f = sheet.frame;
+    const off = p.box.max[0] <= f.min[0] || p.box.min[0] >= f.max[0] || p.box.max[1] <= f.min[1] || p.box.min[1] >= f.max[1];
+    out.push(p.name.startsWith("view ") ? `${p.name} is ${off ? "off" : "partly off"} the sheet` : `${p.name} runs off the sheet`);
+  }
   return out;
 }

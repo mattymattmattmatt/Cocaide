@@ -8,7 +8,8 @@
 // round faces seen from the side; a balloon for every cut list item, on the
 // member of it the iso shows best; the cut list and weld tables; an ISO title
 // block with the general tolerance (ISO 2768-mK for a part, ISO 13920-BF for
-// a weldment). The sheet is A3, the scale whatever fits.
+// a weldment). The sheet is A3, the scale whatever fits — stored on the sheet
+// (Phase Q wave Q4), so that moving views never changes it.
 
 import type { DrawingGeometry } from "../ask/kernel";
 import { parseScale, STANDARD_SCALES } from "../doc/drawing";
@@ -19,6 +20,7 @@ import type { ViewSpec } from "../kernel/drawingViews";
 import { cutList } from "../weldment/cutlist";
 import { autoDimension } from "./autodim";
 import { composeSheet } from "./compose";
+import { withShownScales } from "./fit";
 import { inView, viewFrame } from "./views";
 
 /** What New drawing projects first: the planned views' looks. */
@@ -128,7 +130,15 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   };
   placeNotes(doc, drawing, m, geometry);
   addDetail(doc, drawing, m, geometry);
+  keepPlannedScale(doc, drawing, m, geometry);
   return drawing;
+}
+
+/** The scale the sheet came out at, stored (Phase Q wave Q4): from now on only the user changes it. */
+function keepPlannedScale(doc: unknown, drawing: Drawing, m: Measurements | null, geometry: DrawingGeometry | null): void {
+  if (!geometry) return;
+  const sheet = composeSheet({ ...(doc as object), drawing }, { measurements: m, geometry });
+  if (sheet) drawing.sheets[0] = withShownScales(drawing.sheets[0], sheet);
 }
 
 /** The general notes block: in the sheet's lower left corner, inside its border. */

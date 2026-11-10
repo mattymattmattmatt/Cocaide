@@ -124,6 +124,8 @@ export interface DrawingToolCtx {
   actions: {
     newDrawing(): void;
     balloonAll(): void;
+    /** Fit views to sheet: the views laid out afresh at the largest standard scale that fits, stored on the sheet (wave Q4). */
+    fitViews?(): string | null;
     /** Opens the AI ask on a target with a prompt, sent at once (submit) or left to finish (wave Q3B). */
     ask?(target: AskTarget, prompt: string, submit: boolean): void;
     /** The kernel, for tools that compose the drawing themselves (Auto-detail). */
