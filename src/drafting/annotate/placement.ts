@@ -60,6 +60,12 @@ export class Occupancy {
         this.addBox({ min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] }, "text", owner);
       } else if (p.k === "line" && !p.fill) {
         for (let i = 1; i < p.pts.length; i++) this.addSeg(p.pts[i - 1], p.pts[i], lines, owner);
+      } else if (p.k === "line" && p.fill && p.pts.length) {
+        // A filled shape bigger than an arrowhead (a datum's triangle): a symbol other leaders keep off.
+        const xs = p.pts.map((q) => q[0]);
+        const ys = p.pts.map((q) => q[1]);
+        const b: Box = { min: [Math.min(...xs), Math.min(...ys)], max: [Math.max(...xs), Math.max(...ys)] };
+        if (Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]) > 4) this.addBox(b, "symbol", owner);
       } else if (p.k === "circle" && p.r > 1.2) this.addBox({ min: [p.c[0] - p.r, p.c[1] - p.r], max: [p.c[0] + p.r, p.c[1] + p.r] }, "symbol", owner);
     }
   }
@@ -83,10 +89,22 @@ export class Occupancy {
   linesThrough(box: Box, ignore: string[] = []): number {
     let n = 0;
     for (const s of this.segs) {
-      if (ignore.includes(s.owner)) continue;
+      if (s.kind === "geometry" || ignore.includes(s.owner)) continue;
       if (segmentHitsBox(s.a, s.b, box)) n++;
     }
     return n;
+  }
+
+  /** How many of the views' own lines (their visible and hidden edges, when added as "geometry") a box covers. */
+  geometryThrough(box: Box): number {
+    let n = 0;
+    for (const s of this.segs) if (s.kind === "geometry" && segmentHitsBox(s.a, s.b, box)) n++;
+    return n;
+  }
+
+  /** True when the views' lines were added (a callout may then sit over a view's empty middle, at a price). */
+  get hasGeometry(): boolean {
+    return this.segs.some((s) => s.kind === "geometry");
   }
 
   /** How many leaders, dimension and extension lines the segment a–b crosses. */
@@ -206,7 +224,11 @@ export function findSpot(occ: Occupancy, q: SpotQuery): Spot | null {
       if (blocked > 0) continue;
       let cost = dist(knee, q.tip);
       const overViews = occ.overlap(box, { ignore, views: true, kinds: ["view"] });
-      if (overViews > 0) cost += q.overView ? overViews * 0.05 : 200 + overViews;
+      // Over a view: dear, and dearer for each of its lines the text would cover (Q4 polish: when the views' lines are
+      // known, text in a view's empty middle with a short leader beats text inside a dimension stack).
+      if (overViews > 0) cost += q.overView ? overViews * 0.05 : occ.hasGeometry ? 70 + occ.geometryThrough(grow(box, 0.8)) * 60 : 200 + overViews;
+      // Inside a dimension stack: each dimension or extension line through the text is another thing to read past.
+      cost += occ.linesThrough(box, ignore) * 15;
       cost += occ.linesThrough(box, ignore) * 25;
       const crossings = occ.crossings(knee, q.tip, ignore);
       cost += crossings * 30;

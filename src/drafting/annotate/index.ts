@@ -16,9 +16,9 @@ import { primBox, union, type Box } from "../sheet";
 import { textWidth } from "../text";
 import { layoutBalloon } from "./balloon";
 import { layoutCenterline, layoutCenterMark } from "./centers";
-import { coloured, type AnnotationContext, type AnnotationLayout, type LayoutResult } from "./common";
+import { coloured, hungBox, type AnnotationContext, type AnnotationLayout, type LayoutResult } from "./common";
 import { layoutDimension, type Measure } from "./dimension";
-import { layoutDatum, layoutDatumTarget, layoutGdt } from "./gdt";
+import { framePrims, layoutDatum, layoutDatumTarget, layoutGdt } from "./gdt";
 import { layoutHole, layoutThread } from "./hole";
 import { layoutLeader, layoutLine, layoutNote, layoutRevisionCloud, layoutSketch, layoutText } from "./notes";
 import { layoutSurface } from "./surface";
@@ -117,10 +117,20 @@ export function layoutSheetAnnotations(annotations: Annotation[], ctx: Annotatio
   const rank = (a: Annotation) => {
     const i = ORDER.indexOf(a.type);
     const row = a.type === "dimension" ? (ctx.row(a.id)?.row ?? 0) : 0;
-    // A dimension a frame or datum rides on comes before them anyway (dimensions are before frames).
-    return i * 1000 + row;
+    // A dimension a frame or datum rides on comes before them anyway (dimensions are before frames). A datum fixed
+    // to a dimension's line comes before one that finds its own place on a surface, which then keeps clear of it.
+    const free = a.type === "datum" && !a.dimension && !a.gdt ? 1 : 0;
+    return i * 1000 + row + free;
   };
   const sorted = annotations.map((a, i) => ({ a, i })).sort((x, y) => rank(x.a) - rank(y.a) || x.i - y.i);
+  // Frames that hang under their host's text: the host is placed where they fit, and their room is kept for them.
+  const hung = new Map<string, { w: number; h: number; top: number; bottom: number; ids: string[] }>();
+  for (const a of annotations) {
+    if (a.type !== "gdt" || !a.dimension || a.at || a.extension !== undefined || a.hidden || hung.has(a.dimension)) continue;
+    const f = framePrims(a, ctx.style);
+    hung.set(a.dimension, { w: f.w, h: f.h, top: f.top, bottom: f.bottom, ids: [a.id] });
+  }
+  ctx.hung = hung;
   for (const { a } of sorted) {
     if (a.type === "table") continue;
     const l = layoutAnnotation(a, ctx, measures.get(a.id));
@@ -128,6 +138,9 @@ export function layoutSheetAnnotations(annotations: Annotation[], ctx: Annotatio
     if (!l.prims.length) continue;
     ctx.occ.addPrims(l.prims, a.id, a.type === "dimension" ? "dimension" : "leader");
     if (l.textBox) ctx.occ.addBox(l.textBox, a.type === "balloon" ? "balloon" : "text", a.id);
+    const h = hung.get(a.id);
+    const room = h && l.textBox && !l.problem ? hungBox(ctx, a.id, l.textBox) : null;
+    if (room) ctx.occ.addBox(room, "text", h!.ids[0]);
   }
   return ctx.layouts;
 }

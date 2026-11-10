@@ -20,7 +20,7 @@ import { parseRich, richWidth } from "../symbols/richtext";
 import { CAP } from "../text";
 import { toleranceLine } from "../tolerance";
 import { inView } from "../views";
-import { add, arrowHead, dist, failed, fromCentre, labelPrims, mul, sub, unit, type AnnotationContext, type Label, type LayoutResult } from "./common";
+import { add, arrowHead, dist, failed, fromCentre, labelPrims, mul, sub, unit, withHung, type AnnotationContext, type Label, type LayoutResult } from "./common";
 import { sizeText } from "./dimension";
 import { findSpot } from "./placement";
 
@@ -109,7 +109,8 @@ export function drawCallout(ctx: AnnotationContext, cv: ComposedView, d: Callout
   const lines = d.lines.length;
   const shape = (knee: Vec2, dir: 1 | -1): Box => {
     const x0 = dir > 0 ? knee[0] : knee[0] - w - 1.5;
-    return { min: [x0, knee[1] + style.lift - (lines - 1) * gap - 0.3 * size], max: [x0 + w + 1.5, knee[1] + style.lift + size * CAP + 0.4] };
+    // With the frame hung under it (Q4 polish): placed where both fit.
+    return withHung(ctx, d.owner, { min: [x0, knee[1] + style.lift - (lines - 1) * gap - 0.3 * size], max: [x0 + w + 1.5, knee[1] + style.lift + size * CAP + 0.4] });
   };
   let best: { knee: Vec2; dir: 1 | -1; target: { c: Vec2; r: number }; cost: number } | null = null;
   if (d.at) {

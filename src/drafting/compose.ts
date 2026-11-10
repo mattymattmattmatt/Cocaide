@@ -850,7 +850,11 @@ class Composer {
     const auto = padded.filter((p) => p.cv.auto);
     const held = padded.filter((p) => !p.cv.auto).map((p) => p.cv.box!);
     for (const { box, dims } of auto) {
-      if (tight ? !roomFor(box, dims, this.frame) : !inside(box, this.frame)) return false;
+      if (tight) {
+        if (!roomFor(box, dims, this.frame, [...blocked, ...held])) return false;
+        continue;
+      }
+      if (!inside(box, this.frame)) return false;
       if ([...blocked, ...held].some((b) => overlaps(box, b))) return false;
     }
     for (let i = 0; i < auto.length; i++)
@@ -881,6 +885,8 @@ class Composer {
     const group = all.filter((cv) => grid.has(cv.id) && cv.box);
     const rest = all.filter((cv) => !grid.has(cv.id) && cv.box);
     const room: Box = { min: [left, bottom], max: [right, top] };
+    // Dimension stacks may go to within a millimetre of the border (packed close).
+    const dimsRoom = grow(this.frame, -1);
     const free = (b: Box, others: Box[]) => inside(b, room) && !others.some((o) => overlaps(b, o));
     for (const cv of rest) {
       const p = padded(cv);
@@ -896,16 +902,19 @@ class Composer {
       const span = (bs: Box[]): Box => ({ min: [Math.min(...bs.map((x) => x.min[0])), Math.min(...bs.map((x) => x.min[1]))], max: [Math.max(...bs.map((x) => x.max[0])), Math.max(...bs.map((x) => x.max[1]))] });
       const g = span(boxes.map((x) => x.full));
       const gd = span(boxes.map((x) => x.dims));
-      if (gd.max[0] - gd.min[0] > right - left || gd.max[1] - gd.min[1] > top - bottom) return null;
+      if (gd.max[0] - gd.min[0] > dimsRoom.max[0] - dimsRoom.min[0] || gd.max[1] - gd.min[1] > dimsRoom.max[1] - dimsRoom.min[1]) return null;
       const dxs = [g, gd].flatMap((x) => [left - x.min[0], right - x.max[0], ...blocked.flatMap((o) => [o.max[0] + GAP - x.min[0], o.min[0] - GAP - x.max[0]])]);
       const dys = [g, gd].flatMap((x) => [top - x.max[1], bottom - x.min[1], ...blocked.flatMap((o) => [o.min[1] - GAP - x.max[1], o.max[1] + GAP - x.min[1]])]);
+      // Its dimension stacks against the border or a table (packed close).
+      dxs.push(dimsRoom.min[0] - gd.min[0], dimsRoom.max[0] - gd.max[0], ...blocked.flatMap((o) => [o.max[0] + 1 - gd.min[0], o.min[0] - 1 - gd.max[0]]));
+      dys.push(dimsRoom.max[1] - gd.max[1], dimsRoom.min[1] - gd.min[1], ...blocked.flatMap((o) => [o.min[1] - 1 - gd.max[1], o.max[1] + 1 - gd.min[1]]));
       const tries: Vec2[] = [];
       for (const dx of dxs) for (const dy of dys) tries.push([dx, dy]);
       tries.sort((p, q) => q[1] - p[1] || p[0] - q[0]);
       shifts.length = 0;
       for (const t of tries) {
         if (shifts.some((x) => Math.abs(x[0] - t[0]) < 1e-6 && Math.abs(x[1] - t[1]) < 1e-6)) continue;
-        if (boxes.every((x) => roomFor(shiftBox(x.full, t), shiftBox(x.dims, t), room) && !blocked.some((o) => overlaps(shiftBox(x.full, t), o)))) shifts.push(t);
+        if (boxes.every((x) => roomFor(shiftBox(x.full, t), shiftBox(x.dims, t), dimsRoom, blocked))) shifts.push(t);
       }
     }
     for (const d of shifts) {
@@ -1334,6 +1343,10 @@ class Composer {
   private cuttingLine(cv: ComposedView, child: DrawingView, label: string, standard: "ISO" | "ASME"): void {
     const owner = child.id;
     const pts = child.line!.map((p) => this.toSheet(cv, p));
+    // Each end clear of the view's dimension stack on its side (Q4 polish): the arrow and letter just past the
+    // outline when there is room before the first row, else past the last row.
+    pts[0] = this.clearOfDimensions(cv, pts[0], pts[1]);
+    pts[pts.length - 1] = this.clearOfDimensions(cv, pts[pts.length - 1], pts[pts.length - 2]);
     const n = sectionSide(child.line!, child.flip);
     const look: Vec2 = [-n[0], -n[1]];
     const thick = LINE.visible * 1.4;
@@ -1385,6 +1398,48 @@ class Composer {
       const size = TEXT.title;
       this.prims.push({ k: "text", at: [at[0], at[1] - (size * CAP) / 2], text: label, size, anchor: "middle", bold: standard === "ASME", owner });
     });
+  }
+
+  /**
+   * A cutting line's end moved along the line so that its arrow and letter
+   * (from about 1.2 mm inside the end to 5 mm past it) keep off the band the
+   * view's dimensions take on that side: where it is when clear, else 2 mm
+   * past the outline when that is clear of the first row, else past the last
+   * (while that stays on the sheet), else 2 mm past the outline.
+   * Only for an end running square off the view's box.
+   */
+  private clearOfDimensions(cv: ComposedView, end: Vec2, before: Vec2): Vec2 {
+    const box = cv.box;
+    if (!box) return end;
+    const len = Math.hypot(end[0] - before[0], end[1] - before[1]);
+    if (len < 1e-9) return end;
+    const out: Vec2 = [(end[0] - before[0]) / len, (end[1] - before[1]) / len];
+    const axis: 0 | 1 | null = Math.abs(out[0]) > 0.999 ? 0 : Math.abs(out[1]) > 0.999 ? 1 : null;
+    if (axis === null) return end;
+    const sign = out[axis] > 0 ? 1 : -1;
+    const edge = sign > 0 ? box.max[axis] : box.min[axis];
+    const d0 = (end[axis] - edge) * sign;
+    // The dimensions on that side: vertical ones beside a horizontal line's end, horizontal ones above or below a vertical's.
+    const dir = axis === 0 ? "v" : "h";
+    const dists: number[] = [];
+    const rows = this.rows(cv.id, cv.scale);
+    for (const item of this.dimItems.get(cv.id) ?? []) {
+      const a = this.s.annotations.find((x) => x.id === item.id) as DimensionAnnotation | undefined;
+      if (!a || a.at) continue;
+      for (const [key, r] of rows) {
+        if (key !== item.id && !key.startsWith(`${item.id}#`)) continue;
+        if (r.dir !== dir || item.side !== sign) continue;
+        dists.push(a.offset !== undefined ? Math.abs(a.offset) : rowDistance(r.row, this.style));
+      }
+    }
+    if (!dists.length) return end;
+    const band: [number, number] = [Math.min(...dists) - 1.5, Math.max(...dists) + this.style.h + this.style.lift + 1.5];
+    const clear = (d: number) => d + 5 <= band[0] || d - 1.2 >= band[1];
+    // Past the last row only while the letter stays inside the frame.
+    const room = (sign > 0 ? this.frame.max[axis] - edge : edge - this.frame.min[axis]) - 6;
+    const d = [d0, 2, band[1] + 1.5].find((x) => x >= 1.5 && x <= Math.max(room, d0) && clear(x)) ?? Math.min(d0, 2);
+    if (Math.abs(d - d0) < 1e-9) return end;
+    return [end[0] + out[0] * (d - d0), end[1] + out[1] * (d - d0)];
   }
 
   /** A detail's circle on its parent (thin), its letter beside it, and a leader to the detail when connected. */
@@ -1538,6 +1593,9 @@ class Composer {
     if (this.format?.revisionBlock) occ.addBox(this.format.revisionBlock, "title", "revisionBlock");
     for (const b of this.tableBoxes) occ.addBox(b, "table", "table");
     for (const b of this.labels) occ.addBox(b, "label", "label");
+    // The views' own lines: a callout over a view's empty middle is told from one over its edges.
+    const viewIds = new Set(this.views.map((cv) => cv.id));
+    for (const p of this.prims) if (p.k === "line" && p.owner && viewIds.has(p.owner) && !p.fill) for (let i = 1; i < p.pts.length; i++) occ.addSeg(p.pts[i - 1], p.pts[i], "geometry", p.owner);
     // The views' marks: cutting lines' letters and arrows, detail letters (a callout keeps clear of them).
     for (const p of this.prims) {
       if (p.owner === "sheet" || p.owner === "titleBlock" || p.layer === "TEXT") continue;
@@ -1870,8 +1928,10 @@ function shiftView(cv: ComposedView, d: Vec2): ComposedView {
  * stacks, and the room kept round it for callouts and symbols is there on at
  * least one side across and one side up and down (they go where there is room).
  */
-function roomFor(full: Box, dims: Box, room: Box): boolean {
-  if (!inside(dims, room)) return false;
-  const out = (i: 0 | 1) => full.min[i] < room.min[i] - 0.01 && full.max[i] > room.max[i] + 0.01;
-  return !out(0) && !out(1);
+function roomFor(full: Box, dims: Box, room: Box, blocked: Box[] = []): boolean {
+  if (!inside(dims, room) || blocked.some((b) => overlaps(dims, b))) return false;
+  // A side is taken when the room kept there runs off the sheet or into a table, the title block or another view.
+  const low = (i: 0 | 1) => full.min[i] < room.min[i] - 0.01 || blocked.some((b) => overlaps(full, b) && b.max[i] <= dims.min[i] + 0.01);
+  const high = (i: 0 | 1) => full.max[i] > room.max[i] + 0.01 || blocked.some((b) => overlaps(full, b) && b.min[i] >= dims.max[i] - 0.01);
+  return !(low(0) && high(0)) && !(low(1) && high(1));
 }

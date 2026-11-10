@@ -233,11 +233,22 @@ export function layoutDatum(a: DatumAnnotation, ctx: AnnotationContext, cv: Comp
   } else if (a.dimension) {
     const d = ctx.layouts.get(a.dimension);
     if (!d?.line || d.problem) return failed(`its dimension ${a.dimension} isn't drawn`);
-    // On the dimension line's first end, in line with it.
+    // On an end of the dimension line, in line with it: the first end, or the other when that one is clear and the
+    // first is not (Q4 polish: two datums side by side on a flange read as one).
     const [p, q] = d.line;
-    const u = unit(sub(p, q));
-    base = add(p, mul(u, style.arrow.length * 0.2));
-    n = u;
+    const at = (from: Vec2, to: Vec2) => {
+      const u = unit(sub(from, to));
+      const b0 = add(from, mul(u, style.arrow.length * 0.2));
+      const c = add(b0, mul(u, tri + Math.max(4, a.at ? 4 : 5 + tri) + H / 2 - tri));
+      const box: Box = { min: [c[0] - H / 2 - 0.5, c[1] - H / 2 - 0.5], max: [c[0] + H / 2 + 0.5, c[1] + H / 2 + 0.5] };
+      const cost = (ctx.occ.inFrame(box) ? 0 : 1000) + ctx.occ.overlap(box, { ignore: [a.id], kinds: ["text", "symbol", "balloon", "label", "table", "title"] }) * 50 + ctx.occ.linesThrough(box, [a.id, a.dimension!]) * 8 + ctx.occ.crossings(b0, c, [a.id, a.dimension!]) * 20;
+      return { base: b0, n: u, cost };
+    };
+    const first = at(p, q);
+    const second = at(q, p);
+    const pick = a.at || first.cost <= second.cost ? first : second;
+    base = pick.base;
+    n = pick.n;
   } else if (a.on) {
     const t = tipOf(ctx, a.on, a.at ? add(cv.centre, a.at) : undefined);
     if (!t) return failed(`${a.on} is not in ${cv.id} any more`);
@@ -246,29 +257,46 @@ export function layoutDatum(a: DatumAnnotation, ctx: AnnotationContext, cv: Comp
   } else return failed("a datum is on a surface (on), a dimension (dimension) or a frame (gdt)");
   const stem = Math.max(4, a.at ? dot(sub(add(cv.centre, a.at), base), n) - H / 2 : 5 + tri);
   let boxC = add(base, mul(n, tri + stem + H / 2 - tri));
+  let extendFrom: Vec2 | undefined;
   if (a.at && !a.gdt && !a.dimension) {
     boxC = add(cv.centre, a.at);
   } else if (!a.at) {
     // Slide along the surface (within its middle) and out to a free place: nothing over it, its stem crossing as little as can be.
     const along = perp(n);
     const reach = a.on ? edgeReach(ctx, a.on, base, along) : 6;
-    let best: { c: Vec2; base: Vec2; cost: number } | null = null;
+    let best: { c: Vec2; base: Vec2; cost: number; from?: Vec2 } | null = null;
+    const consider = (b0: Vec2, out: number, extra: number, from?: Vec2) => {
+      const c = add(b0, mul(n, tri + out));
+      const b: Box = { min: [c[0] - H / 2 - 0.5, c[1] - H / 2 - 0.5], max: [c[0] + H / 2 + 0.5, c[1] + H / 2 + 0.5] };
+      if (!ctx.occ.inFrame(b)) return;
+      let cost = extra + ctx.occ.overlap(b, { ignore: [a.id], kinds: ["text", "symbol", "balloon", "label", "table", "title"] }) * 50;
+      cost += ctx.occ.overlap(b, { views: true, kinds: ["view"], ignore: [a.id] }) * 2;
+      // Its stem across a dimension line or a leader is what a checker marks (Q4 polish: weighed as such).
+      cost += ctx.occ.linesThrough(b, [a.id]) * 8 + ctx.occ.crossings(b0, c, [a.id]) * 20 + ctx.occ.textCrossed(b0, c, [a.id]) * 60 + (out - stem) * 0.5;
+      if (from) cost += ctx.occ.crossings(from, b0, [a.id]) * 20 + ctx.occ.textCrossed(from, b0, [a.id]) * 60;
+      if (!best || cost < best.cost) best = { c, base: b0, cost, ...(from ? { from } : {}) };
+    };
     for (const out of [stem, stem + 4, stem + 9, stem + 15]) {
       for (let k = 0; k <= 12; k++) {
         const t = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (reach / 6);
-        const b0 = add(base, mul(along, t));
-        const c = add(b0, mul(n, tri + out));
-        const b: Box = { min: [c[0] - H / 2 - 0.5, c[1] - H / 2 - 0.5], max: [c[0] + H / 2 + 0.5, c[1] + H / 2 + 0.5] };
-        if (!ctx.occ.inFrame(b)) continue;
-        let cost = ctx.occ.overlap(b, { ignore: [a.id], kinds: ["text", "symbol", "balloon", "label", "table", "title"] }) * 50;
-        cost += ctx.occ.overlap(b, { views: true, kinds: ["view"], ignore: [a.id] }) * 2;
-        cost += ctx.occ.linesThrough(b, [a.id]) * 8 + ctx.occ.crossings(b0, c, [a.id]) * 6 + ctx.occ.textCrossed(b0, c, [a.id]) * 60 + Math.abs(t) * 0.3 + (out - stem) * 0.5;
-        if (!best || cost < best.cost) best = { c, base: b0, cost };
+        consider(add(base, mul(along, t)), out, Math.abs(t) * 0.3);
+      }
+    }
+    // ISO 5459 also lets the triangle stand on the surface's line drawn on past its end (an extension line): beyond
+    // a dimension stack that runs the surface's full length, the stem then crosses nothing.
+    const g = a.on ? ctx.resolve(a.on) : null;
+    if (g && g.kind === "edge" && g.a && g.b) {
+      for (const [e, o] of [[g.a, g.b], [g.b, g.a]] as [Vec2, Vec2][]) {
+        const u = unit(sub(e, o));
+        if (Math.abs(dot(u, along)) < 0.99) continue;
+        for (const ext of [4, 7, 11]) for (const out of [stem, stem + 4]) consider(add(e, mul(u, ext)), out, 6 + ext * 0.3, e);
       }
     }
     if (best) {
-      boxC = best.c;
-      base = best.base;
+      const b = best as { c: Vec2; base: Vec2; cost: number; from?: Vec2 };
+      boxC = b.c;
+      base = b.base;
+      extendFrom = b.from;
     }
   }
   const prims: Prim[] = [];
@@ -277,6 +305,8 @@ export function layoutDatum(a: DatumAnnotation, ctx: AnnotationContext, cv: Comp
   const t1 = sub(base, mul(side, tri / 1.15));
   const apex = add(base, mul(n, tri));
   prims.push({ k: "line", pts: [t0, t1, apex], closed: true, w: style.thin, ...(a.open ? {} : { fill: true }) });
+  // On the surface's line drawn on: that extension line, a little past the triangle.
+  if (extendFrom) prims.push({ k: "line", pts: [extendFrom, add(base, mul(unit(sub(base, extendFrom)), tri / 1.15 + 1.5))], w: style.thin });
   // The stem to the frame's nearest side.
   const frameEdge = add(boxC, mul(n, -H / 2));
   prims.push({ k: "line", pts: [apex, Math.abs(n[0]) > 0.7 || Math.abs(n[1]) > 0.7 ? frameEdge : sub(boxC, mul(unit(sub(boxC, apex)), H / 2))], w: style.thin });

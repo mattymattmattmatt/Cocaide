@@ -42,6 +42,8 @@ import {
   readable,
   sub,
   unit,
+  hungBox,
+  withHung,
   type AnnotationContext,
   type Label,
   type LabelPart,
@@ -672,7 +674,7 @@ export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, 
     let d = drawLinear({ ...spec, ...(at ? { textPoint: at } : {}) }, style);
     if (!at) {
       // Text over other text, a symbol or a view's marks: slid along its line to the nearest clear place.
-      const busy = (b: Box) => ctx.occ.overlap(b, { ignore: [owner], kinds: ["text", "symbol", "label", "balloon", "table", "title"] });
+      const busy = (b: Box) => ctx.occ.overlap(withHung(ctx, owner, b), { ignore: [owner], kinds: ["text", "symbol", "label", "balloon", "table", "title"] }) + ctx.occ.linesThrough(hungBox(ctx, owner, b) ?? { min: [0, 0], max: [-1, -1] }, [owner]) * 4;
       if (busy(d.textBox) > 0) {
         const mid = mul(add(d.line[0], d.line[1]), 0.5);
         const half = dist(d.line[0], d.line[1]) / 2;
@@ -792,8 +794,11 @@ function chooseRadialDirection(ctx: AnnotationContext, _cv: ComposedView, c: Vec
     const u: Vec2 = [Math.cos(t), Math.sin(t)];
     const knee = add(c, mul(u, r + Math.max(7, r * 0.25 + 5)));
     const right = knee[0] >= c[0];
-    const tb: Box = { min: [right ? knee[0] : knee[0] - w - 1.5, knee[1] - 1], max: [right ? knee[0] + w + 1.5 : knee[0], knee[1] + 6] };
+    const text: Box = { min: [right ? knee[0] : knee[0] - w - 1.5, knee[1] - 1], max: [right ? knee[0] + w + 1.5 : knee[0], knee[1] + 6] };
+    const tb = withHung(ctx, owner, text);
     let cost = ctx.occ.overlap(tb, { ignore: [owner], kinds: ["text", "symbol", "balloon", "label", "table", "title"] }) * 5;
+    // A frame hung under it with a line through it reads badly.
+    cost += ctx.occ.linesThrough(hungBox(ctx, owner, text) ?? { min: [0, 0], max: [-1, -1] }, [owner]) * 25;
     cost += ctx.occ.overlap(tb, { ignore: [owner], views: true, kinds: ["view"] }) * 0.4;
     cost += ctx.occ.crossings(add(c, mul(u, r)), knee, [owner]) * 30;
     if (!ctx.occ.inFrame(tb)) cost += 1000;
