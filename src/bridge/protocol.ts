@@ -12,7 +12,7 @@
  * (1.2: Grok Build as well as Claude Code), so an app newer than the bridge on
  * the user's computer can say the bridge is out of date.
  */
-export const BRIDGE_VERSION = "1.2.0";
+export const BRIDGE_VERSION = "1.3.0";
 
 /** Whether bridge version `have` is older than `want` (or a different major version). */
 export function bridgeOutdated(have: string, want: string = BRIDGE_VERSION): boolean {

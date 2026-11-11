@@ -4,7 +4,7 @@
 import { ADD_LIBRARY_PROFILE_HELP, LIBRARY_SIZE_RULE, WELDMENT_RULE } from "../weldment/libraryTool";
 import type Anthropic from "@anthropic-ai/sdk";
 import { coreReference, opIndex, referenceSection, sectionIndex } from "../mcp/sections";
-import { anthropicTool } from "./tools/specs";
+import { anthropicTool, TOOL_ISSUE_RULE } from "./tools/specs";
 import type { AskTarget, Packet, PacketKind } from "./packet";
 
 export type AskMode = "explain" | "edit";
@@ -200,6 +200,7 @@ Rules:
 - After your edits, check the measurement the user asked about in the tool result. If it does not match, you get one correction pass. Then stop.
 - Your edits are a proposal: the user sees them and accepts or discards them. Do not ask for confirmation in text; make the proposal.
 - ${WELDMENT_RULE}
+- ${TOOL_ISSUE_RULE}
 - Weldments: a member's size must be one of the sizes in the part's profiles; never invent one. If the part has no profile for a member, add one with addLibraryProfile. If the size the user asked for is not in the catalogue, do NOT substitute or create one on your own: change nothing, and ask the user whether to create that exact size as a non-catalogue size or use one of the nearest catalogue sizes (name them; the tool error lists them). Only after they answer, add it (extraSizes) or use their choice. A joint is changed through its own fields (type, members, through, gap): a mitre names the two members it cuts, a butt names the member that runs through. The rebuild trims the members; read the measured cut to check.
 - Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>"), one table ("table:<id>", setTable on it alone) or the drawing ("drawing", also from a sheet's tab or title block: the packet's sheet is that one); the packet's "selection" lists what else the user had selected on the sheet, which "this" and "these" may mean; the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
@@ -231,6 +232,7 @@ Rules:
 - Tool arguments are JSON objects that follow each tool's schema exactly.
 - Metric clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11. Inches: convert once (25.4 mm) and say so.
 - ${WELDMENT_RULE} ${LIBRARY_SIZE_RULE}
+- ${TOOL_ISSUE_RULE}
 - Weldment member sizes come from the part's profiles only. Drawing numbers are measured, never given.
 - Finish with one or two plain sentences: what you changed and the result, or the answer, or why you stopped.
 
@@ -269,6 +271,7 @@ const READ_TOOLS: Anthropic.Tool[] = [
     description: "The current JSON of a feature named in the packet (target, parent or a child).",
     input_schema: obj({ id: { type: "string" } }, ["id"]),
   },
+  anthropicTool("reportToolIssue"),
   {
     name: "escalate",
     description: "Stop without changing anything: the request cannot be done inside writeScope, or needs information you do not have. Give the reason in one sentence.",

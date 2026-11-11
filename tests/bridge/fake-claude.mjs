@@ -89,6 +89,7 @@ delta("Building ");
 delta("a block.");
 out({ type: "assistant", message: { id: "m-a", role: "assistant", content: [{ type: "text", text: "Building a block." }] } });
 if (scenario === "toolfail") await call("updateFeature", { id: "no_such_feature", patch: { distance: 3 } });
+if (scenario === "toolfail") await call("reportToolIssue", { tool: "updateFeature", problem: "updateFeature refused a feature id the packet listed", suggestion: "say which ids exist" });
 await call("addFeature", { feature: { id: "block_sketch", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r1", type: "rect", center: [0, 0], w: 40, h: 20 }] } });
 await call("addFeature", { feature: { id: "block", op: "extrude", sketch: "block_sketch", distance: 10, direction: [0, 0, 1] } });
 await call("partSummary", {});

@@ -2225,3 +2225,14 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .detail-card .detail-item { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; padding: 2px 0; }
 .detail-card .detail-item.blocked span { color: var(--muted); text-decoration: line-through; }
 .drawing-session .detail-card .detail-items { max-height: none; }
+
+/* The AI window's tool-issue log */
+.ask-issue-groups { margin: 6px 0; padding: 0; list-style: none; max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.ask-issue { border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.ask-issue.report { border-left-color: var(--accent); }
+.ask-issue.call { border-left-color: var(--bad); }
+.ask-issue.notice { border-left-color: var(--muted); }
+.ask-issue-tool { font-family: var(--mono); font-weight: 600; }
+.ask-issue-count { color: var(--muted); font-weight: 600; }
+.ask-issue-problem { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.ask-issues-note { margin-top: 6px; }

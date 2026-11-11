@@ -157,6 +157,7 @@ export const READ_TOOLS = [
   "facePlane",
   "listDatums",
   "reference",
+  "reportToolIssue",
   "plan",
   "exportDxf",
   "cutList",
@@ -464,6 +465,10 @@ export class AgentSession {
         return { result: await facePlane(this.doc, this.inspector, a) };
       case "listDatums":
         return { result: await listDatums(this.doc, this.inspector) };
+      case "reportToolIssue": {
+        if (typeof a.problem !== "string" || !a.problem.trim()) return this.fail("reportToolIssue: problem must say what went wrong");
+        return { result: { ok: true, noted: true, message: "Noted in the user's tool-issue log. Carry on with the task." } };
+      }
       case "reference": {
         const section = typeof a.section === "string" ? a.section : "";
         const text = section ? referenceSection(section) : null;

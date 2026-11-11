@@ -533,6 +533,9 @@ class Sandbox {
         const text = section ? referenceSection(section) : null;
         return text ? { ok: true, section, text } : { ok: !section, ...(section ? { error: `no section "${section}"` } : {}), sections: sectionIndex() };
       }
+      case "reportToolIssue":
+        // Kept from the call itself (the app's tool-issue log reads the ask's calls); nothing changes here.
+        return typeof a.problem === "string" && a.problem.trim() ? { ok: true, noted: true, message: "Noted in the user's tool-issue log. Carry on with the task." } : { ok: false, error: "reportToolIssue: problem must say what went wrong" };
       case "detailPlan": {
         try {
           const view = typeof a.view === "string" ? a.view : this.target.kind === "view" ? this.target.id : undefined;

@@ -3,6 +3,7 @@
 // was ticked for that prompt. A user edit to a feature an open proposal
 // touches drops the proposal and keeps the prompt (spec 6.4).
 
+import { recordAskIssues } from "./toolIssues";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyProposal, conflictsWith, hashDoc, runAsk, type AskEvent, type AskReach } from "../../ask/agent";
 import type { DetailPlan } from "../../ask/detail/plan";
@@ -224,6 +225,8 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       const names = [...attachments.map((a) => a.name), ...(ctx.drawing && !ctx.photo ? [ctx.drawing.name] : []), ...(ctx.photo ? [ctx.photo.name] : [])];
       addHistory(dk, { ...entryOf(result, { id: recordId, at: new Date().toISOString(), label: ctx.label, target: ctx.target, prompt: text, attachments: names, ...(extra.followUp ? { followUpOf: extra.followUp } : {}) }), ...(bridgeSession ? { bridgeSession } : {}) });
       touchHistory();
+      // Problems with the tools (failed calls, the AI's own reports, the bridge's notices) go to the tool-issue log.
+      recordAskIssues({ askId: recordId, at: new Date().toISOString(), model: result.model, prompt: text, target: ctx.label, part: partName(ctx.doc), calls: result.calls, ...((result as { notices?: string[] }).notices ? { notices: (result as { notices?: string[] }).notices } : {}) });
       logAsk({
         id: recordId,
         at: new Date().toISOString(),
@@ -270,6 +273,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       const result = await continuePartAsk({ doc: s.ctx.doc, text: s.prompt, drawing: s.ctx.drawing, model, kernel, library, signal: controller.signal }, s.result, answers);
       if (controller.signal.aborted) return;
       updateAsk(s.recordId, { outcome: result.outcome, text: result.text, calls: [...s.result.calls, ...result.calls], answers });
+      recordAskIssues({ askId: s.recordId, at: new Date().toISOString(), model: result.model, prompt: s.prompt, target: s.ctx.label, part: partName(s.ctx.doc), calls: [...s.result.calls, ...result.calls] });
       const e = entryOf(result, { id: s.recordId, at: new Date().toISOString(), label: s.ctx.label, target: s.ctx.target, prompt: s.prompt, attachments: s.attachments ?? [] });
       updateHistory(docKey(s.ctx.doc), s.recordId, { outcome: e.outcome, reply: e.reply, calls: e.calls, changes: e.changes, status: e.status });
       touchHistory();
@@ -318,6 +322,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
       }
       if (controller.signal.aborted) return;
       updateAsk(s.recordId, { outcome: result.outcome, text: result.text, calls: [...s.result.calls, ...result.calls] });
+      recordAskIssues({ askId: s.recordId, at: new Date().toISOString(), model: result.model, prompt: s.prompt, target: s.ctx.label, part: partName(s.ctx.doc), calls: [...s.result.calls, ...result.calls] });
       const e = entryOf(result, { id: s.recordId, at: new Date().toISOString(), label: s.ctx.label, target: s.ctx.target, prompt: s.prompt, attachments: s.attachments ?? [] });
       updateHistory(docKey(s.ctx.doc), s.recordId, { outcome: e.outcome, reply: e.reply, calls: e.calls, changes: e.changes, status: e.status });
       touchHistory();
@@ -392,4 +397,10 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
   const keepDraft = useCallback((ctx: AskContext, text: string) => saveDraft(docKey(ctx.doc), ctx.target, text), []);
 
   return { busy, liveDoc, state, open, close, submit, answer, detail, accept, discard, togglePreview, previewDoc, settings, setSettings, settingsOpen, setSettingsOpen, history, clearHistory: clear, keepDraft };
+}
+
+/** The part's name, for the tool-issue log. */
+function partName(doc: unknown): string {
+  const n = (doc as { name?: unknown } | null)?.name;
+  return typeof n === "string" && n.trim() ? n.trim() : "part";
 }

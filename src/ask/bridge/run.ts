@@ -75,6 +75,8 @@ export interface BridgeAskResult extends AskResult {
   /** The Claude Code session, for a follow-up. */
   sessionId?: string;
   costUsd?: number;
+  /** What the bridge noticed along the way (tools not loaded, a skipped version of the part): kept for the tool-issue log. */
+  notices?: string[];
 }
 
 /** The longest context packet sent (characters). Claude Code can read more with the tools. */
@@ -267,6 +269,7 @@ export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResu
     turns: done.turns ?? 0,
     ...(done.sessionId ? { sessionId: done.sessionId } : {}),
     ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}),
+    ...(live.notices.length ? { notices: [...live.notices] } : {}),
   };
   // What changed: kept even when the run ended badly, so nothing done is lost unseen.
   if (finalText) {
@@ -276,7 +279,7 @@ export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResu
       const [b, a] = await Promise.all([req.kernel.check(req.doc).catch(() => null), req.kernel.check(after).catch(() => null)]);
       result.proposal = bridgeProposal(req.doc, after, { before: b?.measurements?.volume ?? null, after: a?.measurements?.volume ?? null });
       if (done.ok) result.outcome = "proposal";
-      else result.text = `${done.text}\n\nWhat Claude Code changed before it stopped is shown as a proposal: accept it or discard it.`;
+      else result.text = `${done.text}\n\nWhat ${ENGINE_LABEL[engine]} changed before it stopped is shown as a proposal: accept it or discard it.`;
     }
   }
   return result;

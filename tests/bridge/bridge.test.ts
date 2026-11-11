@@ -198,6 +198,10 @@ describe("bridge: an ask", () => {
     const first = c.messages.find(is("toolResult", "a4"))!;
     expect(first.ok).toBe(false);
     expect(first.error).toMatch(/no_such_feature/);
+    // The assistant's own report reaches the app whole, and the server takes it.
+    const report = c.messages.filter(is("tool", "a4")).find((t) => t.name === "reportToolIssue")!;
+    expect(JSON.parse(report.args)).toMatchObject({ tool: "updateFeature", suggestion: "say which ids exist" });
+    expect(c.messages.filter(is("toolResult", "a4")).find((r) => r.callId === report.callId)?.ok).toBe(true);
     c.close();
   });
 

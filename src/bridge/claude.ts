@@ -296,7 +296,9 @@ export class StreamReader {
           if (b.type === "text" && typeof b.text === "string" && !this.deltas) out.push({ kind: "text", text: b.text });
           if (b.type === "tool_use" && typeof b.id === "string" && typeof b.name === "string") {
             this.names.set(b.id, b.name);
-            out.push({ kind: "tool", callId: b.id, name: cocaideTool(b.name) ?? b.name, args: shortArgs(b.input) });
+            const plain = cocaideTool(b.name);
+            // A tool issue the assistant reported goes to the app whole (its log keeps it); other calls short.
+            out.push({ kind: "tool", callId: b.id, name: plain ?? b.name, args: shortArgs(b.input, plain === "reportToolIssue" ? 4000 : 400) });
           }
         }
         // A turn ends: the next one's text may come whole again.

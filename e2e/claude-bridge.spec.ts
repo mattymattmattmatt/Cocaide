@@ -238,3 +238,39 @@ test("the one-click launcher's link pairs the app with the bridge and leaves no 
   await expect(page.getByTestId("bridge-url")).toHaveValue(url);
   await expect(page.getByTestId("bridge-token")).toHaveValue(token);
 });
+
+test("tool issues: a failed call and the AI's own report are logged, and the report downloads", async ({ page }) => {
+  await useBridge(page);
+  await page.getByTestId("ask-settings-save").click();
+  await page.getByTestId("viewport").click({ button: "right", position: { x: 30, y: 30 } });
+  await page.getByTestId("ctx-ask").click();
+  const input = page.getByTestId("ask-input");
+  await expect(input).toBeVisible();
+  await page.waitForTimeout(200);
+  await input.fill("make something SCENARIO:toolfail");
+  await input.press("Enter");
+  await expect(page.getByTestId("ask-issues-note")).toContainText("2 tool issues logged (1 reported by the AI)", { timeout: 90_000 });
+  const discard = page.getByTestId("ask-discard");
+  if (await discard.count()) await discard.click();
+  const dialog = page.getByRole("dialog", { name: /Ask about/ });
+  if (await dialog.count()) await dialog.getByRole("button", { name: "Close" }).first().click();
+
+  // Any ask window has the log.
+  await page.getByTestId("viewport").click({ button: "right", position: { x: 30, y: 30 } });
+  await page.getByTestId("ctx-ask").click();
+  await expect(page.getByTestId("ask-tab-issues")).toContainText("Tool issues (2)");
+  await page.getByTestId("ask-tab-issues").click();
+  await expect(page.getByTestId("ask-issue")).toHaveCount(2);
+  await expect(page.getByTestId("ask-issue").first()).toContainText("AI report · updateFeature");
+  await expect(page.getByTestId("ask-issue").first()).toContainText("Suggestion: say which ids exist");
+  await expect(page.getByTestId("ask-issue").nth(1)).toContainText("no_such_feature");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("ask-issues-download").click()]);
+  expect(download.suggestedFilename()).toBe("cocaide-tool-issues.md");
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync((await download.path())!, "utf8");
+  expect(text).toContain("# Cocaide tool-issue report");
+  expect(text).toContain("## Reported by the AI");
+  expect(text).toContain("make something SCENARIO:toolfail");
+  await page.getByTestId("ask-issues-clear").click();
+  await expect(page.getByTestId("ask-issues-empty")).toBeVisible();
+});

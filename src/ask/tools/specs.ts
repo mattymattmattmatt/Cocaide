@@ -22,7 +22,23 @@ export interface ToolSpec {
   readOnly: boolean;
 }
 
+/** When the AI should file a tool issue (the same words for every host). */
+export const TOOL_ISSUE_RULE =
+  "If a Cocaide tool fails in a way that looks like a bug, refuses something it should take, its description or the reference misled you, or no tool does what the user asked (so you had to work around it), call reportToolIssue once per problem: which tool, what you tried, what happened, and what would have helped. It goes into the user's tool-issue log for Cocaide's developers. Then carry on with the task; never report the user's own mistakes or a refusal that was right (a write scope, a size the user must confirm).";
+
 export const SPECS: ToolSpec[] = [
+  {
+    name: "reportToolIssue",
+    description:
+      "Note a problem with Cocaide's tools in the user's tool-issue log (for Cocaide's developers): a tool that failed in a way that looks like a bug, refused something it should take, was described wrongly, or a tool that is missing. Changes nothing in the part; carry on after it.",
+    input: {
+      tool: z.string().describe('The tool it is about ("addFeature"), or "missing" when no tool does it'),
+      problem: z.string().describe("What you tried and what happened, in a sentence or two (the error text if there was one)"),
+      suggestion: z.string().optional().describe("What would have helped: a fix, a field, a tool"),
+      input: z.unknown().optional().describe("The arguments of the call that went wrong, if any"),
+    },
+    readOnly: true,
+  },
   {
     name: "partSummary",
     description:

@@ -20,6 +20,7 @@ import { Icon } from "../icons";
 import { changeLines, threadOf, type HistoryEntry } from "./history";
 import type { LiveState } from "../../ask/bridge/run";
 import { BRIDGE_MODELS } from "../../bridge/protocol";
+import { clearIssues, groupIssues, issuesOf, issuesReport, readIssues } from "./toolIssues";
 
 type Ask = ReturnType<typeof useAsk>;
 
@@ -36,7 +37,9 @@ export function AskPopover({ ask }: { ask: Ask }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"ask" | "history">("ask");
+  const [tab, setTab] = useState<"ask" | "history" | "issues">("ask");
+  /** Bumped when the tool-issue log is cleared, so it is read again. */
+  const [issuesVersion, setIssuesVersion] = useState(0);
   /** The history entry being read again. */
   const [reading, setReading] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -176,7 +179,20 @@ export function AskPopover({ ask }: { ask: Ask }) {
           <button type="button" role="tab" aria-selected={tab === "history"} onClick={() => setTab("history")} data-testid="ask-tab-history">
             History{history.length ? ` (${history.length})` : ""}
           </button>
+          <button type="button" role="tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")} data-testid="ask-tab-issues" title="Problems the AI ran into with Cocaide's tools, kept to send to Cocaide's developers">
+            Tool issues{(void issuesVersion, readIssues().length) ? ` (${readIssues().length})` : ""}
+          </button>
         </div>
+      )}
+
+      {s.phase === "menu" && tab === "issues" && (
+        <ToolIssuesView
+          version={issuesVersion}
+          onClear={() => {
+            clearIssues();
+            setIssuesVersion((n) => n + 1);
+          }}
+        />
       )}
 
       {s.phase === "menu" && tab === "history" && (
@@ -408,6 +424,16 @@ export function AskPopover({ ask }: { ask: Ask }) {
               {s.result.text}
             </div>
           )}
+          {(() => {
+            const found = issuesOf({ askId: "", at: "", model: "", prompt: "", target: "", part: "", calls: s.result.calls, notices: (s.result as { notices?: string[] }).notices ?? [] });
+            if (!found.length) return null;
+            const reports = found.filter((i) => i.kind === "report").length;
+            return (
+              <div className="muted small ask-issues-note" data-testid="ask-issues-note">
+                {found.length} tool issue{found.length === 1 ? "" : "s"} logged{reports ? ` (${reports} reported by the AI)` : ""}: see Tool issues in this window to copy them into a report.
+              </div>
+            );
+          })()}
           {s.result.outcome === "questions" && s.result.review && (
             <IntentCard review={s.result.review} drawing={ctx.drawing} views={s.result.views} onBuild={(answers) => ask.answer(s, answers)} />
           )}
@@ -632,4 +658,76 @@ function HistoryView({ entries, reading, onRead, onFollowUp, onClear }: { entrie
 
 function fmt(x: number): string {
   return x.toLocaleString("en-US", { maximumFractionDigits: 3 });
+}
+
+/** The tool-issue log: alike problems grouped, newest groups' examples, and the report to copy or download. */
+function ToolIssuesView({ version, onClear }: { version: number; onClear(): void }) {
+  const [copied, setCopied] = useState(false);
+  void version;
+  const list = readIssues();
+  if (!list.length)
+    return (
+      <p className="muted small ask-body" data-testid="ask-issues-empty">
+        No tool issues yet. When the AI hits a problem with Cocaide's tools (a call that fails, or something it reports as a bug or a missing tool), it is kept here
+        across parts, so you can copy them all into one report for Cocaide's developers.
+      </p>
+    );
+  const groups = groupIssues(list);
+  const report = () => issuesReport(list, { app: location.origin + location.pathname, when: new Date().toISOString().slice(0, 16).replace("T", " ") });
+  const download = (name: string, text: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <div className="ask-body ask-issues" data-testid="ask-issues">
+      <p className="muted small">
+        {list.length} issue{list.length === 1 ? "" : "s"} in {groups.length} group{groups.length === 1 ? "" : "s"}, kept in this browser. Copy the report and paste it
+        to whoever works on Cocaide (a coding assistant reads it as it is).
+      </p>
+      <ol className="ask-issue-groups" data-testid="ask-issue-groups">
+        {groups.slice(0, 40).map((g) => {
+          const e = g.examples[0];
+          return (
+            <li key={g.key} className={`ask-issue ${g.kind}`} data-testid="ask-issue" title={e.input ? `Input: ${e.input}` : undefined}>
+              <span className="ask-issue-tool">{g.kind === "report" ? "AI report" : g.kind === "notice" ? "bridge" : "failed"} · {g.tool ?? "—"}</span>
+              {g.count > 1 && <span className="ask-issue-count"> ×{g.count}</span>}
+              <div className="ask-issue-problem">{e.problem}</div>
+              {e.suggestion && <div className="muted small">Suggestion: {e.suggestion}</div>}
+              <div className="muted small">
+                {new Date(g.last).toLocaleString()} · {e.part} · “{e.prompt.slice(0, 80)}”
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="ask-buttons">
+        <button
+          className="primary"
+          onClick={() => {
+            void navigator.clipboard?.writeText(report()).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            });
+          }}
+          data-testid="ask-issues-copy"
+          title="The whole log as one Markdown report, grouped, with examples"
+        >
+          {copied ? "Copied" : "Copy report"}
+        </button>
+        <button onClick={() => download("cocaide-tool-issues.md", report(), "text/markdown")} data-testid="ask-issues-download">
+          Download report
+        </button>
+        <button onClick={() => download("cocaide-tool-issues.json", JSON.stringify(list, null, 1), "application/json")} data-testid="ask-issues-json" title="Every issue as JSON">
+          JSON
+        </button>
+        <button onClick={onClear} data-testid="ask-issues-clear">
+          Clear
+        </button>
+      </div>
+    </div>
+  );
 }
