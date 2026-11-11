@@ -10,7 +10,8 @@ import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import { claudeStatus, findClaude } from "./claude";
-import { BRIDGE_VERSION, DEFAULT_PORT, originAllowed, type ClientMessage, type ServerMessage } from "./protocol";
+import { findGrok, grokStatus } from "./grok";
+import { BRIDGE_VERSION, DEFAULT_PORT, originAllowed, pickEngine, type ClaudeStatus, type ClientMessage, type ServerMessage } from "./protocol";
 import { BridgeSession } from "./session";
 import { DocWatcher } from "./watch";
 import { upgrade, type WsConnection } from "./ws";
@@ -24,6 +25,8 @@ export interface BridgeOptions {
   newToken?: boolean;
   /** The claude executable (or a .js file run with this Node); default: found on PATH. */
   claudePath?: string;
+  /** The grok executable (xAI's Grok Build CLI); default: found on PATH or in ~/.grok/bin. */
+  grokPath?: string;
   serverPath: string;
   tsxLoader: string;
   timeoutMs?: number;
@@ -86,6 +89,16 @@ export async function startBridge(o: BridgeOptions): Promise<Bridge> {
   const token = o.token ?? pairingToken(dataDir, o.newToken);
   const log = o.log ?? (() => {});
   let claude = findClaude(o.claudePath);
+  let grok = findGrok(o.grokPath);
+  /** Both assistants' status, looked up afresh on hello and status (what "auto" picks from). */
+  const statuses = async () => {
+    claude = findClaude(o.claudePath);
+    grok = findGrok(o.grokPath);
+    const [c, g] = await Promise.all([claudeStatus(claude), grokStatus(grok)]);
+    known = { claude: c, grok: g };
+    return known;
+  };
+  let known: { claude: ClaudeStatus; grok: ClaudeStatus } | null = null;
   let port = o.port ?? DEFAULT_PORT;
   const live = new Set<{ stop(): void }>();
 
@@ -152,14 +165,16 @@ export async function startBridge(o: BridgeOptions): Promise<Bridge> {
         }
         authed = true;
         clearTimeout(helloTimer);
-        claude = findClaude(o.claudePath);
-        send({ type: "welcome", version: BRIDGE_VERSION, claude: await claudeStatus(claude) });
+        const st = await statuses();
+        send({ type: "welcome", version: BRIDGE_VERSION, claude: st.claude, grok: st.grok });
         return;
       }
       switch (m.type) {
         case "status":
-          claude = findClaude(o.claudePath);
-          send({ type: "status", claude: await claudeStatus(claude) });
+          {
+            const st = await statuses();
+            send({ type: "status", claude: st.claude, grok: st.grok });
+          }
           return;
         case "ask": {
           if (session) {
@@ -170,9 +185,13 @@ export async function startBridge(o: BridgeOptions): Promise<Bridge> {
             send({ type: "error", code: "bad-request", message: "ask needs id, prompt, doc and scope", ...(typeof m.id === "string" ? { id: m.id } : {}) });
             return;
           }
+          const st = known ?? (await statuses());
+          const engine = pickEngine(m.engine, st.claude, st.grok);
           const s = new BridgeSession({ ...m, context: typeof m.context === "string" ? m.context : "" }, {
             dataDir,
             claude,
+            grok,
+            engine,
             serverPath: o.serverPath,
             tsxLoader: o.tsxLoader,
             timeoutMs: o.timeoutMs,

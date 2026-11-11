@@ -7,7 +7,7 @@
 import type { RawDocument } from "../../doc/commands";
 import { parseDocumentText, formatDocument } from "../../doc/format";
 import { validateDocument } from "../../doc/validate";
-import type { ServerMessage, BridgeAttachment, BridgeModel } from "../../bridge/protocol";
+import { ENGINE_LABEL, pickEngine, type ServerMessage, type BridgeAttachment, type BridgeEngine, type BridgeModel } from "../../bridge/protocol";
 import { diffDocs, earlierText, type AskCall, type AskReach, type AskResult, type EarlierTurn, type Proposal } from "../agent";
 import type { Attachment } from "../attachments";
 import type { KernelPort } from "../kernel";
@@ -41,6 +41,16 @@ export interface BridgeSettings {
   url: string;
   token: string;
   model: BridgeModel;
+  /** Claude Code, Grok Build, or whichever is installed (default). */
+  engine?: BridgeEngine;
+  /** Grok Build's model ("default": its own). */
+  grokModel?: string;
+}
+
+/** The assistant's name with its model, for the ask log. */
+export function bridgeModelLabel(engine: Exclude<BridgeEngine, "auto">, b: BridgeSettings): string {
+  if (engine === "grok") return `Grok Build${b.grokModel && b.grokModel !== "default" ? ` (${b.grokModel})` : ""}`;
+  return `Claude Code${b.model === "default" ? "" : ` (${b.model})`}`;
 }
 
 export interface BridgeAskRequest {
@@ -109,7 +119,8 @@ export function bridgeProposal(base: RawDocument, doc: RawDocument, volumes: { b
 const failed = (text: string, model: string): BridgeAskResult => ({ outcome: "failed", text, mode: "edit", visual: false, packet: null, proposal: null, calls: [], model, turns: 0 });
 
 export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResult> {
-  const model = `Claude Code${req.bridge.model === "default" ? "" : ` (${req.bridge.model})`}`;
+  let model = bridgeModelLabel(req.bridge.engine === "grok" ? "grok" : "claude", req.bridge);
+  let engine: Exclude<BridgeEngine, "auto"> = req.bridge.engine === "grok" ? "grok" : "claude";
   const live: LiveState = { phase: "connecting", steps: [], text: "", doc: null, updates: 0, notices: [] };
   const show = () => req.onLive?.({ ...live, steps: live.steps.map((s) => ({ ...s })), notices: [...live.notices] });
   show();
@@ -128,8 +139,14 @@ export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResu
   const client = req.client ?? new BridgeClient(req.bridge.url, req.bridge.token);
   try {
     const claude = await client.connect();
-    if (!claude.installed) return failed(claude.problem ?? "Claude Code is not installed on this computer.", model);
-    if (claude.loggedIn === false) return failed(claude.problem ?? "Claude Code is not logged in.", model);
+    // "auto": whichever assistant the bridge found installed and signed in (Claude Code first).
+    engine = pickEngine(req.bridge.engine, claude, client.grok ?? undefined);
+    model = bridgeModelLabel(engine, req.bridge);
+    const st = engine === "grok" ? client.grok : claude;
+    const name = ENGINE_LABEL[engine];
+    if (engine === "grok" && !client.grok) return failed("This bridge is from before Grok support: close the Cocaide bridge window and run start-cocaide.bat again (it updates the folder), then ask again.", model);
+    if (!st?.installed) return failed(st?.problem ?? `${name} is not installed on this computer.`, model);
+    if (st.loggedIn === false) return failed(st.problem ?? `${name} is not signed in.`, model);
     // An out-of-date bridge still works, but its AI lacks the newer tools: say so up front.
     if (client.versionNote) live.notices.push(client.versionNote);
   } catch (e) {
@@ -229,6 +246,8 @@ export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResu
       ...(req.attachments?.length ? { attachments: bridgeAttachments(req.attachments) } : {}),
       ...(req.resume ? { resume: req.resume } : {}),
       model: req.bridge.model,
+      engine,
+      ...(engine === "grok" && req.bridge.grokModel ? { grokModel: req.bridge.grokModel } : {}),
     });
   });
   client.close();

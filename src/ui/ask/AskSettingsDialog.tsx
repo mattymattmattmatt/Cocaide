@@ -79,7 +79,7 @@ export function AskSettingsDialog({ settings, onSave, onClose, onFollow, tab: in
                 <select value={s.provider} onChange={(e) => setS({ ...s, provider: e.target.value as Provider })} data-testid="ask-provider">
                   <option value="anthropic">Anthropic Claude</option>
                   <option value="ollama">Ollama (local)</option>
-                  <option value="claude-code">Claude subscription (Claude Code, local bridge)</option>
+                  <option value="claude-code">Your subscription: Claude Code or Grok (local bridge)</option>
                 </select>
               </label>
               {s.provider === "ollama" && <OllamaSettingsPanel value={s.ollama} onChange={(ollama) => setS({ ...s, ollama })} />}

@@ -16,7 +16,7 @@
 import type { AskReach } from "../../ask/agent";
 import type { AskModel } from "../../ask/model";
 import { DEFAULT_MODEL, type Effort } from "../../ask/models";
-import { DEFAULT_URL, type BridgeModel } from "../../bridge/protocol";
+import { DEFAULT_URL, ENGINE_LABEL, type BridgeEngine, type BridgeModel } from "../../bridge/protocol";
 
 export type Provider = "anthropic" | "ollama" | "claude-code";
 export type ThinkSetting = "off" | "on" | "low" | "medium" | "high";
@@ -50,11 +50,20 @@ export interface BridgeAskSettings {
   /** The pairing token the bridge printed in its terminal. */
   token: string;
   model: BridgeModel;
+  /** Which assistant the bridge runs: Claude Code, xAI's Grok Build, or whichever is installed and signed in. */
+  engine: BridgeEngine;
+  /** Grok Build's model ("default": its own). */
+  grokModel: string;
   /** The last file followed with Live link. */
   followPath: string;
 }
 
-export const BRIDGE_DEFAULTS: BridgeAskSettings = { url: DEFAULT_URL, token: "", model: "default", followPath: "" };
+export const BRIDGE_DEFAULTS: BridgeAskSettings = { url: DEFAULT_URL, token: "", model: "default", engine: "auto", grokModel: "default", followPath: "" };
+
+/** What the bridge answers as, in words: "Claude Code", "Grok Build", or "your subscription" for auto. */
+export function bridgeName(b: Pick<BridgeAskSettings, "engine">): string {
+  return b.engine === "auto" ? "your Claude or Grok subscription" : ENGINE_LABEL[b.engine];
+}
 
 const KEY = "cocaide.ask.settings.v1";
 
@@ -84,7 +93,10 @@ function pairFromLink(s: AskSettings): AskSettings {
     const token = q.get("token")?.trim() ?? "";
     const url = q.get("bridge")?.trim() || s.bridge.url;
     if (!/^[A-Za-z0-9_-]{8,200}$/.test(token) || !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(url)) return s;
-    const next: AskSettings = { ...s, provider: "claude-code", bridge: { ...s.bridge, url, token } };
+    // The launcher says which assistant it found ("engine=grok" when only Grok Build is installed).
+    const e = q.get("engine");
+    const engine: BridgeEngine = e === "claude" || e === "grok" || e === "auto" ? e : s.bridge.engine;
+    const next: AskSettings = { ...s, provider: "claude-code", bridge: { ...s.bridge, url, token, engine } };
     saveSettings(next);
     history.replaceState(null, "", location.pathname + location.search);
     return next;

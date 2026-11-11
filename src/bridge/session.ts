@@ -10,7 +10,8 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { claudeArgs, errorKindOf, INSTALL_FIX, LOGIN_FIX, mcpConfig, spawnSpec, StreamReader, type ClaudeCommand, type StreamEvent } from "./claude";
-import type { ClientMessage, ServerMessage } from "./protocol";
+import { GROK_INSTALL_FIX, GROK_LOGIN_FIX, grokArgs, grokMcpJson, grokNoToolsNote } from "./grok";
+import { ENGINE_LABEL, type BridgeEngine, type ClientMessage, type ServerMessage } from "./protocol";
 import { DocWatcher } from "./watch";
 
 export type AskMessage = Extract<ClientMessage, { type: "ask" }>;
@@ -19,6 +20,10 @@ type Done = Extract<ServerMessage, { type: "done" }>;
 export interface SessionOptions {
   dataDir: string;
   claude: ClaudeCommand | null;
+  /** xAI's Grok Build CLI, when found. */
+  grok?: ClaudeCommand | null;
+  /** Which assistant this ask runs on (resolved from the ask's "auto" by the server). */
+  engine?: Exclude<BridgeEngine, "auto">;
   /** src/mcp/server.ts, and the tsx loader as a file: URL. */
   serverPath: string;
   tsxLoader: string;
@@ -37,6 +42,9 @@ export const SYSTEM_APPEND = `You are working for the user inside Cocaide's AI p
 - Do not export or save files unless the user asks.
 - To detail a drawing (dimensions, fits, GD&T, notes): detailPlan, applyDetailPlan, then checkDrawing and renderSheet until the critic is clean (reference: detailing).
 - Files the user attached are listed in the prompt with their full paths; read them with the Read tool.`;
+
+/** The same instructions for Grok Build (its tools are named differently; attachments are read with read_file). */
+export const SYSTEM_APPEND_GROK = SYSTEM_APPEND.replace("Use only the mcp__cocaide__ tools", "Use only the cocaide MCP server's tools").replace("read them with the Read tool", "read them with your file-reading tool");
 
 const safeName = (n: string) => basename(n).replace(/[^\w.\- ]+/g, "_").slice(0, 80) || "file";
 
@@ -108,11 +116,17 @@ export class BridgeSession {
     } catch {
       return this.finish({ type: "done", id, ok: false, text: "The document sent to the bridge is not valid JSON.", errorKind: "error" });
     }
-    if (!o.claude) return this.finish({ type: "done", id, ok: false, text: `Claude Code (the claude command) was not found on this computer. ${INSTALL_FIX}`, errorKind: "not-installed" });
+    const engine = o.engine ?? "claude";
+    const grok = engine === "grok";
+    const label = ENGINE_LABEL[engine];
+    const installFix = grok ? GROK_INSTALL_FIX : INSTALL_FIX;
+    const loginFix = grok ? GROK_LOGIN_FIX : LOGIN_FIX;
+    const command = grok ? (o.grok ?? null) : o.claude;
+    if (!command) return this.finish({ type: "done", id, ok: false, text: grok ? `Grok Build (the grok command) was not found on this computer. ${GROK_INSTALL_FIX}` : `Claude Code (the claude command) was not found on this computer. ${INSTALL_FIX}`, errorKind: "not-installed" });
 
     // The working folder: the document, its attachments, the MCP config. Claude Code runs in one shared folder so --resume finds earlier sessions.
     const attachDir = join(this.dir, "attachments");
-    const work = join(o.dataDir, "work");
+    const work = join(o.dataDir, grok ? "work-grok" : "work");
     mkdirSync(attachDir, { recursive: true });
     mkdirSync(work, { recursive: true });
     writeFileSync(this.docPath, ask.doc);
@@ -127,23 +141,29 @@ export class BridgeSession {
         files.push(p);
       } else if (a.text) texts.push({ name: a.name, text: a.text });
     }
+    const config = mcpConfig({ serverPath: o.serverPath, tsxLoader: o.tsxLoader, docPath: this.docPath, scope: ask.scope, outDir: join(this.dir, "out") });
     const configPath = join(this.dir, "mcp-config.json");
-    writeFileSync(configPath, JSON.stringify(mcpConfig({ serverPath: o.serverPath, tsxLoader: o.tsxLoader, docPath: this.docPath, scope: ask.scope, outDir: join(this.dir, "out") }), null, 1));
+    writeFileSync(configPath, JSON.stringify(config, null, 1));
+    const prompt = promptText(ask, files, texts);
+    // Grok Build reads MCP servers from the folder it runs in (one ask at a time per bridge connection, so the file names this ask's document).
+    if (grok) writeFileSync(join(work, ".mcp.json"), grokMcpJson(config));
 
-    const args = claudeArgs({ mcpConfig: configPath, appendSystem: SYSTEM_APPEND, model: ask.model, resume: ask.resume, ...(files.length ? { attachDir } : {}) });
-    const spec = spawnSpec(o.claude, args);
-    this.emit({ type: "started", id });
-    o.log?.(`ask ${id}: starting Claude Code in ${this.dir}${ask.resume ? " (follow-up)" : ""}`);
+    const args = grok
+      ? grokArgs({ rules: SYSTEM_APPEND_GROK, prompt, ...(ask.grokModel ? { model: ask.grokModel } : {}), ...(ask.resume ? { resume: ask.resume } : {}), attachments: files.length > 0 })
+      : claudeArgs({ mcpConfig: configPath, appendSystem: SYSTEM_APPEND, model: ask.model, resume: ask.resume, ...(files.length ? { attachDir } : {}) });
+    const spec = spawnSpec(command, args);
+    this.emit({ type: "started", id, engine });
+    o.log?.(`ask ${id}: starting ${label} in ${this.dir}${ask.resume ? " (follow-up)" : ""}`);
 
     this.watcher = new DocWatcher(this.docPath, { onChange: (text) => this.emit({ type: "doc", id, text }) }).start(ask.doc);
     let child: ChildProcess;
     try {
       child = spawn(spec.command, spec.args, { cwd: work, shell: spec.shell, windowsHide: true, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) {
-      return this.finish({ type: "done", id, ok: false, text: `Could not start Claude Code: ${(e as Error).message}`, errorKind: "crash" });
+      return this.finish({ type: "done", id, ok: false, text: `Could not start ${label}: ${(e as Error).message}`, errorKind: "crash" });
     }
     this.child = child;
-    const reader = new StreamReader();
+    const reader = new StreamReader(label);
     let result: Extract<StreamEvent, { kind: "result" }> | null = null;
     let stderr = "";
     let buf = "";
@@ -154,6 +174,7 @@ export class BridgeSession {
           o.log?.(`ask ${id}: skipped a line (${e.reason.slice(0, 120)})`);
           return;
         case "init":
+          if (grok && e.tools === 0) this.emit({ type: "notice", id, text: grokNoToolsNote(work) });
           return this.emit({ type: "init", id, sessionId: e.sessionId, ...(e.model ? { model: e.model } : {}), tools: e.tools, ...(e.mcp ? { mcp: e.mcp } : {}) });
         case "text":
           reply += e.text;
@@ -189,7 +210,8 @@ export class BridgeSession {
       stderr = (stderr + chunk).slice(-4000);
     });
     child.stdin!.on("error", () => {}); // a process that exits before reading its prompt
-    child.stdin!.end(promptText(ask, files, texts));
+    // Claude Code reads the prompt on stdin; Grok Build has it as -p's argument.
+    child.stdin!.end(grok ? "" : prompt);
 
     const total = o.timeoutMs ?? 30 * 60_000;
     this.timers.push(setTimeout(() => this.stop("timeout"), total));
@@ -197,7 +219,7 @@ export class BridgeSession {
 
     child.on("error", (e) => {
       const err = e as NodeJS.ErrnoException;
-      this.finish({ type: "done", id, ok: false, text: err.code === "ENOENT" ? `Claude Code was not found. ${INSTALL_FIX}` : `Could not start Claude Code: ${err.message}`, errorKind: err.code === "ENOENT" ? "not-installed" : "crash" });
+      this.finish({ type: "done", id, ok: false, text: err.code === "ENOENT" ? `${label} was not found. ${installFix}` : `Could not start ${label}: ${err.message}`, errorKind: err.code === "ENOENT" ? "not-installed" : "crash" });
     });
     child.on("close", async (code, signal) => {
       if (buf.trim()) for (const e of reader.line(buf)) onEvent(e);
@@ -207,10 +229,10 @@ export class BridgeSession {
       const doc = this.watcher?.text;
       const common = { id, ...(reader.sessionId ? { sessionId: reader.sessionId } : {}), ...(doc !== undefined ? { doc } : {}) };
       if (this.ended === "aborted") return this.finish({ type: "done", ...common, ok: false, text: "Stopped.", errorKind: "aborted" });
-      if (this.ended === "timeout") return this.finish({ type: "done", ...common, ok: false, text: `Claude Code took too long (no answer in ${Math.round((this.idleHit ? (o.idleMs ?? 600_000) : total) / 60000)} minutes) and was stopped.`, errorKind: "timeout" });
+      if (this.ended === "timeout") return this.finish({ type: "done", ...common, ok: false, text: `${label} took too long (no answer in ${Math.round((this.idleHit ? (o.idleMs ?? 600_000) : total) / 60000)} minutes) and was stopped.`, errorKind: "timeout" });
       if (r) {
         const kind = r.ok ? undefined : r.errorKind;
-        const text = !r.ok && kind === "login" ? `${r.text}\n${LOGIN_FIX}` : r.text || reply.trim();
+        const text = !r.ok && kind === "login" ? `${r.text}\n${loginFix}` : r.text || reply.trim();
         return this.finish({
           type: "done",
           ...common,
@@ -230,7 +252,7 @@ export class BridgeSession {
         type: "done",
         ...common,
         ok: false,
-        text: `Claude Code ended without a result (${signal ? `signal ${signal}` : `exit code ${code}`}).${said ? `\n${said}` : ""}${kind === "login" ? `\n${LOGIN_FIX}` : ""}`,
+        text: `${label} ended without a result (${signal ? `signal ${signal}` : `exit code ${code}`}).${said ? `\n${said}` : ""}${kind === "login" ? `\n${loginFix}` : ""}`,
         errorKind: kind === "error" ? "crash" : kind,
       });
     });

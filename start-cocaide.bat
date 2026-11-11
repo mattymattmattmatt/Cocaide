@@ -14,13 +14,26 @@ where node >nul 2>nul || (
   echo Node.js is not installed. Get the LTS version from https://nodejs.org and run this again.
   pause & exit /b 1
 )
-where claude >nul 2>nul || (
-  echo Claude Code is not installed. Installing it now...
-  call npm install -g @anthropic-ai/claude-code || (pause & exit /b 1)
-  echo.
-  echo Now log in once: a Claude Code window opens. Log in with your Claude subscription, then type /exit.
-  start "Claude Code login" /wait cmd /c claude
+rem Which assistant: Claude Code, xAI's Grok Build (grok), or both. Grok alone is fine:
+rem then nothing is installed and the app opens set to use Grok.
+set "ENGINE=auto"
+set "HASGROK="
+where grok >nul 2>nul && set "HASGROK=1"
+if exist "%USERPROFILE%\.grok\bin\grok.exe" set "HASGROK=1"
+if exist "%USERPROFILE%\.grok\bin\grok" set "HASGROK=1"
+where claude >nul 2>nul && goto haveassistant
+if defined HASGROK (
+  echo Found Grok Build: Cocaide will use your Grok subscription.
+  set "ENGINE=grok"
+  goto haveassistant
 )
+echo Claude Code is not installed. Installing it now...
+echo ^(Prefer Grok? Close this, install xAI's Grok Build CLI, run grok login, then run this again.^)
+call npm install -g @anthropic-ai/claude-code || (pause & exit /b 1)
+echo.
+echo Now log in once: a Claude Code window opens. Log in with your Claude subscription, then type /exit.
+start "Claude Code login" /wait cmd /c claude
+:haveassistant
 rem Keep the Cocaide folder up to date: the bridge runs the AI's tools from
 rem this folder, so an old copy means an AI with old tools.
 set "UPDATED="
@@ -78,5 +91,5 @@ if not exist "%TOKENFILE%" (
   pause & exit /b 1
 )
 set /p TOKEN=<"%TOKENFILE%"
-start "" "%SITE%#bridge=%BRIDGE%&token=%TOKEN%"
+start "" "%SITE%#bridge=%BRIDGE%&token=%TOKEN%&engine=%ENGINE%"
 endlocal

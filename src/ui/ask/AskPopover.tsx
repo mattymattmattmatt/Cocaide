@@ -118,7 +118,11 @@ export function AskPopover({ ask }: { ask: Ask }) {
     ask.settings.provider === "ollama"
       ? `${ask.settings.ollama.model} (local, Ollama)`
       : ask.settings.provider === "claude-code"
-        ? `Claude subscription via Claude Code (${BRIDGE_MODELS.find((m) => m.id === ask.settings.bridge.model)?.label ?? ask.settings.bridge.model})`
+        ? ask.settings.bridge.engine === "grok"
+          ? `Grok subscription via Grok Build (${ask.settings.bridge.grokModel === "default" ? "its default model" : ask.settings.bridge.grokModel})`
+          : ask.settings.bridge.engine === "auto"
+            ? "Your subscription via the local bridge (Claude Code or Grok Build, whichever is installed)"
+            : `Claude subscription via Claude Code (${BRIDGE_MODELS.find((m) => m.id === ask.settings.bridge.model)?.label ?? ask.settings.bridge.model})`
         : (MODELS.find((m) => m.id === ask.settings.model)?.label ?? ask.settings.model);
   const part = ctx.target.kind === "part";
   const asPhoto = !!ctx.photo && readAs === "photo";
@@ -408,7 +412,7 @@ export function AskPopover({ ask }: { ask: Ask }) {
             <IntentCard review={s.result.review} drawing={ctx.drawing} views={s.result.views} onBuild={(answers) => ask.answer(s, answers)} />
           )}
           {s.result.detailPlan && !s.result.proposal && !s.accepted && (
-            <DetailPlanCard plan={s.result.detailPlan} aiReady={ready} aiLabel={ask.settings.provider === "claude-code" ? "Detail with Claude Code" : "Detail with AI"} onRun={(plan, how) => ask.detail(s, plan, how)} />
+            <DetailPlanCard plan={s.result.detailPlan} aiReady={ready} aiLabel={ask.settings.provider === "claude-code" ? (ask.settings.bridge.engine === "grok" ? "Detail with Grok Build" : ask.settings.bridge.engine === "claude" ? "Detail with Claude Code" : "Detail with AI (bridge)") : "Detail with AI"} onRun={(plan, how) => ask.detail(s, plan, how)} />
           )}
           {s.result.proposal?.checks && (
             <ul className="ask-checks" data-testid="ask-checks">

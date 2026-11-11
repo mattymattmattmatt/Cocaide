@@ -1,12 +1,13 @@
-// Settings → Assistant with "Claude subscription (Claude Code, local bridge)"
-// chosen: the bridge's address and pairing token, whether the bridge answers
-// and Claude Code is installed and logged in (with the exact fix when not),
-// the model, the setup steps, and Live link (follow a part file that Claude
-// Code in a terminal is editing).
+// Settings → Assistant with "Your subscription (local bridge)" chosen: the
+// bridge's address and pairing token, which assistants it found on this
+// computer (Claude Code, xAI's Grok Build) and whether each is signed in (with
+// the exact fix when not), which one to use (or whichever is ready), the
+// model, the setup steps, and Live link (follow a part file that Claude Code
+// in a terminal is editing).
 
 import { useCallback, useEffect, useState } from "react";
 import { BridgeClient, BridgeError } from "../../ask/bridge/client";
-import { BRIDGE_MODELS, type BridgeModel, type ClaudeStatus } from "../../bridge/protocol";
+import { BRIDGE_MODELS, GROK_MODELS, pickEngine, type BridgeEngine, type BridgeModel, type ClaudeStatus } from "../../bridge/protocol";
 import type { BridgeAskSettings } from "./settings";
 
 interface Props {
@@ -18,21 +19,29 @@ interface Props {
 type Status =
   | { state: "idle" }
   | { state: "checking" }
-  | { state: "ok"; bridge: string; claude: ClaudeStatus; note?: string | null }
+  | { state: "ok"; bridge: string; claude: ClaudeStatus; grok: ClaudeStatus | null; note?: string | null }
   | { state: "problem"; message: string };
 
 /** One line per thing that has to be right, and what to do about the first that isn't. */
 function statusLines(s: Extract<Status, { state: "ok" }>): { ok: boolean; text: string }[] {
   const c = s.claude;
+  const g = s.grok;
+  const one = (name: string, x: ClaudeStatus) =>
+    !x.installed
+      ? `${name}: not installed`
+      : `${name} ${x.version ?? ""}: ${x.loggedIn === true ? `signed in${x.authMethod ? ` (${x.authMethod})` : ""}` : x.loggedIn === false ? "not signed in" : "sign-in unknown (the first ask will tell)"}`;
   return [
     { ok: true, text: `Bridge ${s.bridge} answers and is paired` },
-    { ok: c.installed, text: c.installed ? `Claude Code ${c.version ?? ""} is installed` : "Claude Code is not installed" },
-    {
-      ok: c.loggedIn !== false && c.installed,
-      text: !c.installed ? "Logged in: —" : c.loggedIn === true ? `Logged in${c.authMethod ? ` (${c.authMethod})` : ""}` : c.loggedIn === false ? "Not logged in" : "Login: Claude Code did not say (an older version); the first ask will tell",
-    },
+    { ok: c.installed && c.loggedIn !== false, text: one("Claude Code", c) },
+    ...(g ? [{ ok: g.installed && g.loggedIn !== false, text: one("Grok Build", g) }] : []),
   ];
 }
+
+const ENGINE_CHOICES: { id: BridgeEngine; label: string }[] = [
+  { id: "auto", label: "Whichever is installed and signed in" },
+  { id: "claude", label: "Claude Code (Claude subscription)" },
+  { id: "grok", label: "Grok Build (SuperGrok / X Premium+ subscription)" },
+];
 
 export function ClaudeCodeSettingsPanel({ value: b, onChange, onFollow }: Props) {
   const [status, setStatus] = useState<Status>({ state: "idle" });
@@ -44,7 +53,7 @@ export function ClaudeCodeSettingsPanel({ value: b, onChange, onFollow }: Props)
     const c = new BridgeClient(b.url, b.token);
     try {
       const claude = await c.connect(10000);
-      setStatus({ state: "ok", bridge: c.version, claude, note: c.versionNote });
+      setStatus({ state: "ok", bridge: c.version, claude, grok: c.grok, note: c.versionNote });
     } catch (e) {
       setStatus({ state: "problem", message: e instanceof BridgeError ? e.message : (e as Error).message });
     } finally {
@@ -61,8 +70,9 @@ export function ClaudeCodeSettingsPanel({ value: b, onChange, onFollow }: Props)
   return (
     <div className="bridge-settings" data-testid="bridge-settings">
       <p className="muted small">
-        Uses your own Claude subscription: Claude Code runs on this computer, logged in as you, and works on the part with Cocaide's tools only. You watch
-        it build in the 3D view; when it finishes you accept or discard the change. No API key.
+        Uses your own subscription: Claude Code (Claude) or xAI's Grok Build (SuperGrok, X Premium+) runs on this computer, signed in as you, and works on
+        the part with Cocaide's tools only. The bridge finds whichever you have. You watch it build in the 3D view; when it finishes you accept or discard
+        the change. No API key.
       </p>
       <label className="field">
         <span className="field-label">Bridge address</span>
@@ -80,15 +90,40 @@ export function ClaudeCodeSettingsPanel({ value: b, onChange, onFollow }: Props)
         />
       </label>
       <label className="field">
-        <span className="field-label">Model</span>
-        <select value={b.model} onChange={(e) => set({ model: e.target.value as BridgeModel })} data-testid="bridge-model">
-          {BRIDGE_MODELS.map((m) => (
+        <span className="field-label">Assistant</span>
+        <select value={b.engine} onChange={(e) => set({ engine: e.target.value as BridgeEngine })} data-testid="bridge-engine">
+          {ENGINE_CHOICES.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
             </option>
           ))}
         </select>
       </label>
+      {b.engine !== "grok" && (
+        <label className="field">
+          <span className="field-label">{b.engine === "auto" ? "Claude model" : "Model"}</span>
+          <select value={b.model} onChange={(e) => set({ model: e.target.value as BridgeModel })} data-testid="bridge-model">
+            {BRIDGE_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {b.engine !== "claude" && (
+        <label className="field">
+          <span className="field-label">{b.engine === "auto" ? "Grok model" : "Model"}</span>
+          <input list="grok-models" value={b.grokModel} onChange={(e) => set({ grokModel: e.target.value.trim() || "default" })} placeholder="default" data-testid="bridge-grok-model" />
+          <datalist id="grok-models">
+            {GROK_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </datalist>
+        </label>
+      )}
       <div className="row">
         <button type="button" onClick={() => void test()} disabled={status.state === "checking"} data-testid="bridge-test">
           {status.state === "checking" ? "Checking…" : "Test"}
@@ -103,7 +138,23 @@ export function ClaudeCodeSettingsPanel({ value: b, onChange, onFollow }: Props)
                 {l.ok ? "✓" : "✗"} {l.text}
               </li>
             ))}
-            {status.claude.problem && <li className="bridge-status bad">{status.claude.problem}</li>}
+            {(() => {
+              const use = pickEngine(b.engine, status.claude, status.grok ?? undefined);
+              const st = use === "grok" ? status.grok : status.claude;
+              const ready = !!st?.installed && st.loggedIn !== false;
+              return (
+                <>
+                  {ready && (
+                    <li className="bridge-status ok" data-testid="bridge-using">
+                      → Asks will use {use === "grok" ? "Grok Build" : "Claude Code"}
+                      {b.engine === "auto" && (use === "grok" ? " (found and signed in)" : status.grok?.installed ? " (Grok Build is there too: pick it above to use it)" : "")}
+                    </li>
+                  )}
+                  {!ready && use === "grok" && !status.grok && <li className="bridge-status bad">This bridge is from before Grok support: close it and run start-cocaide.bat again.</li>}
+                  {!ready && st?.problem && <li className="bridge-status bad">{st.problem}</li>}
+                </>
+              );
+            })()}
             {status.note && <li className="bridge-status bad">{status.note}</li>}
           </ul>
         )}
@@ -127,7 +178,12 @@ export function ClaudeCodeSettingsPanel({ value: b, onChange, onFollow }: Props)
           <code>MSYS_NO_PATHCONV=1</code> so Git Bash leaves <code>/c</code> alone. The bridge itself needs no such care. If the browser asks whether this site
           may reach devices on your local network, allow it: the bridge runs on 127.0.0.1.
         </p>
-        <p className="muted">Everything stays on this computer except what Claude Code sends to Anthropic as it works, as when you use it in a terminal.</p>
+        <p>
+          <strong>Grok instead (or as well):</strong> install xAI's Grok Build CLI (Windows: in Git Bash or WSL) with{" "}
+          <code>curl -fsSL https://x.ai/cli/install.sh | bash</code>, run <code>grok login</code> once and sign in with your SuperGrok or X Premium+ account,
+          then start (or restart) the bridge: it finds <code>grok</code> by itself, and Test shows it here.
+        </p>
+        <p className="muted">Everything stays on this computer except what the assistant sends to Anthropic or xAI as it works, as when you use it in a terminal.</p>
       </details>
       <fieldset className="spin-steps">
         <legend>Live link: follow a part file</legend>

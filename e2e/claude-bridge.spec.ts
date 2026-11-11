@@ -91,7 +91,10 @@ test("settings: the setup steps, a wrong token, then Test shows the bridge, Clau
   await page.getByTestId("bridge-test").click();
   await expect(page.getByTestId("bridge-status")).toContainText("answers and is paired");
   await expect(page.getByTestId("bridge-status")).toContainText("Claude Code 9.9.9");
-  await expect(page.getByTestId("bridge-status")).toContainText("Logged in");
+  await expect(page.getByTestId("bridge-status")).toContainText("signed in");
+  // Auto: Claude Code is the one there, so asks use it.
+  await expect(page.getByTestId("bridge-using")).toContainText("Claude Code");
+  await page.getByTestId("bridge-engine").selectOption("claude");
   await page.getByTestId("bridge-model").selectOption("sonnet");
   await page.getByTestId("ask-settings-save").click();
   await openAssistant(page);
@@ -106,7 +109,7 @@ test("an ask: the view and the tree change live, edits wait, then Discard restor
 
   await page.getByTestId("feature-hole_1").locator(".feature-row").click({ button: "right" });
   await page.getByTestId("ctx-ask").click();
-  await expect(page.getByTestId("ask")).toContainText("Claude subscription via Claude Code");
+  await expect(page.getByTestId("ask")).toContainText(/via (Claude Code|the local bridge)/);
   await ask(page, "add a block under the bracket");
 
   // Live: the steps, the sketch in the tree before the block, the lock banner.

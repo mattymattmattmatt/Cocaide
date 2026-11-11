@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { claudeStatus, findClaude } from "./claude";
+import { findGrok, grokStatus } from "./grok";
 import { BRIDGE_VERSION, DEFAULT_PORT, HOSTED_ORIGIN } from "./protocol";
 import { defaultDataDir, startBridge } from "./server";
 
@@ -20,10 +21,11 @@ export function serverFiles() {
 }
 
 function parse(argv: string[]) {
-  const o: { port: number; dataDir: string; claude?: string; newToken: boolean; timeoutMinutes?: number } = {
+  const o: { port: number; dataDir: string; claude?: string; grok?: string; newToken: boolean; timeoutMinutes?: number } = {
     port: Number(process.env.COCAIDE_BRIDGE_PORT) || DEFAULT_PORT,
     dataDir: process.env.COCAIDE_BRIDGE_DIR || defaultDataDir(),
     claude: process.env.COCAIDE_CLAUDE || undefined,
+    grok: process.env.COCAIDE_GROK || undefined,
     newToken: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -36,10 +38,11 @@ function parse(argv: string[]) {
     if (a === "--port") o.port = Number(v());
     else if (a === "--data-dir") o.dataDir = resolve(v());
     else if (a === "--claude") o.claude = v();
+    else if (a === "--grok") o.grok = v();
     else if (a === "--new-token") o.newToken = true;
     else if (a === "--timeout-minutes") o.timeoutMinutes = Number(v());
     else if (a === "--help" || a === "-h") {
-      console.log("npm run bridge -- [--port 8787] [--data-dir <folder>] [--claude <path to claude>] [--new-token] [--timeout-minutes 30]");
+      console.log("npm run bridge -- [--port 8787] [--data-dir <folder>] [--claude <path to claude>] [--grok <path to grok>] [--new-token] [--timeout-minutes 30]");
       process.exit(0);
     } else throw new Error(`unknown argument ${a}`);
   }
@@ -49,12 +52,13 @@ function parse(argv: string[]) {
 
 async function main() {
   const o = parse(process.argv.slice(2));
-  const status = await claudeStatus(findClaude(o.claude));
+  const [status, grok] = await Promise.all([claudeStatus(findClaude(o.claude)), grokStatus(findGrok(o.grok))]);
   const bridge = await startBridge({
     port: o.port,
     dataDir: o.dataDir,
     newToken: o.newToken,
     claudePath: o.claude,
+    grokPath: o.grok,
     ...serverFiles(),
     ...(o.timeoutMinutes ? { timeoutMs: o.timeoutMinutes * 60_000 } : {}),
     log: (line) => console.log(`[${new Date().toLocaleTimeString()}] ${line}`),
@@ -63,11 +67,12 @@ async function main() {
     `Cocaide bridge ${BRIDGE_VERSION} on http://127.0.0.1:${bridge.port}`,
     `Answers ${HOSTED_ORIGIN} and http://localhost pages only.`,
     "",
-    `Pairing token (paste it once into Settings → Assistant → Claude subscription):`,
+    `Pairing token (paste it once into Settings → Assistant → local bridge):`,
     `    ${bridge.token}`,
     "",
     status.installed ? `Claude Code ${status.version ?? ""}: ${status.loggedIn === true ? "logged in" : status.loggedIn === false ? "NOT logged in" : "login unknown"}` : "Claude Code: NOT FOUND",
-    ...(status.problem ? [status.problem] : []),
+    ...(status.problem && !grok.installed ? [status.problem] : []),
+    grok.installed ? `Grok Build ${grok.version ?? ""}: ${grok.loggedIn ? `signed in (${grok.authMethod})` : "NOT signed in (run grok login)"}` : "Grok Build: not found (optional: xAI's grok CLI)",
     `Session files: ${bridge.dataDir}`,
     "Leave this window open while you use it. Ctrl+C stops the bridge.",
   ];

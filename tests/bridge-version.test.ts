@@ -9,6 +9,7 @@ import { TOOLS } from "../src/mcp/server";
 
 const TOOLSET: Record<string, string[]> = {
   "1.1.0": ["addConstraint","addEntity","addFeature","addLibraryProfile","addSheet","applyDetailPlan","batch","checkDrawing","cutList","deleteAnnotations","deleteConstraint","deleteEntity","deleteFeature","deleteParameter","deleteSheet","detailPlan","drawing","editAnnotation","exportCutList","exportDrawing","exportDxf","exportSTEP","exportSTL","facePlane","fitViews","fullyDefine","geoRefs","getFeature","getSketch","holes","importStep","listDatums","listEdges","listFaces","listFeatures","measure","measureBetween","moveSheet","moveView","newDrawing","partSummary","plan","rebuild","redo","reference","renameBody","renameDimension","renameNode","renameParameter","renameSheet","renderSheet","reorderFeature","saveBody","screenshot","setAnnotation","setBodyMaterial","setCutList","setDimension","setDrawingOptions","setDriven","setFolder","setNode","setParameter","setProperties","setSheet","setTable","setView","setWeld","sketchProfile","suppressFeature","suppressFolder","undo","updateEntity","updateFeature","validate"],
+  "1.2.0": ["addConstraint","addEntity","addFeature","addLibraryProfile","addSheet","applyDetailPlan","batch","checkDrawing","cutList","deleteAnnotations","deleteConstraint","deleteEntity","deleteFeature","deleteParameter","deleteSheet","detailPlan","drawing","editAnnotation","exportCutList","exportDrawing","exportDxf","exportSTEP","exportSTL","facePlane","fitViews","fullyDefine","geoRefs","getFeature","getSketch","holes","importStep","listDatums","listEdges","listFaces","listFeatures","measure","measureBetween","moveSheet","moveView","newDrawing","partSummary","plan","rebuild","redo","reference","renameBody","renameDimension","renameNode","renameParameter","renameSheet","renderSheet","reorderFeature","saveBody","screenshot","setAnnotation","setBodyMaterial","setCutList","setDimension","setDrawingOptions","setDriven","setFolder","setNode","setParameter","setProperties","setSheet","setTable","setView","setWeld","sketchProfile","suppressFeature","suppressFolder","undo","updateEntity","updateFeature","validate"],
 };
 
 describe("bridge version", () => {
@@ -23,6 +24,7 @@ describe("bridge version", () => {
   it("calls an older bridge out of date, and says how to update", () => {
     expect(bridgeOutdated("1.0.0", "1.1.0")).toBe(true);
     expect(bridgeOutdated("1.1.0", "1.1.0")).toBe(false);
+    expect(bridgeOutdated("1.1.0", "1.2.0")).toBe(true);
     expect(bridgeOutdated("1.2.0", "1.1.0")).toBe(false);
     expect(bridgeOutdated("2.0.0", "1.1.0")).toBe(true);
     expect(bridgeOutdatedNote("1.0.0")).toMatch(/start-cocaide\.bat/);

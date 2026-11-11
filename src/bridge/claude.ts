@@ -215,8 +215,24 @@ export function errorKindOf(text: string): "login" | "rate-limit" | "error" {
   return "error";
 }
 
+/** Grok Build wraps a tool's output as JSON text: { "output_for_prompt" | "tool_output_for_prompt" | "raw_output": ... }. */
+function unwrapGrok(text: string): string {
+  if (!text.startsWith("{")) return text;
+  try {
+    const j = JSON.parse(text) as J;
+    for (const k of ["output_for_prompt", "tool_output_for_prompt", "raw_output"]) {
+      const v = j[k];
+      if (typeof v === "string") return v;
+      if (Array.isArray(v)) return resultText(v);
+    }
+  } catch {
+    // not wrapped
+  }
+  return text;
+}
+
 function resultText(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return unwrapGrok(content);
   if (Array.isArray(content))
     return content
       .map((b) => (isObj(b) && b.type === "text" && typeof b.text === "string" ? b.text : ""))
@@ -225,11 +241,16 @@ function resultText(content: unknown): string {
   return "";
 }
 
-/** Reads Claude Code's stream-json lines into the bridge's events. Keeps which call is which, and whether text came as deltas. */
+/**
+ * Reads Claude Code's stream-json lines into the bridge's events (Grok Build's
+ * "streaming-messages-json" is the same format). Keeps which call is which,
+ * and whether text came as deltas. `label` names the assistant in notices.
+ */
 export class StreamReader {
   private names = new Map<string, string>();
   private deltas = false;
   sessionId: string | undefined;
+  constructor(private readonly label = "Claude Code") {}
 
   line(raw: string): StreamEvent[] {
     const s = raw.trim();
@@ -247,7 +268,7 @@ export class StreamReader {
         if (j.subtype !== "init") return [];
         const servers = Array.isArray(j.mcp_servers) ? j.mcp_servers.filter(isObj) : [];
         const ours = servers.find((m) => m.name === MCP_SERVER_NAME);
-        const tools = Array.isArray(j.tools) ? j.tools.filter((t) => typeof t === "string" && t.startsWith(TOOL_PREFIX)).length : 0;
+        const tools = Array.isArray(j.tools) ? j.tools.filter((t) => typeof t === "string" && cocaideTool(t) !== null).length : 0;
         return [
           {
             kind: "init",
@@ -280,7 +301,7 @@ export class StreamReader {
         }
         // A turn ends: the next one's text may come whole again.
         if (m.stop_reason) this.deltas = false;
-        if (typeof j.error === "string") out.push({ kind: "notice", text: `Claude Code reported: ${j.error}` });
+        if (typeof j.error === "string") out.push({ kind: "notice", text: `${this.label} reported: ${j.error}` });
         return out;
       }
       case "user": {
@@ -308,7 +329,7 @@ export class StreamReader {
         const status = typeof info.status === "string" ? info.status : "";
         if (status === "allowed") return [];
         const resets = typeof info.resetsAt === "number" ? ` (resets ${new Date(info.resetsAt * 1000).toLocaleString()})` : "";
-        return [{ kind: "notice", text: `Claude Code rate limit: ${status || "limited"}${resets}` }];
+        return [{ kind: "notice", text: `${this.label} rate limit: ${status || "limited"}${resets}` }];
       }
       case "result": {
         const text = typeof j.result === "string" ? j.result : Array.isArray(j.errors) ? j.errors.map(String).join("\n") : "";
@@ -318,7 +339,7 @@ export class StreamReader {
           {
             kind: "result",
             ok,
-            text: ok ? text : text || `Claude Code stopped: ${String(j.subtype ?? "error")}`,
+            text: ok ? text : text || `${this.label} stopped: ${String(j.subtype ?? "error")}`,
             ...(typeof j.session_id === "string" ? { sessionId: j.session_id } : {}),
             ...(typeof j.total_cost_usd === "number" ? { costUsd: j.total_cost_usd } : {}),
             ...(typeof j.duration_ms === "number" ? { durationMs: j.duration_ms } : {}),

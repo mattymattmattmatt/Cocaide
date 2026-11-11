@@ -8,10 +8,11 @@
 
 /**
  * The bridge's version. Bump the minor number whenever Cocaide's tools change
- * (tests/bridge-version.test.ts fails until you do), so an app newer than the
- * bridge on the user's computer can say the bridge is out of date.
+ * (tests/bridge-version.test.ts fails until you do), or what the bridge can do
+ * (1.2: Grok Build as well as Claude Code), so an app newer than the bridge on
+ * the user's computer can say the bridge is out of date.
  */
-export const BRIDGE_VERSION = "1.1.0";
+export const BRIDGE_VERSION = "1.2.0";
 
 /** Whether bridge version `have` is older than `want` (or a different major version). */
 export function bridgeOutdated(have: string, want: string = BRIDGE_VERSION): boolean {
@@ -47,6 +48,33 @@ export const BRIDGE_MODELS: { id: BridgeModel; label: string }[] = [
 ];
 export type BridgeModel = "default" | "sonnet" | "opus";
 
+/**
+ * Which assistant the bridge runs: Claude Code (the user's Claude
+ * subscription) or xAI's Grok Build CLI (their SuperGrok / X Premium+
+ * subscription, or XAI_API_KEY). "auto": whichever is installed and signed in
+ * (Claude Code first when both are).
+ */
+export type BridgeEngine = "auto" | "claude" | "grok";
+export const ENGINE_LABEL: Record<Exclude<BridgeEngine, "auto">, string> = { claude: "Claude Code", grok: "Grok Build" };
+
+/** Grok Build's models (`grok models` lists what the user's account has); "default": its own default. */
+export const GROK_MODELS: { id: string; label: string }[] = [
+  { id: "default", label: "Grok Build's default" },
+  { id: "grok-4.7", label: "grok-4.7" },
+  { id: "grok-4.7-build-fast", label: "grok-4.7-build-fast" },
+];
+/** A model name the bridge passes to grok -m: letters, digits, dots, dashes. */
+export const GROK_MODEL_RE = /^[a-z0-9][a-z0-9.\-]{0,40}$/i;
+
+/** The engine an "auto" ask runs on: the first installed and signed in (or not known to be signed out). */
+export function pickEngine(want: BridgeEngine | undefined, claude: ClaudeStatus, grok: ClaudeStatus | undefined): Exclude<BridgeEngine, "auto"> {
+  if (want === "claude" || want === "grok") return want;
+  const ready = (s: ClaudeStatus | undefined) => !!s?.installed && s.loggedIn !== false;
+  if (ready(claude)) return "claude";
+  if (ready(grok)) return "grok";
+  return grok?.installed && !claude.installed ? "grok" : "claude";
+}
+
 /** The only tools a bridge session may run: Cocaide's. */
 export const MCP_SERVER_NAME = "cocaide";
 export const TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
@@ -60,7 +88,7 @@ export interface BridgeAttachment {
   text?: string;
 }
 
-/** What Claude Code reports about itself on this computer. */
+/** What Claude Code (or Grok Build) reports about itself on this computer. */
 export interface ClaudeStatus {
   installed: boolean;
   version?: string;
@@ -91,6 +119,10 @@ export type ClientMessage =
       /** A Claude Code session to continue (a follow-up). */
       resume?: string;
       model?: BridgeModel;
+      /** Which assistant runs it (default "auto"). */
+      engine?: BridgeEngine;
+      /** Grok Build's model (grok -m), when the engine is Grok. */
+      grokModel?: string;
     }
   | { type: "abort"; id: string }
   | { type: "follow"; path: string }
@@ -99,10 +131,10 @@ export type ClientMessage =
 // ------------------------------------------------------------ bridge -> app
 
 export type ServerMessage =
-  | { type: "welcome"; version: string; claude: ClaudeStatus }
-  | { type: "status"; claude: ClaudeStatus }
+  | { type: "welcome"; version: string; claude: ClaudeStatus; grok?: ClaudeStatus }
+  | { type: "status"; claude: ClaudeStatus; grok?: ClaudeStatus }
   | { type: "error"; code: "unauthorized" | "bad-request" | "busy" | "internal"; message: string; id?: string }
-  | { type: "started"; id: string }
+  | { type: "started"; id: string; engine?: Exclude<BridgeEngine, "auto"> }
   | { type: "init"; id: string; sessionId: string; model?: string; tools: number; mcp?: string }
   | { type: "text"; id: string; text: string }
   | { type: "tool"; id: string; callId: string; name: string; args: string }
@@ -139,7 +171,13 @@ export function shortArgs(input: unknown, max = 120): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-/** A Cocaide tool's plain name ("mcp__cocaide__addFeature" -> "addFeature"); null for any other tool. */
+/**
+ * A Cocaide tool's plain name ("mcp__cocaide__addFeature" -> "addFeature");
+ * null for any other tool. Grok Build may spell an MCP tool "cocaide__x" or
+ * "cocaide_x" (or with a dot, colon or slash): those count too.
+ */
 export function cocaideTool(name: string): string | null {
-  return name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : null;
+  if (name.startsWith(TOOL_PREFIX)) return name.slice(TOOL_PREFIX.length);
+  const m = /^(?:mcp__)?cocaide(?:__|[_.:/])(.+)$/.exec(name);
+  return m ? m[1] : null;
 }

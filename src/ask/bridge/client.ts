@@ -52,6 +52,8 @@ export class BridgeClient {
   private closers = new Set<() => void>();
   version = "";
   claude: ClaudeStatus | null = null;
+  /** xAI's Grok Build on the same computer (a bridge from before Grok support says nothing: null). */
+  grok: ClaudeStatus | null = null;
 
   constructor(
     private readonly address: string,
@@ -106,6 +108,7 @@ export class BridgeClient {
             clearTimeout(timer);
             this.version = m.version;
             this.claude = m.claude;
+            this.grok = m.grok ?? null;
             resolve(m.claude);
           }
           return;

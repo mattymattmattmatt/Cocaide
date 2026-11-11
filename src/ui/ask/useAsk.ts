@@ -180,7 +180,7 @@ export function useAsk({ kernel, doc, replaceDoc, library }: Options) {
         steps.push("Planning the detailing from the part…");
         show();
         const { planDetailAsk } = await import("../../ask/detail/run");
-        result = await planDetailAsk(ctx.doc, ctx.target as Parameters<typeof planDetailAsk>[1], kernel, settings.provider === "claude-code" ? "Claude Code" : settings.provider === "ollama" ? "Ollama" : "Claude");
+        result = await planDetailAsk(ctx.doc, ctx.target as Parameters<typeof planDetailAsk>[1], kernel, settings.provider === "claude-code" ? (settings.bridge.engine === "grok" ? "Grok Build" : "Claude Code") : settings.provider === "ollama" ? "Ollama" : "Claude");
       } else if (settings.provider === "claude-code") {
         // Claude Code runs the whole ask through the bridge; a follow-up continues its session.
         const thread = extra.followUp ? threadOf(historyOf(dk), extra.followUp) : [];
