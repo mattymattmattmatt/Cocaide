@@ -515,7 +515,8 @@ Phase O turns the modeller into a full parametric part modeller. Everything belo
 - **Mass Properties**: volume, area, mass, centre of mass (marked in the view), moments and products of inertia and the principal moments, per body or for the part, with **Copy all**.
 - **Section view** on any plane or flat face, moved by an offset and flipped, with the cut faces hatched.
 - **Display styles**: shaded with edges, shaded, hidden lines removed, hidden lines visible, wireframe; perspective; zoom to selection; previous view. They are remembered for the document.
-- **Selection filters** for faces (X), edges (E), vertices (V) and planes, box select, hover highlighting in the tree, and hovering a feature in the tree lights up what it is built on and what is built on it.
+- **Selection filters** for faces (X), edges (E), vertices (V), planes and **bodies (B)**: with Bodies on, a click selects the whole body (Ctrl or Shift adds another, or takes it out). While a feature that takes bodies is open (Mirror bodies, Move/Copy, Delete/Keep, Combine, a cut's bodies), the filter switches to bodies by itself: click as many bodies as you want in the view, and click one again to take it out. Box select, hover highlighting in the tree, and hovering a feature in the tree lights up what it is built on and what is built on it.
+- **The right-hand panel** (Properties, the sketch's panel, the drawing's panel) docks at the side, **minimises** to a strip along the screen's edge (point at the strip, or click it, and the panel slides out over the view; move away and it tucks back in; it stays out while a feature is open; the pin docks it again), or **pops out** as a window you drag by its title and resize from its corner (the pin puts it back). The choice is remembered.
 
 ### AI tools
 

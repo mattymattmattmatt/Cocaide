@@ -95,7 +95,7 @@ button, select { font: inherit; color: inherit; }
 .notice button { border: none; background: none; font-size: 18px; cursor: pointer; color: inherit; }
 
 /* ------------------------------------------------------------- workspace */
-.workspace { flex: 1; display: grid; grid-template-columns: 290px 1fr 420px; min-height: 0; }
+.workspace { flex: 1; display: grid; --lw: 290px; --rw: 420px; grid-template-columns: var(--lw) 1fr var(--rw); min-height: 0; }
 .side { display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
 .side.left { border-right: 1px solid var(--border); }
 .side.right { border-left: 1px solid var(--border); }
@@ -189,7 +189,7 @@ button, select { font: inherit; color: inherit; }
 .editor-status.bad { color: var(--bad); }
 
 @media (max-width: 1100px) {
-  .workspace { grid-template-columns: 240px 1fr 340px; }
+  .workspace { --lw: 240px; --rw: 340px; }
 }
 .view-buttons button[aria-pressed="true"] { border-color: var(--accent-2); }
 .view-buttons button[aria-pressed="false"] { color: var(--muted); }
@@ -253,7 +253,7 @@ button, select { font: inherit; color: inherit; }
   color: var(--muted); border-bottom: 2px solid transparent;
 }
 .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-.side.right > .panel { overflow: auto; }
+.side.right > .panel, .dock-body > .panel { overflow: auto; }
 .side.right .editor { padding-top: 12px; }
 
 .properties { display: flex; flex-direction: column; gap: 10px; }
@@ -898,11 +898,7 @@ svg.icon { flex: none; display: block; }
 .sketch-canvas .select-box.crossing { fill: color-mix(in srgb, var(--ok) 8%, transparent); stroke: var(--ok); stroke-dasharray: 5 4; }
 
 /* F9 hides the left column */
-.workspace.no-left { grid-template-columns: 0 1fr 420px; }
 .workspace.no-left > .side.left { display: none; }
-@media (max-width: 1100px) {
-  .workspace.no-left { grid-template-columns: 0 1fr 340px; }
-}
 
 /* settings */
 .modal.settings { width: min(620px, calc(100vw - 32px)); }
@@ -1017,7 +1013,7 @@ svg.icon { flex: none; display: block; }
 .ask-reach button { height: 24px; padding: 0 8px; font-size: 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
 .ask-reach button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 /* A long list of relations scrolls the panel; it never squashes the sections above it. */
-.sketch-panel > .panel { flex-shrink: 0; }
+.sketch-panel > .panel, .sketch-panel > .dock-body > .panel { flex-shrink: 0; }
 
 /* ======================================================= Phase O: CommandManager, declared property forms, multi-select */
 /* The model toolbar: Undo, Redo and Sketch always at hand, then the active tab's tools over a strip of tabs. */
@@ -1686,7 +1682,7 @@ svg.icon { flex: none; display: block; }
 .session-guard-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .session-guard-actions button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 12px; border-radius: 7px; cursor: pointer; }
 /* Phase P W2 (7b): the Evaluate panels docked in the right column above its tabs (they never cover the part); each folds under its title */
-.side.right > .eval-dock {
+.side.right > .eval-dock, .dock-body > .eval-dock {
   position: static; inset: auto; z-index: auto; width: auto; flex: none; max-height: 48%; overflow: auto;
   padding: 10px 10px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--panel-2);
 }
@@ -1968,7 +1964,38 @@ svg.icon { flex: none; display: block; }
 /* ======================================================= Phase Q wave Q2B: the drawing workspace */
 :root { --sheet-accent: #1f6feb; --sheet-preview: #e8590c; --desk: #c5cad3; --desk-2: #b8bec8; }
 @media (prefers-color-scheme: dark) { :root { --sheet-accent: #3b82f6; --sheet-preview: #f08c00; --desk: #2a2f38; --desk-2: #23272f; } }
-.workspace:has(.drawing-left) { grid-template-columns: 280px 1fr 360px; }
+.workspace:has(.drawing-left) { --lw: 280px; --rw: 360px; }
+.workspace.no-left { --lw: 0px; }
+
+/* The right panel's frame (SidePanel): docked, minimised to a strip (it slides out over the view), or popped out. */
+.workspace.right-hidden { --rw: 28px; }
+.workspace.right-floating { --rw: 0px; }
+.side.right { position: relative; }
+.dock-body { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: auto; background: var(--panel); }
+.dock-chrome { display: flex; align-items: center; gap: 2px; padding: 3px 6px 3px 12px; border-bottom: 1px solid var(--border); background: var(--panel-2); flex: none; min-height: 28px; }
+.dock-chrome .dock-title { flex: 1; min-width: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock-chrome button, .dock-strip button { width: 24px; height: 22px; padding: 0; border: none; background: none; border-radius: 5px; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.dock-chrome button:hover, .dock-strip button:hover { background: var(--panel); color: var(--text); }
+.dock-chrome.movable { cursor: move; user-select: none; }
+.side.right.dock-hidden { overflow: visible; z-index: 20; }
+/* Minimised: the panel waits off the screen's edge behind the strip and slides out over the view, then back. */
+.workspace.right-hidden { overflow: hidden; }
+.dock-hidden > .dock-body {
+  position: absolute; top: 0; bottom: 0; right: 100%; width: min(420px, 70vw);
+  border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgb(0 0 0 / 0.18);
+  transform: translateX(calc(100% + 28px)); visibility: hidden; pointer-events: none;
+  transition: transform 0.22s ease, visibility 0s linear 0.22s;
+}
+.dock-hidden.dock-open > .dock-body { transform: none; visibility: visible; pointer-events: auto; transition: transform 0.22s ease; }
+@media (prefers-reduced-motion: reduce) { .dock-hidden > .dock-body, .dock-hidden.dock-open > .dock-body { transition: none; } }
+.dock-strip { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0; height: 100%; cursor: pointer; background: var(--panel-2); }
+.dock-strip:hover { background: var(--panel); }
+.dock-strip-label { writing-mode: vertical-rl; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; }
+.side.right.dock-floating { border: none; }
+.dock-floating > .dock-body {
+  position: fixed; z-index: 60; resize: both; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 14px 40px rgb(0 0 0 / 0.28); min-width: 260px; min-height: 200px;
+}
 .sheet-center { display: flex; flex-direction: column; background: radial-gradient(circle at 50% 40%, var(--desk), var(--desk-2)); }
 .sheet-canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; outline: none; user-select: none; }
 .sheet-canvas > .sheet-paper, .sheet-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; }

@@ -235,19 +235,38 @@ export function pickFieldFor(spec: FieldSpec, f: Raw, c: FormContext, order: num
     }
     case "bodies": {
       const list = Array.isArray(value) ? (value as string[]) : [];
+      // The body a face belongs to (a part of one body: that body).
+      const bodyOf = (index: number): string | undefined => (view ? (view.faces[index]?.body ?? view.bodies[0]?.name) : undefined);
+      const facesOf = (body: string): PickTarget[] => (view ? view.faces.filter((x) => (x.body ?? view.bodies[0]?.name) === body).map((x) => ({ kind: "face" as const, index: x.index, point: x.centroid })) : []);
       return {
         ...base,
         kind: "bodies",
-        takes: ["faces"],
+        // The view picks whole bodies while this field is active: a click on any face of one toggles it.
+        takes: ["bodies"],
         count: list.length,
         required: false,
-        items: [],
+        prompt: spec.prompt ?? `Click the bodies for ${spec.label.toLowerCase()} in the view (again takes one out)`,
+        // The picked bodies light up whole, and so does the body under the pointer.
+        items: list.flatMap(facesOf),
+        reach(t) {
+          const body = t.kind === "face" ? bodyOf(t.index) : undefined;
+          return body ? facesOf(body) : [t];
+        },
         toggle(t) {
           if (t.kind !== "face" || !view) return "Click a face of the body";
-          const body = view.faces[t.index]?.body ?? view.bodies[0]?.name;
+          const body = bodyOf(t.index);
           if (!body || !env.bodies.includes(body)) return `That face's body is not one ${spec.label.toLowerCase()} can take here`;
           const next = toggleId(list, body, env.bodies);
+          if (!next.length && spec.allowEmpty !== true) return `${spec.label} needs at least one body: click another first, then this one to take it out`;
           return result(commit(next.length ? next : null));
+        },
+        addAll(ts) {
+          let next = list;
+          for (const t of ts) {
+            const body = t.kind === "face" ? bodyOf(t.index) : undefined;
+            if (body && env.bodies.includes(body) && !next.includes(body)) next = toggleId(next, body, env.bodies);
+          }
+          return next === list ? null : result(commit(next));
         },
       };
     }

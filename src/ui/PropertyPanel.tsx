@@ -16,7 +16,7 @@ import { sketchDof } from "../geom/solver";
 import type { RebuildView } from "../worker/protocol";
 import { UI_OPS, type EditorProps } from "../features/uiDefs";
 import { Field, Select, TextInput } from "./fields";
-import { DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
+import { BodiesPick, DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import { nextBodyName } from "./model/names";
 import { FeatureForm } from "./props/FeatureForm";
@@ -423,8 +423,8 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
         {(op === "endCap" || op === "gusset") && <BodyNameField f={f} rename={rename} />}
         {(op === "extrude" || op === "cut") && <FeatureForm fields={op === "extrude" ? EXTRUDE_FIELDS : CUT_FIELDS} {...editorProps} />}
         {op === "extrude" && <BodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
-        {op === "cut" && bodiesBefore.length > 1 && <BodiesScope f={f} bodies={bodiesBefore} update={update} />}
-        {op === "combine" && <CombineProps f={f} bodies={bodiesBefore} update={update} />}
+        {op === "cut" && bodiesBefore.length > 1 && <BodiesPick form={editorProps} testId="prop-bodies" allowEmpty emptyHint="none picked: every body it reaches" />}
+        {op === "combine" && <CombineProps f={f} bodies={bodiesBefore} update={update} form={editorProps} />}
         {op === "mirror" && (
           <MirrorProps
             f={f}
@@ -438,8 +438,8 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
           />
         )}
         {op === "split" && <SplitProps f={f} bodies={bodiesBefore} update={update} rename={rename} form={editorProps} />}
-        {op === "move" && <MoveProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
-        {op === "deleteBody" && <DeleteBodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} />}
+        {op === "move" && <MoveProps f={f} bodies={bodiesBefore} update={update} rename={rename} form={editorProps} />}
+        {op === "deleteBody" && <DeleteBodyProps f={f} bodies={bodiesBefore} update={update} rename={rename} form={editorProps} />}
           </>
         )}
       </div>
@@ -510,29 +510,7 @@ function BodyProps({ f, bodies, update, rename }: { f: Raw; bodies: string[]; up
   );
 }
 
-/** Which bodies a cut removes material from (a hole's editor has its own). None ticked: every body it reaches. */
-function BodiesScope({ f, bodies, update }: { f: Raw; bodies: string[]; update(p: Raw): unknown }) {
-  const listed = Array.isArray(f.bodies) ? (f.bodies as string[]) : [];
-  const toggle = (name: string, on: boolean) => {
-    const next = on ? [...listed, name] : listed.filter((n) => n !== name);
-    update({ bodies: next.length ? bodies.filter((b) => next.includes(b)) : null });
-  };
-  return (
-    <Field label="Bodies">
-      <span className="body-checks" data-testid="prop-bodies">
-        {bodies.map((b) => (
-          <label key={b} className="check">
-            <input type="checkbox" checked={listed.includes(b)} onChange={(e) => toggle(b, e.target.checked)} data-testid={`prop-bodies-${b}`} />
-            {b}
-          </label>
-        ))}
-        <span className="muted small">{listed.length ? "only these, and each must lose material" : "none ticked: every body it reaches"}</span>
-      </span>
-    </Field>
-  );
-}
-
-function CombineProps({ f, bodies, update }: { f: Raw; bodies: string[]; update(p: Raw): unknown }) {
+function CombineProps({ f, bodies, update, form }: { f: Raw; bodies: string[]; update(p: Raw): unknown; form: EditorProps }) {
   const target = String(f.target);
   const tools = Array.isArray(f.tools) ? (f.tools as string[]) : [];
   return (
@@ -552,27 +530,8 @@ function CombineProps({ f, bodies, update }: { f: Raw; bodies: string[]; update(
       <Field label="Into">
         <Select value={target} options={bodies.map((b): [string, string] => [b, b])} testId="prop-target" onChange={(v) => update({ target: v, tools: tools.filter((t) => t !== v).length ? tools.filter((t) => t !== v) : bodies.filter((b) => b !== v).slice(0, 1) })} />
       </Field>
-      <Field label="Bodies">
-        <span className="body-checks">
-          {bodies
-            .filter((b) => b !== target)
-            .map((b) => (
-              <label key={b} className="check">
-                <input
-                  type="checkbox"
-                  checked={tools.includes(b)}
-                  data-testid={`prop-tools-${b}`}
-                  onChange={(e) => {
-                    const next = e.target.checked ? [...tools, b] : tools.filter((t) => t !== b);
-                    if (next.length) update({ tools: bodies.filter((x) => next.includes(x)) });
-                  }}
-                />
-                {b}
-              </label>
-            ))}
-          <span className="muted small">used up: they become part of {target}</span>
-        </span>
-      </Field>
+      <BodiesPick form={form} field="tools" label="Bodies" testId="prop-tools" bodies={bodies.filter((b) => b !== target)} />
+      <p className="muted small">The bodies are used up: they become part of {target}.</p>
     </>
   );
 }

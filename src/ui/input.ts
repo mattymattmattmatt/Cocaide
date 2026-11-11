@@ -166,6 +166,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "select.edges", label: "Selection filter: edges", group: "Model tools", key: "E" },
   { id: "select.vertices", label: "Selection filter: vertices", group: "Model tools", key: "V" },
   { id: "select.planes", label: "Selection filter: planes, axes and points", group: "Model tools", key: null },
+  { id: "select.bodies", label: "Selection filter: bodies", group: "Model tools", key: "B" },
   { id: "select.clear", label: "Selection filter: off (pick anything)", group: "Model tools", key: null },
   { id: "rollback.previous", label: "Roll back one feature", group: "Model tools", key: null },
   { id: "rollback.next", label: "Roll forward one feature", group: "Model tools", key: null },

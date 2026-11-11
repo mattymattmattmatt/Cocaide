@@ -7,7 +7,8 @@
 import type { Vec2 } from "../../doc/types";
 import type { PickTarget, Selection, VertexPick } from "../model/selection";
 
-export type FilterKind = "faces" | "edges" | "vertices" | "planes";
+/** "bodies": a click on a face picks the whole body it belongs to. */
+export type FilterKind = "faces" | "edges" | "vertices" | "planes" | "bodies";
 export type SelectFilter = ReadonlySet<FilterKind>;
 
 export const NO_FILTER: SelectFilter = new Set();
@@ -16,6 +17,7 @@ export const FILTER_KINDS: { kind: FilterKind; label: string; command: string }[
   { kind: "edges", label: "Edges", command: "select.edges" },
   { kind: "vertices", label: "Vertices", command: "select.vertices" },
   { kind: "planes", label: "Planes, axes and points", command: "select.planes" },
+  { kind: "bodies", label: "Bodies", command: "select.bodies" },
 ];
 
 /** The filter with one kind switched on or off. */
@@ -29,6 +31,8 @@ export function toggleFilter(f: SelectFilter, kind: FilterKind): SelectFilter {
 /** May a click pick this kind of thing? */
 export function allows(f: SelectFilter, kind: PickTarget["kind"]): boolean {
   if (f.size === 0) return true;
+  // A body is picked through any of its faces.
+  if (kind === "face" && f.has("bodies")) return true;
   return f.has(kind === "face" ? "faces" : kind === "edge" ? "edges" : kind === "vertex" ? "vertices" : "planes");
 }
 

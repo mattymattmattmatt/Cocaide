@@ -83,7 +83,8 @@ import { makeToolCtx } from "./model/context";
 import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay";
 import { hiddenSketches, showSketchPatch, sketchesOf, sketchShown, usedSketches } from "./model/sketchDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
-import { describeDatum, isSelected, only, pickInto, type VertexPick } from "./model/selection";
+import { dockClass, SidePanel, useDock } from "./SidePanel";
+import { describeDatum, facesOfBody, isSelected, only, pickBody, pickInto, type VertexPick } from "./model/selection";
 import { carrySelection, sameSolid } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, EvaluatePanel, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
@@ -178,6 +179,8 @@ export function App() {
   const stored = useMemo(readStored, []);
   const d = useDocument({ text: stored?.text ?? bracketText, savedText: stored?.savedText ?? bracketText });
   const [view, setView] = useState<RebuildView | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [rebuildMs, setRebuildMs] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -206,6 +209,8 @@ export function App() {
   const [measuring, setMeasuring] = useState(false);
   const [weighing, setWeighing] = useState(false);
   const [filter, setFilter] = useState<SelectFilter>(NO_FILTER);
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
   /** A handle being dragged: its feature and the patch it makes, rebuilt live before it is written (one undo step on release). */
   const [preview, setPreview] = useState<{ id: string; patch: Record<string, unknown> } | null>(null);
   /** The feature whose dimensions are shown on the model (double-click it). */
@@ -1324,7 +1329,10 @@ export function App() {
       if (r === "none") setNotice({ kind: "info", text: `${sessionRef.current.id} has no field to pick into now: change it in the panel, then OK (Enter) or Cancel (Esc).` });
       return;
     }
-    setSelection((sel) => (measuringRef.current ? measurePick(sel, target) : pickInto(sel, target, additive)));
+    // The Bodies filter: a click picks the whole body of the face clicked.
+    const v = viewRef.current;
+    const bodyFaces = filterRef.current.has("bodies") && target?.kind === "face" && v ? facesOfBody(v, target.index) : [];
+    setSelection((sel) => (measuringRef.current ? measurePick(sel, target) : bodyFaces.length ? pickBody(sel, target, additive, bodyFaces) : pickInto(sel, target, additive)));
   }, []);
   /** A box over the view: in a session, what it took goes into the active field; else the selection. */
   const onBox = (sel: Selection, additive: boolean) => {
@@ -2076,6 +2084,7 @@ export function App() {
   };
   const prefs = useInputPrefs();
   const [leftHidden, setLeftHidden] = useState(false);
+  const dock = useDock();
   const modelling = !sketch && mode === "model";
   useCommands(
     {
@@ -2430,7 +2439,7 @@ export function App() {
           </div>
         )}
 
-        <main className={`workspace${leftHidden ? " no-left" : ""}`}>
+        <main className={`workspace${leftHidden ? " no-left" : ""}${dockClass(dock)}`}>
           {mode === "drawing" && !sketch ? (
             <DrawingMain
               ws={drawingWs}
@@ -2694,7 +2703,7 @@ export function App() {
                   }
                 />
               ) : (
-              <aside className="side right">
+              <SidePanel title={rightTab === "properties" ? "Properties" : rightTab === "sections" ? "Sections" : rightTab === "cutlist" ? "Cut list" : "Document"} hold={!!session}>
                 {/* The Evaluate panels (Measure, Mass properties, Section), docked above the tabs: they never cover the part. */}
                 {(measuring || weighing || (section?.on && sectionCtl.panelOpen)) && (
                   <div className="eval-panels eval-dock" data-testid="eval-dock">
@@ -2819,7 +2828,7 @@ export function App() {
                     <DocumentEditor ref={editor} text={d.text} onChange={d.setText} parseError={parsed.ok ? null : parsed.error} />
                   </div>
                 )}
-              </aside>
+              </SidePanel>
               )}
             </>
           </>

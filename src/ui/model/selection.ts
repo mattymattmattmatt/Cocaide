@@ -203,3 +203,23 @@ export function selectionText(sel: Selection, faces: FaceInfo[], edges: EdgeInfo
 export function fmt(x: number): string {
   return String(Math.round(x * 1000) / 1000 + 0);
 }
+
+/**
+ * A click with the Bodies filter on: the whole body of the face clicked is
+ * selected (its every face), or with Ctrl or Shift added, or taken out again
+ * when it was all in. `bodyFaces` lists the faces of the face's body.
+ */
+export function pickBody(sel: Selection, target: PickTarget | null, additive: boolean, bodyFaces: number[]): Selection {
+  if (!target || target.kind !== "face" || !bodyFaces.length) return pickInto(sel, target, additive);
+  if (!additive) return { faces: [...bodyFaces], edges: [], point: target.point };
+  const all = bodyFaces.every((f) => sel.faces.includes(f));
+  const faces = all ? sel.faces.filter((f) => !bodyFaces.includes(f)) : [...sel.faces, ...bodyFaces.filter((f) => !sel.faces.includes(f))];
+  return { ...sel, faces };
+}
+
+/** Every face of the body a face belongs to (a part of one body: all its faces). */
+export function facesOfBody(view: { faces: { index: number; body?: string }[]; bodies: { name: string }[] }, face: number): number[] {
+  const first = view.bodies[0]?.name;
+  const body = view.faces[face]?.body ?? first;
+  return view.faces.filter((f) => (f.body ?? first) === body).map((f) => f.index);
+}

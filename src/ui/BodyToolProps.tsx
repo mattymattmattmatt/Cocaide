@@ -28,25 +28,19 @@ function PlaneFields({ form, testId }: { form: FieldProps; testId: string }) {
   return <FeatureForm fields={[{ kind: "plane", key: "plane", label: "Plane", refs: true, testId }]} {...form} />;
 }
 
-function BodyChecks({ list, bodies, onChange, testId, hint }: { list: string[]; bodies: string[]; onChange(next: string[]): void; testId: string; hint?: string }) {
+/**
+ * A list of bodies as a live pick field: in a session, a click on a body in
+ * the view puts it in (or takes it out), the view picking whole bodies while
+ * the field is active; the ticks in the panel do the same.
+ */
+export function BodiesPick({ form, field = "bodies", label = "Bodies", bodies, testId, allowEmpty, emptyHint, patch = (p) => p }: { form: FieldProps; field?: string; label?: string; bodies?: string[]; testId: string; allowEmpty?: boolean; emptyHint?: string; patch?(p: Raw): Raw }) {
   return (
-    <span className="body-checks" data-testid={testId}>
-      {bodies.map((b) => (
-        <label key={b} className="check">
-          <input
-            type="checkbox"
-            checked={list.includes(b)}
-            onChange={(e) => {
-              const next = e.target.checked ? [...list, b] : list.filter((x) => x !== b);
-              if (next.length) onChange(bodies.filter((x) => next.includes(x)));
-            }}
-            data-testid={`${testId}-${b}`}
-          />
-          {b}
-        </label>
-      ))}
-      {hint && <span className="muted small">{hint}</span>}
-    </span>
+    <FeatureForm
+      fields={[{ kind: "bodies", key: field, label, testId, ...(allowEmpty ? { allowEmpty: true } : {}), ...(emptyHint ? { emptyHint } : {}) }]}
+      {...form}
+      bodies={bodies ?? form.bodies}
+      update={(p) => form.update(patch(p))}
+    />
   );
 }
 
@@ -80,9 +74,7 @@ export function MirrorProps({ f, bodies, update, rename, seeds, form }: ToolProp
       </Field>
       {byBodies ? (
         <>
-          <Field label="Bodies">
-            <BodyChecks list={listed} bodies={bodies} onChange={(next) => update({ bodies: next, ...(next.length > 1 ? { newBody: null } : {}) })} testId="prop-mirror-bodies" />
-          </Field>
+          <BodiesPick form={form} testId="prop-mirror-bodies" patch={(p) => ({ ...p, ...(Array.isArray(p.bodies) && p.bodies.length > 1 ? { newBody: null } : {}) })} />
           <label className="check">
             <input type="checkbox" checked={f.merge === true} onChange={(e) => update({ merge: e.target.checked || null, ...(e.target.checked ? { newBody: null } : {}) })} data-testid="prop-mirror-merge" />
             Merge each into itself
@@ -114,16 +106,14 @@ export function SplitProps({ f, bodies, update, rename, form }: ToolProps & { fo
   );
 }
 
-export function MoveProps({ f, bodies, update, rename }: ToolProps) {
+export function MoveProps({ f, update, rename, form }: ToolProps & { form: FieldProps }) {
   const listed = Array.isArray(f.bodies) ? (f.bodies as string[]) : [];
   const rotate = f.rotate as { axis: { origin: Vec3; direction: Vec3 }; angle: number } | undefined;
   const copy = f.copy === true;
   const made = copy && listed.length === 1 ? (typeof f.newBody === "string" ? f.newBody : `${listed[0]}${DERIVED_SUFFIX.move}`) : null;
   return (
     <>
-      <Field label="Bodies">
-        <BodyChecks list={listed} bodies={bodies} onChange={(next) => update({ bodies: next, ...(next.length > 1 ? { newBody: null } : {}) })} testId="prop-move-bodies" />
-      </Field>
+      <BodiesPick form={form} testId="prop-move-bodies" patch={(p) => ({ ...p, ...(Array.isArray(p.bodies) && p.bodies.length > 1 ? { newBody: null } : {}) })} />
       <label className="check">
         <input type="checkbox" checked={copy} onChange={(e) => update({ copy: e.target.checked || null, ...(e.target.checked ? {} : { newBody: null }) })} data-testid="prop-move-copy" />
         Copy (keep the originals)
@@ -158,7 +148,7 @@ export function MoveProps({ f, bodies, update, rename }: ToolProps) {
   );
 }
 
-export function DeleteBodyProps({ f, bodies, update }: ToolProps) {
+export function DeleteBodyProps({ f, update, form }: ToolProps & { form: FieldProps }) {
   const keep = Array.isArray(f.keep);
   const listed = ((keep ? f.keep : f.bodies) as string[]) ?? [];
   return (
@@ -174,9 +164,7 @@ export function DeleteBodyProps({ f, bodies, update }: ToolProps) {
           testId="prop-delete-mode"
         />
       </Field>
-      <Field label={keep ? "Keep" : "Delete"}>
-        <BodyChecks list={listed} bodies={bodies} onChange={(next) => update(keep ? { keep: next } : { bodies: next })} testId="prop-delete-bodies" />
-      </Field>
+      <BodiesPick form={form} field={keep ? "keep" : "bodies"} label={keep ? "Keep" : "Delete"} testId="prop-delete-bodies" />
     </>
   );
 }

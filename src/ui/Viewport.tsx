@@ -226,7 +226,7 @@ interface Hover {
 const VIEW_ICON: Record<ViewName, IconName> = { front: "viewFront", back: "front", left: "right", right: "viewRight", top: "viewTop", bottom: "top", iso: "viewIso", dimetric: "iso", trimetric: "iso" };
 /** The quick buttons under the view. */
 const QUICK_VIEWS: ViewName[] = ["iso", "top", "front", "right"];
-const FILTER_ICON: Record<string, IconName> = { faces: "filterFaces", edges: "filterEdges", vertices: "filterVertices", planes: "filterPlanes" };
+const FILTER_ICON: Record<string, IconName> = { faces: "filterFaces", edges: "filterEdges", vertices: "filterVertices", planes: "filterPlanes", bodies: "filterBodies" };
 
 /** Reads a CSS custom property so the scene follows the page theme. */
 function cssColor(el: Element, name: string, fallback: string): THREE.Color {

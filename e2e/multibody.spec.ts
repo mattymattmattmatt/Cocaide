@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp } from "./helpers";
+import { commit, expectVolume, openApp, viewportClick } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   const problems = await openApp(page);
@@ -108,4 +108,60 @@ test("half the table frame, its legs mirrored, is the whole frame again, with th
     ["3", "SHS 40x40x3", "600", "45° / 45°", "2", "3.9"],
   ]);
   await expect(page.getByTestId("cut-row").nth(1)).toHaveAttribute("title", "leg_a, leg_d, leg_a_mirror, leg_d_mirror");
+});
+
+test("a mirror of bodies takes several, clicked in the view: the view picks whole bodies while its field is active", async ({ page }) => {
+  await page.locator("select").first().selectOption("table frame (weldment)");
+  await expectVolume(page, "3,054,720");
+  await pickBody(page, "leg_a");
+  await page.getByTestId("tool-mirror").click();
+  await expect(page.getByTestId("prop-mirror-bodies-leg_a")).toBeChecked();
+  // The selection filter follows the field: bodies.
+  await expect(page.getByTestId("filter-bodies")).toHaveAttribute("aria-pressed", "true");
+  // The tops of the front and right rails (40 mm tubes on centre lines at 900).
+  await viewportClick(page, [600, 0, 920]);
+  await expect(page.getByTestId("prop-mirror-bodies-rail_front")).toBeChecked();
+  await viewportClick(page, [1200, 300, 920]);
+  await expect(page.getByTestId("prop-mirror-bodies-rail_right")).toBeChecked();
+  await expect(page.getByTestId("prop-mirror-bodies-leg_a")).toBeChecked();
+  // Again takes one out.
+  await viewportClick(page, [600, 0, 920]);
+  await expect(page.getByTestId("prop-mirror-bodies-rail_front")).not.toBeChecked();
+  await expect(page.getByTestId("prop-mirror-bodies-rail_right")).toBeChecked();
+});
+
+test("the right panel minimises to a strip, slides out, pops out as a window and pins back", async ({ page }) => {
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  const main = page.locator("main.workspace");
+  const body = page.getByTestId("dock-body");
+  await page.getByTestId("dock-minimise").click();
+  await expect(main).toHaveClass(/right-hidden/);
+  await expect(body).toBeHidden();
+  await page.getByTestId("dock-strip").hover();
+  await expect(body).toBeVisible();
+  await expect(page.getByTestId("tab-properties")).toBeVisible();
+  await page.mouse.move(400, 400);
+  await expect(body).toBeHidden();
+  await page.getByTestId("dock-pin").click();
+  await expect(main).not.toHaveClass(/right-hidden/);
+  await expect(body).toBeVisible();
+
+  await page.getByTestId("dock-popout").click();
+  await expect(main).toHaveClass(/right-floating/);
+  await expect(body).toHaveCSS("position", "fixed");
+  const before = (await body.boundingBox())!;
+  const chrome = (await page.getByTestId("dock-chrome").boundingBox())!;
+  await page.mouse.move(chrome.x + 40, chrome.y + chrome.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(chrome.x - 160, chrome.y + chrome.height / 2 + 60, { steps: 6 });
+  await page.mouse.up();
+  const after = (await body.boundingBox())!;
+  expect(after.x).toBeLessThan(before.x - 150);
+  expect(after.y).toBeGreaterThan(before.y + 50);
+  // Remembered across a reload.
+  await page.reload();
+  await expect(page.locator("main.workspace")).toHaveClass(/right-floating/);
+  await page.getByTestId("dock-pin-back").click();
+  await expect(page.locator("main.workspace")).not.toHaveClass(/right-floating|right-hidden/);
 });

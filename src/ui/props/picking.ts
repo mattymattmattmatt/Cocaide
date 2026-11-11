@@ -141,7 +141,8 @@ export function takesForKinds(kinds: readonly DatumKind[]): FilterKind[] {
 /** May the field take this click (by the kinds it takes)? */
 export function fieldTakes(f: Pick<PickField, "takes">, target: PickTarget): boolean {
   const kind: FilterKind = target.kind === "face" ? "faces" : target.kind === "edge" ? "edges" : target.kind === "vertex" ? "vertices" : "planes";
-  return f.takes.includes(kind);
+  // A field of bodies takes a body through a click on any of its faces.
+  return f.takes.includes(kind) || (target.kind === "face" && f.takes.includes("bodies"));
 }
 
 // ------------------------------------------------------------ faces

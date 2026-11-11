@@ -30,6 +30,7 @@ import { SheetTabs } from "./SheetTabs";
 import { snapIndex, type SnapIndex } from "./snap";
 import { DRAWING_EDITS, fitViews, keepScale, pinSheet, setManual, type PinAnnotation } from "../../drafting/fit";
 import "./tools";
+import { SidePanel } from "../SidePanel";
 import { runAutoDimension } from "./tools/annotationTools";
 import { annotationKey, annotationMenu } from "./tools/editing";
 import { annotationKind } from "./tools/kinds";
@@ -713,7 +714,9 @@ export function DrawingMain({ ws, empty, help }: { ws: Workspace; empty: ReactNo
           </div>
         )}
       </section>
-      <aside className="side right drawing-right">{p.doc && p.drawing ? <DrawingPanel ws={ws} /> : <section className="panel">{help}</section>}</aside>
+      <SidePanel className="drawing-right" title="Drawing" hold={!!ws.session}>
+        {p.doc && p.drawing ? <DrawingPanel ws={ws} /> : <section className="panel">{help}</section>}
+      </SidePanel>
       {ws.menu && <ContextMenu menu={ws.menu} onClose={() => ws.setMenu(null)} />}
       {ws.dialog && p.drawing && ws.sheetDoc && <WorkspaceDialog ws={ws} />}
     </>

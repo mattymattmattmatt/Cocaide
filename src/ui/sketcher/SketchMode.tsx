@@ -2,6 +2,7 @@
 // one document command (one undo step in the model). Inside the session
 // there is a draft-level undo stack too.
 
+import { SidePanel } from "../SidePanel";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Constraint, DatumPlane, SketchEntity, SketchFeature, Vec2 } from "../../doc/types";
@@ -1338,7 +1339,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         )}
         </>,
       )}
-      <aside className="side right sketch-panel" data-testid="sketch-panel">
+      <SidePanel className="sketch-panel" title="Sketch" testId="sketch-panel">
         <section className="panel">
           <h2>
             Sketch <span className="muted">{session.id}</span>
@@ -1652,7 +1653,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
             Cancel
           </button>
         </section>
-      </aside>
+      </SidePanel>
     </ParametersContext.Provider>
   );
 }

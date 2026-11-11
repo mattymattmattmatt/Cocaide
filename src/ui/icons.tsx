@@ -633,6 +633,13 @@ const ICONS = {
       <circle cx="12" cy="6" r="2.6" fill="currentColor" />
     </>
   ),
+  popOut: <path d="M14 4h6v6 M20 4l-8 8 M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  filterBodies: (
+    <>
+      <path d="M4 8l6-3 6 3v7l-6 3-6-3z" fill="currentColor" fillOpacity={0.3} />
+      <path d="M10 11v7 M4 8l6 3 6-3 M14 6l6 3v7l-4 2" strokeOpacity={0.6} />
+    </>
+  ),
   filterPlanes: <path d="M3 16 8 7h13l-5 9z" fill="currentColor" fillOpacity={0.2} />,
   palette: (
     <>
