@@ -2,7 +2,7 @@
 // WebSocket to the bridge on this computer, paired with the token the bridge
 // printed. Used by the ask (run.ts), the settings panel's Test and Live link.
 
-import { BRIDGE_VERSION, type ClaudeStatus, type ClientMessage, type ServerMessage } from "../../bridge/protocol";
+import { BRIDGE_VERSION, bridgeOutdated, bridgeOutdatedNote, type ClaudeStatus, type ClientMessage, type ServerMessage } from "../../bridge/protocol";
 
 /** The WebSocket constructor (the browser's; tests pass a stand-in). */
 export type SocketCtor = new (url: string) => WebSocket;
@@ -117,7 +117,9 @@ export class BridgeClient {
 
   /** Whether the bridge is older or newer than this app expects (shown, not refused). */
   get versionNote(): string | null {
-    return this.version && this.version.split(".")[0] !== BRIDGE_VERSION.split(".")[0] ? `The bridge is version ${this.version}; this app expects ${BRIDGE_VERSION}. Update the Cocaide folder (git pull) and restart the bridge.` : null;
+    if (!this.version) return null;
+    if (bridgeOutdated(this.version)) return bridgeOutdatedNote(this.version);
+    return this.version.split(".")[0] !== BRIDGE_VERSION.split(".")[0] ? `The bridge is version ${this.version}; this app expects ${BRIDGE_VERSION}. Reload the Cocaide page to get the newest app.` : null;
   }
 
   get connected(): boolean {

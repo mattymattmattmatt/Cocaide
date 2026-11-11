@@ -21,9 +21,41 @@ where claude >nul 2>nul || (
   echo Now log in once: a Claude Code window opens. Log in with your Claude subscription, then type /exit.
   start "Claude Code login" /wait cmd /c claude
 )
+rem Keep the Cocaide folder up to date: the bridge runs the AI's tools from
+rem this folder, so an old copy means an AI with old tools.
+set "UPDATED="
+if not exist .git goto updated
+where git >nul 2>nul || goto updated
+for /f %%r in ('git rev-parse HEAD') do set "OLDREV=%%r"
+echo Checking for Cocaide updates...
+rem npm install can rewrite the lock file; it is generated, so put it back first.
+git checkout -q -- package-lock.json 2>nul
+git pull -q --ff-only || (
+  echo Could not update the Cocaide folder automatically ^(see above^). Carrying on with the copy you have.
+  goto updated
+)
+for /f %%r in ('git rev-parse HEAD') do set "NEWREV=%%r"
+if not "%OLDREV%"=="%NEWREV%" (
+  set "UPDATED=1"
+  echo Updated. Installing any new parts...
+  call npm install --no-audit --no-fund || (pause & exit /b 1)
+)
+:updated
+
 if not exist node_modules (
   echo First run: installing Cocaide's parts, this takes a minute...
   call npm install || (pause & exit /b 1)
+)
+
+rem Updated while an old bridge is running? Stop it so the new one starts.
+if defined UPDATED (
+  taskkill /fi "WINDOWTITLE eq Cocaide bridge*" /t /f >nul 2>nul
+  timeout /t 2 /nobreak >nul
+)
+curl -s -o nul %BRIDGE%/health && if defined UPDATED (
+  echo An older bridge is still running in a window this launcher did not start.
+  echo Close it ^(press Ctrl+C in that window^) and run this again.
+  pause & exit /b 1
 )
 
 rem Already running? Then just open the page.

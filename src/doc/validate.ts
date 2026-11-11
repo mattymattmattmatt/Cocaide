@@ -1965,7 +1965,7 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   const profile = typeof raw.profile === "string" ? profiles[raw.profile] : undefined;
   if (typeof raw.profile !== "string") c.fail("profile", `must name a profile in the part's profiles (got ${describe(raw.profile)})`);
   else if (!profile && listed.includes(raw.profile)) c.fail("profile", `the part's profile "${raw.profile}" has errors (see profiles.${raw.profile})`);
-  else if (!profile) c.fail("profile", `no profile "${raw.profile}" in the part (${listed.length ? `profiles: ${listed.join(", ")}` : "it has none: add one from the section library"})`);
+  else if (!profile) c.fail("profile", `no profile "${raw.profile}" in the part (${listed.length ? `profiles: ${listed.join(", ")}` : "it has none: add one with addLibraryProfile, e.g. { query: \"SHS\", sizes: [\"25x25x2.5\"] }, or from the Sections panel"})`);
   if (typeof raw.size !== "string") c.fail("size", `must be one of the profile's designations (got ${describe(raw.size)})`);
   else if (profile && !profile.sizes.some((s) => s.designation === raw.size)) {
     c.fail("size", `"${raw.size}" is not a size of ${profile.name} (sizes: ${profile.sizes.map((s) => s.designation).join(", ")})`);

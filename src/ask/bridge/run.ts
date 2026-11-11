@@ -130,6 +130,8 @@ export async function runBridgeAsk(req: BridgeAskRequest): Promise<BridgeAskResu
     const claude = await client.connect();
     if (!claude.installed) return failed(claude.problem ?? "Claude Code is not installed on this computer.", model);
     if (claude.loggedIn === false) return failed(claude.problem ?? "Claude Code is not logged in.", model);
+    // An out-of-date bridge still works, but its AI lacks the newer tools: say so up front.
+    if (client.versionNote) live.notices.push(client.versionNote);
   } catch (e) {
     client.close();
     return failed(e instanceof BridgeError ? e.message : `Could not reach the bridge: ${(e as Error).message}. ${bridgeFix("unreachable")}`, model);

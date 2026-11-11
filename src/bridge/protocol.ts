@@ -6,7 +6,26 @@
 // the pairing token the bridge printed in its terminal. Anything else before
 // a good hello closes the connection.
 
-export const BRIDGE_VERSION = "1.0.0";
+/**
+ * The bridge's version. Bump the minor number whenever Cocaide's tools change
+ * (tests/bridge-version.test.ts fails until you do), so an app newer than the
+ * bridge on the user's computer can say the bridge is out of date.
+ */
+export const BRIDGE_VERSION = "1.1.0";
+
+/** Whether bridge version `have` is older than `want` (or a different major version). */
+export function bridgeOutdated(have: string, want: string = BRIDGE_VERSION): boolean {
+  const a = have.split(".").map((n) => parseInt(n, 10) || 0);
+  const b = want.split(".").map((n) => parseInt(n, 10) || 0);
+  if (a[0] !== b[0]) return true;
+  for (let i = 1; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) < (b[i] ?? 0);
+  return false;
+}
+
+/** What to tell the user when their bridge is older than the app. */
+export function bridgeOutdatedNote(have: string): string {
+  return `Your Cocaide bridge (version ${have}) is older than this app (${BRIDGE_VERSION}), so the AI is missing some of Cocaide's newer tools (for example adding a profile from the section library). Close the "Cocaide bridge" window and double-click start-cocaide.bat again: it updates the Cocaide folder and restarts the bridge. (Or run git pull and npm install in the Cocaide folder, then npm run bridge.)`;
+}
 export const DEFAULT_PORT = 8787;
 export const DEFAULT_URL = `http://127.0.0.1:${DEFAULT_PORT}`;
 
