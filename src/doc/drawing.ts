@@ -252,6 +252,7 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
     if (s.name !== undefined) text(s.name, `${sp}.name`, c, 60);
     checkFormat(s.format, `${sp}.format`, c);
     if (s.scale !== undefined && parseScale(s.scale) === null) c.fail(`${sp}.scale`, `must be a scale like "1:10" (got ${describe(s.scale)})`);
+    if (s.manual !== undefined && typeof s.manual !== "boolean") c.fail(`${sp}.manual`, `must be true or false (got ${describe(s.manual)})`);
     if (!PROJECTIONS.includes(s.projection as never)) c.fail(`${sp}.projection`, `must be "third" or "first" (got ${describe(s.projection)})`);
     if (!Array.isArray(s.views)) c.fail(`${sp}.views`, `must be a list of views (got ${describe(s.views)})`);
     else

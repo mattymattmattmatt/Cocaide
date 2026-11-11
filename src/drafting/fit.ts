@@ -8,8 +8,8 @@
 
 import type { Command } from "../doc/commands";
 import { viewKind } from "../doc/drawing";
-import type { DrawingSheet, DrawingView, Vec2 } from "../doc/types";
-import { composeSheet, scaleText, type ComposeContext, type ComposedSheet } from "./compose";
+import type { Annotation, DrawingSheet, DrawingView, Vec2 } from "../doc/types";
+import { composeSheet, scaleText, type ComposeContext, type ComposedAnnotation, type ComposedSheet } from "./compose";
 import { placeFromFront } from "./views";
 import type { TableCorner } from "./tables";
 
@@ -98,6 +98,7 @@ export function withShownScales(sheetDoc: DrawingSheet, composed: ComposedSheet)
  * keep it (a detail's, a section's). The commands, or a reason there are none.
  */
 export function fitViews(doc: unknown, ctx: ComposeContext, sheetDoc: DrawingSheet): { commands: Command[]; scale: string } | { error: string } {
+  if (sheetDoc.manual) return { error: "Fit views: this sheet is in manual mode, where nothing is laid out for you. Turn manual mode off to lay the views out afresh." };
   if (!sheetDoc.views.length) return { error: "Fit views: the sheet has no views." };
   const fresh: DrawingSheet = {
     ...sheetDoc,
@@ -169,10 +170,11 @@ export function keepScales(doc: unknown, cmds: Command[], compose: (sheet: strin
   const out: Command[] = [];
   for (const id of sheetsTouched(doc, cmds)) {
     const sheetDoc = sheets.find((s) => s.id === id);
-    if (!sheetDoc || sheetDoc.scale || !sheetDoc.views?.length) continue;
-    if (cmds.some((c) => (c.type === "setSheet" && "scale" in c.patch && (c.sheet ?? sheets[0].id) === id) || (c.type === "deleteSheet" && c.id === id))) continue;
+    if (!sheetDoc || (sheetDoc.scale && !sheetDoc.manual) || !sheetDoc.views?.length) continue;
+    if (cmds.some((c) => (c.type === "setSheet" && ("scale" in c.patch || "manual" in c.patch) && (c.sheet ?? sheets[0].id) === id) || (c.type === "deleteSheet" && c.id === id))) continue;
     const composed = compose(id);
-    if (composed) out.push(...keepScale(sheetDoc, composed));
+    // A manual sheet: the views the layout placed are held where they are drawn too (and the tables), so the AI's edit moves nothing else.
+    if (composed) out.push(...(sheetDoc.manual ? pinSheet(sheetDoc, composed) : keepScale(sheetDoc, composed)));
   }
   return out;
 }
@@ -180,4 +182,55 @@ export function keepScales(doc: unknown, cmds: Command[], compose: (sheet: strin
 /** The commands that store where the layout moved tables with no anchor of their own (so the views fit): none when it moved none. */
 export function anchorMovedTables(sheetDoc: DrawingSheet, composed: ComposedSheet): Command[] {
   return anchorTables(sheetDoc, movedTables(sheetDoc, composed));
+}
+
+// ------------------------------------------------------------ manual mode
+
+/** What stores an annotation's place as drawn (the sheet editor's drag with no movement), or null when it follows its geometry. */
+export type PinAnnotation = (a: Annotation, said: ComposedAnnotation, composed: ComposedSheet) => Record<string, unknown> | null;
+
+/** Whether an annotation has a place of its own (a dimension's distance, anything's `at`). */
+function hasPlace(a: Annotation): boolean {
+  const r = a as unknown as Record<string, unknown>;
+  return r.at !== undefined || r.offset !== undefined;
+}
+
+/**
+ * Manual mode: the commands that hold everything the layout placed where it
+ * is drawn now, so nothing moves when something else is added: the scale
+ * (and an iso's), each view's centre, the tables the layout moved, and (given
+ * `pin`) each annotation without a place of its own. Empty while a view is
+ * still being projected, or when everything is held already.
+ */
+export function pinSheet(sheetDoc: DrawingSheet, composed: ComposedSheet, pin?: PinAnnotation): Command[] {
+  if (composed.id !== sheetDoc.id) return [];
+  if (composed.views.length !== sheetDoc.views.length || composed.views.some((cv) => !cv.box)) return [];
+  const out: Command[] = sheetDoc.scale ? anchorMovedTables(sheetDoc, composed) : keepScale(sheetDoc, composed);
+  const scaled = new Map<string, string>();
+  for (const cmd of out) if (cmd.type === "setView" && typeof (cmd.view as DrawingView).scale === "string") scaled.set(cmd.id, (cmd.view as DrawingView).scale!);
+  const views: Command[] = [];
+  for (const view of sheetDoc.views) {
+    if (view.at && !scaled.has(view.id)) continue;
+    const cv = composed.views.find((x) => x.id === view.id);
+    if (!cv) continue;
+    const { id, ...body } = view;
+    views.push({ type: "setView", id, sheet: sheetDoc.id, view: { ...body, ...(scaled.has(id) ? { scale: scaled.get(id)! } : {}), at: view.at ?? [Math.round(cv.centre[0] * 1000) / 1000, Math.round(cv.centre[1] * 1000) / 1000] } });
+  }
+  const kept = out.filter((c) => !(c.type === "setView" && views.some((v) => v.type === "setView" && v.id === c.id)));
+  const notes: Command[] = [];
+  if (pin) {
+    for (const a of sheetDoc.annotations) {
+      if (hasPlace(a)) continue;
+      const said = composed.annotations.find((x) => x.id === a.id);
+      if (!said || said.problem || said.dangling || said.hidden || !said.box) continue;
+      const patch = pin(a, said, composed);
+      if (patch && Object.keys(patch).length) notes.push({ type: "editAnnotation", id: a.id, patch });
+    }
+  }
+  return [...kept, ...views, ...notes];
+}
+
+/** Turning manual mode on (or off) for a sheet: on, everything is held where it is drawn first; one undo step. */
+export function setManual(sheetDoc: DrawingSheet, composed: ComposedSheet, on: boolean, pin?: PinAnnotation): Command[] {
+  return [{ type: "setSheet", sheet: sheetDoc.id, patch: { manual: on ? true : null } }, ...(on ? pinSheet(sheetDoc, composed, pin) : [])];
 }

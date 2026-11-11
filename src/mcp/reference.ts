@@ -378,7 +378,8 @@ gives a body its own material (setBodyMaterial); its mass and the part's follow.
     "format": { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic",
       title-block fields (text, optional; may link properties $PRP:"partNumber", $PRPMODEL:"mass", $PRPSHEET:"scale"): "title", "subtitle", "number",
       "revision", "drawnBy", "date", "checkedBy", "checkedDate", "approvedBy", "approvedDate", "company", "material", "finish", "mass" },
-    "scale": "1:10" (optional: else the largest standard scale at which the views, laid out as if none had been moved, fit; New drawing and fitViews store it, and moving a view never changes it), "projection": "third" | "first", "views": [...], "annotations": [...], "tables": [...] (see cutList) }],
+    "scale": "1:10" (optional: else the largest standard scale at which the views, laid out as if none had been moved, fit; New drawing and fitViews store it, and moving a view never changes it), "projection": "third" | "first", "views": [...], "annotations": [...], "tables": [...] (see cutList),
+    "manual"?: true (the user drafts this sheet by hand: nothing is laid out for them. Give every new view an "at" and every new annotation its place ("at", a dimension's "offset"), never move what is there unless asked, and don't call fitViews: it refuses) }],
   "standard": "ISO" | "ASME", "units": "mm" | "in", "generalTolerance": "ISO 2768-mK", "properties": { "company": "Acme" },
   "revisions": [{ "rev": "A", "description": "First issue", "date": "2026-11-04", "by": "JS", "approved": "", "zone": "C3" }] }
 A Phase L drawing ({ sheet, views, annotations }) is read as one sheet in the classic template. Ids are unique across sheets.

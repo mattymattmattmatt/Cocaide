@@ -1142,6 +1142,23 @@ export function App() {
     }
   };
 
+  /** A blank sheet in manual mode: the format and title block New drawing would choose, no views, nothing laid out for the user. */
+  const blankDrawing = async () => {
+    if (!doc || !view?.measurements) return setNotice({ kind: "error", text: "The part needs to rebuild before it can be drawn." });
+    try {
+      const g = await kernel.port.project(doc, DEFAULT_VIEWS);
+      const planned = planDrawing(doc, view.measurements, g, { date: new Date().toISOString().slice(0, 10) });
+      const first = planned.sheets[0];
+      const drawing = { ...planned, sheets: [{ id: first.id, ...(first.name ? { name: first.name } : {}), format: first.format, projection: first.projection, ...(first.scale ? { scale: first.scale } : {}), views: [], annotations: [], manual: true }] };
+      if (run({ type: "setDrawing", drawing }) === null) {
+        setActiveSheet(null);
+        setNotice({ kind: "info", text: `Blank sheet, ${first.format.size}, in manual mode: add views from the View Layout tab (Model View, Projected View) and they go where you click.${docDrawing ? " Ctrl+Z puts the old drawing back." : ""}` });
+      }
+    } catch (e) {
+      setNotice({ kind: "error", text: `No drawing: ${(e as Error).message}` });
+    }
+  };
+
   /** A balloon for every cut list item without one, on the member of it its view shows most of. */
   const balloonAll = () => {
     if (!docDrawing || !sheet) return;
@@ -2423,6 +2440,9 @@ export function App() {
                   <p>Views of the part, dimensioned and ballooned from the rebuild, with its cut list and title block.</p>
                   <button className="primary" onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} data-testid="drawing-new-empty">
                     New drawing
+                  </button>
+                  <button onClick={() => void blankDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} title="An empty sheet in manual mode: you place every view and annotation yourself" data-testid="drawing-new-blank">
+                    Blank sheet (manual)
                   </button>
                 </div>
               }

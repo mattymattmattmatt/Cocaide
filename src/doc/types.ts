@@ -168,8 +168,14 @@ export interface DrawingSheet {
   annotations: Annotation[];
   /** Tables placed on the sheet (src/drafting/tables). */
   tables?: DrawingTable[];
+  /**
+   * Manual drafting: nothing is laid out for the user. Everything stays where
+   * it is drawn (the editor stores each view's, annotation's and table's place
+   * as it goes), new things go where they are clicked, and Fit views is off.
+   */
+  manual?: boolean;
 }
-export const SHEET_KEYS = ["id", "name", "format", "scale", "projection", "views", "annotations", "tables"] as const;
+export const SHEET_KEYS = ["id", "name", "format", "scale", "projection", "views", "annotations", "tables", "manual"] as const;
 
 /** Phase L's sheet: what migrateDrawing reads. */
 export interface LegacySheet {

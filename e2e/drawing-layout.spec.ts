@@ -140,3 +140,59 @@ test("dragging views never changes the scale or a view's size; parents take thei
   expect(await titleScale(page)).toBe(scale);
   expect(size(await viewOf(page, "iso"))).toEqual(size(before.iso));
 });
+
+test("manual mode: nothing moves when it is turned on or when a view is added; Fit views is off; one undo step", async ({ page }) => {
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  await page.getByTestId("mode-drawing").click();
+  await page.getByTestId("drawing-new-empty").click();
+  await expect(page.getByTestId("drawing-item-front")).toContainText("section A-A of top");
+  const views = ["top", "front", "iso"];
+  const before = Object.fromEntries(await Promise.all(views.map(async (id) => [id, await viewOf(page, id)] as const)));
+
+  const manual = page.getByTestId("drawing-manual");
+  await manual.click();
+  await expect(manual).toHaveAttribute("aria-pressed", "true");
+  type Saved = { drawing: { sheets: { manual?: boolean; views: { id: string; at?: number[] }[]; annotations: { type: string; at?: unknown; offset?: unknown }[] }[] } };
+  await expect.poll(async () => ((await savedDocument(page)) as Saved).drawing.sheets[0].manual).toBe(true);
+  const s = ((await savedDocument(page)) as Saved).drawing.sheets[0];
+  expect(s.views.every((v) => Array.isArray(v.at))).toBe(true);
+  expect(s.annotations.filter((a) => a.type === "dimension").every((a) => a.at !== undefined || a.offset !== undefined)).toBe(true);
+  const near = (a: number[], b: number[]) => a.forEach((x, i) => expect(x).toBeCloseTo(b[i], 2));
+  for (const id of views) near((await viewOf(page, id)).centre, before[id].centre);
+
+  await page.getByTestId("dtab-layout").click();
+  await expect(page.getByTestId("tool-view-fit")).toBeDisabled();
+
+  // A projected view to the right of the top view, where it is clicked: nothing else moves.
+  await page.getByTestId("tool-view-projected").click();
+  const top = before.top;
+  const [cx, cy] = await at(page, top.centre[0], top.centre[1]);
+  await page.mouse.click(cx, cy);
+  const [rx, ry] = await at(page, top.box.max[0] + 45, top.centre[1]);
+  await page.mouse.click(rx, ry);
+  await page.keyboard.press("Enter");
+  await expect.poll(() => page.evaluate(() => !!(window as unknown as Record<string, SheetHook>).__cocaideSheet.view("right")?.box)).toBe(true);
+  for (const id of views) {
+    const v = await viewOf(page, id);
+    near(v.centre, before[id].centre);
+    expect(v.scale).toBe(before[id].scale);
+  }
+
+  // Turning it off again is the button too.
+  await manual.click();
+  await expect(manual).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("tool-view-fit")).toBeEnabled();
+});
+
+test("a blank sheet starts in manual mode with nothing on it", async ({ page }) => {
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  await page.getByTestId("mode-drawing").click();
+  await page.getByTestId("drawing-new-blank").click();
+  await expect(page.getByTestId("drawing-manual")).toHaveAttribute("aria-pressed", "true");
+  type Saved = { drawing: { sheets: { manual?: boolean; views: unknown[]; annotations: unknown[] }[] } };
+  await expect.poll(async () => ((await savedDocument(page)) as Saved).drawing?.sheets[0].manual).toBe(true);
+  const s = ((await savedDocument(page)) as Saved).drawing.sheets[0];
+  expect([s.views.length, s.annotations.length]).toEqual([0, 0]);
+});

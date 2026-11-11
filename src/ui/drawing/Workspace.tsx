@@ -28,7 +28,7 @@ import { DrawingPanel } from "./Panels";
 import { SheetCanvas, type SheetStatus } from "./SheetCanvas";
 import { SheetTabs } from "./SheetTabs";
 import { snapIndex, type SnapIndex } from "./snap";
-import { DRAWING_EDITS, fitViews, keepScale } from "../../drafting/fit";
+import { DRAWING_EDITS, fitViews, keepScale, pinSheet, setManual, type PinAnnotation } from "../../drafting/fit";
 import "./tools";
 import { runAutoDimension } from "./tools/annotationTools";
 import { annotationKey, annotationMenu } from "./tools/editing";
@@ -36,6 +36,13 @@ import { annotationKind } from "./tools/kinds";
 import { drawingTool, menuEntriesFor, onToolsChanged, toolForKey, toolGroups } from "./tools/registry";
 import { DRAWING_TABS, type DrawingDialog, type DrawingSession, type DrawingTab, type DrawingToolCtx, type SheetHit } from "./tools/types";
 import { viewBody } from "./tools/session";
+
+/** Manual mode: an annotation held where it is drawn, as a drag of it by nothing would store it. */
+const pinAnnotation: PinAnnotation = (a, said, composed) => {
+  const kind = annotationKind(a.type);
+  if (!kind?.move) return null;
+  return kind.move(a as unknown as Record<string, unknown>, [0, 0], { sheet: composed, said });
+};
 
 export interface WorkspaceProps {
   doc: RawDocument | null;
@@ -129,10 +136,25 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     const { p, sheetDoc } = live.current;
     if (!sheetDoc || !p.sheet || p.previewing) return [];
     if (cmds && !cmds.some((c) => DRAWING_EDITS.has(c.type))) return [];
-    if (cmds?.some((c) => c.type === "setDrawing" || (c.type === "setSheet" && "scale" in c.patch) || (c.type === "deleteSheet" && c.id === sheetDoc.id))) return [];
+    if (cmds?.some((c) => c.type === "setDrawing" || (c.type === "setSheet" && ("scale" in c.patch || "manual" in c.patch)) || (c.type === "deleteSheet" && c.id === sheetDoc.id))) return [];
+    // Manual mode: everything the layout placed is held where it is drawn, in the same undo step, so the edit moves nothing else.
+    if (sheetDoc.manual) return pinSheet(sheetDoc, p.sheet, pinAnnotation);
     return keepScale(sheetDoc, p.sheet);
   };
   const keepingScale = (cmds: Command[]): Command[] => [...scaleToKeep(cmds), ...cmds];
+  /** Manual mode on or off for the sheet shown: on, everything is held where it is drawn now (one undo step). */
+  const toggleManual = () => {
+    const { p, sheetDoc } = live.current;
+    if (!sheetDoc || !p.sheet) return;
+    const on = !sheetDoc.manual;
+    const problem = p.batch(setManual(sheetDoc, p.sheet, on, pinAnnotation));
+    if (problem) return p.notice(problem, "error");
+    p.notice(
+      on
+        ? "Manual mode: nothing is laid out for you now. Views, dimensions, notes and tables stay where they are, new ones go where you click, and the scale stays put. Fit views is off until you turn manual mode off."
+        : "Manual mode off: views and annotations you haven't placed yourself are laid out automatically again. (What manual mode held stays where it is; Fit views lays the views out afresh.)",
+    );
+  };
   const run = useCallback(
     (cmd: Command): string | null => {
       const all = keepingScale([cmd]);
@@ -455,6 +477,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         { label: "Sheet format…", icon: "drawing", onClick: () => setDialog({ name: "format" }) },
         { label: "Drawing properties…", icon: "settings", onClick: () => setDialog({ name: "properties" }) },
         { label: "Zoom to fit", icon: "fit", shortcut: "F", onClick: () => setFitToken((n) => n + 1) },
+        { label: sheetDoc.manual ? "Turn manual mode off" : "Manual mode (nothing laid out for you)", icon: "pin", onClick: toggleManual, testId: "ctx-manual" },
         { label: "Print preview and export…", icon: "export", onClick: () => setDialog({ name: "export" }) },
         "sep",
         askEntry(from === "tree" ? ({ kind: "sheet", id: sheetDoc.id } as AskTarget) : { kind: "drawing" }, x, y),
@@ -495,7 +518,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
         { label: "Add a sheet", icon: "plus", onClick: addSheet },
         { label: "Delete sheet", icon: "trash", disabled: n < 2, onClick: () => run({ type: "deleteSheet", id }) || p.setActiveSheet(null), testId: "ctx-sheet-delete" },
         "sep",
-        { label: "Fit views to sheet", icon: "fit", disabled: id !== sheetDoc?.id, onClick: () => void fitViewsNow(), testId: "ctx-sheet-fit" },
+        { label: "Fit views to sheet", icon: "fit", disabled: id !== sheetDoc?.id || !!sheetDoc?.manual, onClick: () => void fitViewsNow(), testId: "ctx-sheet-fit" },
         "sep",
         askEntry({ kind: "sheet", id } as AskTarget, x, y),
       ],
@@ -504,7 +527,7 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
   const addSheet = () => {
     if (!p.drawing) return;
     const id = nextSheetId(p.drawing);
-    if (run({ type: "addSheet", id }) === null) {
+    if (run({ type: "addSheet", id, ...(sheetDoc?.manual ? { sheet: { manual: true } } : {}) }) === null) {
       p.setActiveSheet(id);
       setSelection([]);
     }
@@ -535,6 +558,8 @@ export function useDrawingWorkspace(p: WorkspaceProps) {
     menuFor,
     sheetMenu,
     fitViews: fitViewsNow,
+    toggleManual,
+    manual: !!sheetDoc?.manual,
     addSheet,
     status,
     setStatus,
@@ -586,6 +611,19 @@ export function DrawingCommandBar({ ws, undoLabel, redoLabel }: { ws: Workspace;
         <ToolButton icon="redo" label="Redo" onClick={p.d.redo} disabled={!p.d.canRedo} title={`Redo${redoLabel && p.d.canRedo ? `: ${redoLabel}` : ""} (Ctrl+Y)`} testId="redo" />
         <span className="sep" />
         <ToolButton icon="drawing" label="New drawing" onClick={p.newDrawing} disabled={!p.ready} title="Plan the sheet from the part: views, overall size, holes, balloons, tables (Ctrl+Z puts the old one back)" testId="drawing-new" />
+        <ToolButton
+          icon="pin"
+          label={ws.manual ? "Manual: on" : "Manual"}
+          onClick={ws.toggleManual}
+          disabled={!has}
+          pressed={ws.manual}
+          title={
+            ws.manual
+              ? "Manual mode is on: nothing is laid out for you. Views, dimensions, notes and tables stay exactly where they are; new ones go where you click; the scale only changes when you change it. Click to turn it off."
+              : "Manual mode: turn the automatic layout off for this sheet and draft by hand. Everything stays where it is now, new views and annotations go where you click, nothing rearranges itself, and Fit views is off."
+          }
+          testId="drawing-manual"
+        />
       </div>
       <span className="sep cm-sep" />
       <div className="cm-body">

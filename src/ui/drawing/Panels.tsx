@@ -683,7 +683,7 @@ function SheetPanel({ ws }: { ws: Workspace }) {
       </Field>
       <div className="field">
         <span className="field-label" />
-        <button className="small" onClick={() => void ws.fitViews()} disabled={!here.views.length} title="Lay the views out afresh at the largest standard scale that fits, and keep it (moving views never changes the scale)" data-testid="sheet-fit-views">
+        <button className="small" onClick={() => void ws.fitViews()} disabled={!here.views.length || !!here.manual} title={here.manual ? "Manual mode is on: turn it off to lay the views out automatically" : "Lay the views out afresh at the largest standard scale that fits, and keep it (moving views never changes the scale)"} data-testid="sheet-fit-views">
           Fit views
         </button>
       </div>
