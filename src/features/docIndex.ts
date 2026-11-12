@@ -21,6 +21,7 @@ import { def as curvePattern } from "./curvePattern/doc";
 import { def as fillPattern } from "./fillPattern/doc";
 import { def as thread } from "./thread/doc";
 import { def as dome } from "./dome/doc";
+import { def as exportBody } from "./exportBody/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -41,4 +42,5 @@ export const DOC_DEFS = [
   fillPattern,
   thread,
   dome,
+  exportBody,
 ];

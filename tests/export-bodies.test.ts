@@ -87,3 +87,53 @@ describe("exporting the stand's bodies", () => {
     }
   }, 120_000);
 });
+
+describe("the Export body feature", () => {
+  const withExport = (f: Record<string, unknown>): RawDocument => ({ ...stand, features: [...stand.features, { id: "export_1", op: "exportBody", ...f }] });
+
+  it("works out the file's frame on the part: by default the model's axes", () => {
+    const r = rebuild(withExport({}), oc);
+    try {
+      expect(r.errors).toEqual([]);
+      const d = r.datums.export_1;
+      expect(d?.kind).toBe("frame");
+      if (d?.kind === "frame") expect(isIdentity({ origin: d.origin, x: d.x, y: d.y, z: d.z })).toBe(true);
+    } finally {
+      r.dispose();
+    }
+  }, 60_000);
+
+  it("one body's bottom middle, model +X up (an axis), front from the Front plane: the frame the export uses", () => {
+    const r = rebuild(withExport({ bodies: ["upright"], origin: "bottom", up: { datum: "X" } }), oc);
+    try {
+      expect(r.errors).toEqual([]);
+      const d = r.datums.export_1;
+      if (d?.kind !== "frame") throw new Error("no frame");
+      close(d.z, [1, 0, 0], 6);
+      close(d.y, [0, 1, 0], 6);
+      const box = r.measurements!.bodies.find((b) => b.name === "upright")!.boundingBox!;
+      close(d.origin, boxPoints(box, [1, 0, 0]).bottom, 4);
+      // The file written with it: the upright's X length is its height.
+      const text = exportPartSTEP(oc, r, withExport({}), { bodies: ["upright"], frame: { origin: d.origin, x: d.x, y: d.y, z: d.z } });
+      const b = fileBox(text);
+      expect(b.max[2] - b.min[2]).toBeCloseTo(box.max[0] - box.min[0], 2);
+      expect(b.min[2]).toBeCloseTo(0, 3);
+    } finally {
+      r.dispose();
+    }
+  }, 60_000);
+
+  it("says what is wrong: a body it doesn't have, a front along up, a point without origin \"point\"", () => {
+    const err = (f: Record<string, unknown>) => {
+      const r = rebuild(withExport(f), oc);
+      try {
+        return r.errors.join(" ");
+      } finally {
+        r.dispose();
+      }
+    };
+    expect(err({ bodies: ["nope"] })).toMatch(/no body "nope"|nope/);
+    expect(err({ up: { datum: "Y" }, front: { datum: "Front" } })).toMatch(/Front must not run along Up/);
+    expect(err({ point: { datum: "Origin" } })).toMatch(/only origin "point" uses it/);
+  }, 60_000);
+});

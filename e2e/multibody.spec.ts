@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { commit, expectVolume, openApp, viewportClick } from "./helpers";
+import { commit, expectVolume, okFeature, openApp, viewportClick } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   const problems = await openApp(page);
@@ -166,34 +166,28 @@ test("the right panel minimises to a strip, slides out, pops out as a window and
   await expect(page.locator("main.workspace")).not.toHaveClass(/right-floating|right-hidden/);
 });
 
-test("export bodies: pick which, a new origin, up and front; the STEP downloads with only those, re-placed", async ({ page }) => {
+test("Export body on the Bodies tab: bodies clicked in the view, a new origin and up in Properties, then Export STEP", async ({ page }) => {
   await page.locator("select").first().selectOption("stand (two bodies)");
   await expectVolume(page, "133,143.363");
-  await page.getByTestId("bodies-export").click();
-  const dialog = page.getByTestId("export-bodies");
-  await expect(dialog).toBeVisible();
-  // Both ticked at first (nothing selected): just the upright.
-  await page.getByTestId("export-body-base").uncheck();
-  await expect(page.getByTestId("export-body-upright")).toBeChecked();
-  await expect(page.getByTestId("export-summary")).toContainText("1 body, as modelled");
-  // The middle of its bottom on the origin, and model +X up for a Z-up program.
-  await page.getByTestId("export-origin").selectOption("bottom");
-  await page.getByTestId("export-up").selectOption("+X");
-  await expect(page.getByTestId("export-summary")).toContainText("re-placed");
-  await expect(page.getByTestId("export-summary")).toContainText("model +X becomes +Z");
-  await expect(page.getByTestId("export-name")).toHaveAttribute("placeholder", /upright$/);
-  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("export-go").click()]);
+  await page.getByTestId("tab-bodies").click();
+  await page.getByTestId("tool-export-body").click();
+  // Its properties: every body until some are picked; the Bodies field takes whole bodies clicked in the view.
+  await expect(page.getByTestId("prop-export-bodies")).toBeVisible();
+  await expect(page.getByTestId("filter-bodies")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("prop-export-bodies-upright").check();
+  await expect(page.getByTestId("prop-export-where")).toContainText("Z 8 to 68");
+  // The middle of its bottom on the origin, and model +X up (the X axis as the Up reference).
+  await page.getByTestId("prop-export-origin").selectOption("bottom");
+  await page.getByTestId("prop-export-up").selectOption("X");
+  await expect(page.getByTestId("prop-export-where")).toContainText("Z 0 to 120");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("prop-export-go").click()]);
   expect(download.suggestedFilename()).toMatch(/upright\.step$/);
-  const text = readFileSync((await download.path())!, "utf8");
-  expect(text).toContain("ISO-10303-21");
-  await expect(page.getByTestId("notice")).toContainText("re-placed on the origin and axes you chose");
-  await expect(dialog).toHaveCount(0);
-
-  // From a body's own menu: that body ticked; Up from a face selected in the view while the dialog is open.
-  await page.getByTestId("body-more-base").click();
-  await page.getByTestId("body-export-base").click();
-  await expect(page.getByTestId("export-body-base")).toBeChecked();
-  await expect(page.getByTestId("export-body-upright")).not.toBeChecked();
-  await page.getByTestId("export-up-selected").click();
-  await expect(page.getByTestId("export-summary")).toContainText("Select a flat face");
+  expect(readFileSync((await download.path())!, "utf8")).toContain("ISO-10303-21");
+  await expect(page.getByTestId("notice")).toContainText("placed on the origin and axes you set");
+  await okFeature(page);
+  // Kept in the tree, to export again after changes.
+  await expect(page.getByTestId("feature-export_1")).toContainText("upright");
+  // The Bodies panel's Export… starts one too.
+  await page.getByTestId("bodies-export").click();
+  await expect(page.getByTestId("prop-export-bodies")).toBeVisible();
 });

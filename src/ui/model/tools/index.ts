@@ -20,6 +20,7 @@ import { tools as sweep } from "./sweep";
 import { tools as evaluate } from "./evaluate";
 import { tools as files } from "./files";
 import { tools as modelling } from "./modelling";
+import { tools as exportBody } from "./exportBody";
 
 const LISTS: ToolDef[][] = [
   sketch,
@@ -38,6 +39,7 @@ const LISTS: ToolDef[][] = [
   evaluate,
   files,
   modelling,
+  exportBody,
 ];
 
 export const MODEL_TOOLS: ToolDef[] = LISTS.flat();

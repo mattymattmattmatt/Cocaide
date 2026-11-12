@@ -82,6 +82,7 @@ describe("the registry", () => {
       "tool-thread",
       "tool-dome",
       "tool-coordinate-system",
+      "tool-export-body",
     ]);
   });
 
@@ -94,7 +95,7 @@ describe("the registry", () => {
     ]);
     expect(ids(toolbarGroups("bodies"))).toEqual([
       ["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"],
-      ["tool.importStep", "tool.exportPlates", "tool.exportFaceDxf"],
+      ["tool.importStep", "tool.exportPlates", "tool.exportFaceDxf", "tool.exportBody"],
     ]);
     expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point", "tool.coordinateSystem"]]);

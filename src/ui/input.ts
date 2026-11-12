@@ -184,6 +184,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.importStep", label: "Import a STEP file as bodies", group: "Model tools", key: null },
   { id: "tool.exportPlates", label: "Export plates for cutting (DXF)", group: "Model tools", key: null },
   { id: "tool.exportFaceDxf", label: "Export a flat face as DXF", group: "Model tools", key: null },
+  { id: "tool.exportBody", label: "Export body (STEP, with a new origin and up)", group: "Model tools", key: null },
   { id: "sketch.insertDxf", label: "Insert a DXF drawing into the sketch", group: "Sketch", key: null },
   { id: "sketch.exportDxf", label: "Export the sketch as DXF", group: "Sketch", key: null },
   // Phase P wave 2: smart selection, grown from what is selected (in a feature session, from what its active field holds).

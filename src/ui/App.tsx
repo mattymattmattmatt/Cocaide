@@ -30,7 +30,9 @@ import { AskSettingsDialog, type SettingsTab } from "./ask/AskSettingsDialog";
 import { canAsk, modelFor } from "./ask/settings";
 import type { ProfileFacts } from "../ask/profile";
 import { BodiesPanel } from "./BodiesPanel";
-import { ExportBodiesDialog, type ExportBodiesRequest } from "./ExportBodiesDialog";
+import { setExportBodyHandler } from "./exportBodyAction";
+import { exportBodyFeature } from "./model/tools/exportBody";
+import { isIdentity } from "../geom/exportFrame";
 import { CutListPanel } from "./CutListPanel";
 import type { FrameActions } from "./FrameProps";
 import { NodesPanel, type PathRequest, type SizeChoice } from "./NodesPanel";
@@ -85,7 +87,7 @@ import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay
 import { hiddenSketches, showSketchPatch, sketchesOf, sketchShown, usedSketches } from "./model/sketchDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
 import { dockClass, SidePanel, useDock } from "./SidePanel";
-import { describeDatum, facesOfBody, isSelected, only, pickBody, pickInto, vertexPoint, type VertexPick } from "./model/selection";
+import { describeDatum, facesOfBody, isSelected, only, pickBody, pickInto, type VertexPick } from "./model/selection";
 import { carrySelection, sameSolid } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, EvaluatePanel, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
@@ -673,52 +675,37 @@ export function App() {
 
   // ------------------------------------------------------------ export bodies
 
-  const [exportBodies, setExportBodies] = useState<{ initial: string[] } | null>(null);
-  /** The bodies the selection touches (a face, an edge or a vertex of each). */
-  const selectedBodies = (sel: Selection, v: RebuildView | null): string[] => {
-    if (!v) return [];
-    const first = v.bodies[0]?.name;
-    const names = new Set<string>();
-    for (const i of sel.faces) names.add(v.faces[i]?.body ?? first ?? "");
-    for (const i of sel.edges) names.add(v.edges[i]?.body ?? first ?? "");
-    for (const vx of sel.vertices ?? []) names.add(v.edges[vx.edge]?.body ?? first ?? "");
-    names.delete("");
-    return v.bodies.map((b) => b.name).filter((n) => names.has(n));
+  /** Export body (the Bodies tab's tool, the Bodies panel's Export…, a body's menu): a new Export body feature, these bodies in it (else the selected, else all). */
+  const openExportBodies = (names?: string[]) => {
+    const f = exportBodyFeature(toolCtxRef.current, names);
+    if (typeof f === "string") return setNotice({ kind: "info", text: f });
+    toolCtxRef.current.create(f);
   };
-  /** Export bodies: these ticked, else the selected ones, else all. */
-  const openExportBodies = (names?: string[]) => setExportBodies({ initial: names ?? selectedBodies(selection, view) });
-  /** What is selected, for the dialog's "Use selected": a point, a direction, the bodies. */
-  const exportPicked = () => {
-    const v = view;
-    const sel = selection;
-    if (!v) return { point: null, dir: null, bodies: [] };
-    let point: Vec3 | null = null;
-    let dir: Vec3 | null = null;
-    const vx = sel.vertices?.[0];
-    if (vx) point = vertexPoint(vx, v.edges) ?? null;
-    const e = sel.edges.length ? v.edges[sel.edges[0]] : undefined;
-    if (e) {
-      if (!point) point = e.kind === "circle" && e.center ? e.center : e.mid;
-      if (e.kind === "line" && e.direction) dir = e.direction;
-    }
-    const f = sel.faces.length ? v.faces[sel.faces[0]] : undefined;
-    if (f) {
-      if (!point) point = f.centroid;
-      if (!dir && f.type === "plane" && f.normal) dir = f.normal;
-    }
-    return { point, dir, bodies: selectedBodies(sel, v) };
-  };
-  const runExportBodies = async (r: ExportBodiesRequest) => {
+  /** Export STEP in an Export body feature's properties: its bodies, placed on the frame the rebuild worked out. */
+  const exportBodyNow = async (id: string) => {
     if (!parsed.ok) return setNotice({ kind: "error", text: `Not exported: ${parsed.error}` });
     const refused = exportRefusal(parsed.value);
     if (refused) return setNotice({ kind: "error", text: refused });
-    const out = await kernel.exportStep(parsed.value, { bodies: r.bodies, ...(r.frame ? { frame: r.frame } : {}), name: r.fileName });
+    const v = viewRef.current;
+    const f = ((parsed.value as RawDocument).features ?? []).find((x) => (x as { id?: unknown }).id === id) as Record<string, unknown> | undefined;
+    const d = v?.datums?.[id];
+    if (!f || !d || d.kind !== "frame") return setNotice({ kind: "error", text: `${id} is not built yet (see its error), so there is nothing to export.` });
+    const frame = { origin: d.origin, x: d.x, y: d.y, z: d.z };
+    const bodies = Array.isArray(f.bodies) ? (f.bodies as string[]) : (v?.bodies ?? []).map((b) => b.name);
+    const base = exportBase(parsed.value, v?.name ?? "part");
+    const fileName = typeof f.fileName === "string" && f.fileName.trim() ? f.fileName.trim() : bodies.length === 1 && (v?.bodies.length ?? 0) > 1 ? `${base}-${bodies[0]}` : base;
+    const moved = !isIdentity(frame);
+    const out = await kernel.exportStep(parsed.value, { bodies, ...(moved ? { frame } : {}), name: fileName });
     if (!out.ok) return setNotice({ kind: "error", text: `STEP not exported: ${out.errors[0]}` });
-    const file = `${r.fileName}.step`;
-    download(file, out.text, "model/step");
-    setExportBodies(null);
-    setNotice({ kind: "info", text: `Exported ${file}: ${r.bodies.length === 1 ? r.bodies[0] : `${r.bodies.length} bodies`}${r.frame ? ", re-placed on the origin and axes you chose" : ", as modelled"}.` });
+    download(`${fileName}.step`, out.text, "model/step");
+    setNotice({ kind: "info", text: `Exported ${fileName}.step: ${bodies.length === 1 ? bodies[0] : `${bodies.length} bodies`}${moved ? ", placed on the origin and axes you set" : ", as modelled"}.` });
   };
+  const exportBodyRef = useRef(exportBodyNow);
+  exportBodyRef.current = exportBodyNow;
+  useEffect(() => {
+    setExportBodyHandler((id) => void exportBodyRef.current(id));
+    return () => setExportBodyHandler(null);
+  }, []);
 
   const exportStep = async () => {
     if (!parsed.ok) {
@@ -2887,17 +2874,6 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
-        {exportBodies && view && (
-          <ExportBodiesDialog
-            bodies={view.bodies.map((b) => b.name)}
-            initial={exportBodies.initial}
-            boxes={Object.fromEntries((view.measurements?.bodies ?? []).map((b) => [b.name, b.boundingBox ? { min: b.boundingBox.min, max: b.boundingBox.max } : null]))}
-            picked={exportPicked}
-            fileBase={exportBase(doc, view.name ?? "part")}
-            onExport={(r) => void runExportBodies(r)}
-            onClose={() => setExportBodies(null)}
-          />
-        )}
         {files.dialogs}
         {paletteOpen && !sketch && mode === "model" && <CommandPalette entries={paletteEntries()} onClose={() => setPaletteOpen(false)} />}
         {valueBox && (
