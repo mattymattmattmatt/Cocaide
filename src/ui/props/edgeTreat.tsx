@@ -8,7 +8,8 @@ import { describeEdgeSelector, describeWanted, selectFaces } from "../../kernel/
 import { edgeLimit, filletRadiusFor } from "../model/smartDefaults";
 import type { EdgeSelector, FaceSelector } from "../../doc/types";
 import { Field, NumberInput, type NumberValue } from "../fields";
-import { PickWrap } from "./FeatureForm";
+import { useState } from "react";
+import { FeatureForm, PickWrap } from "./FeatureForm";
 import { resolveEdges, type PickField } from "./picking";
 import { pickFieldFor, type PickEnv } from "./pickFields";
 import { usePickHost, type PickHost } from "./pickHost";
@@ -147,19 +148,38 @@ export function edgeChoiceFields(prefix: string): FieldSpec[] {
   const verb = prefix === "prop-chamfer" ? "chamfer" : "fillet";
   return [
     { kind: "edges", key: "edges", label: "Edges", optional: true, propagation: true, prompt: `Pick edges to ${verb}`, set: (v, f, c) => sizeToSuit({ edges: v ?? null }, f, c) },
+    { kind: "custom", key: "faces", label: "More ways to choose edges", testId: `${prefix}-more`, render: (p) => <MoreEdgeChoices p={p} prefix={prefix} verb={verb} /> },
+  ];
+}
+
+/** Every edge of picked faces, or the edges earlier features made: the less used ways to choose, folded until wanted (open when already used). */
+export function moreEdgeChoiceFields(prefix: string, verb: string): FieldSpec[] {
+  return [
     {
       kind: "faces",
       key: "faces",
-      label: "Faces",
+      label: "Every edge of faces",
       optional: true,
       testId: `${prefix}-faces`,
-      hint: "Every edge of these faces",
-      prompt: `Pick faces: every edge of each is ${verb === "fillet" ? "filleted" : "chamfered"}`,
+      hint: `Click faces: every edge of each is ${verb === "fillet" ? "filleted" : "chamfered"}`,
+      prompt: `Click faces: every edge of each is ${verb === "fillet" ? "filleted" : "chamfered"}`,
       edgesKey: "edges",
       set: (v, f, c) => sizeToSuit({ faces: v ?? null }, f, c),
     },
     { kind: "features", key: "features", label: "Edges made by", ops: SHAPE_OPS, testId: `${prefix}-features`, hint: "Every edge of the faces these features made" },
   ];
+}
+
+function MoreEdgeChoices({ p, prefix, verb }: { p: FieldProps; prefix: string; verb: string }) {
+  const used = asList(p.f.faces).length > 0 || (Array.isArray(p.f.features) && p.f.features.length > 0);
+  const [open, setOpen] = useState(used);
+  if (!open && !used)
+    return (
+      <button type="button" className="link small more-choices" onClick={() => setOpen(true)} data-testid={`${prefix}-more`}>
+        More ways to choose edges: every edge of a face, or the edges a feature made…
+      </button>
+    );
+  return <FeatureForm fields={moreEdgeChoiceFields(prefix, verb)} order={1} {...p} />;
 }
 
 /**

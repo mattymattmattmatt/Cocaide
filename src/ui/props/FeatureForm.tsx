@@ -3,16 +3,17 @@
 // turn what is picked in the view into selectors and references, so the
 // feature follows the geometry through later edits.
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { DatumPlane, EdgeSelector, FaceSelector, RefPlane, Vec3 } from "../../doc/types";
 import { frameAsDatumPlane } from "../../features/datum";
 import { round9 } from "../model/names";
 import { planeSpecFrameIn } from "../model/sketchPlane";
-import { describeEdgeSelector, describeWanted, selectEdges, selectFaces } from "../../kernel/selectors";
 import { edgesSelectorFor, faceSelectorFor, facesSelectorFor } from "../../kernel/synthesize";
 import { DirectionInput, Field, NumberInput, Select, Vec3Input, type NumberValue } from "../fields";
+import { describeEdgeSelector, describeWanted } from "../../kernel/selectors";
 import { selectionSize, type PickTarget } from "../model/selection";
-import type { PickField } from "./picking";
+import { edgeList, toggleEdges, type PickField } from "./picking";
+import { chipsSummary, edgeChips, faceChips, type Chip, type Missing } from "./chips";
 import { isPickSpec, pickFieldFor, type EdgeOptions } from "./pickFields";
 import { usePickField, usePickHost } from "./pickHost";
 import { choiceRef, datumChoices, describeRef, isDatum, refChoiceId, refFromSelection, type DatumKind, type DatumRef } from "./datumRef";
@@ -444,38 +445,55 @@ function SelectorField({ spec, value, commit, tid, p, field }: { spec: Extract<F
   const { selection, view } = p;
   const host = usePickHost();
   const session = !!host && !!field;
-  /** In a session each selector is a chip: hovered, what it finds lights up in the view. */
-  const chip = (items: () => PickTarget[]) =>
-    session ? { className: "selector-line pick-chip", onPointerEnter: () => host!.peek(items()), onPointerLeave: () => host!.peek(null) } : { className: "selector-line" };
-  const lines: ReactNode[] = [];
+  const [all, setAll] = useState(false);
+  const pickView = host?.view ?? view;
+  const multiBody = (pickView?.bodies.length ?? 0) > 1;
+  const edgesKind = spec.kind === "edges";
+  const noun = edgesKind ? "edge" : "face";
+  const list = edgesKind ? edgeList(value) : asList<FaceSelector>(value);
+  // Before the part has rebuilt there is nothing to find them on: each stored selector, in words.
+  const { chips, missing } = pickView
+    ? edgesKind
+      ? edgeChips(value, pickView.edges, pickView.faces, multiBody)
+      : faceChips(value, pickView.faces, multiBody)
+    : {
+        chips: list.map((sel, i): Chip => {
+          const text = edgesKind ? describeEdgeSelector(sel as EdgeSelector) : describeWanted(sel as FaceSelector, 1).replace(/^1 /, "");
+          return { index: -1 - i, text, title: text };
+        }),
+        missing: [] as Missing[],
+      };
+  const removable = edgesKind ? spec.optional === true || chips.length + missing.length > 1 : spec.kind === "faces" && (spec.optional || chips.length + missing.length > 1);
+  const target = (c: Chip): PickTarget | null => (!pickView || c.index < 0 ? null : edgesKind ? { kind: "edge", index: c.index, point: pickView!.edges[c.index].mid } : { kind: "face", index: c.index, point: pickView!.faces[c.index].centroid });
+  // Hovered, a chip lights up its edge or face in the view (in a session, where the view shows the field's picks).
+  const hover = (items: PickTarget[] | null) => session && host!.peek(items);
+  /** The value with one edge or face taken out (the rest kept, re-made as selectors that find them). */
+  const without = (c: Chip) => {
+    if (!pickView) {
+      const rest = list.filter((_, k) => k !== -1 - c.index);
+      return commit(rest.length === 0 ? null : edgesKind && rest.length === 1 ? rest[0] : rest);
+    }
+    p.setError(null);
+    if (edgesKind) {
+      const next = toggleEdges(value, pickView.edges, pickView.faces, [c.index]);
+      if (typeof next === "string") return p.setError(next);
+      return commit(next);
+    }
+    const keep = chips.filter((x) => x.index !== c.index).map((x) => x.index);
+    const kept = missing.map((m) => list[m.at]);
+    if (!keep.length) return commit(kept.length ? kept : null);
+    const made = facesSelectorFor(pickView.faces, keep);
+    if (!made.ok) return p.setError(made.error);
+    commit([...made.selector, ...kept]);
+  };
+  const dropMissing = (m: Missing) => {
+    const rest = list.filter((_, k) => k !== m.at);
+    commit(rest.length === 0 ? null : edgesKind && rest.length === 1 ? rest[0] : rest);
+  };
+  const LIMIT = 8;
+  const shown = all ? chips : chips.slice(0, LIMIT);
   let use: { label: string; disabled: boolean; run(): void };
-  if (spec.kind === "edges") {
-    const list = asList<EdgeSelector>(value);
-    // An optional list (a fillet that may name faces instead) can be emptied one selector at a time.
-    const removable = spec.optional === true;
-    const pickView = host?.view ?? view;
-    list.forEach((e, i) =>
-      lines.push(
-        <span key={i} {...chip(() => (pickView ? selectEdges(pickView.edges, pickView.faces, e).matches.map((m) => ({ kind: "edge" as const, index: m.index, point: m.mid })) : []))}>
-          {describeEdgeSelector(e)}
-          {removable && (
-            <button
-              type="button"
-              className="selector-remove"
-              aria-label={`Leave out edges ${i + 1}`}
-              title="Leave these edges out"
-              onClick={() => {
-                const rest = list.filter((_, k) => k !== i);
-                commit(rest.length === 0 ? null : rest.length === 1 ? rest[0] : rest);
-              }}
-              data-testid={`${tid}-remove-${i}`}
-            >
-              ×
-            </button>
-          )}
-        </span>,
-      ),
-    );
+  if (edgesKind) {
     use = {
       label: "Use selected edges",
       disabled: selection.edges.length === 0 || !view,
@@ -486,21 +504,6 @@ function SelectorField({ spec, value, commit, tid, p, field }: { spec: Extract<F
       },
     };
   } else {
-    const list = asList<FaceSelector>(value);
-    const removable = spec.kind === "faces" && (spec.optional || list.length > 1);
-    const pickView = host?.view ?? view;
-    list.forEach((s, i) =>
-      lines.push(
-        <span key={i} {...chip(() => (pickView ? selectFaces(pickView.faces, s).matches.map((m) => ({ kind: "face" as const, index: m.index, point: m.centroid })) : []))}>
-          {describeWanted(s, 1).replace(/^1 /, "")}
-          {removable && (
-            <button type="button" className="selector-remove" aria-label={`Leave out face ${i + 1}`} title="Leave this face out" onClick={() => commit(list.filter((_, k) => k !== i))} data-testid={`${tid}-remove-${i}`}>
-              ×
-            </button>
-          )}
-        </span>,
-      ),
-    );
     use =
       spec.kind === "face"
         ? {
@@ -522,25 +525,97 @@ function SelectorField({ spec, value, commit, tid, p, field }: { spec: Extract<F
             },
           };
   }
+  const empty = !chips.length && !missing.length;
   return (
     <>
       <Field label={spec.label} hint={spec.hint} block>
-        <span className={`readout${session ? " pick-box" : ""}`} data-testid={tid} tabIndex={session ? 0 : undefined}>
-          {lines.length ? lines : session ? <span className="muted">none yet</span> : <span className="muted">none: select in the view (Ctrl-click for more), then {use.label}</span>}
+        <span className={`readout chips${session ? " pick-box" : ""}`} data-testid={tid} tabIndex={session ? 0 : undefined}>
+          {empty ? (
+            session ? (
+              <span className="muted">{spec.prompt ? `${spec.prompt} in the view` : `none yet: click ${noun}s in the view`}</span>
+            ) : (
+              <span className="muted">none: select in the view (Ctrl-click for more), then {use.label}</span>
+            )
+          ) : (
+            <span className="chips-head">
+              <span data-testid={`${tid}-count`}>{chipsSummary(chips, noun)}</span>
+              {missing.length > 0 && <span className="chips-missing-count"> · {missing.length} missing</span>}
+              {spec.kind !== "face" && (removable || spec.optional) && (
+                <button
+                  type="button"
+                  className="link small"
+                  onClick={() => {
+                    hover(null);
+                    commit(null);
+                  }}
+                  data-testid={`${tid}-clear`}
+                  title={`Take every ${noun} out`}
+                >
+                  Clear
+                </button>
+              )}
+            </span>
+          )}
+          {shown.map((c, i) => (
+            <span
+              key={`${c.index}`}
+              className={`selector-line chip${session ? " pick-chip" : ""}`}
+              title={c.title}
+              onPointerEnter={() => {
+                const t = target(c);
+                if (t) hover([t]);
+              }}
+              onPointerLeave={() => hover(null)}
+              data-testid={`${tid}-chip-${i}`}
+            >
+              <span className="chip-text">{c.text}</span>
+              {c.body && <span className="chip-body">{c.body}</span>}
+              {removable && (
+                <button
+                  type="button"
+                  className="selector-remove"
+                  aria-label={`Take ${noun} ${i + 1} out`}
+                  title={`Take this ${noun} out`}
+                  onClick={() => {
+                    hover(null);
+                    without(c);
+                  }}
+                  data-testid={`${tid}-remove-${i}`}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+          {chips.length > LIMIT && (
+            <button type="button" className="link small" onClick={() => setAll(!all)} data-testid={`${tid}-more`}>
+              {all ? "Show fewer" : `Show all ${chips.length}`}
+            </button>
+          )}
+          {missing.map((m) => (
+            <span key={`missing-${m.at}`} className="selector-line chip missing" title={m.title} data-testid={`${tid}-missing-${m.at}`}>
+              <span className="chip-text">⚠ A {noun} that isn't there now{session ? `: click its replacement in the view` : ""}</span>
+              <button type="button" className="selector-remove" aria-label={`Remove the missing ${noun}`} title="Leave it out" onClick={() => dropMissing(m)}>
+                ×
+              </button>
+            </span>
+          ))}
         </span>
       </Field>
       {session && spec.kind === "edges" && spec.propagation && <EdgeOptionsRow tid={tid} />}
-      <button
-        type="button"
-        disabled={use.disabled}
-        onClick={() => {
-          p.setError(null);
-          use.run();
-        }}
-        data-testid={`${tid}-use`}
-      >
-        {use.label}
-      </button>
+      {!session && (
+        <button
+          type="button"
+          disabled={use.disabled}
+          onClick={() => {
+            p.setError(null);
+            use.run();
+          }}
+          data-testid={`${tid}-use`}
+        >
+          {use.label}
+        </button>
+      )}
     </>
   );
 }

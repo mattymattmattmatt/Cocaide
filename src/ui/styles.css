@@ -2237,3 +2237,16 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .ask-issue-problem { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
 .ask-issues-note { margin-top: 6px; }
 
+
+/* Picked edges and faces as short chips (a fillet's edges), with a count and Clear */
+.readout.chips { display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+.chips-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.chips-head button.link { margin-left: auto; }
+.chips-missing-count { color: var(--bad); }
+.selector-line.chip { padding: 2px 4px 2px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); font-size: 12px; min-height: 24px; }
+.selector-line.chip .chip-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.selector-line.chip .chip-body { color: var(--muted); font-size: 11px; }
+.selector-line.chip:hover { border-color: var(--pick-active, var(--accent)); }
+.selector-line.chip.missing { border-color: var(--bad); color: var(--bad); background: transparent; }
+.readout.chips { font-family: inherit; }
+.properties button.link.more-choices { margin: 2px 0 6px; text-align: left; }

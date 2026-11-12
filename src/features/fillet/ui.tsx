@@ -15,7 +15,6 @@ export const ui: UiOp = {
   label: "Fillet",
   icon: "fillet",
   fields: [
-    ...edgeChoiceFields("prop-fillet"),
     { kind: "number", key: "radius", label: "Radius", unit: "mm", min: 0, testId: "prop-radius", when: (f) => own(f) && !variable(f) },
     { kind: "number", key: "radius", label: "Start radius", unit: "mm", min: 0, testId: "prop-radius", when: (f) => own(f) && variable(f) },
     { kind: "number", key: "radius2", label: "End radius", unit: "mm", min: 0, testId: "prop-radius2", when: variable },
@@ -29,6 +28,8 @@ export const ui: UiOp = {
       set: (v, _f, c) => variablePatch(c.resolved, v === true),
       hint: "From the start radius at each edge's start to the end radius at its end",
     },
+    // The radius first (what is changed most), then the edges it rounds.
+    ...edgeChoiceFields("prop-fillet"),
     { kind: "custom", key: "sets", label: "Radius sets", render: (p) => <RadiusSets {...p} /> },
   ],
   summary: (f) => (typeof f.radius === "number" ? (typeof f.radius2 === "number" ? `R${f.radius}→${f.radius2}` : `R${f.radius}`) : null),

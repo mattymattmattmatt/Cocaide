@@ -329,13 +329,13 @@ describe("fillet and chamfer editors", () => {
     expect(chamferTypePatch({ ...f, angle: 30, flip: true }, "equal")).toEqual({ distance2: null, angle: null, flip: null });
   });
 
-  it("their fields: faces and features beside edges; the second radius and distance only when used", () => {
+  it("their fields: the size first, then the edges (faces and features folded under More), the second radius and distance only when used", () => {
     const fillet = UI_OPS.fillet.fields!;
     const chamfer = UI_OPS.chamfer.fields!;
     const ids = (specs: typeof fillet, f: Raw) => visibleFields(specs, f, form(f)).map(fieldTestId);
-    expect(ids(fillet, { radius: 1 })).toEqual(["prop-edges", "prop-fillet-faces", "prop-fillet-features", "prop-radius", "prop-fillet-variable", "prop-sets"]);
+    expect(ids(fillet, { radius: 1 })).toEqual(["prop-radius", "prop-fillet-variable", "prop-edges", "prop-fillet-more", "prop-sets"]);
     expect(ids(fillet, { radius: 1, radius2: 2 })).toContain("prop-radius2");
-    expect(ids(chamfer, { distance: 1 })).toEqual(["prop-edges", "prop-chamfer-faces", "prop-chamfer-features", "prop-chamfer-type", "prop-chamfer-distance"]);
+    expect(ids(chamfer, { distance: 1 })).toEqual(["prop-chamfer-type", "prop-chamfer-distance", "prop-edges", "prop-chamfer-more"]);
     expect(ids(chamfer, { distance: 1, distance2: 2 })).toEqual(expect.arrayContaining(["prop-chamfer-distance2", "prop-chamfer-flip"]));
     expect(ids(chamfer, { distance: 1, angle: 30 })).toEqual(expect.arrayContaining(["prop-chamfer-angle", "prop-chamfer-flip"]));
     expect(UI_OPS.chamfer.summary!({ distance: 2, distance2: 1 })).toBe("2 × 1");

@@ -151,7 +151,7 @@ test("shell: faces picked into its field (a click on a picked face takes it out 
   await waitForRebuild(page);
   await viewportClick(page, [-20, 10, 6]);
   await expect.poll(async () => ((await feature(page, "shell_1"))!.faces as unknown[]).length).toBe(1);
-  await expect(page.getByTestId("prop-faces")).toContainText("planar face normal +Z");
+  await expect(page.getByTestId("prop-faces")).toContainText("Flat · facing +Z");
   await viewportClick(page, [-20, 10, 6]);
   await expect.poll(async () => ((await feature(page, "shell_1"))!.faces as unknown[]).length).toBe(0);
   await viewportClick(page, [-20, 10, 6]);

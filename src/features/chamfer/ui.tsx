@@ -11,7 +11,6 @@ export const ui: UiOp = {
   label: "Chamfer",
   icon: "chamfer",
   fields: [
-    ...edgeChoiceFields("prop-chamfer"),
     {
       kind: "select",
       key: "distance2",
@@ -37,6 +36,8 @@ export const ui: UiOp = {
       when: (f) => chamferType(f) !== "equal",
       hint: "Swap which face takes the first distance",
     },
+    // The size first (what is changed most), then the edges it bevels.
+    ...edgeChoiceFields("prop-chamfer"),
   ],
   summary: (f) => (typeof f.distance !== "number" ? null : typeof f.distance2 === "number" ? `${f.distance} × ${f.distance2}` : typeof f.angle === "number" ? `${f.distance} × ${f.angle}°` : `${f.distance}`),
 };

@@ -84,14 +84,15 @@ test("a fillet's edges: in its session a click puts the edge picked now in, and 
   await commit(page, "prop-radius", "2");
   await expectVolume(page, "18,926.05"); // 18,994.728 - (1 - pi/4) x 2² x 80
   const front = JSON.stringify((await feature(page, "fillet_1"))!.edges);
-  await expect(page.getByTestId("prop-edges")).toContainText("-Y");
+  await expect(page.getByTestId("prop-edges")).toContainText("Straight · 80 mm");
 
   // The fillet is open with OK and Cancel, its edges field active (Phase P wave 2): clicks go straight into it.
   await viewportClick(page, [0, 20, 6]); // the top back edge: in
   await expect.poll(async () => JSON.stringify((await feature(page, "fillet_1"))!.edges)).not.toBe(front);
   await viewportClick(page, [0, -20, 6]); // the top front edge: out again
-  await expect(page.getByTestId("prop-edges")).toContainText("+Y");
-  await expect(page.getByTestId("prop-edges")).not.toContainText("-Y");
+  // One edge left, the back one (its faces face +Y and +Z).
+  await expect(page.getByTestId("prop-edges-count")).toHaveText("1 edge");
+  await expect.poll(async () => JSON.stringify((await feature(page, "fillet_1"))!.edges)).toContain("[0,1,0]");
   await expect.poll(async () => (await feature(page, "fillet_1"))!.radius).toBe(2);
   await expectVolume(page, "18,926.05"); // the same edge length, so the same volume
   await okFeature(page);

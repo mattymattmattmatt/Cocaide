@@ -151,7 +151,7 @@ test.describe("fillets and chamfers", () => {
     await waitForRebuild(page);
     expect(await feature(page, "chamfer_1")).toMatchObject({ distance: 2, angle: 30, flip: true });
     // a·b·L/2 with b = 2·tan 30°, along the 80 mm edge.
-    expect(await volume(page)).toBeCloseTo(BRACKET - (2 * 2 * Math.tan(Math.PI / 6) * 80) / 2, 1);
+    await expect.poll(() => volume(page)).toBeCloseTo(BRACKET - (2 * 2 * Math.tan(Math.PI / 6) * 80) / 2, 1);
   });
 
   test("a member body's end edge: the smart radius suits its 3 mm wall, and it builds", async ({ page }) => {
