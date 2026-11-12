@@ -98,7 +98,7 @@ describe("the Plane tool picks its mode from the selection", () => {
   it("a plane and an edge out of it: square to the edge instead, and says so", () => {
     const p = planeFromSelection(sel({ edges: [cornerEdge()], datums: ["Top"] }), view, kinds());
     expect(p.feature.mode).toBe("normalToEdge");
-    expect(p.notice).toMatch(/not in the plane/);
+    expect(p.notice).toMatch(/square to the plane/);
     built(p.feature);
   });
 
@@ -118,14 +118,19 @@ describe("the Plane tool picks its mode from the selection", () => {
     expect(d.kind === "plane" && d.origin[2]).toBeCloseTo(3, 6);
   });
 
-  it("an edge alone: square to it at its start; with a vertex: through it", () => {
+  it("an edge alone: square to it at its start; with a vertex off it: through both; with one of its ends: square to it there", () => {
     const p = planeFromSelection(sel({ edges: [frontTopEdge()] }), view, kinds());
     expect(p.feature).toMatchObject({ op: "plane", mode: "normalToEdge", t: 0 });
     const d = built(p.feature);
     expect(d.kind === "plane" && Math.abs(d.normal[0])).toBeCloseTo(1, 6);
     const q = planeFromSelection(sel({ edges: [frontTopEdge()], vertices: [{ edge: cornerEdge(), at: "start" }] }), view, kinds());
-    expect(q.feature.mode).toBe("normalToEdge");
+    // A vertex off the edge (the bottom of the corner): the plane through the edge and it.
+    expect(q.feature.mode).toBe("lineAndPoint");
     expect(q.feature.refs).toHaveLength(2);
+    built(q.feature);
+    // One of the edge's own ends: square to the edge there.
+    const r = planeFromSelection(sel({ edges: [frontTopEdge()], vertices: [{ edge: frontTopEdge(), at: "end" }] }), view, kinds());
+    expect(r.feature.mode).toBe("normalToEdge");
   });
 
   it("a plane and a vertex: parallel to the plane, through the vertex", () => {
@@ -139,7 +144,8 @@ describe("the Plane tool picks its mode from the selection", () => {
     const p = planeFromSelection(EMPTY_SELECTION, view, kinds());
     expect(p.feature).toEqual({ op: "plane", mode: "offset", refs: [{ datum: "Top" }], distance: 10 });
     expect(p.notice).toMatch(/^Made a plane 10 mm above Top\. Select a flat face/);
-    expect(planeFromSelection(sel({ faces: [holeWall()] }), view, kinds()).notice).toMatch(/^That selection doesn't say which plane\./);
+    // A round face alone: it says what to add (a plane or a point, for a tangent plane).
+    expect(planeFromSelection(sel({ faces: [holeWall()] }), view, kinds()).notice).toMatch(/^A round face alone doesn't say where to touch it/);
     expect(planeFromSelection(sel({ faces: [topFace()] }), null, kinds()).error).toMatch(/not rebuilt yet/);
   });
 });
@@ -251,7 +257,7 @@ describe("switching a reference feature's type in its properties", () => {
   const before = (d: RawDocument) => d.features as Record<string, unknown>[];
   it("keeps the references that fit, fills the rest with defaults, drops the old mode's fields", () => {
     const f = { id: "plane_1", op: "plane", mode: "offset", refs: [{ datum: "Front" }], distance: 20 };
-    expect(switchMode(f, "angle", PLANE_MODE_SPECS, before(doc), { distance: 10, angle: 45 })).toEqual({ mode: "angle", refs: [{ datum: "Front" }, { datum: "X" }], distance: null, angle: 45, t: null });
+    expect(switchMode(f, "angle", PLANE_MODE_SPECS, before(doc), { distance: 10, angle: 45 })).toEqual({ mode: "angle", refs: [{ datum: "Front" }, { datum: "X" }], distance: null, angle: 45 });
     // Three different points, not on one line (the origin three times would never build).
     expect(switchMode(f, "threePoints", PLANE_MODE_SPECS, before(doc))).toMatchObject({ refs: [{ datum: "Origin" }, { point: [10, 0, 0] }, { point: [0, 10, 0] }] });
     // A midplane is never between a plane and itself.
@@ -469,5 +475,43 @@ describe("the AI sees the reference geometry", () => {
     expect(refs.features[2]).toEqual({ id: "point_1", op: "point", mode: "coords", built: false, suppressed: true });
     const one = await buildPacket(withRefs, { kind: "feature", id: "plane_1" }, kernel);
     expect((one.measurements as { now?: unknown }).now).toEqual({ kind: "plane", origin: [0, 0, 20], normal: [0, 0, 1], xDir: [1, 0, 0] });
+  });
+});
+
+describe("the Plane tool's newer guesses", () => {
+  it("a face and an edge's midpoint (snapped to): parallel to the face through the midpoint", () => {
+    const p = planeFromSelection(sel({ faces: [topFace()], vertices: [{ edge: cornerEdge(), at: "mid" }] }), view, kinds());
+    expect(p.feature.mode).toBe("parallelThroughPoint");
+    expect((p.feature.refs as { at?: string }[])[1].at).toBe("mid");
+    const d = built(p.feature);
+    expect(d.kind === "plane" && d.origin[2]).toBeCloseTo(3, 6);
+  });
+
+  it("two points: half way between; four: best fit", () => {
+    const e = frontTopEdge();
+    const two = planeFromSelection(sel({ vertices: [{ edge: e, at: "start" }, { edge: e, at: "end" }] }), view, kinds());
+    expect(two.feature.mode).toBe("betweenPoints");
+    const d = built(two.feature);
+    expect(d.kind === "plane" && Math.abs(d.normal[0])).toBeCloseTo(1, 6);
+    const c = cornerEdge();
+    const four = planeFromSelection(sel({ vertices: [{ edge: e, at: "start" }, { edge: e, at: "end" }, { edge: c, at: "start" }, { edge: c, at: "end" }] }), view, kinds());
+    expect(four.feature.mode).toBe("bestFit");
+    built(four.feature);
+  });
+
+  it("two straight edges: through both", () => {
+    const top = frontTopEdge();
+    const other = view.edges.findIndex((e, i) => i !== top && e.kind === "line" && Math.abs(e.direction![0]) > 0.99 && Math.abs(e.start[2]) < 1e-6 && e.start[1] < 0);
+    const p = planeFromSelection(sel({ edges: [top, other] }), view, kinds());
+    expect(p.feature.mode).toBe("twoLines");
+    const d = built(p.feature);
+    expect(d.kind === "plane" && Math.abs(d.normal[1])).toBeCloseTo(1, 6);
+  });
+
+  it("a round face and a plane: tangent to it", () => {
+    const p = planeFromSelection(sel({ faces: [holeWall()], datums: ["Front"] }), view, kinds());
+    expect(p.feature.mode).toBe("tangent");
+    const d = built(p.feature);
+    expect(d.kind === "plane" && d.origin[1]).toBeCloseTo(-3.3, 6);
   });
 });

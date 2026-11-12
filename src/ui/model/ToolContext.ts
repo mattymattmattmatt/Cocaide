@@ -11,7 +11,7 @@ import type { PlaneSpec } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
 import type { FlatQuery, FlatResult } from "../../kernel/flat";
 import type { IconName } from "../icons";
-import type { Selection } from "./selection";
+import type { Selection, VertexPick } from "./selection";
 import type { ToolMemory } from "./toolMemory";
 
 /** A feature as JSON: the document's own shape, before validation. */
@@ -117,7 +117,7 @@ export type ContextTarget =
   | { kind: "face" | "edge"; index: number }
   | { kind: "part" }
   /** A vertex: an end of an edge. */
-  | { kind: "vertex"; edge: number; at: "start" | "end" }
+  | { kind: "vertex"; edge: number; at: VertexPick["at"] }
   /** Reference geometry: a default plane, the origin, a plane, axis or point feature (in the view or the tree). */
   | { kind: "datum"; id: string };
 

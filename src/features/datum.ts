@@ -340,6 +340,8 @@ export function frameAsDatumPlane(frame: Frame): DatumPlane {
 /** Directions closer than this (as 1 - |cos|) are parallel; lengths under LENGTH_EPS mm are zero. */
 const ANGLE_EPS = 1e-9;
 const LENGTH_EPS = 1e-6;
+/** Two directions whose cross product is shorter than this are parallel (the sine of the angle between them). */
+const SIN_EPS = 1e-7;
 
 /** Tiny rounding noise (6e-17) as 0, and -0 as 0, so frames read as they were worked out. */
 function clean(v: Vec3): Vec3 {
@@ -435,6 +437,141 @@ export function midPlane(a: PlaneDatum, b: PlaneDatum): PlaneDatum {
   // Normals within 90°: the bisector of n1 and n2; else (and at 90°, a box edge) the plane of equal signed distance.
   const n = cos > 1e-12 ? add3(n1, n2) : sub3(n1, n2);
   return planeDatum(line.origin, n, a.xDir);
+}
+
+/**
+ * The plane through a straight line and a point off it: origin the line's
+ * point nearest the point, x along the line, normal d x (p - origin). Null
+ * when the point is on the line.
+ */
+export function lineAndPointPlane(line: AxisDatum, at: Vec3): PlaneDatum | null {
+  const d = normalize3(line.direction);
+  const foot = add3(line.origin, scale3(d, dot3(sub3(at, line.origin), d)));
+  const off = sub3(at, foot);
+  if (Math.hypot(...off) <= LENGTH_EPS * Math.max(1, Math.hypot(...at))) return null;
+  return planeDatum(foot, cross3(d, off), d);
+}
+
+/**
+ * The plane through two straight lines. Crossing (or parallel) lines: the
+ * plane holding both. Skew lines (neither): the plane through the first,
+ * parallel to the second. Null for the same line twice. Its x runs along the
+ * first line.
+ */
+export function twoLinesPlane(a: AxisDatum, b: AxisDatum): PlaneDatum | null {
+  const d1 = normalize3(a.direction);
+  const d2 = normalize3(b.direction);
+  const n = cross3(d1, d2);
+  if (Math.hypot(...n) < SIN_EPS) return lineAndPointPlane(a, b.origin);
+  return planeDatum(a.origin, n, d1);
+}
+
+/**
+ * The plane through a straight line, square to a plane (an edge of a face and
+ * the face: the plane standing up along the edge). Null when the line is
+ * square to the plane (then every plane through it is).
+ */
+export function perpendicularPlane(line: AxisDatum, p: PlaneDatum): PlaneDatum | null {
+  const d = normalize3(line.direction);
+  const n = cross3(d, normalize3(p.normal));
+  if (Math.hypot(...n) < SIN_EPS) return null;
+  return planeDatum(line.origin, n, d);
+}
+
+/** The plane half way between two points, square to the line from the first to the second. Null when they are the same point. */
+export function betweenPointsPlane(a: Vec3, b: Vec3): PlaneDatum | null {
+  const ab = sub3(b, a);
+  if (Math.hypot(...ab) <= LENGTH_EPS * Math.max(1, Math.hypot(...a))) return null;
+  return planeDatum(scale3(add3(a, b), 0.5), ab);
+}
+
+/**
+ * The plane nearest to all the points (least squares, by the smallest
+ * eigenvector of their scatter): through their centroid. Its normal points
+ * the way three-point order would (the first three's (b - a) x (c - a)) and
+ * x runs toward the first point. Null with fewer than 3 points or all on one
+ * line. Also the worst point's distance from it, mm.
+ */
+export function bestFitPlane(points: Vec3[]): { plane: PlaneDatum; worst: number } | null {
+  if (points.length < 3) return null;
+  const c = scale3(points.reduce((s, p) => add3(s, p), [0, 0, 0] as Vec3), 1 / points.length);
+  const m = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  for (const p of points) {
+    const d = sub3(p, c);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) m[i][j] += d[i] * d[j];
+  }
+  const { values, vectors } = symmetricEigen3(m);
+  const order = [0, 1, 2].sort((i, j) => values[i] - values[j]);
+  // All on one line: two eigenvalues are (near) zero.
+  const scale = Math.max(values[order[2]], 1e-30);
+  if (values[order[1]] / scale < 1e-12) return null;
+  let n: Vec3 = normalize3(vectors[order[0]]);
+  const hint = cross3(sub3(points[1], points[0]), sub3(points[2], points[0]));
+  if (dot3(n, hint) < 0) n = scale3(n, -1);
+  const worst = Math.max(...points.map((p) => Math.abs(dot3(sub3(p, c), n))));
+  return { plane: planeDatum(c, n, sub3(points[0], c)), worst };
+}
+
+/** Eigenvalues and unit eigenvectors of a symmetric 3x3 matrix (Jacobi rotations). */
+function symmetricEigen3(input: number[][]): { values: [number, number, number]; vectors: [Vec3, Vec3, Vec3] } {
+  const a = input.map((r) => [...r]);
+  const v = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  for (let sweep = 0; sweep < 50; sweep++) {
+    const off = Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]);
+    if (off < 1e-14 * (Math.abs(a[0][0]) + Math.abs(a[1][1]) + Math.abs(a[2][2]) + 1e-300)) break;
+    for (const [p, q] of [
+      [0, 1],
+      [0, 2],
+      [1, 2],
+    ]) {
+      if (Math.abs(a[p][q]) < 1e-300) continue;
+      const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const cs = 1 / Math.sqrt(t * t + 1);
+      const sn = t * cs;
+      for (let k = 0; k < 3; k++) {
+        const akp = a[k][p];
+        const akq = a[k][q];
+        a[k][p] = cs * akp - sn * akq;
+        a[k][q] = sn * akp + cs * akq;
+      }
+      for (let k = 0; k < 3; k++) {
+        const apk = a[p][k];
+        const aqk = a[q][k];
+        a[p][k] = cs * apk - sn * aqk;
+        a[q][k] = sn * apk + cs * aqk;
+      }
+      for (let k = 0; k < 3; k++) {
+        const vkp = v[k][p];
+        const vkq = v[k][q];
+        v[k][p] = cs * vkp - sn * vkq;
+        v[k][q] = sn * vkp + cs * vkq;
+      }
+    }
+  }
+  const col = (j: number): Vec3 => [v[0][j], v[1][j], v[2][j]];
+  return { values: [a[0][0], a[1][1], a[2][2]], vectors: [col(0), col(1), col(2)] };
+}
+
+/**
+ * The plane tangent to a cylinder (axis, radius), square to `towards` (a unit
+ * direction square to the axis): touching it on the side `towards` points to.
+ * Null when `towards` runs along the axis.
+ */
+export function tangentPlane(axis: AxisDatum, radius: number, towards: Vec3): PlaneDatum | null {
+  const d = normalize3(axis.direction);
+  const radial = sub3(towards, scale3(d, dot3(towards, d)));
+  if (Math.hypot(...radial) < SIN_EPS * Math.max(1, Math.hypot(...towards))) return null;
+  const n = normalize3(radial);
+  return planeDatum(add3(axis.origin, scale3(n, radius)), n, d);
 }
 
 /** The line two planes meet in: its origin the point of it nearest `near`, its direction n1 x n2. Null for parallel planes. */

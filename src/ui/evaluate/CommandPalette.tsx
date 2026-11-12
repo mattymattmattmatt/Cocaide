@@ -57,7 +57,7 @@ export function CommandPalette({ entries, onClose }: { entries: PaletteEntry[]; 
         <ul ref={list} className="palette-list" role="listbox">
           {found.map((e, i) => (
             <li key={e.id} role="option" aria-selected={i === at} aria-disabled={!!e.disabled}>
-              <button onMouseEnter={() => setAt(i)} onClick={() => run(e)} disabled={!!e.disabled} title={e.disabled} data-testid={`palette-item-${e.id}`}>
+              <button onMouseMove={() => i !== at && setAt(i)} onClick={() => run(e)} disabled={!!e.disabled} title={e.disabled} data-testid={`palette-item-${e.id}`}>
                 <span className="palette-label">{e.label}</span>
                 <span className="palette-group">{e.disabled ?? e.group}</span>
                 {e.key && <kbd className="menu-key">{e.key}</kbd>}

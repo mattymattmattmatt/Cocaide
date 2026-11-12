@@ -71,7 +71,7 @@ export const tools: ToolDef[] = [
     tab: "reference",
     group: "datum",
     title:
-      "A reference plane from what is selected: a face or plane (offset), a plane and an edge in it (at an angle), three vertices, two faces (mid-plane), an edge (square to it), a plane and a vertex (parallel through it)",
+      "A reference plane from what is selected: a face (offset); a face and a vertex, midpoint or centre (parallel through it; the Vertices filter snaps to midpoints and centres); a plane and an edge (at an angle, or square to the plane); an edge and a point, or two edges (through them); two faces (mid-plane); two, three or more points (between, through, best fit); an edge (square to it); a cylinder and a plane or point (tangent)",
     testId: "tool-plane",
     run: plane,
     contextItems: (ctx, t) => {

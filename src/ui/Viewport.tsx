@@ -207,6 +207,16 @@ export const BODY_COLORS = ["#c4cad3", "#8fb8e3", "#e3b98f", "#a9d39f", "#d3a9d6
 
 const SKETCH_OPACITY = 0.55;
 const PICK_PIXELS = 6;
+/**
+ * Whether midpoints and circle centres are picked like vertices: when the
+ * filter asks for points without also asking for both faces and edges (the
+ * Vertices filter on, or a field that takes a point), so ordinary picking of
+ * edges and faces is never pulled to a midpoint.
+ */
+export function snapPoints(f: SelectFilter): boolean {
+  return f.has("vertices") && !(f.has("faces") && f.has("edges"));
+}
+
 /** How near (pixels) to the end of an edge a click picks the vertex there. */
 const VERTEX_PIXELS = 8;
 const SELECT_COLOR = 0xf28c28;
@@ -452,6 +462,8 @@ export function Viewport({
     let peek: PickTarget[] = [];
     /** One end of an edge per vertex of the part (the lowest edge that ends there stands for it), for picking vertices. */
     let vertices: (VertexPick & { p: Vec3 })[] = [];
+    /** Snap points: each edge's midpoint, each circle's and arc's centre; picked like vertices while the filter asks for points (snapPoints). */
+    let snaps: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
     let hidden: ReadonlySet<string> = NO_BODIES;
     let hiddenSketchIds: ReadonlySet<string> = NO_BODIES;
@@ -1361,6 +1373,19 @@ export function Viewport({
           }
         });
         vertices = [...seen.values()];
+        const centres = new Set<string>();
+        snaps = [];
+        v.edges.forEach((e, i) => {
+          if (e.seam || isHidden(e.body)) return;
+          if (e.kind !== "circle" && e.mid) snaps.push({ edge: i, at: "mid", p: e.mid });
+          if (e.kind === "circle" && e.center) {
+            const key = e.center.map((x) => Math.round(x * 1e4)).join(",");
+            if (!centres.has(key)) {
+              centres.add(key);
+              snaps.push({ edge: i, at: "center", p: e.center });
+            }
+          }
+        });
         const edgeColor = cssColor(el, "--edge", "#1f2937");
         const eg = new THREE.BufferGeometry();
         eg.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
@@ -1528,7 +1553,7 @@ export function Viewport({
       const front = hit?.distance ?? (faceHit ? faceHit.distance : null);
       let best: { v: VertexPick & { p: Vec3 }; d: number } | null = null;
       if (may("vertex")) {
-        for (const v of vertices) {
+        for (const v of snapPoints(pickFilter) && !everything ? [...vertices, ...snaps] : vertices) {
           if (cutAway(v.p, edgeBody(v.edge))) continue;
           const s = project(v.p);
           if (!s) continue;

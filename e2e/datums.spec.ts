@@ -176,3 +176,30 @@ test("right-click entries act on what was right-clicked; a type that needs a fac
   const doc = (await savedDocument(page)) as Doc;
   expect(doc.features.find((f) => f.id === "axis_1")).toMatchObject({ id: "axis_1", op: "axis", mode: "cylinder", refs: [{ face: { type: "cylindrical", radius: 3.3, pick: "largest", createdBy: "hole_1" } }] });
 });
+
+test("a face and an edge's midpoint (snapped to with the Vertices filter): Plane makes it parallel to the face through the midpoint; the new types are offered", async ({ page }) => {
+  // Faces and vertices on: a click near the middle of an edge snaps to its midpoint.
+  await page.getByTestId("filter-faces").click();
+  await page.getByTestId("filter-vertices").click();
+  await viewportClick(page, [0, 0, 6]);
+  // The front right vertical edge of the 6 mm plate: its middle is z = 3.
+  await viewportClick(page, [40, -20, 3], { shift: true });
+  await expect(page.getByTestId("selection")).toContainText("1 face + 1 vertex");
+  await page.getByTestId("tab-reference").click();
+  await page.getByTestId("tool-plane").click();
+  await expect(page.getByTestId("feature-plane_1")).toBeVisible();
+  await expect(page.getByTestId("prop-datum-where")).toContainText("normal +Z");
+  await expect(page.getByTestId("prop-datum-where")).toContainText(/, 3 · normal/);
+  const doc = (await savedDocument(page)) as Doc;
+  const f = doc.features.find((x) => x.id === "plane_1") as { mode: string; refs: { at?: string }[] };
+  expect(f.mode).toBe("parallelThroughPoint");
+  expect(f.refs[1].at).toBe("mid");
+  // Every type is in the list, and one picked from it builds.
+  const type = page.getByTestId("prop-mode");
+  for (const label of ["Through a line and a point", "Through two lines", "Through a line, square to a plane", "Tangent to a cylinder", "Half way between two points", "Best fit through points", "Centre of the part (symmetry)"]) {
+    await expect(type.locator("option", { hasText: label })).toHaveCount(1);
+  }
+  await type.selectOption({ label: "Centre of the part (symmetry)" });
+  // It keeps the top face as the plane it is parallel to: the part's middle across it is z = 3 again.
+  await expect(page.getByTestId("prop-datum-where")).toContainText(/, 3 · normal \+Z/);
+});

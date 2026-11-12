@@ -7,7 +7,21 @@ import type { DatumRef, FeatureBase } from "../../doc/types";
 import { askFromRefs, checkModeRefs, datumRefsAt, modeTakes, type ModeSpec } from "../datum";
 import type { FeatureDef } from "../defs";
 
-export const PLANE_MODES = ["offset", "angle", "threePoints", "midplane", "normalToEdge", "parallelThroughPoint"] as const;
+export const PLANE_MODES = [
+  "offset",
+  "parallelThroughPoint",
+  "angle",
+  "threePoints",
+  "midplane",
+  "normalToEdge",
+  "lineAndPoint",
+  "twoLines",
+  "perpendicular",
+  "tangent",
+  "betweenPoints",
+  "bestFit",
+  "centre",
+] as const;
 export type PlaneMode = (typeof PLANE_MODES)[number];
 
 export interface PlaneFeature extends FeatureBase {
@@ -22,12 +36,19 @@ export interface PlaneFeature extends FeatureBase {
   angle?: number;
   /** normalToEdge: where along the edge, 0 (its start, the default) to 1 (its end). */
   t?: number;
+  /** tangent: on the far side of the cylinder (the side away from the plane's normal, or from the point). */
+  back?: boolean;
+  /** centre: the body whose middle it goes through (default the whole part). */
+  body?: string;
   /** Turned over: the normal reversed (its x kept). */
   flip?: boolean;
 }
 
 const PLANE: { what: string; kinds: ["plane"] } = { what: "a plane (a default plane, a plane feature or a flat face)", kinds: ["plane"] };
-const POINT: { what: string; kinds: ["point"] } = { what: "a point (a vertex, a point feature, the origin or [x, y, z])", kinds: ["point"] };
+const POINT: { what: string; kinds: ["point"] } = { what: "a point (a vertex, an edge's midpoint, a circle's centre, a point feature, the origin or [x, y, z])", kinds: ["point"] };
+const LINE: { what: string; kinds: ["axis"] } = { what: "a straight line (a straight edge, an axis feature, X, Y or Z, or a sketch line)", kinds: ["axis"] };
+/** The most points a best-fit plane takes. */
+export const BEST_FIT_MAX = 8;
 
 /** What each mode takes. */
 export const PLANE_MODE_SPECS: Readonly<Record<PlaneMode, ModeSpec>> = {
@@ -45,13 +66,44 @@ export const PLANE_MODE_SPECS: Readonly<Record<PlaneMode, ModeSpec>> = {
     fields: ["t"],
     about: "square to an edge (or a sketch's line, arc or circle), at `t` along it (0 its start, 1 its end), or through a point refs[1]",
   },
-  parallelThroughPoint: { refs: [PLANE, POINT], fields: [], about: "parallel to a plane, through a point" },
+  parallelThroughPoint: { refs: [PLANE, POINT], fields: [], about: "parallel to a plane, through a point (a face and an edge's midpoint: parallel to the face, through the middle of the edge)" },
+  lineAndPoint: { refs: [LINE, POINT], fields: [], about: "through a straight line and a point off it" },
+  twoLines: {
+    refs: [LINE, { ...LINE, what: "a second straight line, crossing the first or parallel to it" }],
+    fields: [],
+    about: "through two straight lines that cross or run parallel (the plane holding both); two that do neither: through the first, parallel to the second",
+  },
+  perpendicular: {
+    refs: [LINE, PLANE],
+    fields: [],
+    about: "through a straight line, square to a plane or flat face (an edge of a face and that face: the plane standing up along the edge)",
+  },
+  tangent: {
+    refs: [
+      { what: "a round face (a cylinder)", kinds: ["axis"], forms: ["face"] },
+      { what: "a plane parallel to the cylinder's axis (the tangent plane is parallel to it), or a point (the plane touches the cylinder where the line from the axis through the point meets it)", kinds: ["plane", "point"] },
+    ],
+    fields: ["back"],
+    about: "tangent to a cylinder: parallel to a plane, on the side its normal points to (back: the other side), or touching it nearest a point",
+  },
+  betweenPoints: { refs: [POINT, POINT], fields: [], about: "half way between two points, square to the line joining them (the plane of symmetry of two holes or vertices)" },
+  bestFit: {
+    refs: Array.from({ length: BEST_FIT_MAX }, (_, i) => (i === 0 ? POINT : { ...POINT, what: `point ${i + 1}` })),
+    optional: BEST_FIT_MAX - 3,
+    fields: [],
+    about: `the plane that best fits 3 to ${BEST_FIT_MAX} points (least squares: the one nearest all of them; through them when they lie on one plane)`,
+  },
+  centre: {
+    refs: [PLANE],
+    fields: ["body"],
+    about: "parallel to a plane, through the middle of the part (or of one body, `body`): the plane of symmetry of its bounding box",
+  },
 };
 
 export const def: FeatureDef<PlaneFeature> = {
   op: "plane",
   validate(raw, c, x) {
-    c.keys(raw, "", ["id", "op", "mode", "refs", "distance", "angle", "t", "flip"]);
+    c.keys(raw, "", ["id", "op", "mode", "refs", "distance", "angle", "t", "back", "body", "flip"]);
     const mode = raw.mode === undefined ? "offset" : x.oneOf(raw, "mode", "", PLANE_MODES);
     if (!mode) return null;
     const refs = checkModeRefs(raw, c, x, "plane", mode, PLANE_MODE_SPECS);
@@ -69,6 +121,12 @@ export const def: FeatureDef<PlaneFeature> = {
       else if (refs?.[0] && "datum" in refs[0]) c.fail("t", `${refs[0].datum} is an axis, endless: place the plane with a point refs[1] instead (without one it goes through the axis's origin)`);
     }
     const flip = x.bool(raw, "flip", "");
+    const back = x.bool(raw, "back", "");
+    let body: string | undefined;
+    if (raw.body !== undefined) {
+      if (typeof raw.body !== "string" || !raw.body.trim()) c.fail("body", `must be a body's name (got ${x.describe(raw.body)})`);
+      else body = raw.body;
+    }
     if (c.errors.length || !refs) return null;
     return {
       id: raw.id as string,
@@ -78,6 +136,8 @@ export const def: FeatureDef<PlaneFeature> = {
       ...(distance !== undefined ? { distance } : {}),
       ...(angle !== undefined ? { angle } : {}),
       ...(t !== undefined ? { t } : {}),
+      ...(back ? { back } : {}),
+      ...(body !== undefined ? { body } : {}),
       ...(flip ? { flip } : {}),
     };
   },
@@ -98,6 +158,12 @@ Examples:
   { "id": "plane_2", "op": "plane", "mode": "angle", "refs": [{ "datum": "Top" }, { "edge": { "type": "edge", "kind": "line", "direction": [1,0,0], "pick": "all", "near": [0,-20,6] } }], "angle": 30 }
   { "id": "mid", "op": "plane", "mode": "midplane", "refs": [{ "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } }, { "face": { "type": "planar", "normal": [0,0,-1], "pick": "largest" } }] }
   { "id": "across", "op": "plane", "mode": "normalToEdge", "refs": [{ "edge": { "type": "edge", "kind": "line", "pick": "longest" } }], "t": 0.5 }
+  Parallel to the top face, through the middle of an edge (a point may be an edge's "mid", a circle's "center", a vertex's "start"/"end"):
+  { "id": "half", "op": "plane", "mode": "parallelThroughPoint", "refs": [{ "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } }, { "edge": { "type": "edge", "kind": "line", "direction": [0,0,1], "pick": "longest" }, "at": "mid" }] }
+  { "id": "stand", "op": "plane", "mode": "perpendicular", "refs": [{ "edge": { "type": "edge", "kind": "line", "direction": [1,0,0], "pick": "all", "near": [0,-20,6] } }, { "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } }] }
+  { "id": "touch", "op": "plane", "mode": "tangent", "refs": [{ "face": { "type": "cylinder", "pick": "largest" } }, { "datum": "Front" }] }
+  { "id": "sym", "op": "plane", "mode": "betweenPoints", "refs": [{ "edge": { "type": "edge", "kind": "circle", "pick": "all", "near": [-30,0,6] }, "at": "center" }, { "edge": { "type": "edge", "kind": "circle", "pick": "all", "near": [30,0,6] }, "at": "center" }] }
+  { "id": "middle", "op": "plane", "mode": "centre", "refs": [{ "datum": "Right" }] }   (the part's plane of symmetry across X)
 Sketch on it, then extrude: the body sits on the plane.
   { "id": "sketch_2", "op": "sketch", "plane": { "type": "ref", "ref": { "datum": "plane_1" } }, "entities": [{ "id": "c1", "type": "circle", "center": [0,0], "radius": 5 }] }
 A plane that cannot be made says what to pick instead (an angle axis not in the plane, three points on one line).

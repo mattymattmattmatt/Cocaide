@@ -7,26 +7,40 @@ import { Field } from "../../ui/fields";
 import { datumText, refFields, refsOf, switchMode } from "../../ui/props/datumModes";
 import type { DatumRef } from "../../doc/types";
 import type { UiOp } from "../uiDefs";
-import { PLANE_MODE_SPECS, PLANE_MODES, type PlaneMode } from "./doc";
+import { BEST_FIT_MAX, PLANE_MODE_SPECS, PLANE_MODES, type PlaneMode } from "./doc";
 
 type Raw = Record<string, unknown>;
 
 export const PLANE_MODE_LABEL: Record<PlaneMode, string> = {
   offset: "Offset from a plane",
+  parallelThroughPoint: "Parallel, through a point (or midpoint)",
   angle: "At an angle about an axis",
   threePoints: "Through three points",
   midplane: "Mid-plane of two planes",
-  normalToEdge: "Normal to an edge",
-  parallelThroughPoint: "Parallel, through a point",
+  normalToEdge: "Normal to an edge or curve",
+  lineAndPoint: "Through a line and a point",
+  twoLines: "Through two lines",
+  perpendicular: "Through a line, square to a plane",
+  tangent: "Tangent to a cylinder",
+  betweenPoints: "Half way between two points",
+  bestFit: "Best fit through points",
+  centre: "Centre of the part (symmetry)",
 };
 
 const REF_LABELS: Record<PlaneMode, string[]> = {
   offset: ["Plane"],
+  parallelThroughPoint: ["Plane", "Through point"],
   angle: ["Plane", "Axis"],
   threePoints: ["Point 1", "Point 2", "Point 3"],
   midplane: ["Plane 1", "Plane 2"],
   normalToEdge: ["Edge", "Through point"],
-  parallelThroughPoint: ["Plane", "Through point"],
+  lineAndPoint: ["Line", "Point"],
+  twoLines: ["Line 1", "Line 2"],
+  perpendicular: ["Line", "Square to"],
+  tangent: ["Cylinder", "Parallel to / near"],
+  betweenPoints: ["Point 1", "Point 2"],
+  bestFit: Array.from({ length: BEST_FIT_MAX }, (_, i) => `Point ${i + 1}`),
+  centre: ["Parallel to"],
 };
 
 const modeOf = (f: Raw): PlaneMode => (PLANE_MODES.includes(f.mode as PlaneMode) ? (f.mode as PlaneMode) : "offset");
@@ -34,7 +48,7 @@ const modeOf = (f: Raw): PlaneMode => (PLANE_MODES.includes(f.mode as PlaneMode)
 /** A reference in a word or two, for the tree: "Top", "a face". */
 export function refWord(r: DatumRef | undefined): string {
   if (!r) return "?";
-  return "datum" in r ? r.datum : "face" in r ? "a face" : "edge" in r ? (r.at ? "a vertex" : "an edge") : "a point";
+  return "datum" in r ? r.datum : "face" in r ? "a face" : "edge" in r ? (r.at === "mid" ? "a midpoint" : r.at === "center" ? "a centre" : r.at ? "a vertex" : "an edge") : "a point";
 }
 
 export const ui: UiOp = {
@@ -61,6 +75,16 @@ export const ui: UiOp = {
       default: 0,
       hint: "0 is its start, 0.5 its middle, 1 its end",
       when: (f) => modeOf(f) === "normalToEdge" && refsOf(f).length < 2 && !!refsOf(f)[0] && "edge" in refsOf(f)[0],
+    },
+    { kind: "bool", key: "back", label: "On the other side", hint: "Touch the cylinder on the far side", when: (f) => modeOf(f) === "tangent" },
+    {
+      kind: "select",
+      key: "body",
+      label: "Of",
+      options: (_f, c) => [["", "the whole part"], ...c.bodies.map((b): [string, string] => [b, `body ${b}`])],
+      get: (f) => (typeof f.body === "string" ? f.body : ""),
+      set: (v) => ({ body: v ? String(v) : null }),
+      when: (f, c) => modeOf(f) === "centre" && c.bodies.length > 1,
     },
     { kind: "bool", key: "flip", label: "Flip the normal" },
     {
@@ -90,7 +114,22 @@ export const ui: UiOp = {
       case "normalToEdge":
         return "normal to an edge";
       case "parallelThroughPoint":
-        return `parallel to ${refWord(refs[0])}`;
+        return `parallel to ${refWord(refs[0])}${refs[1] && "edge" in refs[1] && refs[1].at === "mid" ? ", through a midpoint" : ""}`;
+      case "lineAndPoint":
+        return "through a line and a point";
+      case "twoLines":
+        return "through two lines";
+      case "perpendicular":
+        return `square to ${refWord(refs[1])}`;
+      case "tangent":
+        return `tangent to a cylinder${f.back ? " (far side)" : ""}`;
+      case "betweenPoints":
+        return "half way between two points";
+      case "bestFit":
+        return `best fit through ${refs.length} points`;
+      case "centre":
+        return `centre of ${typeof f.body === "string" ? f.body : "the part"}, parallel to ${refWord(refs[0])}`;
     }
+    return "plane";
   },
 };

@@ -179,7 +179,7 @@ describe("what the document refuses, and what it says to pick", () => {
 
   it("the wrong number of references names what the mode takes", () => {
     expect(errorsOf(add(bracket, plane({ mode: "threePoints", refs: [{ point: [0, 0, 0] }] })))).toEqual([
-      'plane_1: refs: mode "threePoints" takes 3 references (a point (a vertex, a point feature, the origin or [x, y, z]), then a point (a vertex, a point feature, the origin or [x, y, z]), then a point (a vertex, a point feature, the origin or [x, y, z])), got 1',
+      'plane_1: refs: mode "threePoints" takes 3 references (a point (a vertex, an edge\'s midpoint, a circle\'s centre, a point feature, the origin or [x, y, z]), then a point (a vertex, an edge\'s midpoint, a circle\'s centre, a point feature, the origin or [x, y, z]), then a point (a vertex, an edge\'s midpoint, a circle\'s centre, a point feature, the origin or [x, y, z])), got 1',
     ]);
     expect(errorsOf(add(bracket, plane({ mode: "angle", refs: [{ datum: "Top" }], angle: 10 })))[0]).toMatch(/^plane_1: refs: mode "angle" takes 2 references \(a plane .*, then an axis in the plane or parallel to it .*\), got 1$/);
     expect(errorsOf(add(bracket, plane({ mode: "normalToEdge", refs: [] })))[0]).toMatch(/^plane_1: refs: mode "normalToEdge" takes 1 or 2 references \(an edge .*, then optionally a point .*\), got 0$/);
@@ -206,7 +206,7 @@ describe("what the document refuses, and what it says to pick", () => {
     expect(errorsOf(add(bracket, { id: "p", op: "point", mode: "onEdge", refs: [{ edge: FRONT_TOP_EDGE, at: "end" }] }))).toEqual([
       'p: refs[0].at: mode "onEdge" takes the whole edge here: leave "at" out',
     ]);
-    expect(errorsOf(add(bracket, plane({ mode: "sideways", refs: [{ datum: "Top" }] })))[0]).toMatch(/^plane_1: mode: must be "offset", "angle", /);
+    expect(errorsOf(add(bracket, plane({ mode: "sideways", refs: [{ datum: "Top" }] })))[0]).toMatch(/^plane_1: mode: must be "offset", "parallelThroughPoint", "angle", /);
   });
 
   it("an axis or a point names its mode; forms a mode does not take are refused", () => {

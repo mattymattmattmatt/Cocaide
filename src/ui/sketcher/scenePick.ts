@@ -120,7 +120,8 @@ export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamer
   if (pick.kind === "vertex") {
     // A vertex is a point of its edge's stand-in; when that edge has none with ends (it runs square to the plane, or
     // is a tilted circle), of another edge ending there: a box's corner below a sketch on its top is still a point to use.
-    const owner = edge.entity && (edge.entity.type === "line" || edge.entity.type === "arc") ? { edge, at: pick.at } : edgeEndingAt(m, pick.point);
+    const end = pick.at === "start" || pick.at === "end" ? pick.at : null;
+    const owner = end && edge.entity && (edge.entity.type === "line" || edge.entity.type === "arc") ? { edge, at: end } : edgeEndingAt(m, pick.point);
     if (owner) {
       const e = owner.edge.entity as Extract<SketchEntity, { type: "line" | "arc" }>;
       return { item: { kind: "point", ref: `${owner.edge.id}.${owner.at}` }, standIn: e, at: e[owner.at], px: dist(local, toScreen(cam, pick.point)), poly3: owner.edge.poly3, point3: pick.point, model: true };

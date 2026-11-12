@@ -240,7 +240,12 @@ export function refTargets(ref: unknown, view: RebuildView | null): PickTarget[]
   if (r.face) return selectFaces(view.faces, r.face).matches.map((f) => ({ kind: "face" as const, index: f.index, point: f.centroid }));
   if (r.edge) {
     const m = selectEdges(view.edges, view.faces, r.edge).matches;
-    if (r.at === "start" || r.at === "end") return m.map((e) => ({ kind: "vertex" as const, edge: e.index, at: r.at as "start" | "end", point: r.at === "start" ? e.start : e.end }));
+    // A point of the edge (an end, its midpoint, a circle's centre) lights up as that point.
+    const at = r.at;
+    if (at) return m.flatMap((e) => {
+      const point = at === "start" ? e.start : at === "end" ? e.end : at === "mid" ? e.mid : e.center;
+      return point ? [{ kind: "vertex" as const, edge: e.index, at, point }] : [];
+    });
     return m.map((e) => ({ kind: "edge" as const, index: e.index, point: e.mid }));
   }
   return [];

@@ -13,14 +13,15 @@ import type { EdgeInfo, FaceInfo } from "../../kernel/topology";
 /** An end of an edge: a vertex of the part (several edges share it; one stands for it). */
 export interface VertexPick {
   edge: number;
-  at: "start" | "end";
+  /** An end of the edge, or (snapped to with the Vertices filter on) the middle of its length or a circle's centre. */
+  at: "start" | "end" | "mid" | "center";
 }
 
 /** A click on the part (a B-rep face, edge or vertex) or on reference geometry (a plane, axis or point, by id), and where. */
 export type PickTarget =
   /** `face`, on an edge: the face under the pointer beside it, when known (the loop "Select loop" means). */
   | { kind: "face" | "edge"; index: number; point: Vec3; face?: number }
-  | { kind: "vertex"; edge: number; at: "start" | "end"; point: Vec3 }
+  | { kind: "vertex"; edge: number; at: VertexPick["at"]; point: Vec3 }
   | { kind: "datum"; id: string; point: Vec3 };
 
 export interface Selection {
@@ -132,13 +133,15 @@ export function describeEdge(e: EdgeInfo | undefined): string {
 /** Where a vertex is: the end of its edge. */
 export function vertexPoint(v: VertexPick, edges: EdgeInfo[]): Vec3 | undefined {
   const e = edges[v.edge];
-  return e ? (v.at === "start" ? e.start : e.end) : undefined;
+  if (!e) return undefined;
+  return v.at === "start" ? e.start : v.at === "end" ? e.end : v.at === "mid" ? e.mid : e.center;
 }
 
 /** "vertex · 40, -20, 6". */
 export function describeVertex(v: VertexPick, edges: EdgeInfo[]): string {
   const p = vertexPoint(v, edges);
-  return p ? `vertex · ${p.map(fmt).join(", ")}` : "vertex";
+  const what = v.at === "mid" ? "midpoint" : v.at === "center" ? "centre" : "vertex";
+  return p ? `${what} · ${p.map(fmt).join(", ")}` : what;
 }
 
 /** What a default reference is called: "Top plane", "Origin". */

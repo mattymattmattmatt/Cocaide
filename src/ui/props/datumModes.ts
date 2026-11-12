@@ -101,7 +101,9 @@ export function switchMode(
   });
   const patch: Raw = { mode, refs: spec.refs.length ? refs : null };
   for (const field of new Set(Object.values(modes).flatMap((m) => m.fields))) {
-    if (!spec.fields.includes(field)) patch[field] = null;
+    if (!spec.fields.includes(field)) {
+      if (f[field] !== undefined) patch[field] = null;
+    }
     else if (f[field] === undefined && defaults[field] !== undefined) patch[field] = defaults[field];
   }
   return patch;
@@ -131,7 +133,8 @@ export function refFields(modes: Readonly<Record<string, ModeSpec>>, labels: Rea
       ...(slot.forms ? { forms: slot.forms } : {}),
       optional: i >= spec.refs.length - (spec.optional ?? 0),
       hint: slot.what[0].toUpperCase() + slot.what.slice(1),
-      when: (f) => modeOf(f) === mode,
+      // Optional slots show one at a time: the next only once the one before is filled (a best fit's points).
+      when: (f) => modeOf(f) === mode && (i <= spec.refs.length - (spec.optional ?? 0) || refsOf(f).length >= i),
       get: (f) => refsOf(f)[i],
       set: (v, f) => ({ refs: withRef(f, i, (v as DatumRef | null) ?? null) }),
     })),
