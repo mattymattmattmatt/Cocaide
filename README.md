@@ -533,7 +533,7 @@ Right-click anything for its menu:
 - a feature in the tree: Edit feature, Edit sketch, Suppress, Rename, Delete; a failed rebuild row the same;
 - a face in the viewport: Sketch on this face, Hole here, Normal to, Zoom to fit, Hide its body; an edge: Fillet, Chamfer;
 - empty space: Sketch on Top, Front or Right, the standard views, Undo;
-- a body: Hide, Select its faces, Save as a part, Delete body; a parameter: Delete;
+- a body: Hide, Select its faces, Export as STEP, Save as a part, Delete body; a parameter: Delete;
 - in the sketcher, geometry: the relations it can take, Smart Dimension, Construction geometry, Delete; a relation or dimension: Edit value, Delete; empty space: the sketch tools, Show relations, Exit sketch;
 - on the drawing sheet, a view or annotation: Delete; empty paper: Balloon every item, Export PDF.
 
@@ -948,6 +948,7 @@ The multibody tools (Phase M) are features too:
 - **Members stay members.** Mirrored, patterned, moved, copied and split members are measured into the cut list along their own lines, under their body names.
 - **Materials.** `"bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } }` gives a body its own material (`setBodyMaterial`). Each body's mass uses it, and the part's mass is their sum.
 - **Save as part.** `bodyPart(doc, body)` is the part as a copy, ending in a `deleteBody` that keeps that body. It is named after the body, in its material, and it never links back to the original. It is in the Bodies panel's **⋯** menu, and over MCP as `saveBody`.
+- **Export bodies (STEP).** The Bodies panel's **Export…** button (or a body's **⋯ → Export STEP…**, or its right-click menu) opens a window beside the view: tick the bodies to export (or **Use selected** to take the ones you selected in the view; the Bodies filter, B, picks whole bodies), then where the file's axes go. **Origin:** the model's own, the centre of the chosen bodies' box, the middle of their bottom (lowest along Up), or a point (typed, or **Use selected point**: a vertex, an edge's midpoint, a circle's centre or a face's centre). **Orientation:** which model direction is **Up** and which way the **front faces** (±X, ±Y, ±Z, or **Use selected** for a flat face's normal or a straight edge), and whether the receiving program is **Z up** (most CAD and CAM: up becomes +Z, the front faces −Y) or **Y up** (many mesh tools: up becomes +Y, the front faces +Z). The window shows where the bodies will sit in the file before you export. It stays open while you click in the view, so you can pick a point or a face for it. Several bodies go in one file, each as its own named solid; the part itself is not changed.
 
 ### Weldment profiles and members
 

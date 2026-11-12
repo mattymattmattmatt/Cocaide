@@ -1,5 +1,6 @@
 // Promise wrapper around the kernel worker.
 
+import type { StepExportOptions } from "../kernel/stepPart";
 import type { KernelMethod, KernelPort } from "../ask/kernel";
 import type { Closest, MassProperties, MeasureRef } from "../kernel/evaluate";
 import type { EvaluateQuery, EvaluateResult, KernelRequest, KernelResponse, RebuildView, SessionPreview } from "./protocol";
@@ -74,8 +75,8 @@ export class KernelClient {
     return r.view;
   }
 
-  async exportStep(doc: unknown): Promise<{ ok: true; name: string; text: string } | { ok: false; errors: string[] }> {
-    const r = await this.request({ type: "exportStep", doc });
+  async exportStep(doc: unknown, options?: StepExportOptions): Promise<{ ok: true; name: string; text: string } | { ok: false; errors: string[] }> {
+    const r = await this.request({ type: "exportStep", doc, ...(options ? { options } : {}) });
     if (r.type !== "step") throw new Error("unexpected kernel reply");
     return r.ok ? { ok: true, name: r.name, text: r.text } : { ok: false, errors: r.errors };
   }

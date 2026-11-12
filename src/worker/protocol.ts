@@ -1,6 +1,7 @@
 // Messages between the UI thread and the kernel worker. OCCT shapes never
 // cross this boundary: the worker sends meshes, measurements and STEP text.
 
+import type { StepExportOptions } from "../kernel/stepPart";
 import type { KernelMethod } from "../ask/kernel";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements, MeshData, SketchOverlay } from "../kernel";
 import type { BodyRange } from "../kernel/bodies";
@@ -11,7 +12,7 @@ import type { Closest, MassProperties, MeasureRef } from "../kernel/evaluate";
 export type KernelRequest =
   /** With `session`: also the session preview for that feature (the client already holds the part before it when `have` is its key). */
   | { id: number; type: "rebuild"; doc: unknown; session?: { feature: string; have?: string } }
-  | { id: number; type: "exportStep"; doc: unknown }
+  | { id: number; type: "exportStep"; doc: unknown; options?: StepExportOptions }
   /** The part as it stands before a feature (the sketch being edited): what that sketch sees and may reference. */
   | { id: number; type: "before"; doc: unknown; feature: string }
   /** A KernelPort call (src/ask/kernel.ts), for the right-click ask. */

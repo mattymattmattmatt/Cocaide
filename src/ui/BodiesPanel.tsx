@@ -28,6 +28,8 @@ interface Props {
   onDelete?(body: string): void;
   /** Saves the body as a part of its own. */
   onSave?(body: string): void;
+  /** Opens Export bodies (STEP) with these bodies ticked (none: what is selected, else all). */
+  onExport?(bodies?: string[]): void;
 }
 
 /** Materials to pick from; anything else is typed as a density. */
@@ -44,11 +46,23 @@ export const MATERIALS: Material[] = [
 
 const n = (x: number, digits = 3) => x.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: digits });
 
-export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelect, onAsk, onSelectMember, materials = {}, onMaterial, onDelete, onSave }: Props) {
+export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelect, onAsk, onSelectMember, materials = {}, onMaterial, onDelete, onSave, onExport }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   if (!m || (bodies.length < 2 && !m.members.length)) return null;
   return (
-    <Section title="Bodies" className="bodies" testId="bodies" count={bodies.length}>
+    <Section
+      title="Bodies"
+      className="bodies"
+      testId="bodies"
+      count={bodies.length}
+      aside={
+        onExport && (
+          <button type="button" className="small" onClick={() => onExport()} title="Export bodies as STEP: choose which, a new origin, and which way is up and front" data-testid="bodies-export">
+            Export…
+          </button>
+        )
+      }
+    >
       <ul>
         {bodies.map((b, i) => {
           const mb = m.bodies.find((x) => x.name === b.name);
@@ -73,7 +87,7 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
               <button className="icon" aria-pressed={!hidden.has(b.name)} aria-label={`${hidden.has(b.name) ? "Show" : "Hide"} ${b.name}`} onClick={() => onToggle(b.name)} data-testid={`body-toggle-${b.name}`}>
                 <Icon name={hidden.has(b.name) ? "eyeOff" : "eye"} size={15} />
               </button>
-              {(onMaterial || onDelete || onSave) && (
+              {(onMaterial || onDelete || onSave || onExport) && (
                 <button className="icon" aria-expanded={open === b.name} aria-label={`More for ${b.name}`} onClick={() => setOpen(open === b.name ? null : b.name)} data-testid={`body-more-${b.name}`}>
                   <Icon name="more" size={15} />
                 </button>
@@ -86,6 +100,7 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
                   onMaterial={onMaterial}
                   onDelete={onDelete && bodies.length > 1 ? () => onDelete(b.name) : undefined}
                   onSave={onSave && (() => onSave(b.name))}
+                  onExport={onExport && (() => onExport([b.name]))}
                 />
               )}
             </li>
@@ -127,7 +142,7 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
 }
 
 /** A body's material, and what can be done with it: delete it, or save it as a part. */
-function BodyDetails({ name, mass, own, onMaterial, onDelete, onSave }: { name: string; mass: string; own?: Material; onMaterial?(body: string, m: Material | null): void; onDelete?(): void; onSave?(): void }) {
+function BodyDetails({ name, mass, own, onMaterial, onDelete, onSave, onExport }: { name: string; mass: string; own?: Material; onMaterial?(body: string, m: Material | null): void; onDelete?(): void; onSave?(): void; onExport?(): void }) {
   const preset = own ? MATERIALS.findIndex((x) => x.name === own.name && x.densityKgPerM3 === own.densityKgPerM3) : -1;
   // "other…" on a preset opens its name and density to edit, starting from the preset's.
   const [editing, setEditing] = useState(false);
@@ -177,6 +192,11 @@ function BodyDetails({ name, mass, own, onMaterial, onDelete, onSave }: { name: 
         </div>
       )}
       <div className="body-actions">
+        {onExport && (
+          <button onClick={onExport} title="This body as a STEP file, with a new origin and up and front if you want" data-testid={`body-export-${name}`}>
+            Export STEP…
+          </button>
+        )}
         {onSave && (
           <button onClick={onSave} title="A part of its own: this part, keeping only this body" data-testid={`body-save-${name}`}>
             Save as part

@@ -30,6 +30,7 @@ import { AskSettingsDialog, type SettingsTab } from "./ask/AskSettingsDialog";
 import { canAsk, modelFor } from "./ask/settings";
 import type { ProfileFacts } from "../ask/profile";
 import { BodiesPanel } from "./BodiesPanel";
+import { ExportBodiesDialog, type ExportBodiesRequest } from "./ExportBodiesDialog";
 import { CutListPanel } from "./CutListPanel";
 import type { FrameActions } from "./FrameProps";
 import { NodesPanel, type PathRequest, type SizeChoice } from "./NodesPanel";
@@ -84,7 +85,7 @@ import { eyeOpen, setShown, toggleEye, useDatumView } from "./model/datumDisplay
 import { hiddenSketches, showSketchPatch, sketchesOf, sketchShown, usedSketches } from "./model/sketchDisplay";
 import { contextEntries, contextTools, MODEL_TOOLS, toolById } from "./model/registry";
 import { dockClass, SidePanel, useDock } from "./SidePanel";
-import { describeDatum, facesOfBody, isSelected, only, pickBody, pickInto, type VertexPick } from "./model/selection";
+import { describeDatum, facesOfBody, isSelected, only, pickBody, pickInto, vertexPoint, type VertexPick } from "./model/selection";
 import { carrySelection, sameSolid } from "./model/carrySelection";
 import { planeSpecFrameIn, sketchFrameIn } from "./model/sketchPlane";
 import type { ContextTarget, EvaluatePanel, ToolCtx, ToolDef, ToolItem } from "./model/ToolContext";
@@ -668,6 +669,55 @@ export function App() {
     download(`${fileBase(name)}${FILE_EXTENSION}`, formatted, "application/json");
     d.markSaved(formatted);
     setNotice({ kind: "info", text: `Saved ${fileBase(name)}${FILE_EXTENSION}` });
+  };
+
+  // ------------------------------------------------------------ export bodies
+
+  const [exportBodies, setExportBodies] = useState<{ initial: string[] } | null>(null);
+  /** The bodies the selection touches (a face, an edge or a vertex of each). */
+  const selectedBodies = (sel: Selection, v: RebuildView | null): string[] => {
+    if (!v) return [];
+    const first = v.bodies[0]?.name;
+    const names = new Set<string>();
+    for (const i of sel.faces) names.add(v.faces[i]?.body ?? first ?? "");
+    for (const i of sel.edges) names.add(v.edges[i]?.body ?? first ?? "");
+    for (const vx of sel.vertices ?? []) names.add(v.edges[vx.edge]?.body ?? first ?? "");
+    names.delete("");
+    return v.bodies.map((b) => b.name).filter((n) => names.has(n));
+  };
+  /** Export bodies: these ticked, else the selected ones, else all. */
+  const openExportBodies = (names?: string[]) => setExportBodies({ initial: names ?? selectedBodies(selection, view) });
+  /** What is selected, for the dialog's "Use selected": a point, a direction, the bodies. */
+  const exportPicked = () => {
+    const v = view;
+    const sel = selection;
+    if (!v) return { point: null, dir: null, bodies: [] };
+    let point: Vec3 | null = null;
+    let dir: Vec3 | null = null;
+    const vx = sel.vertices?.[0];
+    if (vx) point = vertexPoint(vx, v.edges) ?? null;
+    const e = sel.edges.length ? v.edges[sel.edges[0]] : undefined;
+    if (e) {
+      if (!point) point = e.kind === "circle" && e.center ? e.center : e.mid;
+      if (e.kind === "line" && e.direction) dir = e.direction;
+    }
+    const f = sel.faces.length ? v.faces[sel.faces[0]] : undefined;
+    if (f) {
+      if (!point) point = f.centroid;
+      if (!dir && f.type === "plane" && f.normal) dir = f.normal;
+    }
+    return { point, dir, bodies: selectedBodies(sel, v) };
+  };
+  const runExportBodies = async (r: ExportBodiesRequest) => {
+    if (!parsed.ok) return setNotice({ kind: "error", text: `Not exported: ${parsed.error}` });
+    const refused = exportRefusal(parsed.value);
+    if (refused) return setNotice({ kind: "error", text: refused });
+    const out = await kernel.exportStep(parsed.value, { bodies: r.bodies, ...(r.frame ? { frame: r.frame } : {}), name: r.fileName });
+    if (!out.ok) return setNotice({ kind: "error", text: `STEP not exported: ${out.errors[0]}` });
+    const file = `${r.fileName}.step`;
+    download(file, out.text, "model/step");
+    setExportBodies(null);
+    setNotice({ kind: "info", text: `Exported ${file}: ${r.bodies.length === 1 ? r.bodies[0] : `${r.bodies.length} bodies`}${r.frame ? ", re-placed on the origin and axes you chose" : ", as modelled"}.` });
   };
 
   const exportStep = async () => {
@@ -1748,6 +1798,7 @@ export function App() {
         items = [
           { label: hidden ? "Show" : "Hide", icon: hidden ? "eye" : "eyeOff", onClick: () => toggleBody(target.name), testId: "ctx-toggle-body" },
           ...(b ? [{ label: "Select its faces", icon: "select", onClick: () => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] }) } as MenuEntry] : []),
+          { label: "Export as STEP…", icon: "export", onClick: () => openExportBodies([target.name]), testId: "ctx-export-body" },
           { label: "Save as a part…", icon: "save", onClick: () => saveBody(target.name), testId: "ctx-save-body" },
           { label: "Delete body", icon: "deleteBody", disabled: (view?.bodies.length ?? 0) < 2, onClick: () => deleteBody(toolCtx, target.name), testId: "ctx-delete-body" },
         ];
@@ -2525,6 +2576,7 @@ export function App() {
               onMaterial={(body, material) => run({ type: "setBodyMaterial", body, material })}
               onDelete={(name) => deleteBody(toolCtx, name)}
               onSave={saveBody}
+              onExport={openExportBodies}
             />
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>
@@ -2835,6 +2887,17 @@ export function App() {
           )}
         </main>
         <AskPopover ask={ask} />
+        {exportBodies && view && (
+          <ExportBodiesDialog
+            bodies={view.bodies.map((b) => b.name)}
+            initial={exportBodies.initial}
+            boxes={Object.fromEntries((view.measurements?.bodies ?? []).map((b) => [b.name, b.boundingBox ? { min: b.boundingBox.min, max: b.boundingBox.max } : null]))}
+            picked={exportPicked}
+            fileBase={exportBase(doc, view.name ?? "part")}
+            onExport={(r) => void runExportBodies(r)}
+            onClose={() => setExportBodies(null)}
+          />
+        )}
         {files.dialogs}
         {paletteOpen && !sketch && mode === "model" && <CommandPalette entries={paletteEntries()} onClose={() => setPaletteOpen(false)} />}
         {valueBox && (

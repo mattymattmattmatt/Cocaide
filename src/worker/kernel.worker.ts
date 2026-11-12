@@ -183,7 +183,14 @@ async function handle(kernel: OC, req: KernelRequest) {
         post({ id: req.id, type: "step", ok: false, errors });
         return;
       }
-      post({ id: req.id, type: "step", ok: true, name: result.name, text: exportPartSTEP(kernel, result, req.doc) });
+      let text: string;
+      try {
+        text = exportPartSTEP(kernel, result, req.doc, req.options);
+      } catch (e) {
+        post({ id: req.id, type: "step", ok: false, errors: [e instanceof Error ? e.message : String(e)] });
+        return;
+      }
+      post({ id: req.id, type: "step", ok: true, name: result.name, text });
     }
   } catch (e) {
     post({ id: req.id, type: "error", message: e instanceof Error ? e.message : String(e) });

@@ -165,3 +165,35 @@ test("the right panel minimises to a strip, slides out, pops out as a window and
   await page.getByTestId("dock-pin-back").click();
   await expect(page.locator("main.workspace")).not.toHaveClass(/right-floating|right-hidden/);
 });
+
+test("export bodies: pick which, a new origin, up and front; the STEP downloads with only those, re-placed", async ({ page }) => {
+  await page.locator("select").first().selectOption("stand (two bodies)");
+  await expectVolume(page, "133,143.363");
+  await page.getByTestId("bodies-export").click();
+  const dialog = page.getByTestId("export-bodies");
+  await expect(dialog).toBeVisible();
+  // Both ticked at first (nothing selected): just the upright.
+  await page.getByTestId("export-body-base").uncheck();
+  await expect(page.getByTestId("export-body-upright")).toBeChecked();
+  await expect(page.getByTestId("export-summary")).toContainText("1 body, as modelled");
+  // The middle of its bottom on the origin, and model +X up for a Z-up program.
+  await page.getByTestId("export-origin").selectOption("bottom");
+  await page.getByTestId("export-up").selectOption("+X");
+  await expect(page.getByTestId("export-summary")).toContainText("re-placed");
+  await expect(page.getByTestId("export-summary")).toContainText("model +X becomes +Z");
+  await expect(page.getByTestId("export-name")).toHaveAttribute("placeholder", /upright$/);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("export-go").click()]);
+  expect(download.suggestedFilename()).toMatch(/upright\.step$/);
+  const text = readFileSync((await download.path())!, "utf8");
+  expect(text).toContain("ISO-10303-21");
+  await expect(page.getByTestId("notice")).toContainText("re-placed on the origin and axes you chose");
+  await expect(dialog).toHaveCount(0);
+
+  // From a body's own menu: that body ticked; Up from a face selected in the view while the dialog is open.
+  await page.getByTestId("body-more-base").click();
+  await page.getByTestId("body-export-base").click();
+  await expect(page.getByTestId("export-body-base")).toBeChecked();
+  await expect(page.getByTestId("export-body-upright")).not.toBeChecked();
+  await page.getByTestId("export-up-selected").click();
+  await expect(page.getByTestId("export-summary")).toContainText("Select a flat face");
+});
