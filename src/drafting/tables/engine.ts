@@ -238,7 +238,7 @@ function weldValue(key: string, w: Weld): string | number {
     case "size":
       return w.size;
     case "length":
-      return w.allRound ? "ALL ROUND" : w.length;
+      return w.allRound ? "ALL ROUND" : (w.length ?? "—");
     case "count":
       return w.count ?? 1;
     case "side":

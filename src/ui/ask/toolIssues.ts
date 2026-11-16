@@ -43,7 +43,8 @@ const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` 
 export function readIssues(): ToolIssue[] {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? "[]") as unknown;
-    return Array.isArray(v) ? (v as ToolIssue[]) : [];
+    // Usage-limit notices logged before they were left out are not tool problems either.
+    return Array.isArray(v) ? (v as ToolIssue[]).filter((i) => !(i.kind === "notice" && /rate limit|usage limit/i.test(i.problem))) : [];
   } catch {
     return [];
   }
@@ -115,7 +116,8 @@ export function issuesOf(a: AskIssues): ToolIssue[] {
     out.push({ ...base, id: id(), kind: "call", tool: c.tool, problem: cut(c.error, 1500), ...(c.input !== undefined ? { input: json(c.input, 1500) } : {}) });
   }
   for (const t of a.notices ?? []) {
-    if (!t.trim() || /older than this app/.test(t)) continue;
+    // Not about the tools: an out-of-date bridge, or the subscription's usage limit.
+    if (!t.trim() || /older than this app|rate limit|usage limit/i.test(t)) continue;
     out.push({ ...base, id: id(), kind: "notice", problem: cut(t.trim(), 1000) });
   }
   return out;

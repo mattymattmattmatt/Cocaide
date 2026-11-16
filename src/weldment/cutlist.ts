@@ -69,7 +69,7 @@ export function cutListCSV(items: CutListItem[], header: string[][] = []): strin
 
 export function weldTableCSV(welds: Weld[]): string {
   const rows = [["Weld", "Between", "Type", "Size (mm)", "Length (mm)", "All round", "Note"]];
-  for (const w of welds) rows.push([w.id, w.between.join(" + "), w.type, String(w.size), String(w.length), w.allRound ? "yes" : "", w.note ?? ""]);
+  for (const w of welds) rows.push([w.id, w.between.join(" + "), w.type, String(w.size), w.length === undefined ? "" : String(w.length), w.allRound ? "yes" : "", w.note ?? ""]);
   return csv(rows);
 }
 

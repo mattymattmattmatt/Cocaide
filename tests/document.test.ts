@@ -90,7 +90,7 @@ describe("validation", () => {
     const doc = base();
     delete doc.features[2].face.pick;
     expect(allErrors(validateDocument(doc))).toEqual([
-      'hole_1: face.pick: must be one of "largest", "smallest", "all" (got nothing)',
+      'hole_1: face.pick: must be one of "largest", "smallest", "all", "nearest" (got nothing)',
     ]);
   });
 

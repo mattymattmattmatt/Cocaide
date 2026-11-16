@@ -177,7 +177,7 @@ export function CutListPanel({ doc, measurements, dispatch, onError, onSelect, o
                   size <NumberInput value={w.size} min={0} onCommit={(v) => setWeld(w, { size: Number(v) })} testId={`weld-${w.id}-size`} />
                 </label>
                 <label>
-                  length <NumberInput value={w.length} min={0} onCommit={(v) => setWeld(w, { length: Number(v) })} testId={`weld-${w.id}-length`} />
+                  length <NumberInput value={w.length ?? ""} min={0} onCommit={(v) => setWeld(w, { length: Number(v) })} testId={`weld-${w.id}-length`} />
                 </label>
                 <label className="check">
                   <input type="checkbox" checked={!!w.allRound} onChange={(e) => setWeld(w, { allRound: e.target.checked || undefined })} />

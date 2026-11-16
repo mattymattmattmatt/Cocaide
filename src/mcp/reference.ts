@@ -347,9 +347,11 @@ x across, y up): a frame whose nodes are its outside corners has its members ali
   faces. One joint a node; it comes after its members. It fails if its members still overlap.
 { "id": "cap_1", "op": "endCap", "member": "EA", "end": "start" | "end", "thickness": 3 }  a plate on a square end
 { "id": "gusset_1", "op": "gusset", "node": "A", "members": ["EA", "AB"], "size": 100, "thickness": 6, "chamfer": 10 }
-  a triangular plate in the inside corner, centred on the members. End caps and gussets are bodies of their own.
+  a triangular plate in the inside corner, centred on the members' depth; "align": "bottom" sits it flush with their
+  undersides (a board resting on it then sits inside the frame), "top" flush with their tops; "offset" (mm) moves it
+  further up (negative: down). Up is world +Z for a flat corner. End caps and gussets are bodies of their own.
 "welds": [{ "id": "w1", "between": ["EA", "AB"], "type": "fillet" | "butt" | "plug", "size": 3, "length": 160,
-  "allRound": true, "note": "" }]: the weld table, notes only (setWeld). Measurements list each member's length
+  "allRound": true, "note": "" }]: the weld table, notes only (setWeld). "length" (mm) may be left out when it isn't known or the weld is all round. Measurements list each member's length
 (long point to long point) and end angles (0 square, 45 mitre), read from its trimmed body, and the cut list
 groups alike members.
 
@@ -610,7 +612,7 @@ wrong kind is an error that says so ("Top is a plane, but an axis is needed here
 Top, Right, Origin, X, Y or Z.
 
 ## Face selectors
-{ "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all", "offset": 6 (optional), "rank": 1 (optional), "near": [x,y,z] (optional) }
+{ "type": "planar", "normal": [0,0,1], "pick": "largest" | "smallest" | "all" | "nearest" (with "near"), "offset": 6 (optional), "rank": 1 (optional), "near": [x,y,z] (optional) }
 { "type": "cylindrical", "radius": 3.3 (optional), "axis": [0,0,1] (optional), "pick": ..., "near": [x,y,z] (optional) }
 normal is the outward normal; offset is the plane's signed distance from the origin along it. rank (not with offset)
 is the face's level along the normal among the planes the matching faces lie in: 1 the furthest out (the top face for
@@ -627,7 +629,7 @@ Every face and edge selector may also carry:
   fails listing the candidates. Selectors made from picks in the app carry both; write createdBy when you can.
 
 ## Edge selectors
-{ "type": "edge", "pick": "all" | "longest" | "shortest",
+{ "type": "edge", "pick": "all" | "longest" | "shortest" | "nearest" (with "near"),
   "kind": "line" | "circle" (optional), "direction": [0,0,1] (lines parallel to it), "radius": 3, "length": 40,
   "onFace": <face selector>, "between": [<face selector>, <face selector>], "near": [x,y,z] }
 Every given filter must hold.

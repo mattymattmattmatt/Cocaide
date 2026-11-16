@@ -101,7 +101,7 @@ export function cutListXlsx(list: CutListResult, nesting: NestResult[], welds: W
   }
   if (welds.length) {
     const rows: XlsxCell[][] = [[{ v: "Welds", style: "title" }], [], ["Weld", "Between", "Type", "Size (mm)", "Length (mm)", "Count", "Side", "Process", "All round", "Note"].map((v) => ({ v, style: "header" as const }))];
-    for (const w of welds) rows.push([w.id, w.between.join(" + "), w.type, { v: w.size, style: "dec1" }, { v: w.length, style: "dec1" }, { v: w.count ?? 1, style: "int" }, w.side ?? "", w.process ?? "", w.allRound ? "yes" : "", w.note ?? ""]);
+    for (const w of welds) rows.push([w.id, w.between.join(" + "), w.type, { v: w.size, style: "dec1" }, w.length === undefined ? "" : { v: w.length, style: "dec1" }, { v: w.count ?? 1, style: "int" }, w.side ?? "", w.process ?? "", w.allRound ? "yes" : "", w.note ?? ""]);
     sheets.push({ name: "Welds", rows, widths: [8, 30, 10, 10, 12, 8, 8, 14, 10, 30], freeze: 3 });
   }
   return writeXlsx(sheets, { title: meta.title, author: meta.author, date: meta.date });

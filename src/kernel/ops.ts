@@ -459,12 +459,21 @@ export function gussetTool(oc: OC, s: Scope, f: GussetFeature, node: Vec3, a: { 
   const hb = inner(b, ub);
   const alpha = hb / dot3(da2, ub);
   const beta = ha / dot3(db, ua);
-  // Centred on the members' sections across the plane.
-  const mid = (x: typeof a) => {
-    const t = x.placed.outline.map((o) => dot3(o, m));
-    return (Math.max(...t) + Math.min(...t)) / 2;
+  // Across the plane: centred on the members' sections, or flush with their undersides or tops, then offset.
+  // "Up" is world +Z when the plate lies flat, else +Y, else +X.
+  const sign = Math.abs(m[2]) > 0.1 ? Math.sign(m[2]) : Math.abs(m[1]) > 0.1 ? Math.sign(m[1]) : Math.sign(m[0]) || 1;
+  const span = (x: typeof a) => {
+    const t = x.placed.outline.map((o) => dot3(o, m) * sign);
+    return { lo: Math.min(...t), hi: Math.max(...t) };
   };
-  const corner = add3(node, add3(add3(scale3(da2, alpha), scale3(db, beta)), scale3(m, (mid(a) + mid(b)) / 2)));
+  const sa = span(a);
+  const sb = span(b);
+  // Along "up": the plate's middle.
+  let middle = ((sa.lo + sa.hi) / 2 + (sb.lo + sb.hi) / 2) / 2;
+  if (f.align === "bottom") middle = Math.max(sa.lo, sb.lo) + f.thickness / 2;
+  else if (f.align === "top") middle = Math.min(sa.hi, sb.hi) - f.thickness / 2;
+  middle += f.offset ?? 0;
+  const corner = add3(node, add3(add3(scale3(da2, alpha), scale3(db, beta)), scale3(m, middle * sign)));
   const y = normalize3(cross3(m, da2));
   const frame: Frame = { origin: sub3(corner, scale3(m, f.thickness / 2)), x: da2, y, z: m };
   const p2 = (sa: number, sb: number): Vec2 => [sa + sb * dot3(db, da2), sb * dot3(db, y)];

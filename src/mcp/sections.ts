@@ -93,7 +93,18 @@ function find(name: string): Section[] {
   }
   const exact = all.filter((s) => s.key.toLowerCase() === n || s.aliases.some((a) => a.toLowerCase() === n));
   if (exact.length) return exact;
-  return all.filter((s) => s.title.toLowerCase().startsWith(n));
+  // The index lists a section with its aliases ("extrude/cut"): that whole name, or any part of it, finds it.
+  if (n.includes("/")) {
+    for (const part of n.split("/").map((p) => p.trim()).filter(Boolean)) {
+      const got = find(part);
+      if (got.length) return got;
+    }
+  }
+  const titled = all.filter((s) => s.title.toLowerCase().startsWith(n));
+  if (titled.length) return titled;
+  // An op documented inside another section (joint, gusset, endCap in member's): the section that shows "op": "<name>".
+  const raw = name.trim();
+  return all.filter((s) => s.text.includes(`"op": "${raw}"`) || s.text.includes(`"op":"${raw}"`)).slice(0, 2);
 }
 
 /** One section's text, or null with no such section. "ops" gives every op's first lines. */

@@ -397,6 +397,21 @@ export function GussetProps({ f, doc, update }: { f: Raw; doc: RawDocument; upda
       <Field label="Chamfer" unit="mm" hint="Clips the corner for the weld">
         <NumberInput value={(f.chamfer as NumberValue) ?? 0} min={0} onCommit={(v) => update({ chamfer: v === 0 ? null : v })} testId="prop-gusset-chamfer" />
       </Field>
+      <Field label="Sits" hint="Across the members' depth: a board resting on a gusset flush with their undersides sits inside the frame">
+        <Select
+          value={typeof f.align === "string" ? f.align : "centre"}
+          options={[
+            ["centre", "centred on the members"],
+            ["bottom", "flush with their undersides"],
+            ["top", "flush with their tops"],
+          ]}
+          onChange={(v) => update({ align: v === "centre" ? null : v })}
+          testId="prop-gusset-align"
+        />
+      </Field>
+      <Field label="Offset" unit="mm" hint="Further up (negative: down)">
+        <NumberInput value={(f.offset as NumberValue) ?? 0} onCommit={(v) => update({ offset: v === 0 ? null : v })} testId="prop-gusset-offset" />
+      </Field>
     </>
   );
 }

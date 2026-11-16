@@ -11,6 +11,7 @@
 //   SCENARIO:ratelimit      a rate limit event and a usage-limit result
 //   SCENARIO:crash          stderr and exit code 3, no result
 //   SCENARIO:slow           init, then waits (for abort / timeout tests)
+//   SCENARIO:many           24 quick calls first (the step list overflows), then box
 // FAKE_CLAUDE_ARGS: a file the arguments and the prompt are written to.
 // FAKE_CLAUDE_LOGGED_OUT=1: auth status says logged out.
 
@@ -88,6 +89,13 @@ const delta = (text) => out({ type: "stream_event", event: { type: "content_bloc
 delta("Building ");
 delta("a block.");
 out({ type: "assistant", message: { id: "m-a", role: "assistant", content: [{ type: "text", text: "Building a block." }] } });
+// Many quick steps (more than the step list shows), then the usual slow ones.
+if (scenario === "many") {
+  const step = process.env.FAKE_CLAUDE_STEP_MS;
+  process.env.FAKE_CLAUDE_STEP_MS = "0";
+  for (let i = 0; i < 24; i++) await call("partSummary", {});
+  process.env.FAKE_CLAUDE_STEP_MS = step;
+}
 if (scenario === "toolfail") await call("updateFeature", { id: "no_such_feature", patch: { distance: 3 } });
 if (scenario === "toolfail") await call("reportToolIssue", { tool: "updateFeature", problem: "updateFeature refused a feature id the packet listed", suggestion: "say which ids exist" });
 await call("addFeature", { feature: { id: "block_sketch", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r1", type: "rect", center: [0, 0], w: 40, h: 20 }] } });

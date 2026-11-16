@@ -2146,11 +2146,12 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 /* Claude Code through the bridge: the live step list, the edit lock while it works, Live link. */
 .ask-live { display: flex; flex-direction: column; gap: 6px; }
 .ask-live-steps { margin: 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; font-family: var(--mono); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
-.ask-live-step { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* flex: none, or a long run squashes every row to a sliver instead of scrolling the list */
+.ask-live-step { flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ask-live-step.running .ask-live-icon { color: var(--accent); }
 .ask-live-step.ok .ask-live-icon { color: var(--ok); }
 .ask-live-step.error .ask-live-icon, .ask-live-error { color: var(--bad); }
-.ask-live-error { white-space: normal; font-size: 11px; padding-left: 16px; }
+.ask-live-error { white-space: normal; font-size: 11px; padding-left: 16px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .ask-live-name { font-weight: 600; }
 .ask-live-args { color: var(--muted); }
 .ask-live-end { height: 0; }

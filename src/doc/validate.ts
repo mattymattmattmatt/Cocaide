@@ -1612,7 +1612,7 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
   if (raw.type !== "edge") c.fail(`${path}.type`, `must be "edge" (got ${describe(raw.type)})`);
   if (!EDGE_PICKS.includes(raw.pick as never)) {
     c.fail(`${path}.pick`, `must be one of ${EDGE_PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(raw.pick)})`);
-  }
+  } else if (raw.pick === "nearest" && raw.near === undefined) c.fail(`${path}.pick`, '"nearest" needs "near": [x, y, z], the point to be nearest to');
   if (raw.kind !== undefined && !["line", "circle", "other"].includes(raw.kind as string)) {
     c.fail(`${path}.kind`, `must be "line", "circle" or "other" (got ${describe(raw.kind)})`);
   }
@@ -1833,7 +1833,7 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
   const pick = raw.pick;
   if (!PICKS.includes(pick as never)) {
     c.fail(`${path}.pick`, `must be one of ${PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(pick)})`);
-  }
+  } else if (pick === "nearest" && raw.near === undefined) c.fail(`${path}.pick`, '"nearest" needs "near": [x, y, z], the point to be nearest to');
   switch (raw.type) {
     case "planar": {
       c.keys(raw, path, ["type", "normal", "pick", "offset", "rank", "near", "body", ...PROVENANCE_KEYS]);
@@ -1966,9 +1966,13 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   if (typeof raw.profile !== "string") c.fail("profile", `must name a profile in the part's profiles (got ${describe(raw.profile)})`);
   else if (!profile && listed.includes(raw.profile)) c.fail("profile", `the part's profile "${raw.profile}" has errors (see profiles.${raw.profile})`);
   else if (!profile) c.fail("profile", `no profile "${raw.profile}" in the part (${listed.length ? `profiles: ${listed.join(", ")}` : "it has none: add one with addLibraryProfile, e.g. { query: \"SHS\", sizes: [\"25x25x2.5\"] }, or from the Sections panel"})`);
+  // A size written another way ("SHS 25x25x2.5", "25 x 25 x 2.50 SHS") is the designation it means, when just one matches.
+  let size = typeof raw.size === "string" ? raw.size : undefined;
   if (typeof raw.size !== "string") c.fail("size", `must be one of the profile's designations (got ${describe(raw.size)})`);
   else if (profile && !profile.sizes.some((s) => s.designation === raw.size)) {
-    c.fail("size", `"${raw.size}" is not a size of ${profile.name} (sizes: ${profile.sizes.map((s) => s.designation).join(", ")})`);
+    const meant = sameDesignation(profile.sizes.map((s) => s.designation), raw.size);
+    if (meant) size = meant;
+    else c.fail("size", `"${raw.size}" is not a size of ${profile.name} (sizes: ${profile.sizes.map((s) => s.designation).join(", ")})`);
   }
   // An end is a point, or the name of a node.
   const end = (key: "from" | "to"): [Vec3 | undefined, string | undefined] => {
@@ -1997,13 +2001,34 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   }
   const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
   if (c.errors.length > 0 || !from || !to) return null;
-  const f: MemberFeature = { id: raw.id as string, op: "member", profile: raw.profile as string, size: raw.size as string, from, to };
+  const f: MemberFeature = { id: raw.id as string, op: "member", profile: raw.profile as string, size: size as string, from, to };
   if (fromNode) f.fromNode = fromNode;
   if (toNode) f.toNode = toNode;
   if (rotation !== undefined) f.rotation = rotation;
   if (align) f.align = align;
   if (newBody) f.newBody = newBody;
   return f;
+}
+
+/** A designation's words, normalised and in any order: "SHS 25x25x2.5", "25 x 25 x 2.50 SHS" and "25×25×2.5 shs" are one. */
+function designationWords(d: string): string {
+  return d
+    .toLowerCase()
+    .replace(/[×*]/g, "x")
+    .replace(/\s*x\s*/g, "x")
+    .replace(/(\d)\.0+(?!\d)/g, "$1")
+    .replace(/(\.\d*?[1-9])0+(?!\d)/g, "$1")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+/** The one designation `size` means, written another way; undefined when none or several do. */
+export function sameDesignation(designations: string[], size: string): string | undefined {
+  const want = designationWords(size);
+  const hits = designations.filter((d) => designationWords(d) === want);
+  return hits.length === 1 ? hits[0] : undefined;
 }
 
 // ---------------------------------------------------------------- frames
@@ -2090,7 +2115,7 @@ function validateEndCap(raw: Record<string, unknown>, c: Checker, earlier: Map<s
 }
 
 function validateGusset(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): GussetFeature | null {
-  c.keys(raw, "", ["id", "op", "node", "members", "size", "thickness", "chamfer", "newBody"]);
+  c.keys(raw, "", ["id", "op", "node", "members", "size", "thickness", "chamfer", "align", "offset", "newBody"]);
   const node = nodeName(raw, c, ctx);
   if (!Array.isArray(raw.members) || raw.members.length !== 2 || raw.members[0] === raw.members[1]) {
     c.fail("members", `must be the two members it joins (got ${describe(raw.members)})`);
@@ -2104,11 +2129,16 @@ function validateGusset(raw: Record<string, unknown>, c: Checker, earlier: Map<s
   const thickness = c.num(raw, "thickness", "", { positive: true });
   const chamfer = raw.chamfer === undefined ? undefined : c.num(raw, "chamfer", "", { nonNegative: true });
   if (size !== undefined && chamfer !== undefined && chamfer >= size) c.fail("chamfer", `must be less than the size (${size})`);
+  const align = raw.align;
+  if (align !== undefined && align !== "centre" && align !== "bottom" && align !== "top") c.fail("align", `must be "centre", "bottom" (flush with the members' undersides) or "top" (got ${describe(align)})`);
+  const offset = raw.offset === undefined ? undefined : c.num(raw, "offset", "", {});
   const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
   if (c.errors.length || !node || size === undefined || thickness === undefined) return null;
   const pair = raw.members as [string, string];
   const f: GussetFeature = { id: raw.id as string, op: "gusset", node, members: [pair[0], pair[1]], size, thickness };
   if (chamfer !== undefined) f.chamfer = chamfer;
+  if (align !== undefined && align !== "centre") f.align = align as "bottom" | "top";
+  if (offset !== undefined && offset !== 0) f.offset = offset;
   if (newBody) f.newBody = newBody;
   return f;
 }
@@ -2136,7 +2166,7 @@ function checkWelds(input: unknown, bodies: string[], c: Checker): Weld[] {
       });
     if (!WELD_TYPES.includes(w.type as never)) c.fail(`${at}.type`, `must be ${WELD_TYPES.map((t) => `"${t}"`).join(", ")} (got ${describe(w.type)})`);
     c.num(w, "size", at, { positive: true });
-    c.num(w, "length", at, { positive: true });
+    if (w.length !== undefined) c.num(w, "length", at, { positive: true });
     if (w.allRound !== undefined && typeof w.allRound !== "boolean") c.fail(`${at}.allRound`, `must be true or false (got ${describe(w.allRound)})`);
     if (w.note !== undefined && typeof w.note !== "string") c.fail(`${at}.note`, `must be a string (got ${describe(w.note)})`);
     if (w.process !== undefined && (typeof w.process !== "string" || !w.process.trim() || w.process.length > 60)) c.fail(`${at}.process`, `must be the process as text, 1 to 60 characters, like "135 MAG" (got ${describe(w.process)})`);

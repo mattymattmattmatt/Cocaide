@@ -930,8 +930,8 @@ export interface Weld {
   type: WeldType;
   /** Fillet leg or butt throat, mm. */
   size: number;
-  /** Total length, mm. */
-  length: number;
+  /** Total length, mm (left out: not stated; a weld all round needs none). */
+  length?: number;
   /** Welded all round the joint. */
   allRound?: boolean;
   note?: string;
@@ -1847,6 +1847,14 @@ export interface GussetFeature extends FeatureBase {
   size: number;
   thickness: number;
   chamfer?: number;
+  /**
+   * Where the plate sits across the members' depth (default "centre"):
+   * "bottom" flush with their undersides, "top" flush with their tops. Up is
+   * world up (+Z) when the plate lies flat, else +Y, else +X.
+   */
+  align?: "centre" | "bottom" | "top";
+  /** Moved this far further up (negative: down), mm, after align. */
+  offset?: number;
   newBody?: string;
 }
 
@@ -1921,9 +1929,9 @@ export const COMBINE_OPERATIONS = ["add", "subtract", "common"] as const;
 
 // ------------------------------------------------------------- selectors
 
-/** Which of the matching faces to keep. "all" keeps every match. */
-export type Pick = "largest" | "smallest" | "all";
-export const PICKS: readonly Pick[] = ["largest", "smallest", "all"];
+/** Which of the matching faces to keep. "all" keeps every match; "nearest" (with "near") the one nearest that point, as "near" does whatever the pick. */
+export type Pick = "largest" | "smallest" | "all" | "nearest";
+export const PICKS: readonly Pick[] = ["largest", "smallest", "all", "nearest"];
 
 /**
  * Where a selector's face or edge was when the selector was made (picked in
@@ -1984,8 +1992,8 @@ export interface CylindricalFaceSelector extends SelectorProvenance {
 export type FaceSelector = PlanarFaceSelector | CylindricalFaceSelector;
 
 /** Which of the matching edges to keep. */
-export type EdgePick = "all" | "longest" | "shortest";
-export const EDGE_PICKS: readonly EdgePick[] = ["all", "longest", "shortest"];
+export type EdgePick = "all" | "longest" | "shortest" | "nearest";
+export const EDGE_PICKS: readonly EdgePick[] = ["all", "longest", "shortest", "nearest"];
 
 /**
  * Edges are found by query too. Every filter given must hold:

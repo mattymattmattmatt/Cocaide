@@ -274,3 +274,16 @@ test("tool issues: a failed call and the AI's own report are logged, and the rep
   await page.getByTestId("ask-issues-clear").click();
   await expect(page.getByTestId("ask-issues-empty")).toBeVisible();
 });
+
+test("a long run's step list scrolls: every row keeps its height (none squashed to a sliver)", async ({ page }) => {
+  await useBridge(page);
+  await page.getByTestId("ask-settings-save").click();
+  await page.getByTestId("viewport").click({ button: "right", position: { x: 30, y: 30 } });
+  await page.getByTestId("ctx-ask").click();
+  await ask(page, "make something SCENARIO:many");
+  await expect.poll(() => page.getByTestId("ask-live-step").count(), { timeout: 60_000 }).toBeGreaterThan(20);
+  const heights = await page.getByTestId("ask-live-step").evaluateAll((rows) => rows.map((r) => r.getBoundingClientRect().height));
+  expect(Math.min(...heights)).toBeGreaterThan(12);
+  const list = page.getByTestId("ask-live-steps");
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+});

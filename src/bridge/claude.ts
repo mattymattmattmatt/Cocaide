@@ -331,6 +331,8 @@ export class StreamReader {
         const status = typeof info.status === "string" ? info.status : "";
         if (status === "allowed") return [];
         const resets = typeof info.resetsAt === "number" ? ` (resets ${new Date(info.resetsAt * 1000).toLocaleString()})` : "";
+        // "allowed_warning": still allowed, but close to the subscription's usage limit.
+        if (status === "allowed_warning") return [{ kind: "notice", text: `You're close to your ${this.label} usage limit${resets}.` }];
         return [{ kind: "notice", text: `${this.label} rate limit: ${status || "limited"}${resets}` }];
       }
       case "result": {

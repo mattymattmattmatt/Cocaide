@@ -1734,7 +1734,7 @@ class Composer {
     }
     return {
       widths: [16, 70, 22, 16, 22, 34],
-      rows: [["WELDS"], ["WELD", "BETWEEN", "TYPE", "SIZE", "LENGTH", "NOTE"], ...this.v.welds.map((w) => [w.id, w.between.join(" + "), w.type, fmt(w.size), fmt(w.length), w.allRound ? "all round" : (w.note ?? "")])],
+      rows: [["WELDS"], ["WELD", "BETWEEN", "TYPE", "SIZE", "LENGTH", "NOTE"], ...this.v.welds.map((w) => [w.id, w.between.join(" + "), w.type, fmt(w.size), w.length === undefined ? "—" : fmt(w.length), w.allRound ? "all round" : (w.note ?? "")])],
     };
   }
 

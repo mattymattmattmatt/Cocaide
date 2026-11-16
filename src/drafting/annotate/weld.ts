@@ -30,7 +30,7 @@ import type { DraftStyle } from "./style";
 export function sidesOfWeld(w: Weld, standard: "ISO" | "ASME"): { arrowSide?: WeldSymbolSide; otherSide?: WeldSymbolSide } {
   const symbol: WeldSymbolType = w.type === "fillet" ? "fillet" : w.type === "plug" ? "plug" : w.size > 4 ? "v" : "square";
   const size = w.type === "fillet" ? (standard === "ISO" ? `z${numberText(w.size)}` : numberText(w.size)) : w.type === "butt" ? (standard === "ISO" ? `s${numberText(w.size)}` : numberText(w.size)) : numberText(w.size);
-  const side: WeldSymbolSide = { symbol, size, ...(w.allRound ? {} : { length: w.length }) };
+  const side: WeldSymbolSide = { symbol, size, ...(w.allRound || w.length === undefined ? {} : { length: w.length }) };
   const which = w.side ?? "arrow";
   return { ...(which !== "other" ? { arrowSide: side } : {}), ...(which !== "arrow" ? { otherSide: { ...side } } : {}) };
 }
