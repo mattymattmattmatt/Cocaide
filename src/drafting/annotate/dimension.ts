@@ -65,7 +65,7 @@ export interface ViewInfo {
 
 /** What a dimension measures, in its view's mm. */
 export type Measure =
-  | { kind: "linear"; p1: Vec2; p2: Vec2; dir: "h" | "v" | "a"; value: number; sides: [boolean, boolean]; near?: Side; symbol?: string }
+  | { kind: "linear"; p1: Vec2; p2: Vec2; dir: "h" | "v" | "a"; value: number; sides: [boolean, boolean]; near?: Side; symbol?: string; onEdges?: [[Vec2, Vec2] | null, [Vec2, Vec2] | null] }
   | { kind: "angular"; v: Vec2; d1: Vec2; d2: Vec2; r1: number; r2: number; value: number; n1?: number; n2?: number }
   | { kind: "radial"; c: Vec2; r: number; value: number; diameter: boolean; arc?: [number, number]; tip?: Vec2 }
   | { kind: "arc"; c: Vec2; r: number; a0: number; a1: number; value: number }
@@ -295,7 +295,7 @@ function linearFromRefs(
     const p2 = add(p1, mul(n, gap));
     if (Math.abs(gap) < 1e-6) return failed(`${refs[0]} and ${refs[1]} are on one line`);
     const dir: "h" | "v" | "a" = Math.abs(n[0]) < 1e-6 ? "v" : Math.abs(n[1]) < 1e-6 ? "h" : "a";
-    return { kind: "linear", p1, p2, dir, value: Math.abs(gap), sides: [false, false] };
+    return { kind: "linear", p1, p2, dir, value: Math.abs(gap), sides: [false, false], onEdges: [[l1.a, l1.b], [l2.a, l2.b]] };
   }
   // A point and an edge: square from the edge to the point.
   const lineRef = l1 ? 0 : l2 ? 1 : -1;
@@ -310,7 +310,7 @@ function linearFromRefs(
     if (Math.abs(gap) < 1e-6) return failed(`${refs[1 - lineRef]} is on ${refs[lineRef]}`);
     const foot = sub(q.p, mul(n, gap));
     const dir: "h" | "v" | "a" = Math.abs(n[0]) < 1e-6 ? "v" : Math.abs(n[1]) < 1e-6 ? "h" : "a";
-    return { kind: "linear", p1: foot, p2: q.p, dir, value: Math.abs(gap), sides: [false, false] };
+    return { kind: "linear", p1: foot, p2: q.p, dir, value: Math.abs(gap), sides: [false, false], onEdges: [[l.a, l.b], null] };
   }
   return linearBetween(a, v, points, refs[0], refs[1]);
 }
@@ -667,9 +667,22 @@ export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, 
     const side = plan?.side ?? -1;
     const dist0 = a.offset !== undefined ? Math.abs(a.offset) : rowDistance(plan?.row ?? 0, style);
     // A side of the outline: from where the part's drawn edges reach it (sideFoot), not the view's box.
-    const onEdge = (s: Vec2, isSide: boolean): Vec2 => (isSide ? sideFoot(cv, toSheet, s, m.dir === "h" ? 0 : 1, side) : s);
-    const a1 = onEdge(s1, m.sides[0]);
-    const a2 = onEdge(s2, m.sides[1]);
+    const onEdge = (s: Vec2, isSide: boolean, toward: Side): Vec2 => (isSide ? sideFoot(cv, toSheet, s, m.dir === "h" ? 0 : 1, toward) : s);
+    /**
+     * An end on an edge running out to the dimension: its extension line starts at the edge's end nearer the
+     * dimension line, not where the measure crossed it (square from a point, that can be past the edge's end).
+     */
+    const edgeEnd = (p: Vec2, i: 0 | 1, nn: Vec2): Vec2 => {
+      const e = m.onEdges?.[i];
+      if (!e) return p;
+      const [ea, eb] = [toSheet(e[0]), toSheet(e[1])];
+      const d = unit(sub(eb, ea));
+      if (Math.abs(d[0] * nn[1] - d[1] * nn[0]) > 1e-4) return p;
+      return dot(ea, nn) >= dot(eb, nn) ? ea : eb;
+    };
+    const sideN: Vec2 = m.dir === "h" ? [0, side] : m.dir === "v" ? [side, 0] : [0, 0];
+    let a1 = m.dir === "a" ? s1 : edgeEnd(onEdge(s1, m.sides[0], side), 0, sideN);
+    let a2 = m.dir === "a" ? s2 : edgeEnd(onEdge(s2, m.sides[1], side), 1, sideN);
     let u: Vec2;
     let n: Vec2;
     let level: number;
@@ -695,7 +708,11 @@ export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, 
       const nearest = Math.max(dot(a1, n), dot(a2, n));
       if (m.dir !== "a" && lv < Math.min(dot(a1, n), dot(a2, n))) {
         n = mul(n, -1);
-        level = dot(at, n);
+        // Dragged to the other side of the part: its outline sides' extension lines start from that side's edges.
+        const other = (m.dir === "h" ? n[1] : n[0]) > 0 ? 1 : -1;
+        a1 = edgeEnd(onEdge(s1, m.sides[0], other), 0, n);
+        a2 = edgeEnd(onEdge(s2, m.sides[1], other), 1, n);
+        level = Math.max(dot(at, n), Math.max(dot(a1, n), dot(a2, n)) + 2);
       } else level = Math.max(lv, nearest + 2);
     }
     const { label, text } = dimensionLabel(a, m.value, sym, style, ctx.drawing, { side: a.kind === "diameter" ? "shaft" : "hole" });

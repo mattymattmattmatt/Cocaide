@@ -79,6 +79,72 @@ describe("extension lines start on the part", () => {
     expect(far, JSON.stringify(far)).toEqual([]);
   }, 120_000);
 
+  it("a dimension dragged to the other side of the part starts from that side's edges (a chamfered corner)", async () => {
+    const chamfered = {
+      ...plate,
+      name: "chamfered plate",
+      features: [
+        ...(plate as unknown as { features: unknown[] }).features.slice(0, 2),
+        { id: "cut", op: "chamfer", edges: { type: "edge", between: [{ type: "planar", normal: [1, 0, 0], pick: "largest" }, { type: "planar", normal: [0, -1, 0], pick: "largest" }], pick: "all" }, distance: 25 },
+      ],
+    } as unknown as RawDocument;
+    const c = await kernel.check(chamfered);
+    let r = apply(chamfered, { type: "setDrawing", drawing: planDrawing(chamfered, c.measurements, await kernel.project(chamfered, DEFAULT_VIEWS), { date: "2026-11-16" }) });
+    if (!r.ok) throw new Error(r.error);
+    const compose = async (doc: RawDocument) => composeDrawing(doc, { measurements: c.measurements, geometry: await kernel.project(doc, viewSpecs(validateDocument(doc).drawing!)) })!.sheets[0];
+    const first = await compose(r.doc);
+    // Every outline dimension's text dragged to the far side of its view.
+    type Raw = { drawing: { sheets: { annotations: { id: string; type: string; at?: number[] }[] }[] } };
+    const moved = first.annotations.filter((a) => a.type === "dimension" && a.at && a.view && !a.problem);
+    expect(moved.length).toBeGreaterThan(1);
+    const raw = JSON.parse(JSON.stringify(r.doc)) as Raw;
+    for (const a of moved) {
+      const cv = first.views.find((v) => v.id === a.view)!;
+      const rel = [a.at![0] - cv.centre[0], a.at![1] - cv.centre[1]];
+      const ann = raw.drawing.sheets[0].annotations.find((x) => x.id === a.id)!;
+      ann.at = [-rel[0], -rel[1]];
+    }
+    r = { ok: true, doc: raw as unknown as RawDocument } as typeof r;
+    const far = gaps(await compose(raw as unknown as RawDocument)).filter((x) => x.gap > 1.8);
+    expect(far, JSON.stringify(far)).toEqual([]);
+  }, 120_000);
+
+  it("from an edge cut short by a chamfer to a hole below its end: the extension line starts at the edge's end, not past it", async () => {
+    const doc = {
+      ...plate,
+      name: "chamfered plate, hole low",
+      features: [
+        ...(plate as unknown as { features: unknown[] }).features.slice(0, 2),
+        { id: "cut", op: "chamfer", edges: { type: "edge", between: [{ type: "planar", normal: [1, 0, 0], pick: "largest" }, { type: "planar", normal: [0, -1, 0], pick: "largest" }], pick: "all" }, distance: 25 },
+        { id: "hole", op: "hole", face: { type: "planar", normal: [0, 0, 1], pick: "largest" }, center: [-35, -28], diameter: 10, depth: "through" },
+      ],
+    } as unknown as RawDocument;
+    const c = await kernel.check(doc);
+    const r = apply(doc, { type: "setDrawing", drawing: planDrawing(doc, c.measurements, await kernel.project(doc, DEFAULT_VIEWS), { date: "2026-11-16" }) });
+    if (!r.ok) throw new Error(r.error);
+    const compose = async (d: RawDocument) => composeDrawing(d, { measurements: c.measurements, geometry: await kernel.project(d, viewSpecs(validateDocument(d).drawing!)) })!.sheets[0];
+    const first = await compose(r.doc);
+    // The top view: the one whose hole is seen end on.
+    const top = first.views.find((v) => v.edges.some((e) => e.circle && Math.abs(e.circle.r - 5) < 1e-3))!;
+    const lines = top.edges.filter((e) => e.visible && e.look === "line" && e.pts.length >= 2);
+    const maxX = Math.max(...lines.flatMap((e) => e.pts.map((p) => p[0])));
+    const right = lines.find((e) => e.pts.every((p) => Math.abs(p[0] - maxX) < 1e-6))!;
+    const hole = top.edges.find((e) => e.circle && Math.abs(e.circle.r - 5) < 1e-3)!;
+    // The edge's lower end is above the hole's centre: square across from the hole lands past it.
+    expect(Math.min(...right.pts.map((p) => p[1]))).toBeGreaterThan(hole.circle!.c[1] + 1);
+    type Raw = { drawing: { sheets: { annotations: unknown[] }[] } };
+    const raw = JSON.parse(JSON.stringify(r.doc)) as Raw;
+    raw.drawing.sheets[0].annotations.push({ id: "dx", type: "dimension", view: top.id, refs: [`${top.id}:e${right.key}`, `${top.id}:c${hole.key}`], direction: "horizontal" });
+    const v2 = validateDocument(raw) as unknown as { drawingErrors?: unknown };
+    expect(v2.drawingErrors).toEqual([]);
+    const sheet = await compose(raw as unknown as RawDocument);
+    const dx = sheet.annotations.find((a) => a.id === "dx")!;
+    expect(dx.problem).toBeUndefined();
+    const g = gaps(sheet).filter((x) => x.id === "dx");
+    expect(g.length).toBe(2);
+    expect(g.filter((x) => x.gap > 1.8), JSON.stringify(g)).toEqual([]);
+  }, 120_000);
+
   it("the example parts too", async () => {
     for (const name of ["bracket", "flange", "mounting-plate"]) {
       const doc = JSON.parse(readFileSync(new URL(`../examples/${name}.cocaide.json`, import.meta.url), "utf8")) as RawDocument;
