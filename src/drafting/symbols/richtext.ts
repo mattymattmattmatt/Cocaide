@@ -94,7 +94,10 @@ export function richPrims(spans: Span[], at: Vec2, style: RichStyle): Prim[] {
   for (const s of spans) {
     const w = s.kind === "text" ? textWidth(s.text, size, s.bold) : glyphWidth(s.name, h);
     if (s.kind === "text") {
-      out.push({ k: "text", at: [x, 0], text: s.text, size, anchor: "start", ...(s.bold || style.bold ? { bold: true } : {}), ...(s.italic ? { italic: true } : {}), ...extra });
+      // Leading and trailing spaces are room, not text: an SVG or a PDF reader drops them, and " TYP" would sit against its number.
+      const lead = /^\s*/.exec(s.text)![0];
+      const text = s.text.trim();
+      if (text) out.push({ k: "text", at: [x + (lead ? textWidth(lead, size, s.bold) : 0), 0], text, size, anchor: "start", ...(s.bold || style.bold ? { bold: true } : {}), ...(s.italic ? { italic: true } : {}), ...extra });
     } else out.push(...glyph(s.name, x, 0, h, { w: style.stroke ?? h / 10, ...(style.color ? { color: style.color } : {}) }).map((p) => ({ ...p, ...extra })));
     if (s.underline) out.push({ k: "line", pts: [[x, -0.18 * size], [x + w, -0.18 * size]], w: h / 12, ...extra });
     x += w;

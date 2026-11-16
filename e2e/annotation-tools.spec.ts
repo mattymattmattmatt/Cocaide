@@ -144,7 +144,7 @@ test("the bracket detailed by hand: Ø with H7 and its limits, a chain, a datum,
   await page.getByTestId("dim-tol-kind").selectOption("fitWithTol");
   await page.getByTestId("dim-fit-shaft").selectOption("");
   await expect.poll(async () => (await annotations(page)).find((a) => a.id === did)!.tolerance).toEqual({ kind: "fitWithTol", fit: "H7" });
-  await expect.poll(() => sheetTexts(page)).toEqual(expect.arrayContaining([" H7", "+0.015"]));
+  await expect.poll(() => sheetTexts(page)).toEqual(expect.arrayContaining(["H7", "+0.015"]));
   // Override with a warning, then driven again.
   await page.getByTestId("dim-override").fill("6.6 REF");
   await page.getByTestId("dim-override").press("Enter");

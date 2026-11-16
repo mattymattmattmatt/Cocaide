@@ -619,6 +619,39 @@ export function drawLinear(d: LinearDraw, style: DraftStyle): { prims: Prim[]; t
   return { prims, textBox: prof.box, line: [fa, fb], extensions, under, textAt };
 }
 
+/**
+ * Where an extension line from a side of the outline starts (sheet mm): the
+ * point on the side's line (`s[ax]` held) where the view's drawn edges reach
+ * furthest toward the dimension's side, so it starts on the part (the end of a
+ * straight side before a rounded corner), not at the view's box, whose corner
+ * is empty space on a part with rounded corners. The box's edge when no drawn
+ * edge reaches the line (a clipped detail).
+ */
+export function sideFoot(cv: ComposedView, toSheet: (p: Vec2) => Vec2, s: Vec2, ax: 0 | 1, side: Side): Vec2 {
+  const box = cv.box!;
+  const across = 1 - ax;
+  const boxed: Vec2 = ax === 0 ? [s[0], side > 0 ? box.max[1] : box.min[1]] : [side > 0 ? box.max[0] : box.min[0], s[1]];
+  if (cv.clip) return boxed;
+  let best: number | null = null;
+  for (const e of cv.edges) {
+    if (!e.visible) continue;
+    let q: Vec2 | null = null;
+    for (const raw of e.pts) {
+      const p = toSheet(raw);
+      const cands: number[] = [];
+      if (Math.abs(p[ax] - s[ax]) <= 0.05) cands.push(p[across]);
+      if (q && (p[ax] - s[ax]) * (q[ax] - s[ax]) < 0) {
+        const t = (s[ax] - q[ax]) / (p[ax] - q[ax]);
+        cands.push(q[across] + t * (p[across] - q[across]));
+      }
+      for (const c of cands) if (best === null || (side > 0 ? c > best : c < best)) best = c;
+      q = p;
+    }
+  }
+  if (best === null) return boxed;
+  return ax === 0 ? [s[0], best] : [best, s[1]];
+}
+
 /** Lays a dimension out on the sheet. */
 export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedView, m: Measure): LayoutResult | { problem: string } {
   const style = ctx.style;
@@ -633,12 +666,8 @@ export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, 
     const s2 = toSheet(m.p2);
     const side = plan?.side ?? -1;
     const dist0 = a.offset !== undefined ? Math.abs(a.offset) : rowDistance(plan?.row ?? 0, style);
-    // A side of the outline stands on the view's edge nearest the dimension.
-    const onEdge = (s: Vec2, isSide: boolean): Vec2 => {
-      if (!isSide) return s;
-      if (m.dir === "h") return [s[0], side > 0 ? box.max[1] : box.min[1]];
-      return [side > 0 ? box.max[0] : box.min[0], s[1]];
-    };
+    // A side of the outline: from where the part's drawn edges reach it (sideFoot), not the view's box.
+    const onEdge = (s: Vec2, isSide: boolean): Vec2 => (isSide ? sideFoot(cv, toSheet, s, m.dir === "h" ? 0 : 1, side) : s);
     const a1 = onEdge(s1, m.sides[0]);
     const a2 = onEdge(s2, m.sides[1]);
     let u: Vec2;
@@ -973,7 +1002,7 @@ function setDims(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
   const u: Vec2 = m.dir === "h" ? [1, 0] : [0, 1];
   const n: Vec2 = m.dir === "h" ? [0, side] : [side, 0];
   const edgeLevel = side > 0 ? box.max[other] : -box.min[other];
-  const fill = (p: Vec2, isSide: boolean): Vec2 => (isSide ? (other === 1 ? [p[0], side > 0 ? box.max[1] : box.min[1]] : [side > 0 ? box.max[0] : box.min[0], p[1]]) : p);
+  const fill = (p: Vec2, isSide: boolean): Vec2 => (isSide ? sideFoot(cv, toSheet, p, axis as 0 | 1, side) : p);
   const o = fill(toSheet(m.origin), m.sides[0]);
   const pts = m.pts.map((p, i) => fill(toSheet(p), m.sides[i + 1]));
   const texts: string[] = [];

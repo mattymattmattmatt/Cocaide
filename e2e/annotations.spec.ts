@@ -51,7 +51,7 @@ test("auto-dimension the bracket, add an H7 fit and a position frame through the
   await page.getByTestId("ask-close").click();
 
   // The fit reads H7 with its deviations; the frame is drawn under it, its symbols as lines.
-  await expect.poll(() => sheetTexts(page)).toEqual(expect.arrayContaining(["Ø6.6", " H7", "+0.015", "0", "A", "B", "C"]));
+  await expect.poll(() => sheetTexts(page)).toEqual(expect.arrayContaining(["Ø6.6", "H7", "+0.015", "0", "A", "B", "C"]));
   await expect(group(page, "pos").locator("polygon, polyline")).not.toHaveCount(0);
   await expect(page.getByTestId("drawing-item-pos")).toBeVisible();
   const doc = (await savedDocument(page)) as { drawing: { sheets: { annotations: { id: string; tolerance?: unknown }[] }[] } };

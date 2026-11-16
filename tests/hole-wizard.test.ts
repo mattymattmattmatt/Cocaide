@@ -364,7 +364,7 @@ describe("a tapped hole on a drawing", () => {
     // The text is set without the symbol; each ⌴ is three strokes (a box open at the top).
     const texts = sheet.prims.flatMap((p) => (p.k === "text" ? [p.text] : []));
     expect(texts.some((t) => t.includes("⌴"))).toBe(false);
-    expect(texts).toEqual(expect.arrayContaining(["M8×1.25 - 6H ", "11.25", "Ø6.8 ", "15"]));
+    expect(texts).toEqual(expect.arrayContaining(["M8×1.25 - 6H", "11.25", "Ø6.8", "15"]));
     const svg = sheetSVG(sheet);
     expect(svg).not.toContain("⌴");
     // The PDF sets only what Helvetica has: no "?" stands in for a missing glyph.

@@ -100,6 +100,10 @@ export interface ComposedView {
   clip?: { circle?: { c: Vec2; r: number }; poly?: Vec2[] };
   /** Its projection's edges (view mm), each with its key: what GeoRefs resolve against. */
   edges: ProjectedEdge[];
+  /** A section: its cutting line on its parent as drawn (sheet mm, ends where they were drawn): what the editor's grips sit on. */
+  cutLine?: Vec2[];
+  /** A detail view: its circle as drawn on its parent (sheet mm), for its grips. */
+  detailRing?: { c: Vec2; r: number };
 }
 
 export interface ComposedAnnotation {
@@ -125,6 +129,8 @@ export interface ComposedAnnotation {
   grips?: Grip[];
   /** Where it is now, from its view's centre: what rememberPlaces keeps as its `last`. */
   place?: { pts: Vec2[]; text: string };
+  /** A dimension's extension lines, each from near the part to past its line (sheet mm). */
+  extensions?: [Vec2, Vec2][];
   /** Hidden: kept, not drawn. */
   hidden?: boolean;
 }
@@ -1361,6 +1367,8 @@ class Composer {
     // outline when there is room before the first row, else past the last row.
     pts[0] = this.clearOfDimensions(cv, pts[0], pts[1]);
     pts[pts.length - 1] = this.clearOfDimensions(cv, pts[pts.length - 1], pts[pts.length - 2]);
+    const section = this.cv(child.id);
+    if (section) section.cutLine = pts.map((p) => [p[0], p[1]] as Vec2);
     const n = sectionSide(child.line!, child.flip);
     const look: Vec2 = [-n[0], -n[1]];
     const thick = LINE.visible * 1.4;
@@ -1463,6 +1471,8 @@ class Composer {
       const c = this.toSheet(cv, child.circle.at);
       const r = child.circle.r * cv.scale;
       this.prims.push({ k: "circle", c, r, w: LINE.thin * 1.4, owner });
+      const detail = this.cv(child.id);
+      if (detail) detail.detailRing = { c: [c[0], c[1]], r };
       const a = Math.PI / 4;
       const at: Vec2 = [c[0] + Math.cos(a) * (r + 2.5), c[1] + Math.sin(a) * (r + 2.5)];
       this.prims.push({ k: "text", at, text: label, size: TEXT.title, anchor: "start", bold: (this.d.standard ?? "ISO") === "ASME", owner });
@@ -1678,6 +1688,7 @@ class Composer {
         ...(l.textBox ? { textBox: l.textBox } : {}),
         grips: l.grips,
         ...(l.place ? { place: l.place } : {}),
+        ...(l.extensions?.length ? { extensions: l.extensions } : {}),
       });
     }
   }

@@ -10,6 +10,7 @@
 // dropped); annotations drag and their grips move one thing. A tool's
 // session takes the pointer instead, and draws its rubber band over the sheet.
 
+import { cutLineAfter, cutLineGrips, detailRingAfter, detailRingGrips } from "./cutLine";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Command } from "../../doc/commands";
 import type { Drawing, DrawingSheet, Vec2 } from "../../doc/types";
@@ -73,6 +74,8 @@ interface Drag {
   /** What the drag moves: the hit, or the view of an annotation that follows its geometry (a centre mark). */
   target?: SheetHit | null;
   grip?: Grip;
+  /** The grip is on a section's cutting line (the selected section view's), not an annotation's. */
+  cut?: boolean;
   /** The ids moving with the item, for the preview. */
   moving?: string[];
   delta?: Vec2;
@@ -219,8 +222,12 @@ export function SheetCanvas(props: SheetCanvasProps) {
 
   // ------------------------------------------------------------ grips of the one selected annotation
 
-  const grips = useMemo((): { id: string; grip: Grip }[] => {
+  const grips = useMemo((): { id: string; grip: Grip; cut?: boolean }[] => {
     if (selection.length !== 1 || session) return [];
+    // A section view selected: its cutting line's grips (ends, corners, the line itself).
+    const section = sheet.views.find((v) => v.id === selection[0]);
+    if (section?.cutLine) return cutLineGrips(section).map((grip) => ({ id: section.id, grip, cut: true }));
+    if (section?.detailRing) return detailRingGrips(section).map((grip) => ({ id: section.id, grip, cut: true }));
     const a = sheetDoc.annotations.find((x) => x.id === selection[0]) as Record<string, unknown> | undefined;
     const k = a && annotationKind(String(a.type));
     if (!a || !k?.grips) return [];
@@ -285,6 +292,27 @@ export function SheetCanvas(props: SheetCanvasProps) {
     props.onCommands([{ type: "setAnnotation", id, annotation: next }]);
   };
 
+  /** A cutting line's grip dropped: the section view's new line, on its parent. */
+  const dropCut = (id: string, delta: Vec2, grip: Grip) => {
+    const view = sheetDoc.views.find((v) => v.id === id);
+    const cv = sheet.views.find((v) => v.id === id);
+    const parent = view?.parent ? sheet.views.find((v) => v.id === view.parent) : undefined;
+    if (!cv || !parent || !view) return;
+    if (grip.id.startsWith("ring:")) {
+      const circle = view.circle && detailRingAfter(cv, parent, grip.id, delta);
+      if (!circle) return;
+      const { id: _i, ...others } = view;
+      void _i;
+      return props.onCommands([{ type: "setView", id, view: { ...others, circle } }]);
+    }
+    if (!view.line) return;
+    const line = cutLineAfter(cv, view.line, parent, grip.id, delta);
+    if (!line) return;
+    const { id: _id, ...rest } = view;
+    void _id;
+    props.onCommands([{ type: "setView", id, view: { ...rest, line } }]);
+  };
+
   const dropTable = (id: string, delta: Vec2) => {
     const t = (sheetDoc.tables ?? []).find((x) => x.id === id);
     const b = sheet.blocks.find((x) => x.id === id)?.box;
@@ -311,7 +339,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
     if (session) return set({ ...base, kind: "click" });
     const pad = GRIP_PX * props.scaleRef.current;
     const g = grips.find((x) => Math.hypot(x.grip.at[0] - p[0], x.grip.at[1] - p[1]) <= pad);
-    if (g) return set({ ...base, kind: "grip", hit: { kind: "annotation", id: g.id }, grip: g.grip, moving: [g.id] });
+    if (g) return set({ ...base, kind: "grip", hit: g.cut ? { kind: "view", id: g.id } : { kind: "annotation", id: g.id }, grip: g.grip, moving: g.cut ? [] : [g.id], ...(g.cut ? { cut: true } : {}) });
     const hit = hitAt(p);
     if (!hit || hit.kind === "titleBlock") return set({ ...base, kind: "box", hit, additive: e.shiftKey || e.ctrlKey || e.metaKey });
     // An annotation that follows its geometry (a centre mark, a centre line) drags its view.
@@ -399,6 +427,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
       return props.onSelect(ids, d.additive ?? false);
     }
     const delta = d.delta ?? [0, 0];
+    if (d.cut && d.grip && d.hit) return dropCut(d.hit.id, delta, d.grip);
     const t = d.target ?? d.hit;
     if (!t) return;
     if (t.kind === "view") {
@@ -511,9 +540,32 @@ export function SheetCanvas(props: SheetCanvasProps) {
       shapes.push(<rect key={`sel-${id}`} x={b.min[0] - 2 + d[0]} y={H - b.max[1] - 2 - d[1]} width={b.max[0] - b.min[0] + 4} height={b.max[1] - b.min[1] + 4} rx={2} fill="none" stroke="var(--sheet-accent)" strokeWidth={1.6 * k} />);
     }
   }
-  for (const { grip } of grips) {
-    const d = drag?.kind === "grip" && drag.delta ? drag.delta : [0, 0];
-    shapes.push(<rect key={`grip-${grip.id}`} x={grip.at[0] + d[0] - 4 * k} y={H - grip.at[1] - d[1] - 4 * k} width={8 * k} height={8 * k} fill="#fff" stroke="var(--sheet-accent)" strokeWidth={1.5 * k} className="grip" />);
+  // The cutting line as it will be, while one of its grips drags.
+  const cutDrag = drag?.kind === "grip" && drag.cut && drag.delta && drag.grip ? drag : undefined;
+  if (cutDrag?.grip && cutDrag.hit) {
+    const line = sheet.views.find((v) => v.id === cutDrag.hit!.id)?.cutLine;
+    const dd = cutDrag.delta!;
+    const gid = cutDrag.grip.id;
+    if (line) {
+      const pts = line.map((p, i) => (gid === "cut:move" || gid === `cut:${i}` ? [p[0] + dd[0], p[1] + dd[1]] : p));
+      shapes.push(<polyline key="cut-preview" points={pts.map((p) => `${p[0]},${H - p[1]}`).join(" ")} fill="none" stroke="var(--sheet-preview)" strokeWidth={1.4 * k} strokeDasharray={`${6 * k} ${2 * k} ${1.5 * k} ${2 * k}`} data-testid="cut-preview" />);
+    }
+  }
+  if (cutDrag?.grip && cutDrag.hit && cutDrag.grip.id.startsWith("ring:")) {
+    const ring = sheet.views.find((v) => v.id === cutDrag.hit!.id)?.detailRing;
+    const dd = cutDrag.delta!;
+    if (ring) {
+      const centreMoves = cutDrag.grip.id === "ring:centre";
+      const c = centreMoves ? [ring.c[0] + dd[0], ring.c[1] + dd[1]] : ring.c;
+      const r = centreMoves ? ring.r : Math.max(0.5, Math.hypot(ring.r + dd[0], dd[1]));
+      shapes.push(<circle key="ring-preview" cx={c[0]} cy={H - c[1]} r={r} fill="none" stroke="var(--sheet-preview)" strokeWidth={1.4 * k} strokeDasharray={`${4 * k} ${2 * k}`} data-testid="cut-preview" />);
+    }
+  }
+  for (const { grip, cut } of grips) {
+    const g = drag?.kind === "grip" ? drag.grip : undefined;
+    const follows = !!g && (g.id === grip.id || (!!cut && (g.id === "cut:move" || g.id === "ring:centre")));
+    const d = follows && drag?.delta ? drag.delta : [0, 0];
+    shapes.push(<rect key={`grip-${grip.id}`} x={grip.at[0] + d[0] - 4 * k} y={H - grip.at[1] - d[1] - 4 * k} width={8 * k} height={8 * k} fill="#fff" stroke="var(--sheet-accent)" strokeWidth={1.5 * k} className="grip" data-grip={grip.id} />);
   }
   // Snap guides while a view drags; the box of a box selection or zoom to area.
   for (const g of drag?.guides ?? []) {

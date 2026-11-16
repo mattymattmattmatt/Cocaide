@@ -167,7 +167,13 @@ describe("Auto-detail's placement leaves the critic nothing to say about overlap
           for (const d of dimLines) {
             if (d.k !== "line") continue;
             for (let i = 1; i < d.pts.length; i++) {
-              const crossed = s.pts.slice(1).some((q, j) => segmentHitsBox(s.pts[j], q, { min: [Math.min(d.pts[i - 1][0], d.pts[i][0]) - 0.05, Math.min(d.pts[i - 1][1], d.pts[i][1]) - 0.05], max: [Math.max(d.pts[i - 1][0], d.pts[i][0]) + 0.05, Math.max(d.pts[i - 1][1], d.pts[i][1]) + 0.05] }));
+              // A stem that ends on an extension line stands on it (a datum on the surface's extension line): only one running through counts.
+              const trim = (a: number[], b: number[]): [[number, number], [number, number]] => {
+                const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+                const t = Math.min(0.2, l / 3) / l;
+                return [[a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], [b[0] - (b[0] - a[0]) * t, b[1] - (b[1] - a[1]) * t]];
+              };
+              const crossed = s.pts.slice(1).some((q, j) => segmentHitsBox(...trim(s.pts[j], q), { min: [Math.min(d.pts[i - 1][0], d.pts[i][0]) - 0.05, Math.min(d.pts[i - 1][1], d.pts[i][1]) - 0.05], max: [Math.max(d.pts[i - 1][0], d.pts[i][0]) + 0.05, Math.max(d.pts[i - 1][1], d.pts[i][1]) + 0.05] }));
               const along = Math.abs(d.pts[i][0] - d.pts[i - 1][0]) < 1e-6 || Math.abs(d.pts[i][1] - d.pts[i - 1][1]) < 1e-6;
               if (along && crossed) expect([name, datum.id, d.owner, "crosses"]).toEqual([name, datum.id, d.owner, "clear"]);
             }

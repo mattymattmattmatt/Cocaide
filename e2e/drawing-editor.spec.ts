@@ -276,3 +276,49 @@ test("a weldment's sheet: a balloon dragged by its grip", async ({ page }) => {
   await expect.poll(async () => ((await savedDocument(page)) as Doc).drawing.sheets[0].annotations.find((a) => a.id === "b5")?.at?.length).toBe(2);
   await page.screenshot({ path: "test-results/drawing-editor-weldment.png" });
 });
+
+test("a section's cutting line: an end dragged shorter, then the cut moved", async ({ page }) => {
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  await page.getByTestId("mode-drawing").click();
+  await page.getByTestId("drawing-new-empty").click();
+  await expect(page.getByTestId("drawing-item-front")).toContainText("section A-A of top");
+  await page.getByTestId("drawing-item-front").click();
+  type Doc = { drawing: { sheets: { views: { id: string; line?: number[][] }[] }[] } };
+  const line = async () => ((await savedDocument(page)) as Doc).drawing.sheets[0].views.find((v) => v.id === "front")?.line ?? [];
+  const before = await line();
+  expect(before.length).toBe(2);
+  const overlay = page.getByTestId("sheet-overlay");
+  await expect(overlay.locator('rect.grip[data-grip="cut:0"]')).toBeVisible();
+  await expect(overlay.locator('rect.grip[data-grip="cut:move"]')).toBeVisible();
+  const drag = async (id: string, to: (c: { x: number; y: number }, other: { x: number; y: number }) => [number, number]) => {
+    const a = (await overlay.locator(`rect.grip[data-grip="${id}"]`).boundingBox())!;
+    const b = (await overlay.locator('rect.grip[data-grip="cut:1"]').boundingBox())!;
+    const c = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
+    const [x, y] = to(c, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.down();
+    await page.mouse.move((c.x + x) / 2, (c.y + y) / 2, { steps: 4 });
+    await page.mouse.move(x, y, { steps: 4 });
+    await expect(page.getByTestId("cut-preview")).toBeAttached();
+    await page.mouse.up();
+  };
+  const len = (l: number[][]) => Math.hypot(l[1][0] - l[0][0], l[1][1] - l[0][1]);
+  // The start end, a third of the way toward the other end: shorter.
+  await drag("cut:0", (c, o) => [c.x + (o.x - c.x) / 3, c.y + (o.y - c.y) / 3]);
+  await expect.poll(async () => len(await line())).toBeLessThan(len(before) - 1);
+  const shortened = await line();
+  // The middle, dragged square to the line: the cut moves, the same length.
+  await drag("cut:move", (c, o) => {
+    const [dx, dy] = [o.x - c.x, o.y - c.y];
+    const l = Math.hypot(dx, dy) || 1;
+    return [c.x - (dy / l) * 15, c.y + (dx / l) * 15];
+  });
+  await expect.poll(async () => JSON.stringify(await line())).not.toBe(JSON.stringify(shortened));
+  const moved = await line();
+  expect(len(moved)).toBeCloseTo(len(shortened), 3);
+  // Undo puts it back.
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => JSON.stringify(await line())).toBe(JSON.stringify(shortened));
+  await page.screenshot({ path: "test-results/drawing-editor-cut-line.png" });
+});
