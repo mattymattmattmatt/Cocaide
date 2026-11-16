@@ -13,7 +13,7 @@
 import { cutLineAfter, cutLineGrips, detailRingAfter, detailRingGrips } from "./cutLine";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Command } from "../../doc/commands";
-import type { Drawing, DrawingSheet, Vec2 } from "../../doc/types";
+import type { Annotation, Drawing, DrawingSheet, Vec2 } from "../../doc/types";
 import type { ComposedSheet } from "../../drafting/compose";
 import type { Box, Prim } from "../../drafting/sheet";
 import { SHEET_FONT, sheetSVG } from "../../drafting/svg";
@@ -21,6 +21,7 @@ import { wheelZoom } from "../input";
 import { alignmentOf, constrain, followers, keepOff, pulledOff, snapToViews, tenth, type Guide } from "./align";
 import { snapAt, type SnapIndex, type SnapKind, type SnapTarget } from "./snap";
 import { annotationKind, type Grip } from "./tools/kinds";
+import { previewAnnotation } from "./tools/preview";
 import { alignedCoordinate } from "./tools/geometry";
 import type { DrawingSession, OverlayShape, SheetHit, SheetPointer, Tone } from "./tools/types";
 import { areaBox, blendBox, fitBox, mmPerPixel, panBy, reshape, toUser, zoomAt, zoomPercent, type ViewBox } from "./zoom";
@@ -279,16 +280,24 @@ export function SheetCanvas(props: SheetCanvasProps) {
     props.onCommands(cmds);
   };
 
-  const dropAnnotation = (id: string, delta: Vec2, grip?: Grip) => {
+  /** The annotation as a move or a grip drag of `delta` leaves it (without its id); null when it doesn't move on its own. */
+  const patched = (id: string, delta: Vec2, grip?: Grip): Record<string, unknown> | null => {
     const a = sheetDoc.annotations.find((x) => x.id === id) as Record<string, unknown> | undefined;
     const k = a && annotationKind(String(a.type));
-    if (!a || !k) return;
+    if (!a || !k) return null;
     const said = sheet.annotations.find((x) => x.id === id);
     const patch = grip ? k.dragGrip?.(a, grip, delta, { sheet, said }) : k.move?.(a, delta, { sheet, said });
-    if (!patch) return props.onNotice(`${id} follows what it is attached to: it doesn't move on its own.`);
+    if (!patch) return null;
     const next: Record<string, unknown> = { ...a, ...patch };
     for (const [key, v] of Object.entries(next)) if (v === null || v === undefined) delete next[key];
     delete next.id;
+    return next;
+  };
+
+  const dropAnnotation = (id: string, delta: Vec2, grip?: Grip) => {
+    if (!sheetDoc.annotations.some((x) => x.id === id)) return;
+    const next = patched(id, delta, grip);
+    if (!next) return props.onNotice(`${id} follows what it is attached to: it doesn't move on its own.`);
     props.onCommands([{ type: "setAnnotation", id, annotation: next }]);
   };
 
@@ -467,16 +476,40 @@ export function SheetCanvas(props: SheetCanvasProps) {
 
   // ------------------------------------------------------------ previews of a move: the groups translated
 
+  // An annotation dragged (by itself or a grip): laid out as the drop will lay it out, its extension lines
+  // staying on the part, rather than its drawing slid whole. Others (and one that can't be laid out) slide.
+  const live = useMemo((): { id: string; prims: Prim[] } | null => {
+    if (!drag?.moved || !drag.delta || drag.cut) return null;
+    const id = drag.kind === "item" && drag.target?.kind === "annotation" && drag.moving?.length === 1 ? drag.target.id : drag.kind === "grip" && drag.hit?.kind === "annotation" ? drag.hit.id : null;
+    if (!id) return null;
+    const next = patched(id, drag.delta, drag.kind === "grip" ? drag.grip : undefined);
+    if (!next) return null;
+    const l = previewAnnotation(sheet, { ...next, id } as unknown as Annotation);
+    return l && !l.problem && l.prims.length ? { id, prims: l.prims } : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag, sheet, sheetDoc]);
+
   const moved = useMemo((): Map<string, Vec2> => {
     const m = new Map<string, Vec2>();
-    if (drag?.moved && drag.delta && drag.moving && drag.kind !== "box") for (const id of drag.moving) m.set(id, drag.delta);
+    if (drag?.moved && drag.delta && drag.moving && drag.kind !== "box") for (const id of drag.moving) if (id !== live?.id) m.set(id, drag.delta);
     for (const s of session?.overlay() ?? []) if (s.k === "move") m.set(s.id, s.delta);
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag, session, props.tick, hover]);
+  }, [drag, session, props.tick, hover, live]);
   useLayoutEffect(() => {
     const el = host.current;
     if (!el) return;
+    // The dragged annotation's own drawing hidden while its live layout stands in for it.
+    for (const g of el.querySelectorAll<SVGGElement>("g[data-live]")) {
+      if (g.dataset.id !== live?.id) {
+        g.style.removeProperty("visibility");
+        g.removeAttribute("data-live");
+      }
+    }
+    if (live) for (const g of el.querySelectorAll<SVGGElement>(groupSel(live.id))) {
+      g.style.visibility = "hidden";
+      g.setAttribute("data-live", "1");
+    }
     for (const g of el.querySelectorAll<SVGGElement>("g[data-moved]")) {
       if (!moved.has(g.dataset.id ?? "")) {
         g.removeAttribute("transform");
@@ -489,7 +522,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
         g.setAttribute("data-moved", "1");
       }
     }
-  }, [moved, svg]);
+  }, [moved, svg, live]);
 
   // ------------------------------------------------------------ the overlay
 
@@ -576,6 +609,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
     const b = hover.raw;
     shapes.push(<rect key="band" x={Math.min(a[0], b[0])} y={H - Math.max(a[1], b[1])} width={Math.abs(b[0] - a[0])} height={Math.abs(b[1] - a[1])} fill="color-mix(in srgb, var(--sheet-accent) 8%, transparent)" stroke="var(--sheet-accent)" strokeWidth={k} strokeDasharray={drag.kind === "area" ? `${4 * k} ${3 * k}` : undefined} data-testid="sheet-band" />);
   }
+  if (live) draw({ k: "prims", prims: live.prims, tone: "accent" }, "live-drag");
   (session?.overlay() ?? []).forEach((s, i) => draw(s, `s${i}`));
 
   const gridLines = useMemo(() => {

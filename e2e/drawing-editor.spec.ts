@@ -322,3 +322,41 @@ test("a section's cutting line: an end dragged shorter, then the cut moved", asy
   await expect.poll(async () => JSON.stringify(await line())).toBe(JSON.stringify(shortened));
   await page.screenshot({ path: "test-results/drawing-editor-cut-line.png" });
 });
+
+test("a dimension dragged: its preview is laid out as it will drop, the extension lines staying on the part", async ({ page }) => {
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  await page.getByTestId("mode-drawing").click();
+  await page.getByTestId("drawing-new-empty").click();
+  await expect(page.getByTestId("drawing-item-d2")).toContainText("dimension 40");
+  const g = page.getByTestId("sheet").locator('g[data-id="d2"]').first();
+  // The extension lines' starts as drawn (in the sheet's own units, as the points list them).
+  const starts = async (loc: ReturnType<Page["locator"]>) =>
+    (await loc.locator("polyline, line, path").evaluateAll((els) =>
+      els.map((el) => {
+        if (el.tagName === "polyline") return (el.getAttribute("points") ?? "").trim().split(/\s+/)[0];
+        if (el.tagName === "line") return `${el.getAttribute("x1")},${el.getAttribute("y1")}`;
+        return (el.getAttribute("d") ?? "").replace(/^M\s*/, "").split(/[ L]/).filter(Boolean).slice(0, 2).join(",");
+      }),
+    )).map((s) => s.split(",").map((v) => Math.round(Number(v) * 10) / 10).join(","));
+  const before = await starts(g);
+  type Doc = { drawing: { sheets: { annotations: { id: string }[] }[] } };
+  const stored = async () => JSON.stringify(((await savedDocument(page)) as Doc).drawing.sheets[0].annotations.find((a) => a.id === "d2"));
+  const was = await stored();
+  const t = (await g.locator("text").first().boundingBox())!;
+  const [x, y] = [t.x + t.width / 2, t.y + t.height / 2];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 15, y + 5, { steps: 4 });
+  await page.mouse.move(x - 40, y + 10, { steps: 4 });
+  const preview = page.getByTestId("sheet-overlay").getByTestId("sheet-preview");
+  await expect(preview).toBeVisible();
+  await expect(g).toHaveCSS("visibility", "hidden");
+  const during = await starts(preview);
+  // The two extension lines start where they did: on the part, not slid with the drag.
+  expect(before.filter((p) => during.includes(p)).length).toBeGreaterThanOrEqual(2);
+  await page.mouse.up();
+  await expect(preview).toHaveCount(0);
+  await expect(g).not.toHaveCSS("visibility", "hidden");
+  await expect.poll(stored).not.toBe(was);
+});
