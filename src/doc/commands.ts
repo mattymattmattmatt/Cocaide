@@ -206,7 +206,13 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (!Number.isInteger(at) || at < 0 || at > features.length) {
         return { ok: false, error: `addFeature: index ${at} is outside 0..${features.length}` };
       }
-      features.splice(at, 0, f);
+      // A sketch whose drawn numbers are a hair off its constraints (rounded coordinates against an exact dimension)
+      // is solved onto them, as a dimension edit would; one that won't solve goes in as written and says why on rebuild.
+      if (f.op === "sketch" && Array.isArray(f.constraints) && f.constraints.length) {
+        const solved = resolveSketch(f, documentParameters(doc));
+        if (solved.ok) features.splice(at, 0, solved.feature);
+        else features.splice(at, 0, f);
+      } else features.splice(at, 0, f);
       break;
     }
     case "insertFeatures": {

@@ -1217,7 +1217,13 @@ function validateExtrude(
   c: Checker,
   earlier: Map<string, string>,
 ): ExtrudeFeature | null {
-  c.keys(raw, "", raw.op === "extrude" ? EXTRUDE_KEYS : CUT_KEYS);
+  c.keys(raw, "", raw.op === "extrude" ? [...EXTRUDE_KEYS, "operation"] : CUT_KEYS);
+  // "operation", as revolve and sweep take it: "add" (the default), "new" (a body of its own: newBody, or the
+  // feature's id), "intersect"; material taken away is op "cut".
+  const operation = raw.op === "extrude" ? raw.operation : undefined;
+  if (operation !== undefined && !["add", "new", "intersect"].includes(operation as string)) {
+    c.fail("operation", operation === "remove" ? 'an extrude adds material: to take it away use op "cut" with the same fields' : `must be "add", "new" or "intersect" (got ${describe(operation)})`);
+  }
   if (typeof raw.sketch !== "string") {
     c.fail("sketch", `must be the id of a sketch feature (got ${describe(raw.sketch)})`);
   } else if (!earlier.has(raw.sketch)) {
@@ -1287,9 +1293,9 @@ function validateExtrude(
   // Where the material goes: an extrude names a body; a cut, the bodies it cuts. (keys() reports the other fields.)
   const extrude = raw.op === "extrude";
   const body = extrude && raw.body !== undefined ? bodyName(raw.body, "body", c) : undefined;
-  const newBody = extrude && raw.newBody !== undefined ? bodyName(raw.newBody, "newBody", c) : undefined;
+  const newBody = extrude && raw.newBody !== undefined ? bodyName(raw.newBody, "newBody", c) : extrude && operation === "new" && typeof raw.id === "string" ? raw.id : undefined;
   if (extrude && raw.body !== undefined && raw.newBody !== undefined) c.fail("", "give body (add to it) or newBody (start one), not both");
-  const intersect = extrude ? flag(raw, "intersect", c) : undefined;
+  const intersect = extrude ? flag(raw, "intersect", c) || operation === "intersect" || undefined : undefined;
   if (intersect && raw.newBody !== undefined) c.fail("intersect", "keeps the overlap with an existing body: name it with body (or leave it out for the part's body), not newBody");
   const flipSide = extrude ? undefined : flag(raw, "flipSide", c);
   const bodies = !extrude && raw.bodies !== undefined ? bodyList(raw.bodies, "bodies", c) : undefined;
@@ -1610,8 +1616,10 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
   const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
   const prov = selectorProvenance(raw, path, c);
   if (raw.type !== "edge") c.fail(`${path}.type`, `must be "edge" (got ${describe(raw.type)})`);
-  if (!EDGE_PICKS.includes(raw.pick as never)) {
-    c.fail(`${path}.pick`, `must be one of ${EDGE_PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(raw.pick)})`);
+  if (raw.pick === undefined && raw.near !== undefined) {
+    // The edge nearest "near" is the one meant.
+  } else if (!EDGE_PICKS.includes(raw.pick as never)) {
+    c.fail(`${path}.pick`, `must be one of ${EDGE_PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(raw.pick)})${raw.pick === undefined ? ', or give "near": [x, y, z] for the edge nearest a point' : ""}`);
   } else if (raw.pick === "nearest" && raw.near === undefined) c.fail(`${path}.pick`, '"nearest" needs "near": [x, y, z], the point to be nearest to');
   if (raw.kind !== undefined && !["line", "circle", "other"].includes(raw.kind as string)) {
     c.fail(`${path}.kind`, `must be "line", "circle" or "other" (got ${describe(raw.kind)})`);
@@ -1638,7 +1646,7 @@ export function validateEdgeSelector(raw: unknown, path: string, c: Checker): Ed
     c.fail(`${path}.radius`, `applies to circular edges, but kind is ${describe(raw.kind)}`);
   }
   if (c.errors.length > before) return null;
-  const sel: EdgeSelector = { type: "edge", pick: raw.pick as EdgeSelector["pick"] };
+  const sel: EdgeSelector = { type: "edge", pick: (raw.pick ?? "nearest") as EdgeSelector["pick"] };
   if (raw.kind !== undefined) sel.kind = raw.kind as EdgeSelector["kind"];
   if (onFace) sel.onFace = onFace;
   if (between) sel.between = between;
@@ -1831,8 +1839,11 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
   }
   const before = c.errors.length;
   const pick = raw.pick;
-  if (!PICKS.includes(pick as never)) {
-    c.fail(`${path}.pick`, `must be one of ${PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(pick)})`);
+  // With "near" the face nearest that point is the one meant: "pick" may be left out.
+  if (pick === undefined && raw.near !== undefined) {
+    // nothing to check
+  } else if (!PICKS.includes(pick as never)) {
+    c.fail(`${path}.pick`, `must be one of ${PICKS.map((p) => `"${p}"`).join(", ")} (got ${describe(pick)})${pick === undefined ? ', or give "near": [x, y, z] for the face nearest a point' : ""}`);
   } else if (pick === "nearest" && raw.near === undefined) c.fail(`${path}.pick`, '"nearest" needs "near": [x, y, z], the point to be nearest to');
   switch (raw.type) {
     case "planar": {
@@ -1849,7 +1860,7 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
       const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
       const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
       if (!normal || c.errors.length > before) return null;
-      const s: FaceSelector = { type: "planar", normal, pick: pick as FaceSelector["pick"] };
+      const s: FaceSelector = { type: "planar", normal, pick: (pick ?? "nearest") as FaceSelector["pick"] };
       if (offset !== undefined) s.offset = offset;
       if (rank !== undefined) s.rank = rank as number;
       if (near) s.near = near;
@@ -1864,7 +1875,7 @@ export function validateFaceSelector(raw: unknown, path: string, c: Checker): Fa
       const near = raw.near === undefined ? undefined : c.vec3(raw, "near", path);
       const body = raw.body === undefined ? undefined : bodyName(raw.body, `${path}.body`, c);
       if (c.errors.length > before) return null;
-      const s: FaceSelector = { type: "cylindrical", pick: pick as FaceSelector["pick"] };
+      const s: FaceSelector = { type: "cylindrical", pick: (pick ?? "nearest") as FaceSelector["pick"] };
       if (radius !== undefined) s.radius = radius;
       if (axis) s.axis = axis;
       if (near) s.near = near;
@@ -2225,6 +2236,8 @@ export function validatePlane(v: unknown, path: string, c: Checker, earlier: Rea
  * geometry.
  */
 export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: ReadonlyMap<string, string>, want?: DatumKind | readonly DatumKind[]): DatumRef | null {
+  // A bare [x, y, z] is the point it plainly means.
+  if (Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x))) return validateDatumRef({ point: v }, path, c, earlier, want);
   if (!isObject(v)) {
     c.fail(path, `must be a reference: { "datum": "Top" }, { "face": <face selector> }, { "edge": <edge selector> }, { "point": [x, y, z] } or { "sketch": <sketch id>, "entity": <entity id> } (got ${describe(v)})`);
     return null;

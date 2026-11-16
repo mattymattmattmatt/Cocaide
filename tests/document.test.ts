@@ -46,7 +46,7 @@ describe("validation", () => {
     const doc = base();
     doc.features[1].distnace = 6;
     expect(allErrors(validateDocument(doc))).toEqual([
-      'ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction, body, newBody, upTo, offset, direction2, startOffset, from, draft, thin, regions, intersect)',
+      'ext_1: unknown field "distnace" (allowed: id, op, sketch, extent, distance, direction, body, newBody, upTo, offset, direction2, startOffset, from, draft, thin, regions, intersect, operation)',
     ]);
   });
 
@@ -90,7 +90,7 @@ describe("validation", () => {
     const doc = base();
     delete doc.features[2].face.pick;
     expect(allErrors(validateDocument(doc))).toEqual([
-      'hole_1: face.pick: must be one of "largest", "smallest", "all", "nearest" (got nothing)',
+      'hole_1: face.pick: must be one of "largest", "smallest", "all", "nearest" (got nothing), or give "near": [x, y, z] for the face nearest a point',
     ]);
   });
 

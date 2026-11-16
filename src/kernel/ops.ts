@@ -506,7 +506,9 @@ export function combineBodies(oc: OC, s: Scope, f: CombineFeature, target: TopoD
     const next = unify(oc, s, s.track(op.Shape()));
     const after = volumeOf(oc, s, next);
     if (f.operation !== "subtract" && countSubShapes(oc, s, next, "solid") > 1) {
-      throw new OpError(`"${f.target}" and "${name}" don't touch: adding them would make one body of separate solids`);
+      throw new OpError(
+        `"${f.target}" and "${name}" don't touch: adding them would make one body of separate solids. Leave them as separate bodies (a cut list and Export body can still take them together), or move one so they touch or overlap`,
+      );
     }
     if (after <= VOLUME_EPS) {
       throw new OpError(f.operation === "common" ? `"${f.target}" and "${name}" don't overlap: their common part is empty` : `subtracting "${name}" leaves nothing of "${f.target}"`);

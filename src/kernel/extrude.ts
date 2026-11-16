@@ -204,7 +204,11 @@ class Builder {
     // direction from a profile off to one side still reaches a part that is not ahead of the sketch origin.
     const up = scale3(this.frame.z, Math.sign(dot3(dd, this.frame.z)));
     const length = reachAlong(this.oc, this.s, this.reach, from, up);
-    if (length <= 1e-6) throw new OpError(`the solid is entirely behind the ${this.parallel(start) ? "sketch plane" : "start"} in direction ${formatDirection(dd)}`);
+    if (length <= 1e-6) {
+      throw new OpError(
+        `the solid is entirely behind the ${this.parallel(start) ? "sketch plane" : "start"} in direction ${formatDirection(dd)}: reverse the direction (${formatDirection(scale3(dd, -1))}), or use extent "throughAllBoth" to go both ways`,
+      );
+    }
     return { kind: "plane", plane: { point: add3(from, scale3(up, length)), normal: this.frame.z }, what: "the far side of the part" };
   }
 

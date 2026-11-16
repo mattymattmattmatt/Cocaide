@@ -30,7 +30,7 @@ export function applyOperation(ctx: RebuildCtx, s: Scope, f: OperationFields & {
       ctx.setSeed(f.id, { tool, kind: "fuse", into: r.body });
       break;
     case "remove":
-      ctx.commit(removeFrom(oc, s, ctx.targets(r.bodies), tool, { listed: !!r.bodies, what, missed: `the ${what} does not reach ${r.bodies ? "the bodies it lists" : "the part"}` }));
+      ctx.commit(removeFrom(oc, s, ctx.targets(r.bodies), tool, { listed: !!r.bodies, what, missed: `the ${what} does not reach ${r.bodies ? "the bodies it lists" : "the part"}${what === "sweep" ? ' (check the profile sits on the body where the path starts; for a screw thread, the "thread" op cuts or models one from a cylinder\'s face)' : ""}` }));
       ctx.setSeed(f.id, { tool, kind: "cut", bodies: r.bodies });
       break;
     case "intersect":

@@ -101,7 +101,7 @@ describe("what the document checks", () => {
   });
 
   it("checks selectors with the selector rules, and the rest of the shape strictly", () => {
-    expect(check({ face: { type: "planar", normal: [0, 0, 1] } }).errors).toEqual(['f: axis.face.pick: must be one of "largest", "smallest", "all", "nearest" (got nothing)']);
+    expect(check({ face: { type: "planar", normal: [0, 0, 1] } }).errors).toEqual(['f: axis.face.pick: must be one of "largest", "smallest", "all", "nearest" (got nothing), or give "near": [x, y, z] for the face nearest a point']);
     expect(check({ edge: { type: "edge", pick: "all" }, at: "top" }).errors).toEqual(['f: axis.at: must be "start", "end", "mid", "center" (got "top")']);
     expect(check({ datum: "Top", at: "start" }).errors).toEqual(['f: axis: unknown field "at" (allowed: datum)']);
     expect(check({ datum: "Top", face: TOP }).errors).toEqual(["f: axis: give one of datum, face, edge, point or sketch (got datum and face)"]);
