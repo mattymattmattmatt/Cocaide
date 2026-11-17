@@ -314,7 +314,7 @@ const KIND_KEYS: Record<ViewKind, readonly string[]> = {
   detail: ["parent", "circle", "profile", "style", "label"],
   auxiliary: ["parent", "edge", "label", "flip"],
 };
-const COMMON_KEYS = ["id", "kind", "hidden", "at", "locked", "scale", "display", "tangent", "threads", "breaks", "crop", "brokenOut", "bodies", "showLabel", "showScale"];
+const COMMON_KEYS = ["id", "kind", "hidden", "at", "locked", "scale", "display", "tangent", "threads", "breaks", "crop", "brokenOut", "bodies", "showLabel", "showScale", "rotation"];
 const KIND_HELP: Record<ViewKind, string> = {
   model: "a model view looks at the part from a named orientation (look) or a custom one (orientation)",
   projected: "a projected view is made from a parent view and a direction",
@@ -433,6 +433,10 @@ function checkView(v: Record<string, unknown>, at: string, views: Map<string, { 
   if (v.display !== undefined && !DISPLAY_MODES.includes(v.display as never)) c.fail(`${at}.display`, `must be ${DISPLAY_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.display)})`);
   if (v.tangent !== undefined && !TANGENT_MODES.includes(v.tangent as never)) c.fail(`${at}.tangent`, `must be ${TANGENT_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.tangent)})`);
   for (const k of ["threads", "showLabel", "showScale", "free", "locked"]) bool(k);
+  if (v.rotation !== undefined) {
+    c.num(v, "rotation", at, {});
+    if (typeof v.rotation === "number" && Math.abs(v.rotation) > 360) c.fail(`${at}.rotation`, `must be degrees from -360 to 360 (got ${v.rotation})`);
+  }
   // Phase L's switch (true and false are read as display "hidden" and its default); anything else is a mistake.
   if (v.hidden !== undefined) c.fail(`${at}.hidden`, `must be true or false (got ${describe(v.hidden)}); a view's hidden edges are now display: "hidden"`);
   if (v.breaks !== undefined) {

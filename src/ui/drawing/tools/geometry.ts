@@ -4,12 +4,14 @@
 // view lined up with its parent must sit; a cutting line run past the part.
 
 import type { Vec2 } from "../../../doc/types";
-import { unbreak, viewToSheet, type ComposedView } from "../../../drafting/compose";
+import { turnVec, unbreak, viewToSheet, type ComposedView } from "../../../drafting/compose";
 import type { Box } from "../../../drafting/sheet";
 
 /** A sheet point in the view's mm (its breaks put back): the inverse of viewToSheet. */
-export function sheetToView(cv: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks">, p: Vec2): Vec2 {
-  const q: Vec2 = [cv.origin[0] + (p[0] - cv.centre[0]) / cv.scale, cv.origin[1] + (p[1] - cv.centre[1]) / cv.scale];
+export function sheetToView(cv: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks"> & { rotation?: number }, p: Vec2): Vec2 {
+  // Turned back first (a turned view), then scaled.
+  const d = turnVec([p[0] - cv.centre[0], p[1] - cv.centre[1]], cv.rotation ? -cv.rotation : 0);
+  const q: Vec2 = [cv.origin[0] + d[0] / cv.scale, cv.origin[1] + d[1] / cv.scale];
   if (!cv.breaks.length) return q;
   // unbreak is increasing along each axis: find the point it sends to q by halving.
   const out: Vec2 = [q[0], q[1]];

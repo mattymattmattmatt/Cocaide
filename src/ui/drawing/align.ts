@@ -45,6 +45,9 @@ export function attachSide(view: DrawingView, projection: Projection): Vec2 | nu
 export function alignmentOf(view: DrawingView, views: DrawingView[], projection: Projection): Alignment {
   const side = attachSide(view, projection);
   if (!side || !views.some((v) => v.id === view.parent)) return { axis: null };
+  // A turned view (or one made from a turned view) lines up with nothing: the composer doesn't line it up either.
+  const parent = views.find((v) => v.id === view.parent);
+  if (view.rotation || parent?.rotation) return { axis: null };
   return { axis: side[0] !== 0 ? 0 : 1, parent: view.parent, side };
 }
 

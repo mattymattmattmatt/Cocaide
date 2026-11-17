@@ -139,6 +139,8 @@ export interface PlacedView {
   centre: Vec2;
   origin: Vec2;
   scale: number;
+  /** Turned on the sheet, degrees counter-clockwise about its centre. */
+  rotation?: number;
 }
 
 /**
@@ -147,7 +149,11 @@ export interface PlacedView {
  * its hole table. Owned by the table's id.
  */
 export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec2, owner: string, size = 3.5): Prim[] {
-  const at = (p: Vec2): Vec2 => [view.centre[0] + (p[0] - view.origin[0]) * view.scale, view.centre[1] + (p[1] - view.origin[1]) * view.scale];
+  const at = (p: Vec2): Vec2 => {
+    const t = ((view.rotation ?? 0) * Math.PI) / 180;
+    const d: Vec2 = [(p[0] - view.origin[0]) * view.scale, (p[1] - view.origin[1]) * view.scale];
+    return [view.centre[0] + d[0] * Math.cos(t) - d[1] * Math.sin(t), view.centre[1] + d[0] * Math.sin(t) + d[1] * Math.cos(t)];
+  };
   const out: Prim[] = [];
   for (const r of rows) {
     const c = at(r.center);

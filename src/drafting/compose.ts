@@ -93,6 +93,10 @@ export interface ComposedView {
   outline: Box | null;
   /** Where its lines are on the sheet. */
   box: Box | null;
+  /** Turned on the sheet, degrees counter-clockwise about its centre (DrawingView.rotation); absent when not turned. */
+  rotation?: number;
+  /** A turned view: its box as if it were not turned (about the same centre), what its dimensions are laid out against. */
+  localBox?: Box | null;
   /** True when a length along the view is a true length. */
   square: boolean;
   breaks: ComposedBreak[];
@@ -233,10 +237,27 @@ export function composeSheet(doc: unknown, ctx: ComposeContext, sheet: string | 
   return s ? new Composer(v, v.drawing, s, i, ctx, doc).compose() : null;
 }
 
-/** A point of a view (view mm, before breaks) on the sheet. */
-export function viewToSheet(cv: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks">, p: Vec2): Vec2 {
+/** A vector turned `deg` degrees counter-clockwise. */
+export function turnVec(v: Vec2, deg: number | undefined): Vec2 {
+  if (!deg) return v;
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return [v[0] * c - v[1] * s, v[0] * s + v[1] * c];
+}
+
+/** A view's turn as stored, to -180..180 (0 when none). */
+export function viewTurn(v: { rotation?: unknown }): number {
+  const r = typeof v.rotation === "number" && Number.isFinite(v.rotation) ? v.rotation : 0;
+  const n = ((((r + 180) % 360) + 360) % 360) - 180;
+  return Math.abs(n) < 1e-9 ? 0 : n;
+}
+
+/** A point of a view (view mm, before breaks) on the sheet: scaled, turned about the view's centre, moved there. */
+export function viewToSheet(cv: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks"> & { rotation?: number }, p: Vec2): Vec2 {
   const q = unbreak(cv.breaks, p);
-  return [cv.centre[0] + (q[0] - cv.origin[0]) * cv.scale, cv.centre[1] + (q[1] - cv.origin[1]) * cv.scale];
+  const d = turnVec([(q[0] - cv.origin[0]) * cv.scale, (q[1] - cv.origin[1]) * cv.scale], cv.rotation);
+  return [cv.centre[0] + d[0], cv.centre[1] + d[1]];
 }
 
 /** A point of a view with its breaks taken out: past a break, closer by what it leaves out; in one, squeezed into its gap. */
@@ -736,13 +757,17 @@ class Composer {
   }
 
   /** A view's size on the sheet at scale k (breaks taken out), and what it covers before them. */
-  private extent(view: DrawingView, k: number): { half: Vec2; outline: Box | null; originB: Vec2; breaks: ComposedBreak[] } {
+  private extent(view: DrawingView, k: number): { half: Vec2; local: Vec2; outline: Box | null; originB: Vec2; breaks: ComposedBreak[] } {
     const outline = this.outline(view);
     const breaks = this.breaksOf(view, k);
-    if (!outline) return { half: [0, 0], outline, originB: [0, 0], breaks };
+    if (!outline) return { half: [0, 0], local: [0, 0], outline, originB: [0, 0], breaks };
     const lo = unbreak(breaks, outline.min);
     const hi = unbreak(breaks, outline.max);
-    return { half: [((hi[0] - lo[0]) * k) / 2, ((hi[1] - lo[1]) * k) / 2], outline, originB: [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2], breaks };
+    const local: Vec2 = [((hi[0] - lo[0]) * k) / 2, ((hi[1] - lo[1]) * k) / 2];
+    // Turned: what the turned rectangle covers.
+    const t = (viewTurn(view) * Math.PI) / 180;
+    const half: Vec2 = t ? [Math.abs(Math.cos(t)) * local[0] + Math.abs(Math.sin(t)) * local[1], Math.abs(Math.sin(t)) * local[0] + Math.abs(Math.cos(t)) * local[1]] : local;
+    return { half, local, outline, originB: [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2], breaks };
   }
 
   /** A view's own scale: its own, else a detail's twice its parent's, else the sheet's. */
@@ -829,6 +854,7 @@ class Composer {
       ...cv,
       centre: [cv.centre[0] + d[0], cv.centre[1] + d[1]],
       box: cv.box ? { min: [cv.box.min[0] + d[0], cv.box.min[1] + d[1]], max: [cv.box.max[0] + d[0], cv.box.max[1] + d[1]] } : null,
+      ...(cv.localBox ? { localBox: shiftBox(cv.localBox, d) } : {}),
     });
     const visit = (id: string, trail: Set<string>): ComposedView | undefined => {
       const done = out.get(id);
@@ -996,6 +1022,7 @@ class Composer {
         origin: e.originB,
         outline: e.outline,
         box: e.outline ? { min: [at[0] - e.half[0], at[1] - e.half[1]], max: [at[0] + e.half[0], at[1] + e.half[1]] } : null,
+        ...(viewTurn(view) ? { rotation: viewTurn(view), localBox: e.outline ? { min: [at[0] - e.local[0], at[1] - e.local[1]], max: [at[0] + e.local[0], at[1] + e.local[1]] } : null } : {}),
         square: kind === "detail" && parentCv ? parentCv.square : isSquareFrame(frame),
         breaks: e.breaks,
         ...(clip ? { clip } : {}),
@@ -1094,6 +1121,8 @@ class Composer {
     const cv = out.get(view.id);
     const pcv = view.parent ? out.get(view.parent) : undefined;
     if (!d || !cv || !pcv || Math.abs(cv.scale - pcv.scale) > 1e-12) return;
+    // A turned view lines up with nothing: its axes aren't the sheet's.
+    if (cv.rotation || pcv.rotation) return;
     const axis = d[0] !== 0 ? 1 : 0;
     // Along the shared axis both views' coordinates are the same model quantity.
     const want = pcv.centre[axis] + (cv.origin[axis] - pcv.origin[axis]) * cv.scale;
@@ -1101,6 +1130,7 @@ class Composer {
     if (Math.abs(shift) < 1e-12) return;
     cv.centre = axis === 0 ? [want, cv.centre[1]] : [cv.centre[0], want];
     if (cv.box) cv.box = axis === 0 ? { min: [cv.box.min[0] + shift, cv.box.min[1]], max: [cv.box.max[0] + shift, cv.box.max[1]] } : { min: [cv.box.min[0], cv.box.min[1] + shift], max: [cv.box.max[0], cv.box.max[1] + shift] };
+    if (cv.localBox) cv.localBox = shiftBox(cv.localBox, axis === 0 ? [shift, 0] : [0, shift]);
   }
 
   // ------------------------------------------------------------- views
@@ -1949,7 +1979,7 @@ function shiftBox(b: Box, d: Vec2): Box {
 }
 
 function shiftView(cv: ComposedView, d: Vec2): ComposedView {
-  return { ...cv, centre: [cv.centre[0] + d[0], cv.centre[1] + d[1]], box: cv.box ? shiftBox(cv.box, d) : null };
+  return { ...cv, centre: [cv.centre[0] + d[0], cv.centre[1] + d[1]], box: cv.box ? shiftBox(cv.box, d) : null, ...(cv.localBox ? { localBox: shiftBox(cv.localBox, d) } : {}) };
 }
 
 /**

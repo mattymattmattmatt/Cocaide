@@ -36,6 +36,11 @@ export interface DraftStyle {
   lift: number;
   /** ASME: text upright, in a break of the dimension line. */
   unidirectional: boolean;
+  /**
+   * Laying out in a turned view's own axes (src/drafting/annotate/dimension.ts layoutDimension): the turn, degrees,
+   * that will be put on afterwards, so text is set to read from the bottom or the right once turned.
+   */
+  turn?: number;
   /** Datum triangles filled. */
   filledDatum: boolean;
 }

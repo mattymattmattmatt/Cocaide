@@ -325,6 +325,8 @@ export interface DrawingView {
   showLabel?: boolean;
   /** The scale in its label. Default when the view's scale is not the sheet's. */
   showScale?: boolean;
+  /** Turned on the sheet, degrees counter-clockwise about its centre (its dimensions turn with it; notes stay upright). Default 0. */
+  rotation?: number;
 }
 export const VIEW_KEYS = [
   "id",
@@ -358,6 +360,7 @@ export const VIEW_KEYS = [
   "bodies",
   "showLabel",
   "showScale",
+  "rotation",
 ] as const;
 
 /**

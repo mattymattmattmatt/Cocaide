@@ -250,8 +250,13 @@ export function dragGrip<A extends Annotation>(a: A, grip: Grip, to: Vec2, m: Mo
   const next = { ...a } as Record<string, unknown>;
   if (grip.field === "at") next.at = r(to);
   else if (grip.field === "offset" && view?.box) {
-    // Square out from the view's nearest side.
-    const b = view.box;
+    // Square out from the view's nearest side (a turned view's own sides: the point turned back first).
+    const b = view.rotation && view.localBox ? view.localBox : view.box;
+    if (view.rotation) {
+      const t = (-view.rotation * Math.PI) / 180;
+      const d: Vec2 = [to[0] - c[0], to[1] - c[1]];
+      to = [c[0] + d[0] * Math.cos(t) - d[1] * Math.sin(t), c[1] + d[0] * Math.sin(t) + d[1] * Math.cos(t)];
+    }
     const dx = to[0] < b.min[0] ? to[0] - b.min[0] : to[0] > b.max[0] ? to[0] - b.max[0] : 0;
     const dy = to[1] < b.min[1] ? to[1] - b.min[1] : to[1] > b.max[1] ? to[1] - b.max[1] : 0;
     const d = Math.abs(dy) >= Math.abs(dx) ? dy : dx;

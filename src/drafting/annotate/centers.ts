@@ -6,7 +6,7 @@
 
 import type { CenterlineAnnotation, CenterMarkAnnotation, Vec2 } from "../../doc/types";
 import type { ComposedView } from "../compose";
-import { viewToSheet } from "../compose";
+import { turnVec, viewToSheet } from "../compose";
 import type { Prim } from "../sheet";
 import { CENTER_DASH } from "../text";
 import { dist, failed, type AnnotationContext, type LayoutResult } from "./common";
@@ -29,6 +29,8 @@ export function layoutCenterMark(a: CenterMarkAnnotation, ctx: AnnotationContext
     radius = e?.model?.radius ?? r;
   } else return failed(`${a.at} is not a circle or an arc's centre`);
   const s = viewToSheet(cv, c);
+  // A turned view's centre lines turn with it.
+  const ax = (pts: Vec2[]): Vec2[] => (cv.rotation ? pts.map((p) => { const d = turnVec([p[0] - s[0], p[1] - s[1]], cv.rotation); return [s[0] + d[0], s[1] + d[1]] as Vec2; }) : pts);
   const w = ctx.style.thin;
   const R = r * cv.scale + (a.extend ?? 2.5);
   const cross = Math.min(1.5, R / 3);
@@ -36,7 +38,7 @@ export function layoutCenterMark(a: CenterMarkAnnotation, ctx: AnnotationContext
   const style = a.style ?? "lines";
   if (style === "cross") {
     const k = Math.max(1.5, Math.min(3, r * cv.scale * 0.4));
-    prims.push({ k: "line", pts: [[s[0] - k, s[1]], [s[0] + k, s[1]]], w }, { k: "line", pts: [[s[0], s[1] - k], [s[0], s[1] + k]], w });
+    prims.push({ k: "line", pts: ax([[s[0] - k, s[1]], [s[0] + k, s[1]]]), w }, { k: "line", pts: ax([[s[0], s[1] - k], [s[0], s[1] + k]]), w });
   } else if (style === "pitch") {
     // The pattern's other centres seen in the view: the pitch circle they lie on.
     const others = cv.edges.filter((e) => e.look === "circle" && e.circle && Math.abs(e.circle.r - r) < 1e-6).map((e) => e.circle!.c);
@@ -57,16 +59,16 @@ export function layoutCenterMark(a: CenterMarkAnnotation, ctx: AnnotationContext
       const u: Vec2 = [Math.cos(ang), Math.sin(ang)];
       prims.push({ k: "line", pts: [[s[0] - u[0] * R, s[1] - u[1] * R], [s[0] + u[0] * R, s[1] + u[1] * R]], w, dash: R > 6 ? CENTER_DASH : undefined });
     } else {
-      prims.push({ k: "line", pts: [[s[0] - R, s[1]], [s[0] + R, s[1]]], w, dash: R > 6 ? CENTER_DASH : undefined });
-      prims.push({ k: "line", pts: [[s[0], s[1] - R], [s[0], s[1] + R]], w, dash: R > 6 ? CENTER_DASH : undefined });
+      prims.push({ k: "line", pts: ax([[s[0] - R, s[1]], [s[0] + R, s[1]]]), w, dash: R > 6 ? CENTER_DASH : undefined });
+      prims.push({ k: "line", pts: ax([[s[0], s[1] - R], [s[0], s[1] + R]]), w, dash: R > 6 ? CENTER_DASH : undefined });
     }
   } else {
-    prims.push({ k: "line", pts: [[s[0] - R, s[1]], [s[0] + R, s[1]]], w, dash: R > 6 ? CENTER_DASH : undefined });
-    prims.push({ k: "line", pts: [[s[0], s[1] - R], [s[0], s[1] + R]], w, dash: R > 6 ? CENTER_DASH : undefined });
+    prims.push({ k: "line", pts: ax([[s[0] - R, s[1]], [s[0] + R, s[1]]]), w, dash: R > 6 ? CENTER_DASH : undefined });
+    prims.push({ k: "line", pts: ax([[s[0], s[1] - R], [s[0], s[1] + R]]), w, dash: R > 6 ? CENTER_DASH : undefined });
     if (R > 6) {
       // The dash pattern may leave the centre open: a short solid cross marks it.
-      prims.push({ k: "line", pts: [[s[0] - cross, s[1]], [s[0] + cross, s[1]]], w });
-      prims.push({ k: "line", pts: [[s[0], s[1] - cross], [s[0], s[1] + cross]], w });
+      prims.push({ k: "line", pts: ax([[s[0] - cross, s[1]], [s[0] + cross, s[1]]]), w });
+      prims.push({ k: "line", pts: ax([[s[0], s[1] - cross], [s[0], s[1] + cross]]), w });
     }
   }
   return { prims, text: `centre mark Ø${Math.round(2 * radius * 10) / 10}`, at: s, grips: [] };

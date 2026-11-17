@@ -19,7 +19,7 @@ import { parseGeoRef, pointRef } from "../../doc/drawing";
 import type { DimensionAnnotation, Drawing, DrawingPoint, Vec2, Vec3 } from "../../doc/types";
 import type { ProjectedEdge } from "../../kernel/drawingViews";
 import type { ComposedView, PointContext } from "../compose";
-import { viewToSheet } from "../compose";
+import { turnVec, viewToSheet } from "../compose";
 import { geoInView } from "../georef";
 import { grow, type Box, type Prim } from "../sheet";
 import { parseRich } from "../symbols/richtext";
@@ -584,14 +584,16 @@ export function drawLinear(d: LinearDraw, style: DraftStyle): { prims: Prim[]; t
   if (textLo < Math.min(dot(lineA, along), dot(lineB, along))) lineA = add(base, mul(along, textLo));
   if (textHi > Math.max(dot(lineA, along), dot(lineB, along))) lineB = add(base, mul(along, textHi));
   const asme = style.unidirectional;
-  const { u: tu, angle } = asme ? { u: [1, 0] as Vec2, angle: 0 } : readable(along);
+  const turn = style.turn ?? 0;
+  // Read once turned (a turned view's dimension): upright for ASME, from the bottom or the right for ISO.
+  const { u: tu, angle } = asme ? { u: turnVec([1, 0], -turn), angle: -turn } : readableTurned(along, turn);
   const up = perp(tu);
   let textAt: Vec2;
   let prof: ReturnType<typeof labelPrims>;
   if (asme) {
     // Upright, centred on the line, the line broken round it.
-    textAt = [centre[0], centre[1] - (m.up - m.down) / 2];
-    prof = labelPrims(d.label, textAt, "middle", 0, style);
+    textAt = add(centre, turnVec([0, -(m.up - m.down) / 2], -turn));
+    prof = labelPrims(d.label, textAt, "middle", angle, style);
     const t0 = Math.min(dot(lineA, along), dot(lineB, along));
     const t1 = Math.max(dot(lineA, along), dot(lineB, along));
     // The break: the text's extent along the line (its width on a horizontal line, its height on a vertical one).
@@ -652,8 +654,88 @@ export function sideFoot(cv: ComposedView, toSheet: (p: Vec2) => Vec2, s: Vec2, 
   return ax === 0 ? [s[0], best] : [best, s[1]];
 }
 
-/** Lays a dimension out on the sheet. */
+/** `readable` for text that will be turned `turn` degrees afterwards: its direction and angle before the turn. */
+function readableTurned(d: Vec2, turn: number): { u: Vec2; angle: number } {
+  if (!turn) return readable(d);
+  const r = readable(turnVec(d, turn));
+  return { u: turnVec(r.u, -turn), angle: Math.round((r.angle - turn) * 1000) / 1000 + 0 };
+}
+
+/**
+ * Lays a dimension out on the sheet. In a turned view, a horizontal or
+ * vertical one (and a chain, baseline or ordinate set) runs along the view's
+ * own axes: it is laid out as if the view were not turned, against its
+ * unturned box, and the result turned with the view; its text is set to read
+ * from the bottom or the right once turned.
+ */
 export function layoutDimension(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedView, m: Measure): LayoutResult | { problem: string } {
+  const turn = cv.rotation ?? 0;
+  if (!turn || !((m.kind === "linear" && m.dir !== "a") || m.kind === "set")) return layoutDimensionAxes(a, ctx, cv, m);
+  const c = cv.centre;
+  const fwd = (p: Vec2): Vec2 => add(c, turnVec(sub(p, c), turn));
+  const { rotation: _r, localBox: _l, ...rest } = cv;
+  void _r;
+  void _l;
+  const local: ComposedView = { ...rest, box: cv.localBox ?? cv.box };
+  const la = a.at ? { ...a, at: turnVec(a.at, -turn) } : a;
+  const lctx: AnnotationContext = { ...ctx, style: { ...ctx.style, turn }, occ: turnedOccupancy(ctx.occ, fwd) };
+  const r = layoutDimensionAxes(la, lctx, local, m);
+  if ("problem" in r && !("prims" in r)) return r;
+  return turnLayout(r as LayoutResult, c, turn);
+}
+
+/** The occupancy as seen from a turned view's own axes: boxes and points asked about are turned onto the sheet first. */
+function turnedOccupancy(occ: AnnotationContext["occ"], fwd: (p: Vec2) => Vec2): AnnotationContext["occ"] {
+  const isVec = (x: unknown): x is Vec2 => Array.isArray(x) && x.length === 2 && typeof x[0] === "number" && typeof x[1] === "number";
+  const isBox = (x: unknown): x is Box => !!x && typeof x === "object" && isVec((x as Box).min) && isVec((x as Box).max);
+  const map = (x: unknown): unknown => {
+    if (isVec(x)) return fwd(x);
+    if (isBox(x)) {
+      const cs = [x.min, [x.max[0], x.min[1]], x.max, [x.min[0], x.max[1]]].map((p) => fwd(p as Vec2));
+      return { min: [Math.min(...cs.map((p) => p[0])), Math.min(...cs.map((p) => p[1]))], max: [Math.max(...cs.map((p) => p[0])), Math.max(...cs.map((p) => p[1]))] };
+    }
+    return x;
+  };
+  return new Proxy(occ, {
+    get(target, key, receiver) {
+      const v = Reflect.get(target, key, receiver);
+      return typeof v === "function" ? (...args: unknown[]) => (v as (...a: unknown[]) => unknown).apply(target, args.map(map)) : v;
+    },
+  });
+}
+
+/** A layout made in a turned view's own axes, turned onto the sheet about the view's centre. */
+function turnLayout(r: LayoutResult, c: Vec2, turn: number): LayoutResult {
+  const fwd = (p: Vec2): Vec2 => add(c, turnVec(sub(p, c), turn));
+  const prims: Prim[] = r.prims.map((p) => {
+    if (p.k === "line") return { ...p, pts: p.pts.map(fwd) };
+    if (p.k === "circle") return { ...p, c: fwd(p.c) };
+    if (p.k === "area") return { ...p, loops: p.loops.map((l) => l.map(fwd)) };
+    const angle = Math.round(((p.angle ?? 0) + turn) * 1000) / 1000;
+    const { angle: _a, ...plain } = p;
+    void _a;
+    return { ...plain, at: fwd(p.at), ...(Math.abs(angle) > 1e-9 ? { angle } : {}) };
+  });
+  const turnBox = (b: Box): Box => {
+    const cs = [b.min, [b.max[0], b.min[1]] as Vec2, b.max, [b.min[0], b.max[1]] as Vec2].map(fwd);
+    return { min: [Math.min(...cs.map((p) => p[0])), Math.min(...cs.map((p) => p[1]))], max: [Math.max(...cs.map((p) => p[0])), Math.max(...cs.map((p) => p[1]))] };
+  };
+  const { box: _b, ...rest } = r;
+  void _b;
+  return {
+    ...rest,
+    prims,
+    ...(r.textBox ? { textBox: turnBox(r.textBox) } : {}),
+    ...(r.at ? { at: fwd(r.at) } : {}),
+    ...(r.under ? { under: fwd(r.under) } : {}),
+    ...(r.line ? { line: [fwd(r.line[0]), fwd(r.line[1])] as [Vec2, Vec2] } : {}),
+    ...(r.extensions ? { extensions: r.extensions.map(([a, b]) => [fwd(a), fwd(b)] as [Vec2, Vec2]) } : {}),
+    ...(r.grips ? { grips: r.grips.map((g) => ({ ...g, at: fwd(g.at) })) } : {}),
+    ...(r.place ? { place: { ...r.place, pts: r.place.pts.map((p) => turnVec(p, turn)) } } : {}),
+  };
+}
+
+function layoutDimensionAxes(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedView, m: Measure): LayoutResult | { problem: string } {
   const style = ctx.style;
   const toSheet = (p: Vec2) => viewToSheet(cv, p);
   const box = cv.box!;
@@ -1058,8 +1140,14 @@ function setDims(a: DimensionAnnotation, ctx: AnnotationContext, cv: ComposedVie
       prims.push({ k: "line", pts: pts2, w: style.thin });
       const label: Label = { parts: [{ kind: "rich", spans: parseRich(sizeText(values[idx], places, ctx.drawing.units)), size: style.font }], size: style.font };
       const tPos = add(foot(placed[k]), mul(n, 1));
-      const angle = m.dir === "h" ? 90 : 0;
-      const lp = labelPrims(label, [tPos[0] + (m.dir === "h" ? style.h / 2 : 0), tPos[1] - (m.dir === "h" ? 0 : style.h / 2)], side > 0 ? "start" : "end", angle, style);
+      // Along its extension line; turned half round when the view's turn would leave it upside down.
+      const base = m.dir === "h" ? 90 : 0;
+      const finalAngle = ((((base + (style.turn ?? 0) + 180) % 360) + 360) % 360) - 180;
+      const flipText = finalAngle > 90 + 1e-6 || finalAngle <= -90 + 1e-6;
+      const angle = flipText ? base + 180 : base;
+      const sgn = flipText ? -1 : 1;
+      const anchor = (side > 0) !== flipText ? "start" : "end";
+      const lp = labelPrims(label, [tPos[0] + sgn * (m.dir === "h" ? style.h / 2 : 0), tPos[1] - sgn * (m.dir === "h" ? 0 : style.h / 2)], anchor, angle, style);
       prims.push(...lp.prims);
       textBox = grow(textBox, lp.box);
       texts.push(sizeText(values[idx], places, ctx.drawing.units));

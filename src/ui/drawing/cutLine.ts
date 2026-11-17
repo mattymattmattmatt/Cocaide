@@ -5,7 +5,7 @@
 // square to the line: the cut moves, and the section with it). A drag becomes
 // the section view's new `line`, in its parent's view mm. Pure.
 
-import type { ComposedView } from "../../drafting/compose";
+import { turnVec, type ComposedView } from "../../drafting/compose";
 import type { Vec2 } from "../../doc/types";
 import { sheetToView } from "./tools/geometry";
 import type { Grip } from "./tools/kinds";
@@ -37,13 +37,14 @@ export function cutLineGrips(section: Pick<ComposedView, "cutLine">): Grip[] {
  * line drawn run past the dimensions shortens from there), or every point by
  * the drag. Null when the grip is not one of its line's.
  */
-export function cutLineAfter(section: Pick<ComposedView, "cutLine">, stored: Vec2[], parent: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks">, gripId: string, delta: Vec2): Vec2[] | null {
+export function cutLineAfter(section: Pick<ComposedView, "cutLine">, stored: Vec2[], parent: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks"> & { rotation?: number }, gripId: string, delta: Vec2): Vec2[] | null {
   const drawn = section.cutLine;
   if (!drawn || drawn.length !== stored.length) return null;
   const tenth = (v: number) => Math.round(v * 1000) / 1000;
   const r = (p: Vec2): Vec2 => [tenth(p[0]), tenth(p[1])];
   if (gripId === "cut:move") {
-    const dv: Vec2 = [delta[0] / parent.scale, delta[1] / parent.scale];
+    const back = turnVec(delta, parent.rotation ? -parent.rotation : 0);
+    const dv: Vec2 = [back[0] / parent.scale, back[1] / parent.scale];
     return stored.map((p) => r([p[0] + dv[0], p[1] + dv[1]]));
   }
   const m = /^cut:(\d+)$/.exec(gripId);
@@ -65,7 +66,7 @@ export function detailRingGrips(detail: Pick<ComposedView, "detailRing">): Grip[
 }
 
 /** The detail's new circle (parent view mm) after a grip moved `delta` sheet mm; null when the grip is not one of its circle's. */
-export function detailRingAfter(detail: Pick<ComposedView, "detailRing">, parent: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks">, gripId: string, delta: Vec2): { at: Vec2; r: number } | null {
+export function detailRingAfter(detail: Pick<ComposedView, "detailRing">, parent: Pick<ComposedView, "centre" | "origin" | "scale" | "breaks"> & { rotation?: number }, gripId: string, delta: Vec2): { at: Vec2; r: number } | null {
   const ring = detail.detailRing;
   if (!ring) return null;
   const tenth = (v: number) => Math.round(v * 1000) / 1000;

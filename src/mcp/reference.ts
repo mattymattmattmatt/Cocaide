@@ -389,7 +389,7 @@ gives a body its own material (setBodyMaterial); its mass and the part's follow.
 A Phase L drawing ({ sheet, views, annotations }) is read as one sheet in the classic template. Ids are unique across sheets.
 Views (kind, default "model"; every view may have at, scale, display "visible" | "hidden" | "removed" | "shaded" | "shadedEdges",
 tangent "visible" | "phantom" | "removed", threads (cosmetic, default true), breaks [{ axis "x" | "y", from, to, gap?, style? }]
-(view mm; dimensions still read true), crop (closed outline), brokenOut [{ profile, depth }], bodies [names], showLabel, showScale):
+(view mm; dimensions still read true), crop (closed outline), brokenOut [{ profile, depth }], bodies [names], showLabel, showScale, rotation (degrees counter-clockwise on the sheet; its dimensions turn with it, notes stay upright)):
   { "id": "front", "look": "front" | "back" | "top" | "bottom" | "left" | "right" | "iso" | "dimetric" | "trimetric" }  or "orientation": { "eye": [x, y, z], "up"?: [..] }
   { "id": "top", "kind": "projected", "parent": "front", "direction": "up" | "down" | "left" | "right" | "upLeft" ... }  lined up with its parent
     (a projected or section view with "free": true is placed on its own, its alignment broken; any view with "locked": true keeps its place in the editor)

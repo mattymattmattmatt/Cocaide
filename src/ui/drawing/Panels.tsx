@@ -116,6 +116,14 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
   );
 }
 
+/** A view's turn after adding `by` degrees: -180 to 180, to a tenth; undefined for none (or a number that isn't one). */
+function turned(r: unknown, by: number): number | undefined {
+  const v = (typeof r === "number" && Number.isFinite(r) ? r : 0) + by;
+  if (!Number.isFinite(v)) return undefined;
+  const n = Math.round((((((v + 180) % 360) + 360) % 360) - 180) * 10) / 10;
+  return n === 0 ? undefined : n === -180 ? 180 : n;
+}
+
 function TextField({ value, placeholder, onCommit, testId }: { value: string; placeholder?: string; onCommit(v: string): void; testId: string }) {
   return (
     <input
@@ -204,6 +212,17 @@ function ViewPanel({ ws, view }: { ws: Workspace; view: DrawingView }) {
       )}
       <Field label="Scale">
         <ScaleSelect value={view.scale} auto={`${kind === "detail" ? "twice its parent's" : "the sheet's"} (${cv?.scaleText ?? "…"})`} onChange={(scale) => set({ scale })} testId="prop-view-scale" />
+      </Field>
+      <Field label="Rotation">
+        <span className="view-rotation">
+          <button type="button" className="mini" title="Turn 90° clockwise" onClick={() => set({ rotation: turned(view.rotation, -90) })} data-testid="prop-view-rotate-cw">
+            ↻
+          </button>
+          <TextField value={view.rotation ? String(view.rotation) : ""} placeholder="0°" onCommit={(v) => set({ rotation: turned(v.trim() === "" ? 0 : Number(v.replace("°", "")), 0) })} testId="prop-view-rotation" />
+          <button type="button" className="mini" title="Turn 90° counter-clockwise" onClick={() => set({ rotation: turned(view.rotation, 90) })} data-testid="prop-view-rotate-ccw">
+            ↺
+          </button>
+        </span>
       </Field>
       <Field label="Display">
         <select value={view.display ?? ""} onChange={(e) => set({ display: e.target.value || undefined })} data-testid="prop-view-display">

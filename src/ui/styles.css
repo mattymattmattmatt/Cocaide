@@ -2252,3 +2252,7 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .selector-line.chip.missing { border-color: var(--bad); color: var(--bad); background: transparent; }
 .readout.chips { font-family: inherit; }
 .properties button.link.more-choices { margin: 2px 0 6px; text-align: left; }
+.view-rotation { display: flex; align-items: center; gap: 4px; }
+.view-rotation input { width: 64px; text-align: center; }
+.view-rotation button { min-width: 26px; height: 26px; padding: 0 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; }
+.view-rotation button:hover { border-color: var(--accent); }

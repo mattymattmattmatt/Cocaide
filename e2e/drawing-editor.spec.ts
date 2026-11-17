@@ -367,3 +367,27 @@ test("a dimension dragged: its preview is laid out as it will drop, the extensio
   await expect(g).not.toHaveCSS("visibility", "hidden");
   await expect.poll(stored).not.toBe(was);
 });
+
+test("a view turned from its properties: 90° by the buttons, any angle typed; its dimensions turn with it; undo", async ({ page }) => {
+  await page.locator("select").first().selectOption("bracket");
+  await expectVolume(page, "18,994.728");
+  await page.getByTestId("mode-drawing").click();
+  await page.getByTestId("drawing-new-empty").click();
+  await page.getByTestId("drawing-item-top").click();
+  type Doc = { drawing: { sheets: { views: { id: string; rotation?: number }[] }[] } };
+  const turn = async () => ((await savedDocument(page)) as Doc).drawing.sheets[0].views.find((v) => v.id === "top")?.rotation;
+  await page.getByTestId("prop-view-rotate-ccw").click();
+  await expect.poll(turn).toBe(90);
+  await page.getByTestId("prop-view-rotate-cw").click();
+  await expect.poll(turn).toBeUndefined();
+  const field = page.getByTestId("prop-view-rotation");
+  await field.fill("30");
+  await field.press("Enter");
+  await expect.poll(turn).toBe(30);
+  // The 80's text turned with the view: 30° on the sheet (the SVG turns the other way).
+  const eighty = page.getByTestId("sheet").locator('g[data-id="d1"] text', { hasText: /^80$/ });
+  await expect(eighty).toHaveAttribute("transform", /rotate\(-30 /);
+  await page.screenshot({ path: "test-results/drawing-editor-turned.png" });
+  await page.keyboard.press("Control+z");
+  await expect.poll(turn).toBeUndefined();
+});
