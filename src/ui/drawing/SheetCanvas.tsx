@@ -15,11 +15,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { Command } from "../../doc/commands";
 import type { Annotation, Drawing, DrawingSheet, Vec2 } from "../../doc/types";
 import type { ComposedSheet } from "../../drafting/compose";
-import type { Box, Prim } from "../../drafting/sheet";
+import { primBox, type Box, type Prim } from "../../drafting/sheet";
+import { textWidth } from "../../drafting/text";
 import { SHEET_FONT, sheetSVG } from "../../drafting/svg";
 import { wheelZoom } from "../input";
 import { alignmentOf, constrain, followers, keepOff, pulledOff, snapToViews, tenth, type Guide } from "./align";
 import { snapAt, type SnapIndex, type SnapKind, type SnapTarget } from "./snap";
+import { boxDistance, segDistance } from "./hitGeometry";
 import { annotationKind, type Grip } from "./tools/kinds";
 import { previewAnnotation } from "./tools/preview";
 import { alignedCoordinate } from "./tools/geometry";
@@ -80,6 +82,8 @@ interface Drag {
   /** The ids moving with the item, for the preview. */
   moving?: string[];
   delta?: Vec2;
+  /** A snapping grip (a dimension's end): the geometry it is over, what the drop attaches it to. */
+  snapTo?: SnapTarget;
   guides?: Guide[];
   refused?: boolean;
   additive?: boolean;
@@ -193,16 +197,41 @@ export function SheetCanvas(props: SheetCanvasProps) {
   const area = (b: Box) => (b.max[0] - b.min[0] + 2) * (b.max[1] - b.min[1] + 2);
   const tableIds = useMemo(() => new Set((sheetDoc.tables ?? []).map((t) => t.id)), [sheetDoc]);
 
+  const primsByOwner = useMemo(() => {
+    const m = new Map<string, Prim[]>();
+    for (const q of sheet.prims) if (q.owner) (m.get(q.owner) ?? m.set(q.owner, []).get(q.owner)!).push(q);
+    return m;
+  }, [sheet]);
   const hitAt = (p: Vec2): SheetHit | null => {
     const pad = 3 * props.scaleRef.current;
-    const anns = sheet.annotations.filter((a) => a.box && within(a.box, p, pad)).sort((a, b) => area(a.box!) - area(b.box!));
-    if (anns.length) return { kind: tableIds.has(anns[0].id) ? "table" : "annotation", id: anns[0].id };
+    // The annotation whose drawing is nearest the pointer (its text, its lines), not the one whose box holds the point:
+    // an outer dimension's box covers the inner ones' text and lines, which are plainly what is under the pointer.
+    const near = sheet.annotations
+      .filter((a) => a.box && within(a.box, p, pad))
+      .map((a) => ({ a, d: drawnDistance(a.id, a.textBox, p) }))
+      .filter((x) => x.d <= pad || tableIds.has(x.a.id))
+      .sort((x, y) => x.d - y.d || area(x.a.box!) - area(y.a.box!));
+    if (near.length) return { kind: tableIds.has(near[0].a.id) ? "table" : "annotation", id: near[0].a.id };
     const block = sheet.blocks.find((b) => within(b.box, p, 0));
     if (block) return { kind: tableIds.has(block.id) ? "table" : "annotation", id: block.id };
     const views = sheet.views.filter((v) => within(v.box, p, 2)).sort((a, b) => area(a.box!) - area(b.box!));
     if (views.length) return { kind: "view", id: views[0].id };
     if (within(sheet.titleBlock, p, 0)) return { kind: "titleBlock", id: "titleBlock" };
     return null;
+  };
+  /** How far a sheet point is from what an annotation draws: 0 in its text, else its nearest line, circle or text. */
+  const drawnDistance = (id: string, textBox: Box | undefined, p: Vec2): number => {
+    if (textBox && within(textBox, p, 0)) return 0;
+    let best = textBox ? boxDistance(textBox, p) : Infinity;
+    for (const q of primsByOwner.get(id) ?? []) {
+      if (q.k === "line") for (let i = 1; i < q.pts.length; i++) best = Math.min(best, segDistance(p, q.pts[i - 1], q.pts[i]));
+      else if (q.k === "circle") best = Math.min(best, q.fill ? Math.max(0, Math.hypot(p[0] - q.c[0], p[1] - q.c[1]) - q.r) : Math.abs(Math.hypot(p[0] - q.c[0], p[1] - q.c[1]) - q.r));
+      else if (q.k === "text") {
+        const b = primBox(q, textWidth);
+        if (b) best = Math.min(best, boxDistance(b, p));
+      }
+    }
+    return Math.max(0, best);
   };
   const viewAt = (p: Vec2): string | null => sheet.views.filter((v) => within(v.box, p, 2)).sort((a, b) => area(a.box!) - area(b.box!))[0]?.id ?? null;
 
@@ -281,12 +310,12 @@ export function SheetCanvas(props: SheetCanvasProps) {
   };
 
   /** The annotation as a move or a grip drag of `delta` leaves it (without its id); null when it doesn't move on its own. */
-  const patched = (id: string, delta: Vec2, grip?: Grip): Record<string, unknown> | null => {
+  const patched = (id: string, delta: Vec2, grip?: Grip, target?: SnapTarget): Record<string, unknown> | null => {
     const a = sheetDoc.annotations.find((x) => x.id === id) as Record<string, unknown> | undefined;
     const k = a && annotationKind(String(a.type));
     if (!a || !k) return null;
     const said = sheet.annotations.find((x) => x.id === id);
-    const patch = grip ? k.dragGrip?.(a, grip, delta, { sheet, said }) : k.move?.(a, delta, { sheet, said });
+    const patch = grip ? k.dragGrip?.(a, grip, delta, { sheet, said, ...(target ? { target } : {}) }) : k.move?.(a, delta, { sheet, said });
     if (!patch) return null;
     const next: Record<string, unknown> = { ...a, ...patch };
     for (const [key, v] of Object.entries(next)) if (v === null || v === undefined) delete next[key];
@@ -294,10 +323,16 @@ export function SheetCanvas(props: SheetCanvasProps) {
     return next;
   };
 
-  const dropAnnotation = (id: string, delta: Vec2, grip?: Grip) => {
+  const dropAnnotation = (id: string, delta: Vec2, grip?: Grip, target?: SnapTarget) => {
     if (!sheetDoc.annotations.some((x) => x.id === id)) return;
-    const next = patched(id, delta, grip);
+    const next = patched(id, delta, grip, target);
+    if (!next && grip?.snap) return target ? undefined : props.onNotice(`Drop the end on an edge, a corner or a centre of the view to measure from it.`);
     if (!next) return props.onNotice(`${id} follows what it is attached to: it doesn't move on its own.`);
+    if (grip?.snap) {
+      // Reattached: refused when it can't be measured that way (two edges that aren't parallel, a side and an edge ...).
+      const l = previewAnnotation(sheet, { ...next, id } as unknown as Annotation);
+      if (!l || l.problem) return props.onNotice(`${id} can't measure to that: ${l?.problem ?? "nothing to measure"}.`);
+    }
     props.onCommands([{ type: "setAnnotation", id, annotation: next }]);
   };
 
@@ -378,7 +413,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
     if (!pt) return;
     setHover(pt);
     const r = host.current!.getBoundingClientRect();
-    setTip(pt.snap && !d?.moved ? { x: e.clientX - r.left, y: e.clientY - r.top, text: pt.snap.label } : null);
+    setTip(pt.snap && (!d?.moved || d.grip?.snap) ? { x: e.clientX - r.left, y: e.clientY - r.top, text: pt.snap.label } : null);
     props.onStatus({ at: pt.at, snap: pt.snap?.label ?? null, zoom: zoomPercent(boxRef.current, size[0] || 1) });
     if (session && (!d || d.kind === "click")) session.move?.(pt);
     if (!d) return;
@@ -395,6 +430,11 @@ export function SheetCanvas(props: SheetCanvasProps) {
       d.delta = m.delta;
       d.guides = m.guides;
       d.refused = m.refused;
+    } else if (d.kind === "grip" && d.grip?.snap) {
+      // Onto the view's geometry: it snaps to what is under the pointer.
+      const t = pt.snap && d.grip.snap.includes(pt.snap.kind) && (!d.grip.view || pt.snap.view === d.grip.view) ? pt.snap : undefined;
+      d.snapTo = t;
+      d.delta = t ? [t.at[0] - d.grip.at[0], t.at[1] - d.grip.at[1]] : raw;
     } else if (d.kind === "grip" && d.grip?.along) {
       const a = d.grip.along;
       const t = raw[0] * a[0] + raw[1] * a[1];
@@ -448,7 +488,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
       return dropView(t.id, delta);
     }
     if (t.kind === "table") return dropTable(t.id, delta);
-    return dropAnnotation(t.id, delta, d.kind === "grip" ? d.grip : undefined);
+    return dropAnnotation(t.id, delta, d.kind === "grip" ? d.grip : undefined, d.kind === "grip" ? d.snapTo : undefined);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -482,7 +522,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
     if (!drag?.moved || !drag.delta || drag.cut) return null;
     const id = drag.kind === "item" && drag.target?.kind === "annotation" && drag.moving?.length === 1 ? drag.target.id : drag.kind === "grip" && drag.hit?.kind === "annotation" ? drag.hit.id : null;
     if (!id) return null;
-    const next = patched(id, drag.delta, drag.kind === "grip" ? drag.grip : undefined);
+    const next = patched(id, drag.delta, drag.kind === "grip" ? drag.grip : undefined, drag.kind === "grip" ? drag.snapTo : undefined);
     if (!next) return null;
     const l = previewAnnotation(sheet, { ...next, id } as unknown as Annotation);
     return l && !l.problem && l.prims.length ? { id, prims: l.prims } : null;
@@ -557,7 +597,7 @@ export function SheetCanvas(props: SheetCanvasProps) {
       );
   };
   // Hovered geometry, with its snap glyph.
-  const snapNow = drag?.moved ? null : hover?.snap;
+  const snapNow = drag?.moved ? (drag.snapTo ?? null) : hover?.snap;
   if (snapNow) {
     if (snapNow.circle) draw({ k: "circle", c: snapNow.circle.c, r: snapNow.circle.r, tone: "accent", w: 2.5 }, "hc");
     else if (snapNow.pts && (snapNow.kind === "edge" || snapNow.kind === "arc")) snapNow.pts.forEach((l, i) => draw({ k: "line", pts: l, tone: "accent", w: 2.5 }, `he${i}`));

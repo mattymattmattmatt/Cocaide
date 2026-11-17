@@ -10,6 +10,7 @@ import { STANDARD_SCALES } from "../../../doc/drawing";
 import { DIMENSION_DIRECTIONS, OUTLINE_SIDES, type Vec2 } from "../../../doc/types";
 import { validateDocument } from "../../../doc/validate";
 import type { ComposedAnnotation, ComposedSheet } from "../../../drafting/compose";
+import type { SnapKind, SnapTarget } from "../snap";
 import type { ReactNode } from "react";
 import type { MenuEntry } from "../../ContextMenu";
 import type { IconName } from "../../icons";
@@ -27,12 +28,17 @@ export interface Grip {
   label: string;
   /** A click on it (no drag) acts: dragGrip is called with no movement (an arrowhead flips the arrows). */
   click?: boolean;
+  /** Dropped on the view's geometry: it snaps to these kinds (in `view` only), and dragGrip is given what it was dropped on. */
+  snap?: SnapKind[];
+  view?: string;
 }
 
 /** What a kind's drag and grips may read: the sheet as composed, and the annotation as composed. */
 export interface KindCtx {
   sheet: ComposedSheet;
   said?: ComposedAnnotation;
+  /** A snapping grip's drop: the edge, corner or centre it landed on. */
+  target?: SnapTarget;
 }
 
 export interface AnnotationKindDef {

@@ -46,6 +46,42 @@ function arrowGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
   return [2, 3].map((i) => ({ id: `arrow:${i}`, at: [cv.centre[0] + place.pts[i][0], cv.centre[1] + place.pts[i][1]] as Vec2, label: "Click: arrows inside or outside", click: true }));
 }
 
+/** What a dimension's end can be dropped on to measure from it instead. */
+const END_SNAPS = ["vertex", "centre", "midpoint", "quadrant", "edge"] as const;
+
+/** A linear dimension's two ends, where its extension lines start: dragged onto another edge, corner or centre, it measures from there. */
+function endGrips(a: Record<string, unknown>, ctx: KindCtx): Grip[] {
+  const place = ctx.said?.place;
+  const cv = ctx.sheet.views.find((v) => v.id === a.view);
+  const twoEnds = (Array.isArray(a.refs) && a.refs.length === 2) || (a.from !== undefined && a.to !== undefined && a.member === undefined);
+  if (!place || place.pts.length !== 4 || !cv || !twoEnds) return [];
+  return [0, 1].map((i) => ({
+    id: `end:${i}`,
+    at: [cv.centre[0] + place.pts[i][0], cv.centre[1] + place.pts[i][1]] as Vec2,
+    label: "Drag onto another edge, corner or centre to measure from there",
+    snap: [...END_SNAPS],
+    view: cv.id,
+  }));
+}
+
+/** The patch that measures end `i` from what it was dropped on; null when it was dropped on nothing of its view. */
+export function reattachEnd(a: Record<string, unknown>, i: 0 | 1, target: KindCtx["target"]): Record<string, unknown> | null {
+  if (!target || target.view !== a.view) return null;
+  const point = target.kind !== "edge";
+  if (Array.isArray(a.refs) && a.refs.length === 2) {
+    const refs = [...(a.refs as string[])];
+    if (refs[i] === target.ref) return null;
+    refs[i] = target.ref;
+    return { refs, last: null };
+  }
+  if (a.from === undefined || a.to === undefined) return null;
+  // From and to are points: an end dropped on a point stays one; on an edge, the two become refs (a point to an edge, or two edges).
+  if (point) return i === 0 ? { from: target.ref, last: null } : { to: target.ref, last: null };
+  const refs = [String(a.from), String(a.to)];
+  refs[i] = target.ref;
+  return { refs, from: null, to: null, last: null };
+}
+
 const dimension = annotationKind("dimension")!;
 const oldGrips = dimension.grips;
 const oldDrag = dimension.dragGrip;
@@ -55,9 +91,10 @@ registerAnnotationKind({
   grips: (a, ctx) => {
     const text = engineGrips(a, ctx).filter((g) => !g.id.startsWith("line:"));
     const line = (oldGrips?.(a, ctx) ?? []).map((g) => ({ ...g, id: "offset" }));
-    return [...line, ...text, ...arrowGrips(a, ctx)];
+    return [...line, ...text, ...arrowGrips(a, ctx), ...endGrips(a, ctx)];
   },
   dragGrip: (a, grip, delta, ctx) => {
+    if (grip.id.startsWith("end:")) return reattachEnd(a, grip.id === "end:1" ? 1 : 0, ctx.target);
     if (grip.id.startsWith("arrow:")) {
       const now = (a.arrows as string | undefined) ?? "auto";
       return { arrows: now === "outside" ? "inside" : "outside" };

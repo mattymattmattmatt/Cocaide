@@ -391,3 +391,62 @@ test("a view turned from its properties: 90° by the buttons, any angle typed; i
   await page.keyboard.press("Control+z");
   await expect.poll(turn).toBeUndefined();
 });
+
+/** Page pixels of the longest straight line an annotation draws (its dimension line), a fraction `t` along it. */
+async function alongLongestLine(page: Page, id: string, t: number): Promise<[number, number]> {
+  return page
+    .getByTestId("sheet")
+    .locator(`.sheet-paper g[data-id="${id}"]:not([data-on]) polyline, .sheet-paper g[data-id="${id}"]:not([data-on]) line`)
+    .evaluateAll((els, t) => {
+      let best: [number, number, number] | null = null;
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        const len = Math.hypot(r.width, r.height);
+        if (!best || len > best[2]) best = [r.left + r.width * t, r.top + r.height * t, len];
+      }
+      return [best![0], best![1]] as [number, number];
+    }, t);
+}
+
+test("dimensions stacked: a click picks the one drawn under the pointer; a dimension's end dragged onto a corner measures from there", async ({ page }) => {
+  await bracketDrawing(page);
+  // The 80 runs outside the 70, so close that the 70's box takes in the 80's line: a click on the 80's line is the 80.
+  const [x, y] = await alongLongestLine(page, "d1", 0.25);
+  await page.mouse.move(x, y);
+  await page.mouse.click(x, y);
+  await expect(page.getByTestId("drawing-item-d1")).toHaveClass(/selected/);
+  const [x2, y2] = await alongLongestLine(page, "d5", 0.25);
+  await page.mouse.move(x2, y2);
+  await page.mouse.click(x2, y2);
+  await expect(page.getByTestId("drawing-item-d5")).toHaveClass(/selected/);
+  await expect(page.getByTestId("drawing-item-d5")).toContainText("dimension 70");
+
+  // The 70 runs from the plate's left side to the hole: its end at the hole, dragged onto the plate's far corner, makes it the 80.
+  const end = page.getByTestId("sheet-overlay").locator('rect.grip[data-grip="end:1"]');
+  await expect(end).toBeVisible();
+  const corners = await page.evaluate(() => (window as unknown as { __cocaideSheet: SheetHook }).__cocaideSheet.targets("top", "vertex").filter((t) => t.visible));
+  const far = corners.reduce((a, b) => (b.at[0] + b.at[1] > a.at[0] + a.at[1] ? b : a));
+  const g = (await end.boundingBox())!;
+  const [gx, gy] = [g.x + g.width / 2, g.y + g.height / 2];
+  const [cx, cy] = await at(page, far.at[0], far.at[1]);
+  await page.mouse.move(gx, gy);
+  await page.mouse.down();
+  await page.mouse.move((gx + cx) / 2, (gy + cy) / 2 + 20, { steps: 5 });
+  await page.mouse.move(cx, cy, { steps: 5 });
+  // Over the corner: the live dimension already reads 80.
+  await expect(page.getByTestId("sheet-overlay").getByTestId("sheet-preview").locator("text", { hasText: /^80$/ })).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.getByTestId("drawing-item-d5")).toContainText("dimension 80");
+  type Doc = { drawing: { sheets: { annotations: { id: string; to?: string; refs?: string[] }[] }[] } };
+  const d5 = ((await savedDocument(page)) as Doc).drawing.sheets[0].annotations.find((a) => a.id === "d5")!;
+  expect(JSON.stringify(d5)).toContain(far.ref);
+
+  // Dropped on nothing: it stays as it is, and says why.
+  const g2 = (await page.getByTestId("sheet-overlay").locator('rect.grip[data-grip="end:1"]').boundingBox())!;
+  await page.mouse.move(g2.x + g2.width / 2, g2.y + g2.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(g2.x + 150, g2.y - 200, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId("notice")).toContainText("Drop the end on an edge, a corner or a centre");
+  await expect(page.getByTestId("drawing-item-d5")).toContainText("dimension 80");
+});
