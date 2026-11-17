@@ -16,7 +16,7 @@ import { roomAt } from "./edgeRoom";
 import { isValidShape, volumeOf } from "./measure";
 import type { OC, Scope } from "./oc";
 import { OpError, VOLUME_EPS } from "./ops";
-import { describeWanted, edgeSelectionError, selectEdges, selectFaces } from "./selectors";
+import { describeWanted, edgeSelectionError, selectEdges, selectFaces, tieHint } from "./selectors";
 import { faceSignature, type EdgeInfo, type FaceInfo } from "./topology";
 
 /** One edge to treat and how. */
@@ -61,7 +61,7 @@ export function chosenEdges(part: DescribedPart, ch: EdgeChoice, path: string, m
     const where = `${at("faces")}[${i}]`;
     const found = selectFaces(part.faceInfos, sel);
     if (found.matches.length === 0) throw new OpError(`${where}: selector matched 0 faces (wanted ${describeWanted(sel, 1)} or more)`);
-    if (found.tie) throw new OpError(`${where}: selector matched ${found.matches.length} faces tied for ${found.tie}${found.tie === "nearest" ? "" : " area"} (wanted ${describeWanted(sel, 1)})`);
+    if (found.tie) throw new OpError(`${where}: selector matched ${found.matches.length} faces tied for ${found.tie}${found.tie === "nearest" ? "" : " area"} (wanted ${describeWanted(sel, 1)})${tieHint(found.matches)}`);
     onFaces(new Set(found.matches.map((f) => f.index)));
   });
   ch.features?.forEach((id, i) => {

@@ -87,3 +87,49 @@ test("right-click a body: the ask is about that body only, and an edit to the ot
   await page.getByTestId("ask-close").click();
   expect(await savedDocument(page)).toEqual(before);
 });
+
+test("combine's panel: Add takes one list of bodies, Subtract a main body and the bodies to take away", async ({ page }) => {
+  await page.getByTestId("tab-bodies").click();
+  await page.getByTestId("tool-combine").click();
+  await expectVolume(page, "133,143.363");
+  await page.getByTestId("feature-combine_1").locator(".feature-row").click();
+  // Add: both bodies in one list, the result named after the first.
+  await expect(page.getByTestId("prop-operation-add")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("prop-tools-base")).toBeChecked();
+  await expect(page.getByTestId("prop-tools-upright")).toBeChecked();
+  // Subtract: a main body, and the bodies to subtract from it.
+  await page.getByTestId("prop-operation-subtract").click();
+  await expect.poll(async () => ((await savedDocument(page)).features as { id: string; operation?: string }[]).find((f) => f.id === "combine_1")?.operation).toBe("subtract");
+  await expect(page.getByTestId("prop-target-base")).toBeChecked();
+  await expect(page.getByTestId("prop-tools-upright")).toBeChecked();
+  // The main body swapped: the upright, with the base to subtract.
+  await page.getByTestId("prop-target-upright").check();
+  await expect.poll(async () => ((await savedDocument(page)).features as { id: string; target?: string; tools?: string[] }[]).find((f) => f.id === "combine_1")).toMatchObject({ target: "upright", tools: ["base"] });
+  await page.getByTestId("prop-operation-add").click();
+  await expectVolume(page, "133,143.363");
+});
+
+const bodyNames = (page: Page) => page.getByTestId("bodies").locator("li .body-name").allTextContents();
+const pickBody = (page: Page, name: string) => page.getByTestId(`body-${name}`).locator(".body-name").click();
+
+test("split's panel: keep one piece or both, swap the sides, and it says which piece is which", async ({ page }) => {
+  await pickBody(page, "base");
+  await page.getByTestId("tab-bodies").click();
+  await page.getByTestId("tool-split").click();
+  await expect.poll(() => bodyNames(page)).toEqual(["base", "upright", "base_split"]);
+  await page.getByTestId("feature-split_1").locator(".feature-row").click();
+  await expect(page.getByTestId("prop-split-summary")).toHaveText("The piece in front of the plane (where its normal points) becomes base_split; the piece behind the plane stays base.");
+  await page.getByTestId("prop-split-flip").check();
+  await expect(page.getByTestId("prop-split-summary")).toHaveText("The piece behind the plane becomes base_split; the piece in front of the plane (where its normal points) stays base.");
+  // Keep only the rest: a trim, no new body.
+  await page.getByTestId("prop-split-keep-rest").click();
+  await expect.poll(() => bodyNames(page)).toEqual(["base", "upright"]);
+  await expect(page.getByTestId("prop-split-name")).toHaveCount(0);
+  await expect(page.getByTestId("prop-split-summary")).toContainText("Only the piece in front of the plane (where its normal points) is kept, as base");
+  await expectVolume(page, "95,371.681");
+  await page.getByTestId("prop-split-keep-both").click();
+  await expect.poll(() => bodyNames(page)).toEqual(["base", "upright", "base_split"]);
+  // With a sketch: the newest sketch before the split (it cuts with its closed profile).
+  await page.getByTestId("prop-split-with-sketch").click();
+  await expect.poll(async () => ((await savedDocument(page)).features as { id: string; sketch?: string; plane?: unknown }[]).find((f) => f.id === "split_1")).toMatchObject({ sketch: "sketch_2" });
+});

@@ -1883,13 +1883,24 @@ export interface MirrorFeature extends FeatureBase {
   newBody?: string;
 }
 
-/** Cuts a body in two with a plane: the piece the normal points to becomes `newBody` (default `<body>_split`). */
+/**
+ * Cuts a body in two with a plane, or with a sketch's closed profile run
+ * through the body both ways. The cut-off piece (the side the plane's normal
+ * points to; inside the profile) becomes `newBody` (default `<body>_split`),
+ * the rest stays `body`; `flip` swaps the sides. `keep` keeps only one piece
+ * (named `body`, nothing new): "piece" the cut-off piece, "rest" the rest.
+ */
 export interface SplitFeature extends FeatureBase {
   op: "split";
   body: string;
-  plane: PlaneSpec;
+  plane?: PlaneSpec;
+  sketch?: string;
+  flip?: boolean;
+  keep?: SplitKeep;
   newBody?: string;
 }
+export const SPLIT_KEEPS = ["both", "piece", "rest"] as const;
+export type SplitKeep = (typeof SPLIT_KEEPS)[number];
 
 /** Turns (first) and moves bodies; with `copy`, the originals stay and the copies are new bodies `<name>_copy`. */
 export interface MoveFeature extends FeatureBase {

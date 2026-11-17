@@ -194,6 +194,62 @@ describe("Phase M acceptance: members stay members", () => {
   });
 });
 
+describe("split, as other CAD does it", () => {
+  // A 20 × 20 square on the Top plane, clear of the holes and the upright: run through the base, it cuts out a block.
+  const square = { id: "sq", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [0, -28], w: 20, h: 20 }] };
+  const BLOCK = 20 * 20 * 8;
+
+  it("cuts with a sketch's closed profile: what is inside is the new body, the rest stays", () => {
+    const b = built(add(stand, square, { id: "s", op: "split", body: "base", sketch: "sq" }));
+    expect(b.errors).toEqual([]);
+    expect(b.bodies).toEqual([
+      ["base", r3(BASE - BLOCK)],
+      ["upright", UPRIGHT],
+      ["base_split", r3(BLOCK)],
+    ]);
+  });
+
+  it("swaps the sides with flip", () => {
+    const b = built(add(stand, square, { id: "s", op: "split", body: "base", sketch: "sq", flip: true, newBody: "frame" }));
+    expect(b.errors).toEqual([]);
+    expect(b.bodies).toEqual([
+      ["base", r3(BLOCK)],
+      ["upright", UPRIGHT],
+      ["frame", r3(BASE - BLOCK)],
+    ]);
+  });
+
+  it("keeps only one piece, as the body itself: a trim", () => {
+    expect(built(add(stand, square, { id: "s", op: "split", body: "base", sketch: "sq", keep: "rest" })).bodies).toEqual([
+      ["base", r3(BASE - BLOCK)],
+      ["upright", UPRIGHT],
+    ]);
+    expect(built(add(stand, square, { id: "s", op: "split", body: "base", sketch: "sq", keep: "piece" })).bodies).toEqual([
+      ["base", r3(BLOCK)],
+      ["upright", UPRIGHT],
+    ]);
+    const half = built(add(stand, { id: "s", op: "split", body: "base", plane: YZ, keep: "piece" }));
+    expect(half.errors).toEqual([]);
+    expect(half.bodies).toEqual([
+      ["base", r3(BASE / 2)],
+      ["upright", UPRIGHT],
+    ]);
+  });
+
+  it("says why when the profile misses the body, and checks what it is given", () => {
+    const off = { ...square, entities: [{ id: "r", type: "rect", center: [500, 0], w: 20, h: 20 }] };
+    expect(built(add(stand, off, { id: "s", op: "split", body: "base", sketch: "sq" })).errors.join(" ")).toMatch(/the sketch's profile misses body "base": all of it is outside the profile/);
+    const bad = (f: Record<string, unknown>) => errorsOf(add(stand, square, f));
+    expect(bad({ id: "s", op: "split", body: "base" })).toEqual(['s: plane: a split cuts with a "plane" or with a "sketch" (its closed profile, through the body both ways): one of them']);
+    expect(bad({ id: "s", op: "split", body: "base", plane: YZ, sketch: "sq" })).toEqual(['s: sketch: a split cuts with a "plane" or with a "sketch" (its closed profile, through the body both ways): one of them']);
+    expect(bad({ id: "s", op: "split", body: "base", sketch: "ext_1" })).toEqual(['s: sketch: "ext_1" is a extrude, not a sketch']);
+    expect(bad({ id: "s", op: "split", body: "base", sketch: "sq", keep: "piece", newBody: "x" })).toEqual(['s: newBody: keeping one piece makes no new body: the piece kept stays "base"']);
+    expect(bad({ id: "s", op: "split", body: "base", sketch: "sq", keep: "left" })[0]).toMatch(/keep: must be "both", "piece", "rest"/);
+    // Keeping one piece makes no new body: a later feature can't use "base_split".
+    expect(bad({ id: "s", op: "split", body: "base", sketch: "sq", keep: "rest" })).toEqual([]);
+  });
+});
+
 describe("the tools' rules", () => {
   it("validates them strictly", () => {
     const bad = (f: Record<string, unknown>) => errorsOf(add(stand, f));
@@ -220,7 +276,7 @@ describe("the tools' rules", () => {
   });
 
   it("says what is wrong when the kernel can't do it", () => {
-    expect(built(add(stand, { id: "s", op: "split", body: "base", plane: { type: "datum", normal: [1, 0, 0], origin: [200, 0, 0] } })).errors).toEqual(['s: the plane misses body "base": it lies wholly behind it']);
+    expect(built(add(stand, { id: "s", op: "split", body: "base", plane: { type: "datum", normal: [1, 0, 0], origin: [200, 0, 0] } })).errors).toEqual(['s: the plane misses body "base": all of it is behind the plane, so there is nothing to split off']);
     expect(built(add(stand, { id: "m", op: "mirror", plane: XZ, bodies: ["upright"], merge: true })).errors).toEqual(['m: the mirror of "upright" adds nothing: it is already symmetric about the plane']);
     const away = add(stand, { id: "mv", op: "move", bodies: ["upright"], translate: [0, 30, 0] }, { id: "m", op: "mirror", plane: XZ, bodies: ["upright"], merge: true });
     expect(built(away).errors).toEqual(['m: the mirror of "upright" doesn\'t touch it: merged, they would be one body of separate solids. Leave merge off to make "upright_mirror"']);

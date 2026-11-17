@@ -263,7 +263,7 @@ describe("errors the agent can read", () => {
     };
     const r = build(doc);
     expect(r.errors).toEqual([
-      "hole_1: selector matched 2 faces tied for largest area (wanted 1 planar face normal +Z)",
+      'hole_1: selector matched 2 faces tied for largest area (wanted 1 planar face normal +Z); they are at [-20, 0, 5], [20, 0, 5]: add "near": [x, y, z] (one of those points) to pick that face, or "pick": "all" for all of them',
     ]);
     expect(r.measurements!.solids).toBe(2);
   });

@@ -220,7 +220,7 @@ function circleWire(ctx: RebuildCtx, s: Scope, path: PathShape, r: number): Topo
 }
 
 /** Why a path with a sharp corner beside a curve failed: the corner modes cannot join a curved piece cleanly. */
-const CURVED_CORNER = "the path has a sharp corner next to a curve, which the profile cannot turn: round the corner with a sketch fillet";
+const CURVED_CORNER = "the path has a sharp corner next to a curve, which the profile cannot turn: round the corner with a sketch fillet (if the path should be open, check it isn't closed back to its start: a sketchProfile polyline is closed unless \"closed\": false)";
 
 /** Does the path have a piece that is not a straight line (an arc, ellipse, spline or helix)? */
 function hasCurvedPiece(ctx: RebuildCtx, s: Scope, path: PathShape): boolean {

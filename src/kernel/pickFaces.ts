@@ -7,7 +7,7 @@ import type { TopoDS_Face } from "replicad-opencascadejs";
 import type { FaceSelector } from "../doc/types";
 import type { DescribedPart } from "./bodies";
 import { OpError } from "./ops";
-import { describeWanted, selectFaces } from "./selectors";
+import { describeWanted, selectFaces, tieHint } from "./selectors";
 
 export interface PickedFace {
   /** Its index in the part's face order (this rebuild only). */
@@ -27,7 +27,7 @@ export function pickFaces(part: DescribedPart, selectors: readonly FaceSelector[
     const where = `${path}[${i}]`;
     const found = selectFaces(part.faceInfos, sel);
     if (found.matches.length === 0) throw new OpError(`${where}: selector matched no face (wanted ${describeWanted(sel, 1)})`);
-    if (found.tie) throw new OpError(`${where}: selector matched ${found.matches.length} faces tied for ${found.tie}${found.tie === "nearest" ? "" : " area"}; add "near" to pick one, or "pick": "all" for all of them`);
+    if (found.tie) throw new OpError(`${where}: selector matched ${found.matches.length} faces tied for ${found.tie}${found.tie === "nearest" ? "" : " area"}${tieHint(found.matches)}`);
     for (const info of found.matches) {
       if (seen.has(info.index)) continue;
       seen.add(info.index);

@@ -22,21 +22,36 @@ export function deleteBody(ctx: ToolCtx, name = ctx.pickedBody()): void {
   ctx.create({ id: ctx.nextId("delete"), op: "deleteBody", bodies: [name] });
 }
 
+/** The bodies of the faces picked, in the bodies' own order. */
+function pickedBodies(ctx: ToolCtx, names: string[]): string[] {
+  const picked = new Set(ctx.selection.faces.map((i) => ctx.view?.faces[i]?.body).filter((b): b is string => !!b));
+  return names.filter((n) => picked.has(n));
+}
+
 function combine(ctx: ToolCtx): Raw | string {
   const names = ctx.view?.bodies.map((b) => b.name) ?? [];
   if (!ctx.doc || names.length < 2) return "Combine needs two bodies or more.";
-  // The clicked face's body goes into the first other body; change either in Properties.
-  const picked = ctx.selection.faces.length ? ctx.view?.faces[ctx.selection.faces[0]]?.body : undefined;
-  const tool = picked ?? names[1];
+  // Bodies picked first (faces of two or more): they are the ones combined, the oldest keeping its name.
+  const picked = pickedBodies(ctx, names);
+  if (picked.length >= 2) return { id: ctx.nextId("combine"), op: "combine", operation: "add", target: picked[0], tools: picked.slice(1) };
+  // One picked: it joins the first other body; else the first two. Click more in the view, or change the operation, in Properties.
+  const tool = picked[0] ?? names[1];
   const target = names.find((n) => n !== tool)!;
   return { id: ctx.nextId("combine"), op: "combine", operation: "add", target, tools: [tool] };
+}
+
+/** A plane picked (a default plane or a plane feature): what a split or mirror cuts with. */
+function pickedPlane(ctx: ToolCtx): string | undefined {
+  return (ctx.selection.datums ?? []).find((id) => ["Top", "Front", "Right"].includes(id) || (ctx.doc?.features as Raw[] | undefined)?.some((f) => f.id === id && f.op === "plane"));
 }
 
 function split(ctx: ToolCtx): Raw | string {
   const body = ctx.pickedBody();
   const box = body ? bodyBox(ctx, body) : null;
   if (!ctx.doc || !body || !box) return "Split needs a body: click one, then Split.";
-  return { id: ctx.nextId("split"), op: "split", body, plane: yzPlane((box.min[0] + box.max[0]) / 2) };
+  // A plane picked with it cuts there; else a plane across the middle of the body, to change in Properties.
+  const plane = pickedPlane(ctx);
+  return { id: ctx.nextId("split"), op: "split", body, plane: plane ? { type: "ref", ref: { datum: plane } } : yzPlane((box.min[0] + box.max[0]) / 2) };
 }
 
 function move(ctx: ToolCtx): Raw | string {
@@ -70,7 +85,7 @@ export const tools: ToolDef[] = [
     icon: "split",
     tab: "bodies",
     group: "bodies",
-    title: "Cut the clicked body in two with a plane",
+    title: "Cut the clicked body in two with a plane, a face or a sketch's profile",
     testId: "tool-split",
     run: make(split),
   },

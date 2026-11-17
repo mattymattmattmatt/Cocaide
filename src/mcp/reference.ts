@@ -368,6 +368,9 @@ groups alike members.
   image into its own body (it must touch it).
 { "id": "split_1", "op": "split", "body": "base", "plane": {...}, "newBody": "base_left" }
   cuts a body in two: the piece the normal points to is newBody (default "<body>_split"); one piece each side.
+  Or "sketch": "<sketch id>" instead of "plane": its closed profile runs through the body both ways, and what is
+  inside is the cut-off piece (newBody). "flip": true swaps the sides. "keep": "piece" | "rest" keeps only the
+  cut-off piece or only the rest, as "body" (no new body: a trim); default "both".
 { "id": "move_1", "op": "move", "bodies": ["upright"], "rotate": { "axis": { "origin": [0,0,0], "direction": [0,0,1] }, "angle": 90 },
   "translate": [0, 50, 0], "copy": true, "newBody": "upright_2" }  turns, then moves; with copy the copies are new
   bodies "<name>_copy" (or newBody for one).

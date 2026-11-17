@@ -249,13 +249,19 @@ export function describeWanted(sel: FaceSelector, count: number): string {
   return parts.join(" ") + near + of;
 }
 
+/** Faces tied for a pick: where each is, so "near" can name the one meant. */
+export function tieHint(matches: { centroid: Vec3 }[]): string {
+  const at = matches.slice(0, 4).map((f) => fmtPoint(f.centroid)).join(", ");
+  return `; they are at ${at}${matches.length > 4 ? " …" : ""}: add "near": [x, y, z] (one of those points) to pick that face, or "pick": "all" for all of them`;
+}
+
 /** Error text for a selection that is not exactly `wanted` faces, or null when it is. */
 export function selectionError(sel: FaceSelector, result: Selection, wanted: number): string | null {
   if (result.matches.length === wanted) return null;
   if (result.unhealed) return `${moved("face", result.matches.length)}; ${candidateText("face", result.unhealed)} (wanted ${describeWanted(sel, wanted)})`;
   const n = result.matches.length;
   const tied = result.tie === "nearest" ? " tied for nearest" : result.tie ? ` tied for ${result.tie} area` : "";
-  return `selector matched ${n} ${n === 1 ? "face" : "faces"}${tied} (wanted ${describeWanted(sel, wanted)})`;
+  return `selector matched ${n} ${n === 1 ? "face" : "faces"}${tied} (wanted ${describeWanted(sel, wanted)})${result.tie ? tieHint(result.matches) : ""}`;
 }
 
 // ----------------------------------------------------------------- edges
@@ -308,7 +314,7 @@ export function selectEdgesStrictly(edges: EdgeInfo[], faces: FaceInfo[], sel: E
   const faceSet = (fs: FaceSelector, where: string): Set<number> | string => {
     const r = selectFaces(faces, fs);
     if (r.matches.length === 0) return `${where}: selector matched 0 faces (wanted ${describeWanted(fs, 1)} or more)`;
-    if (r.tie) return `${where}: selector matched ${r.matches.length} faces tied for ${r.tie}${r.tie === "nearest" ? "" : " area"}`;
+    if (r.tie) return `${where}: selector matched ${r.matches.length} faces tied for ${r.tie}${r.tie === "nearest" ? "" : " area"}${tieHint(r.matches)}`;
     return new Set(r.matches.map((f) => f.index));
   };
   let on: Set<number> | undefined;

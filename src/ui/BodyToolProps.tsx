@@ -91,17 +91,107 @@ export function MirrorProps({ f, bodies, update, rename, seeds, form }: ToolProp
   );
 }
 
+/** A row of buttons, one on: a choice of a few (Add / Subtract / Common). */
+export function Choice<T extends string>({ value, options, onChange, testId }: { value: T; options: [T, string][]; onChange(v: T): void; testId: string }) {
+  return (
+    <span className="segmented wrap" data-testid={testId}>
+      {options.map(([v, label]) => (
+        <button key={v} type="button" className={v === value ? "on" : ""} aria-pressed={v === value} onClick={() => v !== value && onChange(v)} data-testid={`${testId}-${v}`}>
+          {label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/** One body as a live pick: a click on another body in the view takes its place (the panel's ticks too). */
+export function OneBodyPick({ form, field, label, testId, bodies, also }: { form: FieldProps; field: string; label: string; testId: string; bodies?: string[]; also?(body: string, f: Raw): Raw }) {
+  return (
+    <FeatureForm
+      fields={[
+        {
+          kind: "bodies",
+          key: field,
+          label,
+          testId,
+          prompt: `Click the ${label.toLowerCase()} in the view`,
+          get: (f) => (typeof f[field] === "string" ? [f[field]] : []),
+          set: (v, f) => {
+            const list = Array.isArray(v) ? (v as string[]) : [];
+            const now = f[field];
+            const body = list.find((b) => b !== now) ?? list[0] ?? now;
+            return { [field]: body, ...(also && typeof body === "string" ? also(body, f) : {}) };
+          },
+        },
+      ]}
+      {...form}
+      bodies={bodies ?? form.bodies}
+    />
+  );
+}
+
+/**
+ * Split, as other CAD does it: the body, what cuts it (a plane or a face, or
+ * a sketch's closed profile run through it), which pieces to keep, which side
+ * is the new one, and its name.
+ */
 export function SplitProps({ f, bodies, update, rename, form }: ToolProps & { form: FieldProps }) {
   const body = String(f.body);
+  const bySketch = typeof f.sketch === "string";
+  const keep = (typeof f.keep === "string" ? f.keep : "both") as "both" | "piece" | "rest";
+  const flip = f.flip === true;
   const piece = typeof f.newBody === "string" ? f.newBody : `${body}${DERIVED_SUFFIX.split}`;
+  const sketches = form.before.filter((x) => x.op === "sketch").map((x) => String(x.id));
+  const sides = bySketch ? (["inside the profile", "outside the profile"] as const) : (["in front of the plane (where its normal points)", "behind the plane"] as const);
+  const [cutOff, rest] = flip ? [sides[1], sides[0]] : [sides[0], sides[1]];
+  void bodies;
   return (
     <>
-      <Field label="Body">
-        <Select value={body} options={bodies.map((b): [string, string] => [b, b])} onChange={(v) => update({ body: v, newBody: null })} testId="prop-split-body" />
+      <OneBodyPick form={form} field="body" label="Body to split" testId="prop-split-body" also={() => ({ newBody: null })} />
+      <Field label="Cut with">
+        <Choice
+          value={bySketch ? "sketch" : "plane"}
+          options={[
+            ["plane", "Plane or face"],
+            ["sketch", "Sketch"],
+          ]}
+          onChange={(v) => {
+            if (v === "plane") return update({ sketch: null, plane: { type: "ref", ref: { datum: "Right" } } });
+            if (!sketches.length) return form.setError("Split with a sketch needs a sketch before it: draw one with a closed profile where the body should be cut, then choose it here.");
+            update({ plane: null, sketch: sketches[sketches.length - 1] });
+          }}
+          testId="prop-split-with"
+        />
       </Field>
-      <PlaneFields form={form} testId="prop-split-plane" />
-      <NewBodyName name={piece} rename={rename} testId="prop-split-name" />
-      <p className="muted small">The piece the normal points to becomes {piece}; the other stays {body}.</p>
+      {bySketch ? (
+        <FeatureForm fields={[{ kind: "sketch", key: "sketch", label: "Sketch", testId: "prop-split-sketch", hint: "Its closed profile is run through the body both ways: what is inside is cut off" }]} {...form} />
+      ) : (
+        <PlaneFields form={form} testId="prop-split-plane" />
+      )}
+      <Field label="Keep">
+        <Choice
+          value={keep}
+          options={[
+            ["both", "Both pieces"],
+            ["piece", "Cut-off piece"],
+            ["rest", "The rest"],
+          ]}
+          onChange={(v) => update({ keep: v === "both" ? null : v, ...(v === "both" ? {} : { newBody: null }) })}
+          testId="prop-split-keep"
+        />
+      </Field>
+      <label className="check">
+        <input type="checkbox" checked={flip} onChange={(e) => update({ flip: e.target.checked || null })} data-testid="prop-split-flip" />
+        Swap sides
+      </label>
+      {keep === "both" && <NewBodyName name={piece} rename={rename} testId="prop-split-name" />}
+      <p className="muted small" data-testid="prop-split-summary">
+        {keep === "both"
+          ? `The piece ${cutOff} becomes ${piece}; the piece ${rest} stays ${body}.`
+          : keep === "piece"
+            ? `Only the piece ${cutOff} is kept, as ${body}; the rest is thrown away.`
+            : `Only the piece ${rest} is kept, as ${body}; the piece ${cutOff} is thrown away.`}
+      </p>
     </>
   );
 }

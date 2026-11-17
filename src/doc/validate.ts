@@ -8,6 +8,8 @@
 import {
   BODY_NAME,
   COMBINE_OPERATIONS,
+  SPLIT_KEEPS,
+  type SplitKeep,
   DEFAULT_BODY,
   EDGE_PICKS,
   FEATURE_OPS,
@@ -2443,13 +2445,33 @@ function validateMirror(raw: Record<string, unknown>, c: Checker, earlier: Map<s
 }
 
 function validateSplit(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): SplitFeature | null {
-  c.keys(raw, "", ["id", "op", "body", "plane", "newBody"]);
+  c.keys(raw, "", ["id", "op", "body", "plane", "sketch", "flip", "keep", "newBody"]);
   const body = bodyName(raw.body, "body", c);
-  const plane = validatePlane(raw.plane, "plane", c, earlier);
+  // Cut with a plane, or with a sketch's closed profile: one of them.
+  if ((raw.plane === undefined) === (raw.sketch === undefined)) c.fail(raw.plane === undefined ? "plane" : "sketch", 'a split cuts with a "plane" or with a "sketch" (its closed profile, through the body both ways): one of them');
+  const plane = raw.plane === undefined ? undefined : validatePlane(raw.plane, "plane", c, earlier);
+  if (raw.sketch !== undefined) {
+    if (typeof raw.sketch !== "string") c.fail("sketch", `must be the id of a sketch feature (got ${describe(raw.sketch)})`);
+    else if (!earlier.has(raw.sketch)) c.fail("sketch", `"${raw.sketch}" is not a feature before this one`);
+    else if (earlier.get(raw.sketch) !== "sketch") c.fail("sketch", `"${raw.sketch}" is a ${earlier.get(raw.sketch)}, not a sketch`);
+  }
+  if (raw.flip !== undefined && typeof raw.flip !== "boolean") c.fail("flip", `must be true or false (got ${describe(raw.flip)})`);
+  const keep = raw.keep as SplitKeep | undefined;
+  if (keep !== undefined && !SPLIT_KEEPS.includes(keep)) c.fail("keep", `must be ${SPLIT_KEEPS.map((k) => `"${k}"`).join(", ")}: both pieces, only the cut-off piece, or only the rest (got ${describe(raw.keep)})`);
   const newBody = optionalNewBody(raw, c);
   if (newBody && newBody === body) c.fail("newBody", "must differ from the body it is split from");
-  if (c.errors.length > 0 || !body || !plane) return null;
-  return { id: raw.id as string, op: "split", body, plane, ...(newBody ? { newBody } : {}) };
+  if (newBody && keep && keep !== "both") c.fail("newBody", `keeping one piece makes no new body: the piece kept stays "${String(raw.body)}"`);
+  if (c.errors.length > 0 || !body) return null;
+  return {
+    id: raw.id as string,
+    op: "split",
+    body,
+    ...(plane ? { plane } : {}),
+    ...(typeof raw.sketch === "string" ? { sketch: raw.sketch } : {}),
+    ...(raw.flip === true ? { flip: true } : {}),
+    ...(keep && keep !== "both" ? { keep } : {}),
+    ...(newBody ? { newBody } : {}),
+  };
 }
 
 function validateMove(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>): MoveFeature | null {
@@ -2631,7 +2653,8 @@ class BodyNames {
         break;
       case "split":
         need(f.body, "body");
-        makes = [f.newBody ?? `${f.body}${DERIVED_SUFFIX.split}`];
+        // Keeping one piece makes nothing new: the piece kept stays the body.
+        makes = f.keep && f.keep !== "both" ? [] : [f.newBody ?? `${f.body}${DERIVED_SUFFIX.split}`];
         break;
       case "move":
         f.bodies.forEach((b, i) => need(b, `bodies[${i}]`));

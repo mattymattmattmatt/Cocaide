@@ -16,7 +16,7 @@ import { sketchDof } from "../geom/solver";
 import type { RebuildView } from "../worker/protocol";
 import { UI_OPS, type EditorProps } from "../features/uiDefs";
 import { Field, Select, TextInput } from "./fields";
-import { BodiesPick, DeleteBodyProps, MirrorProps, MoveProps, SplitProps } from "./BodyToolProps";
+import { BodiesPick, Choice, DeleteBodyProps, MirrorProps, MoveProps, OneBodyPick, SplitProps } from "./BodyToolProps";
 import { EndCapProps, GussetProps, JointProps, MemberProps, type FrameActions } from "./FrameProps";
 import { nextBodyName } from "./model/names";
 import { FeatureForm } from "./props/FeatureForm";
@@ -510,28 +510,62 @@ function BodyProps({ f, bodies, update, rename }: { f: Raw; bodies: string[]; up
   );
 }
 
+/**
+ * Combine, as other CAD does it: Add and Common take one list of bodies (the
+ * result keeps the first one's name); Subtract takes a main body and the
+ * bodies to take away from it. Bodies are clicked in the view or ticked.
+ */
 function CombineProps({ f, bodies, update, form }: { f: Raw; bodies: string[]; update(p: Raw): unknown; form: EditorProps }) {
   const target = String(f.target);
   const tools = Array.isArray(f.tools) ? (f.tools as string[]) : [];
+  const operation = f.operation as "add" | "subtract" | "common";
+  const all = [target, ...tools];
+  // In the bodies' own order: the oldest is the main one, whose name the result keeps.
+  const ordered = (list: string[]) => bodies.filter((b) => list.includes(b));
   return (
     <>
       <Field label="Operation">
-        <Select
-          value={f.operation as "add" | "subtract" | "common"}
-          testId="prop-operation"
+        <Choice
+          value={operation}
           options={[
-            ["add", "Add (join)"],
+            ["add", "Add"],
             ["subtract", "Subtract"],
-            ["common", "Common (intersect)"],
+            ["common", "Common"],
           ]}
           onChange={(v) => update({ operation: v })}
+          testId="prop-operation"
         />
       </Field>
-      <Field label="Into">
-        <Select value={target} options={bodies.map((b): [string, string] => [b, b])} testId="prop-target" onChange={(v) => update({ target: v, tools: tools.filter((t) => t !== v).length ? tools.filter((t) => t !== v) : bodies.filter((b) => b !== v).slice(0, 1) })} />
-      </Field>
-      <BodiesPick form={form} field="tools" label="Bodies" testId="prop-tools" bodies={bodies.filter((b) => b !== target)} />
-      <p className="muted small">The bodies are used up: they become part of {target}.</p>
+      {operation === "subtract" ? (
+        <>
+          <OneBodyPick form={form} field="target" label="Main body" testId="prop-target" also={(b, cur) => ({ tools: (Array.isArray(cur.tools) ? (cur.tools as string[]) : []).filter((t) => t !== b).length ? (cur.tools as string[]).filter((t) => t !== b) : bodies.filter((x) => x !== b).slice(0, 1) })} />
+          <BodiesPick form={form} field="tools" label="Bodies to subtract" testId="prop-tools" bodies={bodies.filter((b) => b !== target)} />
+          <p className="muted small">The bodies to subtract are cut out of {target} and used up.</p>
+        </>
+      ) : (
+        <>
+          <FeatureForm
+            fields={[
+              {
+                kind: "bodies",
+                key: "tools",
+                label: "Bodies to combine",
+                testId: "prop-tools",
+                prompt: `Click the bodies to ${operation === "add" ? "join" : "intersect"} in the view (again takes one out)`,
+                get: () => ordered(all),
+                set: (v) => {
+                  const list = ordered(Array.isArray(v) ? (v as string[]) : []);
+                  return list.length >= 2 ? { target: list[0], tools: list.slice(1) } : { target: list[0] ?? target, tools: [] };
+                },
+              },
+            ]}
+            {...form}
+          />
+          <p className="muted small">
+            {operation === "add" ? "Joined into one body" : "Only where they all overlap is kept"}, named {ordered(all)[0] ?? target}; the others are used up.
+          </p>
+        </>
+      )}
     </>
   );
 }

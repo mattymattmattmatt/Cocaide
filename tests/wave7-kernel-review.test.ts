@@ -147,7 +147,7 @@ describe("sweep: a sharp corner next to a curve in the path", () => {
   const tube = (entities: Raw[]) => built(doc(sketch("path", FRONT, entities), DISC, { id: "sw", op: "sweep", circle: { diameter: 2 }, path: { sketch: "path" } }));
   const line = (id: string, start: number[], end: number[]) => ({ id, type: "line", start, end });
   const SPLINE = { id: "sp", type: "spline", points: [[0, 0], [5, 15], [-5, 30], [0, 45]] };
-  const CORNER = ["sw: the path has a sharp corner next to a curve, which the profile cannot turn: round the corner with a sketch fillet"];
+  const CORNER = ['sw: the path has a sharp corner next to a curve, which the profile cannot turn: round the corner with a sketch fillet (if the path should be open, check it isn\'t closed back to its start: a sketchProfile polyline is closed unless "closed": false)'];
   const ELLIPSE_ARC = { id: "el", type: "ellipse", center: [20, 0], major: [40, 0], minor: 15, startAngle: 90, endAngle: 180 };
 
   it("two lines at a corner sweep (the reference case)", () => {

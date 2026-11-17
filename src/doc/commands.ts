@@ -1363,7 +1363,7 @@ export function dependants(features: unknown[], id: string): string[] {
  */
 export function references(f: Record<string, unknown>, opts: { sketchRefs?: boolean } = {}): string[] {
   const refs: string[] = [];
-  if ((f.op === "extrude" || f.op === "cut") && typeof f.sketch === "string") refs.push(f.sketch);
+  if ((f.op === "extrude" || f.op === "cut" || f.op === "split") && typeof f.sketch === "string") refs.push(f.sketch);
   // A fillet or chamfer may treat the edges an earlier feature made (its own, or one of its sets).
   if (f.op === "fillet" || f.op === "chamfer") {
     const sets = Array.isArray(f.sets) ? f.sets.filter(isObject) : [];

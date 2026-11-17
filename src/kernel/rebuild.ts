@@ -14,7 +14,7 @@ import { validateDocument } from "../doc/validate";
 import type { Datum } from "../features/datum";
 import { runKernelOp, type RebuildCtx } from "../features/kernelDefs";
 import { checkConstraints } from "../geom/constraints";
-import { roundTo } from "../geom/vec";
+import { roundTo, scale3 } from "../geom/vec";
 import { to3D, type Frame } from "../geom/frame";
 import { placeSection } from "../geom/member";
 import { buildProfile, entityPolylines } from "../geom/profile";
@@ -52,8 +52,12 @@ import {
   moveTrsfs,
   noClosedProfile,
   OpError,
+  prism,
+  profileFaces,
+  reachAlong,
   removeFrom,
-  splitBody,
+  splitPieces,
+  type SplitTool,
   transformLine,
   transformed,
   type SketchProfile,
@@ -713,18 +717,32 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
         }
         case "split": {
           const body = need(raw.body);
+          const keep = raw.keep ?? "both";
           const other = raw.newBody ?? `${raw.body}${DERIVED_SUFFIX.split}`;
-          if (bodies.has(other)) throw new OpError(`a body "${other}" already exists; name the new piece with newBody`);
-          const at = planeOf(raw.plane);
+          if (keep === "both" && bodies.has(other)) throw new OpError(`a body "${other}" already exists; name the new piece with newBody`);
           scoped((s) => {
-            const [behind, front] = splitBody(oc, s, raw.body, body, { normal: at.z, origin: at.origin });
-            commit(new Map([[raw.body, behind], [other, front]]));
+            let tool: SplitTool;
+            if (raw.sketch) {
+              // The sketch's closed profile, run through the body both ways along the sketch's normal.
+              const profile = ctx.profile(raw.sketch, "split with");
+              const z = profile.frame.z;
+              const reach = Math.max(reachAlong(oc, s, body, profile.frame.origin, z), reachAlong(oc, s, body, profile.frame.origin, scale3(z, -1)), 1);
+              tool = { solid: prism(oc, s, profileFaces(oc, s, profile), scale3(z, -reach), scale3(z, 2 * reach)) };
+            } else {
+              const at = planeOf(raw.plane!);
+              tool = { plane: { normal: at.z, origin: at.origin } };
+            }
+            const r = splitPieces(oc, s, raw.body, body, tool, keep, raw.flip === true);
+            if (keep === "both") commit(new Map([[raw.body, r.rest!], [other, r.piece!]]));
+            else commit(new Map([[raw.body, (keep === "piece" ? r.piece : r.rest)!]]));
           });
-          // Both pieces of a member are lengths of it, along its line.
-          const mb = memberBodies.get(raw.body);
-          if (mb) memberBodies.set(other, { ...mb, id: other });
-          // A hole in the body may be in either piece.
-          for (const h of holesIn([raw.body])) holeBodies.get(h)!.add(other);
+          if (keep === "both") {
+            // Both pieces of a member are lengths of it, along its line.
+            const mb = memberBodies.get(raw.body);
+            if (mb) memberBodies.set(other, { ...mb, id: other });
+            // A hole in the body may be in either piece.
+            for (const h of holesIn([raw.body])) holeBodies.get(h)!.add(other);
+          }
           break;
         }
         case "move": {

@@ -586,22 +586,53 @@ export function mergeMirror(oc: OC, s: Scope, name: string, body: TopoDS_Shape, 
 
 /** A body cut in two by a plane: [the piece behind it, the piece the normal points to]. Each must be one solid. */
 export function splitBody(oc: OC, s: Scope, name: string, body: TopoDS_Shape, plane: { normal: Vec3; origin: Vec3 }): [TopoDS_Shape, TopoDS_Shape] {
-  const n = normalize3(plane.normal);
-  const behind = cutHalfSpace(oc, s, body, { point: plane.origin, normal: n });
-  const front = cutHalfSpace(oc, s, body, { point: plane.origin, normal: scale3(n, -1) });
+  const r = splitPieces(oc, s, name, body, { plane }, "both");
+  return [r.rest!, r.piece!];
+}
+
+/** What a split cuts with: a plane, or a solid (a sketch's profile run through the body) whose inside is the cut-off piece. */
+export type SplitTool = { plane: { normal: Vec3; origin: Vec3 } } | { solid: TopoDS_Shape };
+
+/**
+ * A split's two pieces: the cut-off one (in front of the plane, inside the
+ * tool solid) and the rest; `flip` swaps them. Both must have something in
+ * them, and each piece kept must be one solid. Only the kept ones are returned.
+ */
+export function splitPieces(oc: OC, s: Scope, name: string, body: TopoDS_Shape, tool: SplitTool, keep: "both" | "piece" | "rest", flip = false): { piece?: TopoDS_Shape; rest?: TopoDS_Shape } {
+  let inside: TopoDS_Shape;
+  let outside: TopoDS_Shape;
+  const words = "plane" in tool ? { inside: "in front of the plane", outside: "behind the plane", tool: "the plane" } : { inside: "inside the profile", outside: "outside the profile", tool: "the sketch's profile" };
+  if ("plane" in tool) {
+    const n = normalize3(tool.plane.normal);
+    outside = cutHalfSpace(oc, s, body, { point: tool.plane.origin, normal: n });
+    inside = cutHalfSpace(oc, s, body, { point: tool.plane.origin, normal: scale3(n, -1) });
+  } else {
+    const common = s.track(new oc.BRepAlgoAPI_Common(body, tool.solid, s.track(new oc.Message_ProgressRange())));
+    if (!common.IsDone()) throw new OpError(`splitting body "${name}" with the sketch's profile failed in the kernel`);
+    inside = s.track(common.Shape());
+    outside = boolean(oc, s, "cut", body, tool.solid);
+  }
   const total = volumeOf(oc, s, body);
-  const [vb, vf] = [volumeOf(oc, s, behind), volumeOf(oc, s, front)];
-  if (vb <= VOLUME_EPS * Math.max(1, total) || vf <= VOLUME_EPS * Math.max(1, total)) {
-    throw new OpError(`the plane misses body "${name}": it lies wholly ${vf <= VOLUME_EPS * Math.max(1, total) ? "behind" : "in front of"} it`);
+  const empty = (x: TopoDS_Shape) => volumeOf(oc, s, x) <= VOLUME_EPS * Math.max(1, total);
+  if (empty(inside) || empty(outside)) {
+    throw new OpError(`${words.tool} misses body "${name}": all of it is ${empty(inside) ? words.outside : words.inside}, so there is nothing to split off`);
   }
-  for (const [piece, side] of [
-    [behind, "behind"],
-    [front, "in front of"],
+  const [piece, rest, pieceWords, restWords] = flip ? [outside, inside, words.outside, words.inside] : [inside, outside, words.inside, words.outside];
+  const out: { piece?: TopoDS_Shape; rest?: TopoDS_Shape } = {};
+  for (const [which, shape, where] of [
+    ["piece", piece, pieceWords],
+    ["rest", rest, restWords],
   ] as const) {
-    const solids = countSubShapes(oc, s, piece, "solid");
-    if (solids !== 1) throw new OpError(`the plane leaves ${solids} pieces of "${name}" ${side} it; a split makes two bodies, so cut it where it leaves one on each side`);
+    if (keep !== "both" && keep !== which) continue;
+    const solids = countSubShapes(oc, s, shape, "solid");
+    if (solids !== 1) {
+      throw new OpError(
+        `${words.tool} leaves ${solids} separate pieces of "${name}" ${where}; each piece a split keeps is one body, so cut where it leaves one piece${keep === "both" ? ' on each side, or keep only the other side ("keep")' : ""}, or split again`,
+      );
+    }
+    out[which] = unify(oc, s, shape);
   }
-  return [unify(oc, s, behind), unify(oc, s, front)];
+  return out;
 }
 
 /** A new identity gp_Trsf, tracked in `s`: set it with SetTranslation, SetRotation, SetMirror, SetScale. */
