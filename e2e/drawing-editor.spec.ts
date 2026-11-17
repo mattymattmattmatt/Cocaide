@@ -130,6 +130,13 @@ test("a detail by drawing its circle; a projected view slides along its line and
   await clickSheet(page, centre.at[0] + 9, centre.at[1]);
   await expect(page.getByTestId("sheet-prompt")).toContainText("Click where the detail goes");
   const frame = await page.evaluate(() => (window as unknown as { __cocaideSheet: SheetHook }).__cocaideSheet.titleBlock());
+  // While the detail follows the pointer, its circle stays on the top view, round the hole.
+  const [hx, hy] = await at(page, frame.max[0] - 60, frame.max[1] + 70);
+  await page.mouse.move(hx, hy, { steps: 4 });
+  const ring = page.getByTestId("sheet").locator('g[data-id="detail_1"][data-on="top"]');
+  await expect(ring.first()).toBeAttached();
+  await expect(page.getByTestId("sheet").locator('g[data-id="detail_1"]:not([data-on])').first()).toHaveAttribute("transform", /translate/);
+  for (const g of await ring.all()) expect(await g.getAttribute("transform")).toBeNull();
   await clickSheet(page, frame.max[0] - 40, frame.max[1] + 50);
   await page.getByTestId("detail-scale").selectOption("5:1");
   await page.getByTestId("session-ok").click();

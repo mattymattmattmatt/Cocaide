@@ -43,15 +43,17 @@ export function sheetSVG(sheet: ComposedSheet, opts: SvgOptions = {}): string {
   };
   const groups: string[] = [];
   let owner: string | undefined;
+  let on: string | undefined;
   let open = false;
   const selected = new Set(opts.selected ?? []);
   const failed = new Set(opts.failed ?? []);
   for (const p of sheet.prims) {
-    if (!open || p.owner !== owner) {
+    if (!open || p.owner !== owner || p.on !== on) {
       if (open) groups.push("</g>");
       owner = p.owner;
+      on = p.on;
       const cls = [owner && selected.has(owner) ? "selected" : "", owner && failed.has(owner) ? "failed" : ""].filter(Boolean).join(" ");
-      groups.push(`<g${owner ? ` data-id="${esc(owner)}"` : ""}${cls ? ` class="${cls}"` : ""}>`);
+      groups.push(`<g${owner ? ` data-id="${esc(owner)}"` : ""}${on ? ` data-on="${esc(on)}"` : ""}${cls ? ` class="${cls}"` : ""}>`);
       open = true;
     }
     groups.push(prim(p));

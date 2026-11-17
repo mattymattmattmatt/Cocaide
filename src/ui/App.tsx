@@ -2065,6 +2065,20 @@ export function App() {
     return p?.ghost ? [{ at: p.ghost, label: p.severity === "fragile" ? "It is found by position here" : `${p.ref?.kind === "edge" ? "The edge" : "The face"} was here` }] : [];
   }, [repick, session, whatsWrongOpen, problems, shownProblem]);
   const shownOverlay = useMemo<EvalOverlay | null>(() => (ghosts.length ? { ...(overlay ?? { lines: [], points: [] }), ghosts } : overlay), [overlay, ghosts]);
+  /** The other way: the features that made the faces and edges picked on the part, marked in the tree. */
+  const fromModel = useMemo(() => {
+    if (!view || session) return [];
+    const ids = new Set<string>();
+    for (const i of selection.faces) {
+      const f = view.faces[i];
+      if (f?.createdBy) ids.add(f.createdBy);
+    }
+    for (const i of selection.edges) {
+      const e = view.edges[i];
+      if (e?.createdBy) ids.add(e.createdBy);
+    }
+    return [...ids];
+  }, [view, session, selection]);
   /** A feature's row hovered in the tree: the faces it made light up in the view. */
   const hoverPeek = useMemo<PickTarget[] | null>(() => {
     if (!hoverFeature || !view || session) return null;
@@ -2533,6 +2547,7 @@ export function App() {
               // A double-click opens the feature with OK and Cancel (Edit feature); its dimensions are on its right-click menu.
               onShowDimensions={sketch ? undefined : (id) => editFeature(id)}
               onHover={setHoverFeature}
+              fromModel={fromModel}
               onPicked={setTreePicked}
               onCopy={sketch ? undefined : copyTree}
               onPaste={sketch ? undefined : () => pasteTree()}

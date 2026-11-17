@@ -1340,7 +1340,11 @@ class Composer {
   private drawMarks(cv: ComposedView): void {
     const start = this.prims.length;
     this.drawMarksOf(cv);
-    for (const p of this.prims.slice(start)) p.layer ??= "SECTION";
+    // Drawn on this view though owned by the child: they stay with this view when the child is dragged.
+    for (const p of this.prims.slice(start)) {
+      p.layer ??= "SECTION";
+      p.on = cv.id;
+    }
   }
 
   private drawMarksOf(cv: ComposedView): void {

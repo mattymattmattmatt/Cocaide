@@ -516,10 +516,20 @@ export function SheetCanvas(props: SheetCanvasProps) {
         g.removeAttribute("data-moved");
       }
     }
+    const shift = (g: SVGGElement, d: Vec2) => {
+      g.setAttribute("transform", `translate(${d[0]} ${-d[1]})`);
+      g.setAttribute("data-moved", "1");
+    };
     for (const [id, d] of moved) {
-      for (const g of el.querySelectorAll<SVGGElement>(groupSel(id))) {
-        g.setAttribute("transform", `translate(${d[0]} ${-d[1]})`);
-        g.setAttribute("data-moved", "1");
+      // A view's marks on its parent (a cutting line, a detail's circle) stay with the parent.
+      for (const g of el.querySelectorAll<SVGGElement>(groupSel(id))) if (!g.dataset.on) shift(g, d);
+    }
+    for (const g of el.querySelectorAll<SVGGElement>("g[data-on]")) {
+      const d = moved.get(g.dataset.on ?? "");
+      if (d) shift(g, d);
+      else if (g.hasAttribute("data-moved")) {
+        g.removeAttribute("transform");
+        g.removeAttribute("data-moved");
       }
     }
   }, [moved, svg, live]);

@@ -73,6 +73,8 @@ interface Props {
   doc: RawDocument | null;
   view: RebuildView | null;
   selectedId: string | null;
+  /** The features that made what is picked on the part (its faces and edges): their rows are marked and shown. */
+  fromModel?: string[];
   onSelect(id: string | null): void;
   onEditSketch(id: string): void;
   dispatch(cmd: Command): string | null;
@@ -160,6 +162,7 @@ export function FeatureTree({
   doc,
   view,
   selectedId,
+  fromModel = [],
   onSelect,
   onEditSketch,
   dispatch,
@@ -224,6 +227,16 @@ export function FeatureTree({
   }, [picked.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   // A feature that is gone is not picked any more.
   useEffect(() => setExtra((x) => x.filter((id) => features.some((f) => f.id === id))), [features.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A face or edge picked on the part: the feature that made it is shown (its folder opened, scrolled to).
+  const fromKey = fromModel.join(",");
+  useEffect(() => {
+    const id = fromModel[0];
+    if (!id) return;
+    const f = folders.find((x) => x.features.includes(id));
+    if (f && collapsed.has(f.id)) toggleFolder(f.id);
+    requestAnimationFrame(() => listRef.current?.querySelector(`[data-testid="feature-${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }));
+  }, [fromKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Requests from the app: rename in place, a note, show a feature.
   useEffect(() => {
@@ -487,6 +500,7 @@ export function FeatureTree({
           state === "warning" ? "warned" : "",
           selectedId === id || pickedDatums.includes(id) ? "selected" : "",
           extra.includes(id) && selectedId !== id ? "picked" : "",
+          fromModel.includes(id) && selectedId !== id ? "from-model" : "",
           flash === id ? "flash" : "",
           folder ? "in-folder" : "",
           line ? `drop-${line}${dropAt?.problem ? " drop-refused" : ""}` : "",

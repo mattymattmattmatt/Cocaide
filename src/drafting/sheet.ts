@@ -42,7 +42,11 @@ export type Prim = (
       color?: string;
       owner?: string;
     }
-) & { layer?: string };
+) & {
+  layer?: string;
+  /** Drawn on this view though owned by another (a section's cutting line, a detail's circle on its parent): it moves with this view. */
+  on?: string;
+};
 
 export interface Box {
   min: Vec2;

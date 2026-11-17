@@ -1834,6 +1834,7 @@ svg.icon { flex: none; display: block; }
 .feature-list li.in-folder > .feature-row-wrap { margin-left: 16px; }
 .feature-list li.in-folder > .feature-error, .feature-list li.in-folder > .drop-reason { margin-left: 30px; }
 .feature-icon.warned { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.feature-list li.from-model > .feature-row-wrap { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); border-radius: 6px; }
 .feature-list li.picked > .feature-row-wrap { background: color-mix(in srgb, var(--selected-row) 60%, transparent); border-radius: 6px; }
 .feature-list li.flash > .feature-row-wrap { animation: tree-flash 1.5s ease-out; border-radius: 6px; }
 @keyframes tree-flash { 0%, 40% { background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { background: transparent; } }

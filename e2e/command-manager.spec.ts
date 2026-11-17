@@ -126,3 +126,14 @@ test("a circular pattern's axis point is one field of the axis: the whole axis i
   expect((await feature(page, "circular_1"))!.axis).toEqual({ origin: [20, 0, 0], direction: [0, 0, 1] });
   expect((await feature(page, "circular_1"))!.angle).toBeUndefined();
 });
+
+test("a face or edge picked on the part marks the feature that made it in the tree", async ({ page }) => {
+  await viewportClick(page, [-10, 5, 6]); // the top face: the extrude made it
+  await expect(page.getByTestId("feature-ext_1")).toHaveClass(/from-model/);
+  await expect(page.getByTestId("feature-hole_1")).not.toHaveClass(/from-model/);
+  await viewportClick(page, [30, -3.3, 6], { shift: true }); // the hole's rim: the hole made it
+  await expect(page.getByTestId("feature-hole_1")).toHaveClass(/from-model/);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("feature-ext_1")).not.toHaveClass(/from-model/);
+  await expect(page.getByTestId("feature-hole_1")).not.toHaveClass(/from-model/);
+});
