@@ -488,8 +488,10 @@ function BodyNameField({ f, rename }: { f: Raw; rename(from: string, to: string)
 /** Where an extrude's material goes: an existing body, or a new one with a name. */
 function BodyProps({ f, bodies, update, rename }: { f: Raw; bodies: string[]; update(p: Raw): unknown; rename(from: string, to: string): unknown }) {
   const newBody = typeof f.newBody === "string" ? f.newBody : null;
-  const value = newBody ? "__new" : typeof f.body === "string" ? f.body : DEFAULT_BODY;
-  const names = bodies.includes(DEFAULT_BODY) ? bodies : [DEFAULT_BODY, ...bodies];
+  // Naming no body, it adds to the part's only body (whatever its name), else to "main".
+  const fallback = bodies.length === 1 ? bodies[0] : DEFAULT_BODY;
+  const value = newBody ? "__new" : typeof f.body === "string" ? f.body : fallback;
+  const names = bodies.includes(DEFAULT_BODY) || bodies.length === 1 ? bodies : [DEFAULT_BODY, ...bodies];
   const options: [string, string][] = [...names.map((n): [string, string] => [n, n === DEFAULT_BODY && !bodies.includes(n) ? `${n} (new)` : `add to ${n}`]), ["__new", "New body"]];
   return (
     <>
@@ -498,7 +500,7 @@ function BodyProps({ f, bodies, update, rename }: { f: Raw; bodies: string[]; up
           value={value}
           options={options}
           testId="prop-body"
-          onChange={(v) => update(v === "__new" ? { body: null, newBody: nextBodyName(bodies) } : { newBody: null, body: v === DEFAULT_BODY ? null : v })}
+          onChange={(v) => update(v === "__new" ? { body: null, newBody: nextBodyName(bodies) } : { newBody: null, body: v === fallback ? null : v })}
         />
       </Field>
       {newBody && (

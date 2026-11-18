@@ -157,7 +157,9 @@ describe("validation of planes", () => {
       'sk: plane.flip: must be true or false (got "yes")',
     ]);
     expect(errorsOf(sk({ type: "plane" }))).toEqual(['sk: plane.type: must be "datum" (written out) or "ref" (by reference) (got "plane")']);
-    expect(errorsOf(sk("Top"))).toEqual(['sk: plane: must be a plane: { "type": "datum", "normal": [x, y, z], "origin": [x, y, z] } or { "type": "ref", "ref": { "face": <face selector> } } (got "Top")']);
+    // A plane by name is the shorthand for it by reference.
+    expect(errorsOf(sk("Top"))).toEqual([]);
+    expect(errorsOf(sk(42))).toEqual(['sk: plane: must be a plane: { "type": "datum", "normal": [x, y, z], "origin": [x, y, z] } or { "type": "ref", "ref": { "face": <face selector> } } (got 42)']);
   });
 
   it("an offset may be an expression", () => {

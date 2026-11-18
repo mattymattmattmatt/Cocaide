@@ -175,7 +175,9 @@ export function critique(input: CriticInput): Finding[] {
 
   // ---- standards
   if (!parseGeneralTolerance(drawing.generalTolerance)) out.push({ rule: "standard", severity: "error", message: 'no general tolerance: setDrawingOptions { "generalTolerance": "ISO 2768-mK" } (a weldment "ISO 13920-BF").' });
-  const material = validateDocument(input.doc).material?.name ?? sheets[0]?.format.material;
+  // The part's material, the title block's, or the bodies' own (a weldment's members carry their section's steel).
+  const bodyMaterial = input.measurements?.bodies.find((b) => b.material && !/\(default\)/.test(b.material))?.material;
+  const material = validateDocument(input.doc).material?.name ?? sheets[0]?.format.material ?? bodyMaterial;
   if (!material) out.push({ rule: "standard", severity: "warning", message: "no material: give the part a material (or the title block's material)." });
   return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "error" ? -1 : 1));
 }

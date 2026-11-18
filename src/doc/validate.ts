@@ -1742,6 +1742,10 @@ function validatePattern(
     c.keys(raw.axis, "axis", ["ref"]);
     const ref = validateDatumRef(raw.axis.ref, "axis.ref", c, earlier, "axis");
     if (ref) axis = { ref };
+  } else if (raw.axis.origin === undefined && raw.axis.direction === undefined && ["datum", "edge", "face", "sketch"].some((k) => k in (raw.axis as object))) {
+    // The reference itself, unwrapped ({ "datum": "Z" }): the same as { "ref": { "datum": "Z" } }.
+    const ref = validateDatumRef(raw.axis, "axis", c, earlier, "axis");
+    if (ref) axis = { ref };
   } else {
     c.keys(raw.axis, "axis", ["origin", "direction"]);
     const origin = c.vec3(raw.axis, "origin", "axis");
@@ -1797,6 +1801,9 @@ function lineDirection(raw: Record<string, unknown>, key: string, refKey: string
     const ref = validateDatumRef(raw[refKey], refKey, c, earlier, ["axis", "plane"]);
     return ref ?? undefined;
   }
+  // A reference written where the direction goes ({ "datum": "X" }, { "edge": ... }): the same as refKey.
+  const v = raw[key];
+  if (isObject(v) && ["datum", "edge", "face", "sketch"].some((k) => k in v)) return validateDatumRef(v, key, c, earlier, ["axis", "plane"]) ?? undefined;
   return c.unitVec(raw, key, "");
 }
 
@@ -1975,7 +1982,14 @@ function libraryRef(v: unknown, path: string, c: Checker): { id: string; version
 function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext): MemberFeature | null {
   const { profiles, listed } = ctx;
   c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "align", "newBody"]);
-  const profile = typeof raw.profile === "string" ? profiles[raw.profile] : undefined;
+  // A profile named by its family alone ("SHS") is the part's one profile of that family ("SHS (AS/NZS 1163)"), when just one is.
+  let profileKey = typeof raw.profile === "string" ? raw.profile : undefined;
+  if (profileKey !== undefined && !(profileKey in profiles) && !listed.includes(profileKey)) {
+    const want = profileKey.trim().toLowerCase();
+    const family = listed.filter((k) => k.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase() === want || profiles[k]?.name?.trim().toLowerCase() === want);
+    if (family.length === 1) profileKey = family[0];
+  }
+  const profile = profileKey !== undefined ? profiles[profileKey] : undefined;
   if (typeof raw.profile !== "string") c.fail("profile", `must name a profile in the part's profiles (got ${describe(raw.profile)})`);
   else if (!profile && listed.includes(raw.profile)) c.fail("profile", `the part's profile "${raw.profile}" has errors (see profiles.${raw.profile})`);
   else if (!profile) c.fail("profile", `no profile "${raw.profile}" in the part (${listed.length ? `profiles: ${listed.join(", ")}` : "it has none: add one with addLibraryProfile, e.g. { query: \"SHS\", sizes: [\"25x25x2.5\"] }, or from the Sections panel"})`);
@@ -2014,7 +2028,7 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   }
   const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
   if (c.errors.length > 0 || !from || !to) return null;
-  const f: MemberFeature = { id: raw.id as string, op: "member", profile: raw.profile as string, size: size as string, from, to };
+  const f: MemberFeature = { id: raw.id as string, op: "member", profile: profileKey as string, size: size as string, from, to };
   if (fromNode) f.fromNode = fromNode;
   if (toNode) f.toNode = toNode;
   if (rotation !== undefined) f.rotation = rotation;
@@ -2199,6 +2213,12 @@ function checkWelds(input: unknown, bodies: string[], c: Checker): Weld[] {
  * when the part rebuilds.
  */
 export function validatePlane(v: unknown, path: string, c: Checker, earlier: ReadonlyMap<string, string>): PlaneSpec | undefined {
+  // Shorthands for a plane by reference: its name ("Right", a plane feature's id), or the reference unwrapped ({ "datum": "Right" }, { "face": ... }).
+  if (typeof v === "string" && v.trim()) v = { type: "ref", ref: { datum: v.trim() } };
+  else if (isObject(v) && v.type === undefined && ["datum", "face", "edge", "sketch", "point"].some((k) => k in (v as object))) {
+    const { offset, flip, xDir, ...ref } = v as Record<string, unknown>;
+    v = { type: "ref", ref, ...(offset !== undefined ? { offset } : {}), ...(flip !== undefined ? { flip } : {}), ...(xDir !== undefined ? { xDir } : {}) };
+  }
   if (!isObject(v)) {
     c.fail(path, `must be a plane: { "type": "datum", "normal": [x, y, z], "origin": [x, y, z] } or { "type": "ref", "ref": { "face": <face selector> } } (got ${describe(v)})`);
     return undefined;
@@ -2606,6 +2626,12 @@ class BodyNames {
 
 
 
+  /** The body an extrude adds to: the one named, else the part's only body (whatever its name), else "main". */
+  extrudeInto(f: { newBody?: string; body?: string }): string {
+    if (f.newBody ?? f.body) return (f.newBody ?? f.body)!;
+    return this.names.size === 1 ? [...this.names][0] : DEFAULT_BODY;
+  }
+
   check(f: Feature, c: Checker): void {
     const need = (name: string, path: string) => {
       if (!this.names.has(name)) c.fail(path, `no body "${name}" before this feature (${this.list()})`);
@@ -2614,7 +2640,7 @@ class BodyNames {
       case "extrude":
         if (f.body) need(f.body, "body");
         // An intersect keeps the overlap with a body there is: it never starts one.
-        else if (f.intersect && !f.newBody) need(DEFAULT_BODY, "intersect");
+        else if (f.intersect && !f.newBody) need(this.extrudeInto(f), "intersect");
         if (f.newBody && this.names.has(f.newBody)) c.fail("newBody", `a body "${f.newBody}" already exists; use "body" to add to it`);
         break;
       case "cut":
@@ -2699,7 +2725,7 @@ class BodyNames {
     if (f.op === "deleteBody") for (const n of f.bodies ?? [...this.names].filter((x) => !f.keep!.includes(x))) this.names.delete(n);
     // What this feature makes, for the features after it.
     if (f.op === "extrude" && !f.intersect) {
-      const name = f.newBody ?? f.body ?? DEFAULT_BODY;
+      const name = this.extrudeInto(f);
       this.add(name);
       if (f.newBody) this.made.set(f.id, f.newBody);
     } else if (f.op === "linearPattern" || f.op === "circularPattern") {
@@ -2856,8 +2882,14 @@ export class Checker {
     return this.vec(obj, key, path, 3) as Vec3 | undefined;
   }
 
-  /** A direction: three numbers, not all zero. Stored as written, normalised by the kernel. */
+  /** A direction: three numbers, not all zero (or an axis by name: "+Z", "-X", "Y"). Stored as written, normalised by the kernel. */
   unitVec(obj: Record<string, unknown>, key: string, path: string): Vec3 | undefined {
+    const named = typeof obj[key] === "string" ? /^\s*([+-]?)\s*([XYZ])\s*$/i.exec(obj[key] as string) : null;
+    if (named) {
+      const axis = "XYZ".indexOf(named[2].toUpperCase());
+      const sign = named[1] === "-" ? -1 : 1;
+      return [0, 1, 2].map((i) => (i === axis ? sign : 0)) as Vec3;
+    }
     const v = this.vec3(obj, key, path);
     if (v && Math.hypot(...v) < 1e-12) {
       this.fail(path ? `${path}.${key}` : key, "must not be the zero vector");

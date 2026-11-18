@@ -509,9 +509,11 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
         case "extrude": {
           const profile = profiles.get(raw.sketch);
           if (!profile) throw new OpError(`${missing(raw.sketch, "sketch")}, so there is no profile to ${raw.op}`);
-          const name = raw.newBody ?? raw.body ?? DEFAULT_BODY;
+          // Naming no body, it adds to the part's only body (whatever its name), or to "main".
+          const only = !raw.newBody && !raw.body && bodies.size === 1 ? [...bodies.keys()][0] : undefined;
+          const name = raw.newBody ?? raw.body ?? only ?? DEFAULT_BODY;
           if (raw.newBody && bodies.has(raw.newBody)) throw new OpError(`a body "${raw.newBody}" already exists; use "body" to add to it`);
-          const into = raw.newBody ? null : raw.body ? need(raw.body) : (bodies.get(DEFAULT_BODY) ?? null);
+          const into = raw.newBody ? null : raw.body ? need(raw.body) : (bodies.get(name) ?? null);
           if (raw.intersect && !into) throw new OpError(`intersect keeps the overlap with body "${name}", but there is no such body before this feature`);
           const entities = sketchFeatures.get(raw.sketch)?.entities ?? [];
           scoped((s) => {
@@ -527,7 +529,12 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
               const hit = interference(oc, s, new Map([[name, tool], ...bodies])).find((i) => i.bodies[0] === name);
               if (hit) throw new OpError(`names no body, so it starts body "${name}", but that overlaps body "${hit.bodies[1]}" (by ${roundTo(hit.volume, 3)} mm³): add to it with "body": "${hit.bodies[1]}", or start a separate body with "newBody"`);
             }
-            commit(new Map([[name, fuseInto(oc, s, into, tool, "extrusion")]]));
+            const fused = fuseInto(oc, s, into, tool, "extrusion");
+            // Naming no body, it joins the part's only body: it must touch it, or the body would be two solids.
+            if (only && only !== DEFAULT_BODY && into && countSubShapes(oc, s, fused, "solid") > countSubShapes(oc, s, into, "solid")) {
+              throw new OpError(`names no body, so it adds to the part's only body "${only}", but it doesn't touch it: make it touch, or start a separate body with "newBody"`);
+            }
+            commit(new Map([[name, fused]]));
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", into: raw.newBody ? undefined : name, newBody: raw.newBody });
           });
           break;

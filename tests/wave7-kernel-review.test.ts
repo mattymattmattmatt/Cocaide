@@ -226,16 +226,18 @@ describe("an extrude naming no body after a part started by revolve", () => {
   ];
   const disc = (x: number) => sketch("s2", TOP, [{ id: "c", type: "circle", center: [x, 10], radius: 5 }]);
 
-  it("refuses starting body \"main\" over body \"rv\", and says how to add to it", () => {
+  it("adds to the part's only body (rv) when it touches it, as a feature naming no body does", () => {
     const b = built(doc(...rv, disc(0), { id: "e1", op: "extrude", sketch: "s2", distance: 20 }));
-    expect(b.errors).toHaveLength(1);
-    expect(b.errors[0]).toMatch(/^e1: names no body, so it starts body "main", but that overlaps body "rv" \(by [\d.]+ mm³\): add to it with "body": "rv", or start a separate body with "newBody"$/);
+    expect(b.errors).toEqual([]);
+    expect(b.bodies).toEqual(["rv"]);
   });
 
-  it("adds to rv when named, and starts a separate body where it does not overlap", () => {
-    expect(built(doc(...rv, disc(0), { id: "e1", op: "extrude", sketch: "s2", distance: 20, body: "rv" })).errors).toEqual([]);
+  it("refuses joining it when it doesn't touch, and says how to start a separate body; named, it adds or starts as told", () => {
     const apart = built(doc(...rv, disc(60), { id: "e1", op: "extrude", sketch: "s2", distance: 20 }));
-    expect(apart.errors).toEqual([]);
-    expect(apart.bodies).toEqual(["rv", "main"]);
+    expect(apart.errors).toEqual(['e1: names no body, so it adds to the part\'s only body "rv", but it doesn\'t touch it: make it touch, or start a separate body with "newBody"']);
+    expect(built(doc(...rv, disc(0), { id: "e1", op: "extrude", sketch: "s2", distance: 20, body: "rv" })).errors).toEqual([]);
+    const separate = built(doc(...rv, disc(60), { id: "e1", op: "extrude", sketch: "s2", distance: 20, newBody: "disc" }));
+    expect(separate.errors).toEqual([]);
+    expect(separate.bodies).toEqual(["rv", "disc"]);
   });
 });

@@ -521,7 +521,7 @@ export function cutMissed(f: ExtrudeFeature, profile: SketchProfile): string {
   return `the cut does not reach the solid in direction ${formatDirection(d)}${hint}`;
 }
 
-/** The body an extrude adds to (or intersects), by the document's rule. */
-export function extrudeBody(f: ExtrudeFeature): string {
-  return f.newBody ?? f.body ?? DEFAULT_BODY;
+/** The body an extrude adds to (or intersects), by the document's rule: the one named, else the part's only body, else "main". */
+export function extrudeBody(f: ExtrudeFeature, bodies: readonly string[] = []): string {
+  return f.newBody ?? f.body ?? (bodies.length === 1 ? bodies[0] : DEFAULT_BODY);
 }

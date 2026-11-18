@@ -765,9 +765,17 @@ class Composer {
     const hi = unbreak(breaks, outline.max);
     const local: Vec2 = [((hi[0] - lo[0]) * k) / 2, ((hi[1] - lo[1]) * k) / 2];
     // Turned: what the turned rectangle covers.
-    const t = (viewTurn(view) * Math.PI) / 180;
+    const t = (this.turnOf(view) * Math.PI) / 180;
     const half: Vec2 = t ? [Math.abs(Math.cos(t)) * local[0] + Math.abs(Math.sin(t)) * local[1], Math.abs(Math.sin(t)) * local[0] + Math.abs(Math.cos(t)) * local[1]] : local;
     return { half, local, outline, originB: [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2], breaks };
+  }
+
+  /** A view's turn on the sheet: its own; a detail without one takes its parent's (it shows a piece of the parent, as the parent shows it). */
+  private turnOf(view: DrawingView): number {
+    const own = viewTurn(view);
+    if (own || view.rotation !== undefined || viewKind(view) !== "detail" || !view.parent) return own;
+    const p = this.allViews.get(view.parent);
+    return p ? this.turnOf(p) : 0;
   }
 
   /** A view's own scale: its own, else a detail's twice its parent's, else the sheet's. */
@@ -1022,7 +1030,7 @@ class Composer {
         origin: e.originB,
         outline: e.outline,
         box: e.outline ? { min: [at[0] - e.half[0], at[1] - e.half[1]], max: [at[0] + e.half[0], at[1] + e.half[1]] } : null,
-        ...(viewTurn(view) ? { rotation: viewTurn(view), localBox: e.outline ? { min: [at[0] - e.local[0], at[1] - e.local[1]], max: [at[0] + e.local[0], at[1] + e.local[1]] } : null } : {}),
+        ...(this.turnOf(view) ? { rotation: this.turnOf(view), localBox: e.outline ? { min: [at[0] - e.local[0], at[1] - e.local[1]], max: [at[0] + e.local[0], at[1] + e.local[1]] } : null } : {}),
         square: kind === "detail" && parentCv ? parentCv.square : isSquareFrame(frame),
         breaks: e.breaks,
         ...(clip ? { clip } : {}),
@@ -1356,9 +1364,11 @@ class Composer {
         // Zigzag and curves are drawn on the sheet from the straight line: offsets in paper mm.
         if (b.style !== "straight") {
           const base = pts.map((q) => this.toSheet(cv, b.axis === 0 ? [at, q[1]] : [q[0], at]));
+          // Along the view's own axis: a turned view's breaks zigzag across the turned part.
+          const along = turnVec(b.axis === 0 ? [1, 0] : [0, 1], cv.rotation);
           for (let i = 0; i < sheet.length; i++) {
-            const dv = b.axis === 0 ? pts[i][0] - at : pts[i][1] - at;
-            sheet[i] = b.axis === 0 ? [base[i][0] + dv * cv.scale, base[i][1]] : [base[i][0], base[i][1] + dv * cv.scale];
+            const dv = (b.axis === 0 ? pts[i][0] - at : pts[i][1] - at) * cv.scale;
+            sheet[i] = [base[i][0] + along[0] * dv, base[i][1] + along[1] * dv];
           }
         }
         this.prims.push({ k: "line", pts: sheet, w: LINE.thin, layer: "BREAK", owner: cv.id });

@@ -67,7 +67,9 @@ export async function holesCommands(doc: RawDocument, kernel: KernelPort, input:
   if (sel.kind !== "faces" || sel.indices.length !== 1) return `holes: face: the selector picks ${sel.indices.length} ${sel.kind}; it must pick exactly one flat face`;
   const frame = faceFrame(sel.faces[0]);
   if (!frame) return "holes: face: that face is not flat";
-  const at = isObject(a.at) ? a.at : null;
+  // A bare list of points ([[x, y], ...]) or one point ([x, y]) is read as { "points" } or { "center" }.
+  const pair = (v: unknown) => Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === "number" || typeof n === "string");
+  const at = isObject(a.at) ? a.at : Array.isArray(a.at) && a.at.length && a.at.every(pair) ? { points: a.at } : pair(a.at) ? { center: a.at } : null;
   if (!at) return 'holes: "at" must be one of { "circle": { "center"?, "diameter", "count", "startAngle"? } }, { "grid": { "corner" | "center", "columns", "rows", "pitchX", "pitchY" } }, { "corners": { "inset" } }, { "points": [[x, y], ...] }, { "center": [x, y] }';
   const hole: Record<string, unknown> = { id: typeof a.id === "string" ? a.id : nextId(doc, "hole"), op: "hole", face: a.face };
   for (const k of HOLE_KEYS) if (a[k] !== undefined) hole[k] = a[k];

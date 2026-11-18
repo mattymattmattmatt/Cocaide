@@ -6,6 +6,7 @@
 // was, if it would introduce a validation error that was not there before
 // (a bad field, a broken reference, a duplicate id).
 
+import { expandShorthands } from "./shorthand";
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
 import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, rawParameters, resolveExpressions, type Parameters } from "./parameters";
@@ -196,7 +197,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
 
   switch (cmd.type) {
     case "addFeature": {
-      const f = structuredClone(cmd.feature) as Record<string, unknown>;
+      const f = expandShorthands(structuredClone(cmd.feature) as Record<string, unknown>);
       if (typeof f.id === "string" && indexOf(f.id) >= 0) {
         return { ok: false, error: `addFeature: a feature "${f.id}" already exists` };
       }
@@ -217,7 +218,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
     }
     case "insertFeatures": {
       if (!Array.isArray(cmd.features) || cmd.features.length === 0) return { ok: false, error: "insertFeatures: features must be a list of features" };
-      const list = cmd.features.map((f) => structuredClone(f) as Record<string, unknown>);
+      const list = cmd.features.map((f) => expandShorthands(structuredClone(f) as Record<string, unknown>));
       for (const f of list) {
         if (typeof f.id === "string" && (indexOf(f.id) >= 0 || list.filter((g) => g.id === f.id).length > 1)) return { ok: false, error: `insertFeatures: a feature "${f.id}" already exists` };
       }
@@ -276,8 +277,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (typeof i === "string") return { ok: false, error: i };
       const next =
         cmd.type === "replaceFeature"
-          ? (structuredClone(cmd.feature) as Record<string, unknown>)
-          : { ...features[i], ...structuredClone(cmd.patch) };
+          ? expandShorthands(structuredClone(cmd.feature) as Record<string, unknown>)
+          : { ...features[i], ...expandShorthands({ op: features[i].op, ...structuredClone(cmd.patch) }) };
       for (const [k, v] of Object.entries(next)) if (v === null) delete next[k];
       if (next.id !== cmd.id) {
         const renamed = String(next.id);
@@ -361,7 +362,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const i = need(cmd.id);
       if (typeof i === "string") return { ok: false, error: i };
       if (!Number.isInteger(cmd.index) || cmd.index < 0 || cmd.index >= features.length) {
-        return { ok: false, error: `reorderFeature: index ${cmd.index} is outside 0..${features.length - 1}` };
+        return { ok: false, error: cmd.index === undefined ? `reorderFeature: give "index", the position to move it to (0..${features.length - 1})` : `reorderFeature: index ${cmd.index} is outside 0..${features.length - 1}` };
       }
       const [moved] = features.splice(i, 1);
       // The bar stays between the same features: moving the one just below it leaves the bar above the next one
