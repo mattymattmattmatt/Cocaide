@@ -47,7 +47,7 @@ describe("found by examining every tool", () => {
     const r = (await s.call("addFeature", { feature: { id: "rail", op: "member", profile: "SHS", size: "SHS 40x40x3", from: [0, 0, 0], to: [500, 0, 0] } })).result;
     expect(r.ok).toBe(true);
     // Stored by the profile's own key, so everything reading the document finds it.
-    const f = ((await s.call("getFeature", { id: "rail" })).result as { feature: { profile: string } }).feature;
+    const f = ((await s.call("getFeature", { id: "rail" })).result as unknown as { feature: { profile: string } }).feature;
     expect(f.profile).toBe("SHS");
     expect(validateDocument(JSON.parse(JSON.stringify((s as unknown as { doc: RawDocument }).doc))).features.find((x) => x.id === "rail")?.feature).toMatchObject({ profile: "SHS (AS/NZS 1163)" });
     s.close();

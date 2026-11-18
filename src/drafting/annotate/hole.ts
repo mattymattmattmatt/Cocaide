@@ -25,7 +25,11 @@ import { sizeText } from "./dimension";
 import { findSpot } from "./placement";
 
 /** "6.6", "12.5": a size in a callout. */
-const f = (x: number) => sizeText(x, undefined);
+/** A callout's size: to a hundredth, trailing zeros dropped (a tap's thread depth is 11.25, not 11.3). */
+const f = (x: number) => {
+  const r = Math.round(x * 100) / 100 + 0;
+  return Number.isInteger(r) ? sizeText(r, 0) : Number.isInteger(Math.round(r * 10 * 1000) / 1000) ? sizeText(r, 1) : sizeText(r, 2);
+};
 
 /**
  * A hole's callout lines in the standards' symbols. `count` is how many it
