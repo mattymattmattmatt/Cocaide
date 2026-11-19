@@ -49,6 +49,16 @@ export type RawDocument = Record<string, unknown> & { features: Record<string, u
 
 export type Command =
   | { type: "addFeature"; feature: Record<string, unknown> | Feature; index?: number }
+  /** The whole assembly, or none (null). */
+  | { type: "setAssembly"; assembly: Record<string, unknown> | null; label?: string }
+  /** Adds or replaces a component by id; null removes it, and its mates. */
+  | { type: "setComponent"; id: string; component: Record<string, unknown> | null }
+  /** Adds or replaces a mate by id; null removes it. */
+  | { type: "setMate"; id: string; mate: Record<string, unknown> | null }
+  /** Carries a part document in the file under a key, for components to use; null removes it (refused while a component uses it). */
+  | { type: "setAssemblyPart"; key: string; part: Record<string, unknown> | null }
+  /** Where components are: what the mate solver or a move gives (at, rotation), as one step. */
+  | { type: "placeComponents"; places: Record<string, { at?: number[]; rotation?: number[] }> }
   /** Shallow merge into the feature; a value of null removes that field. */
   | { type: "updateFeature"; id: string; patch: Record<string, unknown> }
   /**
@@ -553,6 +563,67 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (checked.errors.length) return { ok: false, error: `setCutList: ${checked.errors.map((e) => e.replace(/^document: /, "")).join("; ")}` };
       if (Object.keys(next).length) doc.cutList = next;
       else delete doc.cutList;
+      break;
+    }
+    case "setAssembly": {
+      if (cmd.assembly === null) {
+        if (doc.assembly === undefined) return { ok: false, error: "setAssembly: the document has no assembly" };
+        delete doc.assembly;
+      } else doc.assembly = structuredClone(cmd.assembly);
+      break;
+    }
+    case "setComponent":
+    case "setMate":
+    case "setAssemblyPart":
+    case "placeComponents": {
+      const asm = (isObject(doc.assembly) ? doc.assembly : { components: [] }) as { parts?: Record<string, unknown>; components: Record<string, unknown>[]; mates?: Record<string, unknown>[] };
+      if (!Array.isArray(asm.components)) asm.components = [];
+      if (cmd.type === "setComponent") {
+        const i = asm.components.findIndex((k) => k.id === cmd.id);
+        if (cmd.component === null) {
+          if (i < 0) return { ok: false, error: `setComponent: no component "${cmd.id}"` };
+          asm.components.splice(i, 1);
+          // Its mates go with it.
+          if (asm.mates) asm.mates = asm.mates.filter((m) => (m.a as { component?: string })?.component !== cmd.id && (m.b as { component?: string })?.component !== cmd.id);
+          if (asm.mates && !asm.mates.length) delete asm.mates;
+        } else {
+          const next = { ...structuredClone(cmd.component), id: cmd.id };
+          if (i < 0) asm.components.push(next);
+          else asm.components[i] = next;
+        }
+      } else if (cmd.type === "setMate") {
+        const mates = (asm.mates ??= []);
+        const i = mates.findIndex((m) => m.id === cmd.id);
+        if (cmd.mate === null) {
+          if (i < 0) return { ok: false, error: `setMate: no mate "${cmd.id}"` };
+          mates.splice(i, 1);
+        } else {
+          const next = { ...structuredClone(cmd.mate), id: cmd.id };
+          if (i < 0) mates.push(next);
+          else mates[i] = next;
+        }
+        if (!mates.length) delete asm.mates;
+      } else if (cmd.type === "setAssemblyPart") {
+        const parts = (asm.parts ??= {});
+        if (cmd.part === null) {
+          if (!(cmd.key in parts)) return { ok: false, error: `setAssemblyPart: no part "${cmd.key}"` };
+          const users = asm.components.filter((k) => k.part === cmd.key).map((k) => String(k.id));
+          if (users.length) return { ok: false, error: `setAssemblyPart: ${users.join(", ")} ${users.length === 1 ? "uses" : "use"} part "${cmd.key}": remove ${users.length === 1 ? "it" : "them"} first` };
+          delete parts[cmd.key];
+        } else parts[cmd.key] = structuredClone(cmd.part);
+        if (!Object.keys(parts).length) delete asm.parts;
+      } else {
+        for (const [id, place] of Object.entries(cmd.places)) {
+          const k = asm.components.find((x) => x.id === id);
+          if (!k) return { ok: false, error: `placeComponents: no component "${id}"` };
+          const tidy = (v: number[] | undefined) => (v ? v.map((x) => Math.round(x * 1e6) / 1e6 + 0) : undefined);
+          if (place.at) k.at = tidy(place.at);
+          if (place.rotation) k.rotation = tidy(place.rotation);
+          if (Array.isArray(k.rotation) && (k.rotation as number[]).every((x) => x === 0)) delete k.rotation;
+          if (Array.isArray(k.at) && (k.at as number[]).every((x) => x === 0)) delete k.at;
+        }
+      }
+      doc.assembly = asm;
       break;
     }
     case "setDrawing": {

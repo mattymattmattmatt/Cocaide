@@ -7,6 +7,7 @@
 
 import {
   BODY_NAME,
+  type Assembly,
   COMBINE_OPERATIONS,
   SPLIT_KEEPS,
   type SplitKeep,
@@ -72,6 +73,7 @@ import {
   type FilletSet,
 } from "./types";
 import { validateDrawing } from "./drawing";
+import { validateAssembly } from "./assembly";
 import { checkCutList, type CutListSettings } from "./cutListSettings";
 import { documentParameters, evaluate, isExpression, PARAMETER_NAME, resolveExpressions, type Parameters } from "./parameters";
 import { defOf, type FeatureDef, type ValidateKit } from "../features/defs";
@@ -118,6 +120,10 @@ export interface ValidationResult {
   drawing: Drawing | null;
   /** What is wrong with the drawing. Never stops the part rebuilding. */
   drawingErrors: string[];
+  /** The assembly, when the document has one and it can be read. */
+  assembly?: Assembly | null;
+  /** What is wrong with the assembly. Never stops the part rebuilding. */
+  assemblyErrors?: string[];
   /** The tree's folders that are not right: they never stop the rebuild (a folder builds nothing), but commands may not make new ones. */
   folderErrors?: string[];
   /** The part's properties (part number, description ...); empty when it has none or they are wrong. */
@@ -144,7 +150,7 @@ const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /** Every error in the document, flattened, in feature order. */
 export function allErrors(v: ValidationResult): string[] {
-  return [...v.headerErrors, ...v.features.flatMap((f) => f.errors), ...v.drawingErrors, ...(v.folderErrors ?? [])];
+  return [...v.headerErrors, ...v.features.flatMap((f) => f.errors), ...v.drawingErrors, ...(v.assemblyErrors ?? []), ...(v.folderErrors ?? [])];
 }
 
 /** The typed document, or null when anything failed validation. */
@@ -169,7 +175,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -358,6 +364,11 @@ export function validateDocument(input: unknown): ValidationResult {
     const cut = checkCutList(input.cutList);
     result.cutList = cut.value;
     result.headerErrors.push(...cut.errors);
+  }
+  if (input.assembly !== undefined) {
+    const assembly = new Checker("document");
+    result.assembly = validateAssembly(input.assembly, assembly);
+    result.assemblyErrors = assembly.errors;
   }
   if (input.drawing !== undefined) {
     const drawing = new Checker("document");

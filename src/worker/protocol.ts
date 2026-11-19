@@ -15,6 +15,10 @@ export type KernelRequest =
   | { id: number; type: "exportStep"; doc: unknown; options?: StepExportOptions }
   /** The part as it stands before a feature (the sketch being edited): what that sketch sees and may reference. */
   | { id: number; type: "before"; doc: unknown; feature: string }
+  /** Another part, built on its own (an assembly's component): the document on screen keeps the shared rebuild. */
+  | { id: number; type: "partView"; doc: unknown }
+  /** An assembly as a STEP file: each component's part, rebuilt, placed (R·x + t) and named; or the interference between them. */
+  | { id: number; type: "assembly"; parts: Record<string, unknown>; components: { id: string; part: string; R: number[][]; t: number[] }[]; want: "step" | "interference"; name: string }
   /** A KernelPort call (src/ask/kernel.ts), for the right-click ask. */
   | { id: number; type: "port"; method: KernelMethod; args: unknown[] }
   /** Measure or Mass Properties on the rebuild of `doc` (the one on screen: the worker keeps it). */
@@ -74,6 +78,9 @@ export type KernelResponse =
   /** A rebuild skipped because a newer one was already waiting: only the newest is worth building. */
   | { id: number; type: "superseded" }
   | { id: number; type: "before"; view: RebuildView }
+  | { id: number; type: "partView"; view: RebuildView }
+  | { id: number; type: "assembly"; ok: true; text?: string; interference?: { components: [string, string]; volume: number }[] }
+  | { id: number; type: "assembly"; ok: false; error: string }
   | { id: number; type: "step"; ok: true; name: string; text: string }
   | { id: number; type: "step"; ok: false; errors: string[] }
   | { id: number; type: "port"; result: unknown }

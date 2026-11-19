@@ -2256,3 +2256,34 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .view-rotation input { width: 64px; text-align: center; }
 .view-rotation button { min-width: 26px; height: 26px; padding: 0 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; }
 .view-rotation button:hover { border-color: var(--accent); }
+
+/* ---------------------------------------------------------------- assembly */
+.assembly-tree { display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 16px; overflow: auto; }
+.assembly-tree .panel-title { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding: 2px 4px 6px; }
+.asm-heading { font-size: 11.5px; font-weight: 600; color: var(--muted); margin: 8px 4px 2px; }
+.asm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.asm-list li { display: flex; align-items: center; border-radius: 6px; }
+.asm-list li.selected { background: var(--selected-row); }
+.asm-list li.failed .asm-name { color: var(--bad); }
+.asm-list li.suppressed { opacity: 0.55; }
+.asm-row { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; border: 0; background: none; color: var(--text); padding: 5px 6px; text-align: left; cursor: pointer; border-radius: 6px; font: inherit; font-size: 13px; }
+.asm-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.asm-row .muted { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asm-name { font-family: var(--mono, ui-monospace, monospace); font-size: 12.5px; white-space: nowrap; }
+.asm-badge { font-size: 11px; color: var(--muted); }
+.asm-eye { border: 0; background: none; color: var(--muted); padding: 4px; cursor: pointer; border-radius: 5px; }
+.asm-eye:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.asm-section { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.asm-section h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.asm-mate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.asm-mate-grid button { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 12.5px; }
+.asm-mate-grid button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.asm-mate-grid button:disabled { opacity: 0.45; cursor: default; }
+.asm-bom { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.asm-bom th, .asm-bom td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.asm-bom th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.asm-plain { margin: 0; padding-left: 18px; font-size: 12.5px; }
+.asm-busy { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 12.5px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
+.error-text { color: var(--bad); }
+.assembly-bar .cm-group { display: inline-flex; align-items: flex-start; }
+.assembly-bar .cm-tools { display: flex; flex-wrap: wrap; align-items: flex-start; }

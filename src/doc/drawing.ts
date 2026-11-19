@@ -1095,7 +1095,8 @@ export type { Drawing, DrawingView };
  * sheet never rebuilds the model.
  */
 export function geometryKey(doc: unknown): string {
-  if (!isObject(doc) || doc.drawing === undefined) return JSON.stringify(doc);
-  const { drawing: _drawing, ...rest } = doc;
+  if (!isObject(doc) || (doc.drawing === undefined && doc.assembly === undefined)) return JSON.stringify(doc);
+  // The drawing and the assembly don't change the part's geometry.
+  const { drawing: _drawing, assembly: _assembly, ...rest } = doc;
   return JSON.stringify(rest);
 }

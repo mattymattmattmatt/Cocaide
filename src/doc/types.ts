@@ -43,6 +43,62 @@ export interface CocaideDocument {
   features: Feature[];
   /** The part's fabrication drawing (Phase L): views of the rebuilt part, annotated. */
   drawing?: Drawing;
+  /** An assembly of this part and others (src/doc/assembly.ts): components placed and mated. Never changes the part itself. */
+  assembly?: Assembly;
+}
+
+// ---------------------------------------------------------------- assembly
+
+/**
+ * Parts put together: each component is a part (this document's own,
+ * "self", or one carried in `parts`) placed in the assembly's space, and mates
+ * hold faces, edges and planes of them together. The solver moves the
+ * components that aren't fixed until the mates hold, and writes their places
+ * back. Placement: a component is turned by `rotation` (degrees about the
+ * assembly's X, then Y, then Z) and then moved by `at` (mm).
+ */
+export interface Assembly {
+  /** The parts components use besides this document's own, by key: whole part documents, carried in the file so it opens anywhere. */
+  parts?: Record<string, unknown>;
+  components: AssemblyComponent[];
+  mates?: Mate[];
+}
+
+export interface AssemblyComponent {
+  /** "bracket-1": unique in the assembly. */
+  id: string;
+  /** "self" (this document's part) or a key of `parts`. */
+  part: string;
+  at?: Vec3;
+  rotation?: Vec3;
+  /** Held where it is: mates move the others to it. */
+  fixed?: boolean;
+  /** Not drawn (still mated, listed and exported). */
+  hidden?: boolean;
+}
+
+export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric"] as const;
+export type MateType = (typeof MATE_TYPES)[number];
+
+/** What a mate holds on a component: one of its faces or edges (selectors, as features use, on the component's part), or one of its default planes or axes. */
+export interface MateRef {
+  component: string;
+  face?: FaceSelector;
+  edge?: EdgeSelector;
+  /** "Top", "Front", "Right" (planes), "X", "Y", "Z" (axes) or "Origin", of the component's part. */
+  datum?: string;
+}
+
+export interface Mate {
+  id: string;
+  type: MateType;
+  a: MateRef;
+  b: MateRef;
+  /** distance: mm between them; angle: degrees. */
+  value?: number;
+  /** Faces and planes face each other unless "aligned" (normals the same way); for parallel and concentric, either way holds. */
+  aligned?: boolean;
+  suppressed?: boolean;
 }
 
 // ---------------------------------------------------------------- drawing

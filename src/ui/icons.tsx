@@ -32,6 +32,8 @@ const ICONS = {
   // modes
   model: <path d={CUBE} />,
   drawing: <path d="M3 5h18v14H3z M13 14h8 M13 14v5 M6 8h5v4H6z" />,
+  assembly: <path d="M3 9l5-3 5 3v6l-5 3-5-3z M3 9l5 3 5-3 M8 12v6 M13 11l4-2.5 4 2.5v6l-4 2.5-3-1.8 M17 13.5v6" />,
+  mate: <path d="M4 7h7v10H4z M13 7h7v10h-7z M11 12h2 M8 4v3 M16 4v3" />,
   // sketch and features
   sketch: <path d="M15.5 4.5l4 4L9 19H5v-4z M13.5 6.5l4 4" />,
   extrude: <path d="M6 13h12v7H6z M12 10V3 M9 6l3-3 3 3" />,

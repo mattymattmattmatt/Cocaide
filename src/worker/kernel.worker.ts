@@ -17,6 +17,7 @@ import {
 import { LocalKernel } from "../ask/kernel";
 import { exportRefusal } from "../doc/photo";
 import { exportPartSTEP } from "../kernel/stepPart";
+import { assemblyInterference, assemblySTEP } from "../kernel/assembly";
 import { labelBodies } from "../kernel/bodies";
 import { evaluate } from "./evaluate";
 import { rebuild } from "../kernel/rebuild";
@@ -53,6 +54,9 @@ function rebuildCached(doc: unknown): RebuildResult {
 
 /** The part before a feature, by document and feature: plain data, so it outlives the rebuild it came from. */
 const beforeViews = new Recent<RebuildView>(4);
+
+/** An assembly's parts, built on their own, by geometry: plain data. */
+const partViews = new Recent<RebuildView>(12);
 
 /** The part before a feature session's feature: its rebuild (whose solid the effect is measured against) and its view. Freed when dropped. */
 const sessionBefore = new Recent<{ result: RebuildResult; view: RebuildView }>(2, (b) => b.result.dispose());
@@ -171,6 +175,29 @@ async function handle(kernel: OC, req: KernelRequest) {
         beforeViews.set(key, view);
       }
       post({ id: req.id, type: "before", view });
+    } else if (req.type === "partView") {
+      // An assembly's part: its own rebuild, kept by its geometry (copied out, never transferred: it may be asked for again).
+      const key = geometryKey(req.doc);
+      let view = partViews.get(key);
+      if (!view) {
+        const result = rebuild(req.doc, kernel);
+        try {
+          view = viewOf(kernel, result);
+        } finally {
+          result.dispose();
+        }
+        partViews.set(key, view);
+      }
+      post({ id: req.id, type: "partView", view });
+    } else if (req.type === "assembly") {
+      try {
+        const out = scoped((s) =>
+          req.want === "step" ? { text: assemblySTEP(kernel, s, req.name, req.parts, req.components) } : { interference: assemblyInterference(kernel, s, req.parts, req.components) },
+        );
+        post({ id: req.id, type: "assembly", ok: true, ...out });
+      } catch (e) {
+        post({ id: req.id, type: "assembly", ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
     } else {
       const refused = exportRefusal(req.doc);
       if (refused) {
@@ -222,6 +249,7 @@ async function drainQueue() {
       const before = heapBytes(oc);
       local.reset();
       beforeViews.clear();
+      partViews.clear();
       sessionBefore.clear();
       oc = null;
       const t0 = performance.now();

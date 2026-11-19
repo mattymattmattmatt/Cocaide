@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AssemblyBar, AssemblyMain } from "./assembly/Assembly";
+import { useAssembly } from "./assembly/useAssembly";
 import bracketText from "../../examples/bracket.cocaide.json?raw";
 import flangeText from "../../examples/flange.cocaide.json?raw";
 import plateText from "../../examples/mounting-plate.cocaide.json?raw";
@@ -203,7 +205,16 @@ export function App() {
   const [profileCard, setProfileCard] = useState<string | null>(null);
   const [savedProfile, setSavedProfile] = useState<string | null>(null);
   /** The 3D model, or the part's drawing (Phase L). */
-  const [mode, setMode] = useState<"model" | "drawing">("model");
+  const [mode, setMode] = useState<"model" | "drawing" | "assembly">("model");
+  // The Assembly tab: components of this part and others, placed and mated (src/ui/assembly).
+  const assemblyWs = useAssembly({
+    doc: d.doc,
+    dispatch: d.dispatch,
+    kernel,
+    notice: (text, kind) => setNotice({ kind: kind ?? "info", text }),
+    examples: EXAMPLES,
+    active: mode === "assembly",
+  });
   /** The views projected for the drawing, for the geometry and view directions in `key`. */
   const [geometry, setGeometry] = useState<{ key: string; g: DrawingGeometry | null } | null>(null);
   /** The sheet shown in the drawing (its id); the first when unset or gone. */
@@ -2401,7 +2412,7 @@ export function App() {
             {FILE_EXTENSION}
             {dirty && <span className="dirty">•</span>}
           </div>
-          <div className="mode-switch" role="tablist" aria-label="Model or drawing">
+          <div className="mode-switch" role="tablist" aria-label="Model, drawing or assembly">
             <button role="tab" aria-selected={mode === "model"} onClick={() => setMode("model")} data-testid="mode-model">
               <Icon name="model" />
               Model
@@ -2409,6 +2420,10 @@ export function App() {
             <button role="tab" aria-selected={mode === "drawing"} onClick={() => setMode("drawing")} disabled={!!sketch} data-testid="mode-drawing">
               <Icon name="drawing" />
               Drawing
+            </button>
+            <button role="tab" aria-selected={mode === "assembly"} onClick={() => setMode("assembly")} disabled={!!sketch} data-testid="mode-assembly">
+              <Icon name="assembly" />
+              Assembly
             </button>
           </div>
           <nav className="actions" aria-label="File">
@@ -2478,6 +2493,7 @@ export function App() {
         </header>
 
         {!sketch && mode === "drawing" && <DrawingCommandBar ws={drawingWs} undoLabel={d.undoLabel} redoLabel={d.redoLabel} />}
+        {!sketch && mode === "assembly" && <AssemblyBar a={assemblyWs} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} />}
         {!sketch && mode === "model" && (
           <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
@@ -2492,7 +2508,9 @@ export function App() {
         )}
 
         <main className={`workspace${leftHidden ? " no-left" : ""}${dockClass(dock)}`}>
-          {mode === "drawing" && !sketch ? (
+          {mode === "assembly" && !sketch ? (
+            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} />
+          ) : mode === "drawing" && !sketch ? (
             <DrawingMain
               ws={drawingWs}
               help={<DrawingHelp />}

@@ -75,6 +75,20 @@ export class KernelClient {
     return r.view;
   }
 
+  /** Another part, built on its own (an assembly's component): faces, edges and mesh, kept by the worker. */
+  async partView(doc: unknown): Promise<RebuildView> {
+    const r = await this.request({ type: "partView", doc });
+    if (r.type !== "partView") throw new Error("unexpected kernel reply");
+    return r.view;
+  }
+
+  /** An assembly as STEP text, or the components that share volume. */
+  async assembly(want: "step" | "interference", name: string, parts: Record<string, unknown>, components: { id: string; part: string; R: number[][]; t: number[] }[]): Promise<{ ok: true; text?: string; interference?: { components: [string, string]; volume: number }[] } | { ok: false; error: string }> {
+    const r = await this.request({ type: "assembly", want, name, parts, components });
+    if (r.type !== "assembly") throw new Error("unexpected kernel reply");
+    return r.ok ? { ok: true, ...(r.text !== undefined ? { text: r.text } : {}), ...(r.interference ? { interference: r.interference } : {}) } : { ok: false, error: r.error };
+  }
+
   async exportStep(doc: unknown, options?: StepExportOptions): Promise<{ ok: true; name: string; text: string } | { ok: false; errors: string[] }> {
     const r = await this.request({ type: "exportStep", doc, ...(options ? { options } : {}) });
     if (r.type !== "step") throw new Error("unexpected kernel reply");

@@ -1,0 +1,432 @@
+// The assembly workspace's state and actions (the Assembly tab): its parts
+// built in the kernel worker, the scene on screen, the solve, what is
+// selected, and every edit as one undo step with the mates solved.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { nextComponentId, nextMateId, SELF, validateAssembly } from "../../doc/assembly";
+import type { Command, RawDocument } from "../../doc/commands";
+import { geometryKey } from "../../doc/drawing";
+import type { Assembly, AssemblyComponent, Mate, MateRef, MateType, Vec3 } from "../../doc/types";
+import { Checker } from "../../doc/validate";
+import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
+import type { KernelClient } from "../../worker/client";
+import type { RebuildView } from "../../worker/protocol";
+import { facesAlign, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
+import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
+import { placementOf, pointTo, apply as rotate } from "../../assembly/transform";
+import { pickInto, EMPTY_SELECTION, type PickTarget, type Selection } from "../model/selection";
+import { pickFile, saveFile } from "../files/pick";
+import type { HandleSpec } from "../evaluate/handles";
+
+export type AssemblyItem = { kind: "component" | "mate"; id: string } | null;
+
+export interface AssemblyOptions {
+  doc: RawDocument | null;
+  dispatch(cmd: Command): string | null;
+  kernel: KernelClient;
+  notice(text: string, kind?: "info" | "error"): void;
+  /** The example parts, by name: their documents' text. */
+  examples: Record<string, string>;
+  active: boolean;
+}
+
+/** What a picked face or edge is, as a mate holds it, and where it is now in the assembly. */
+interface Picked {
+  ref: MateRef;
+  kind: "plane" | "axis" | "other";
+  normal?: Vec3;
+  point?: Vec3;
+}
+
+export function useAssembly(o: AssemblyOptions) {
+  const { doc } = o;
+  const asm = useMemo((): Assembly | null => (doc?.assembly === undefined ? null : validateAssembly(doc.assembly, new Checker("document"))), [doc]);
+  const [views, setViews] = useState<Map<string, RebuildView>>(new Map());
+  const keys = useRef(new Map<string, string>());
+  const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  const [item, setItem] = useState<AssemblyItem>(null);
+  const [fitToken, setFitToken] = useState(0);
+  const [clashes, setClashes] = useState<{ components: [string, string]; volume: number }[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  /** A component being dragged by its handles: where it is shown meanwhile (the document changes when the drag ends). */
+  const [dragging, setDragging] = useState<{ id: string; at: Vec3; rotation: Vec3 } | null>(null);
+
+  // Each part the assembly uses, built in the worker (again when it changes).
+  const docs = useMemo(() => (doc && asm ? partDocuments(doc as Record<string, unknown>, asm) : {}), [doc, asm]);
+  useEffect(() => {
+    if (!o.active) return;
+    let gone = false;
+    for (const [key, part] of Object.entries(docs)) {
+      const g = geometryKey(part);
+      if (keys.current.get(key) === g) continue;
+      keys.current.set(key, g);
+      o.kernel
+        .partView(part)
+        .then((v) => {
+          if (gone || keys.current.get(key) !== g) return;
+          setViews((m) => new Map(m).set(key, v));
+        })
+        .catch((e: Error) => o.notice(`${partName(doc as Record<string, unknown>, key)} didn't build: ${e.message}`, "error"));
+    }
+    return () => {
+      gone = true;
+      // The next run asks again for what this one didn't get back.
+      for (const key of Object.keys(docs)) if (!views.has(key)) keys.current.delete(key);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs, o.active]);
+
+  const solve = useMemo((): AssemblySolve | null => (asm && asm.mates?.length ? solveAssembly(asm, views) : null), [asm, views]);
+  const scene = useMemo(
+    (): AssemblyScene =>
+      composeScene(
+        (asm?.components ?? []).map((k) => ({ id: k.id, placement: placementOf(dragging?.id === k.id ? dragging : k), view: views.get(k.part), hidden: k.hidden })),
+        typeof doc?.name === "string" ? `${doc.name} assembly` : "assembly",
+      ),
+    [asm, views, doc?.name, dragging],
+  );
+  // The view fits the assembly when it first shows something, and again when a component comes in (so it is in view).
+  const shownCount = scene.view.bodies.length;
+  const lastCount = useRef(0);
+  useEffect(() => {
+    if (shownCount > lastCount.current) setFitToken((t) => t + 1);
+    lastCount.current = shownCount;
+  }, [shownCount]);
+
+  /** Commits the assembly as one undo step; with `solve`, the mates move the components first. */
+  const commit = useCallback(
+    (next: Assembly | null, label: string, withSolve = true): string | null => {
+      let out = next;
+      if (out && withSolve && out.mates?.length) {
+        const s = solveAssembly(out, views);
+        out = placed(out, new Map([...s.placements].filter(([id]) => !out!.components.find((k) => k.id === id)?.fixed)));
+      }
+      const problem = o.dispatch({ type: "setAssembly", assembly: out as unknown as Record<string, unknown> | null, label });
+      if (problem) o.notice(problem, "error");
+      setClashes(null);
+      return problem;
+    },
+    [o, views],
+  );
+
+  const base = (): Assembly => asm ?? { components: [] };
+
+  /** Where a new component goes: beside what is there (+X), clear of it. */
+  const beside = (): Vec3 => {
+    const m = scene.view.mesh;
+    if (!m || !m.positions.length) return [0, 0, 0];
+    let max = -Infinity;
+    for (let i = 0; i < m.positions.length; i += 3) max = Math.max(max, m.positions[i]);
+    return [Math.ceil(max / 10) * 10 + 50, 0, 0];
+  };
+
+  const insert = (part: string, name: string, also?: (a: Assembly) => Assembly) => {
+    const a = also ? also(base()) : base();
+    const first = a.components.length === 0;
+    const id = nextComponentId(a, name);
+    const k: AssemblyComponent = { id, part, ...(first ? { fixed: true } : { at: beside() }) };
+    const next = { ...a, components: [...a.components, k] };
+    if (!commit(next, `Insert ${id}`, false)) {
+      setItem({ kind: "component", id });
+      o.notice(first ? `${id} is in, fixed at the origin: the next parts are mated to it.` : `${id} is in, beside the others: select a face of it and one of another, then pick a mate.`, "info");
+    }
+  };
+
+  const insertSelf = () => insert(SELF, typeof doc?.name === "string" ? doc.name : "part");
+
+  /** A part document (from a file or an example) carried in the assembly and put in. The same part again is used again. */
+  const insertDocument = (part: Record<string, unknown>) => {
+    if (!Array.isArray(part.features)) return o.notice("That isn't a part: it has no features.", "error");
+    const name = typeof part.name === "string" && part.name.trim() ? part.name : "part";
+    const { assembly: _a, drawing: _d, ...clean } = part;
+    void _a;
+    void _d;
+    const parts = base().parts ?? {};
+    const same = Object.entries(parts).find(([, d]) => geometryKey(d) === geometryKey(clean))?.[0];
+    let key = same;
+    if (!key) {
+      const stem = name.replace(/[^\w-]+/g, "_") || "part";
+      key = stem;
+      for (let i = 2; key === SELF || key in parts; i++) key = `${stem}_${i}`;
+    }
+    const k = key;
+    insert(k, name, (a) => (same ? a : { ...a, parts: { ...(a.parts ?? {}), [k]: clean } }));
+  };
+
+  const insertFile = async () => {
+    const file = await pickFile(".json,.cocaide.json,application/json");
+    if (!file) return;
+    try {
+      insertDocument(JSON.parse(await file.text()));
+    } catch (e) {
+      o.notice(`${file.name} couldn't be read as a part: ${(e as Error).message}`, "error");
+    }
+  };
+
+  const insertExample = (name: string) => {
+    const text = o.examples[name];
+    if (text) insertDocument(JSON.parse(text));
+  };
+
+  /** A face or edge of the scene, as its component's part names it. */
+  const pickedRef = (kind: "face" | "edge", index: number): Picked | string => {
+    const owners: Owner[] = kind === "face" ? scene.faceOwner : scene.edgeOwner;
+    const owner = owners[index];
+    if (!owner) return "That isn't part of a component.";
+    const k = asm?.components.find((x) => x.id === owner.component);
+    const v = k ? views.get(k.part) : undefined;
+    if (!k || !v) return `${owner.component}'s part hasn't been built yet.`;
+    const syn = kind === "face" ? faceSelectorFor(v.faces, owner.local) : edgeSelectorFor(v.edges, v.faces, owner.local);
+    if (!syn.ok) return `That ${kind} of ${owner.component} can't be named so a rebuild finds it again: ${syn.error}`;
+    const P = placementOf(k);
+    if (kind === "face") {
+      const f = v.faces.find((x) => x.index === owner.local)!;
+      const ref: MateRef = { component: k.id, face: syn.selector as MateRef["face"] };
+      if (f.type === "plane" && f.normal) return { ref, kind: "plane", normal: rotate(P.R, f.normal), point: pointTo(P, f.point ?? f.centroid) };
+      if (f.cylinder) return { ref, kind: "axis", normal: rotate(P.R, f.cylinder.axis), point: pointTo(P, f.cylinder.origin) };
+      return { ref, kind: "other" };
+    }
+    const e = v.edges.find((x) => x.index === owner.local)!;
+    const ref: MateRef = { component: k.id, edge: syn.selector as MateRef["edge"] };
+    if (e.kind === "line" && e.direction) return { ref, kind: "axis", normal: rotate(P.R, e.direction), point: pointTo(P, e.start) };
+    if (e.kind === "circle" && e.axis && e.center) return { ref, kind: "axis", normal: rotate(P.R, e.axis), point: pointTo(P, e.center) };
+    return { ref, kind: "other" };
+  };
+
+  /** The two things selected, as mates hold them (or why not). */
+  const picks = useMemo((): Picked[] | string => {
+    const list: Picked[] = [];
+    for (const f of selection.faces) {
+      const p = pickedRef("face", f);
+      if (typeof p === "string") return p;
+      list.push(p);
+    }
+    for (const e of selection.edges) {
+      const p = pickedRef("edge", e);
+      if (typeof p === "string") return p;
+      list.push(p);
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, scene, asm, views]);
+
+  /** Which mates the selection can make (all of them want two things of two components). */
+  const mateChoices = useMemo((): { type: MateType; ok: boolean; why?: string }[] => {
+    const types: MateType[] = ["coincident", "concentric", "distance", "parallel", "perpendicular", "angle"];
+    if (typeof picks === "string") return types.map((type) => ({ type, ok: false, why: picks }));
+    if (picks.length !== 2) return types.map((type) => ({ type, ok: false, why: "Select two faces or edges, one on each of two components (Ctrl-click the second)" }));
+    if (picks[0].ref.component === picks[1].ref.component) return types.map((type) => ({ type, ok: false, why: "Both are on one component: pick the second on another component" }));
+    const [a, b] = picks.map((p) => p.kind);
+    const planes = a === "plane" && b === "plane";
+    const axes = a === "axis" && b === "axis";
+    const oriented = a !== "other" && b !== "other";
+    return types.map((type) => {
+      const ok = type === "concentric" ? axes : type === "coincident" || type === "distance" ? oriented : oriented;
+      return { type, ok, ...(ok ? {} : { why: type === "concentric" ? "Concentric takes two round faces or edges (or axes)" : "Pick flat or round faces, or straight or round edges" }) };
+    }).sort((x, y) => (planes ? 0 : 0) + Number(y.ok) - Number(x.ok) || 0);
+  }, [picks]);
+
+  /** Mates the two things selected: the value, for distance and angle, as they are now. */
+  const mate = (type: MateType, value?: number) => {
+    if (typeof picks === "string" || picks.length !== 2) return o.notice(typeof picks === "string" ? picks : "Select two faces or edges, one on each of two components.", "error");
+    const [a, b] = picks;
+    const m: Mate = { id: nextMateId(asm ?? undefined, type), type, a: a.ref, b: b.ref };
+    if (type === "distance") {
+      const now = a.normal && a.point && b.point ? Math.abs((b.point[0] - a.point[0]) * a.normal[0] + (b.point[1] - a.point[1]) * a.normal[1] + (b.point[2] - a.point[2]) * a.normal[2]) : 10;
+      m.value = value ?? (Math.round(now * 1000) / 1000 || 10);
+    }
+    if (type === "angle") {
+      const c = a.normal && b.normal ? Math.abs(a.normal[0] * b.normal[0] + a.normal[1] * b.normal[1] + a.normal[2] * b.normal[2]) : 1;
+      m.value = value ?? (Math.round((Math.acos(Math.min(1, c)) * 180) / Math.PI * 1000) / 1000 || 45);
+    }
+    // Planes facing the same way stay so; otherwise they meet face to face.
+    if ((type === "coincident" || type === "distance") && a.kind === "plane" && b.kind === "plane" && facesAlign(a.normal, b.normal)) m.aligned = true;
+    const next = { ...base(), mates: [...(base().mates ?? []), m] };
+    if (!commit(next, `Mate ${m.id}`)) {
+      setSelection(EMPTY_SELECTION);
+      setItem({ kind: "mate", id: m.id });
+    }
+  };
+
+  const editComponent = (id: string, patch: Partial<AssemblyComponent>, label: string, withSolve = true) => {
+    const a = base();
+    const next = { ...a, components: a.components.map((k) => (k.id === id ? clean({ ...k, ...patch }) : k)) };
+    commit(next, label, withSolve);
+  };
+
+  const editMate = (id: string, patch: Partial<Mate>, label: string) => {
+    const a = base();
+    const next = { ...a, mates: (a.mates ?? []).map((m) => (m.id === id ? clean({ ...m, ...patch }) : m)) };
+    commit(next, label);
+  };
+
+  const remove = (it: NonNullable<AssemblyItem>) => {
+    const a = base();
+    if (it.kind === "mate") commit({ ...a, mates: (a.mates ?? []).filter((m) => m.id !== it.id) }, `Delete ${it.id}`, false);
+    else {
+      const left = a.components.filter((k) => k.id !== it.id);
+      const mates = (a.mates ?? []).filter((m) => m.a.component !== it.id && m.b.component !== it.id);
+      // A part no component uses any more goes from the file too.
+      const used = new Set(left.map((k) => k.part));
+      const parts = Object.fromEntries(Object.entries(a.parts ?? {}).filter(([key]) => used.has(key)));
+      const next: Assembly = { components: left, ...(mates.length ? { mates } : {}), ...(Object.keys(parts).length ? { parts } : {}) };
+      commit(left.length ? next : null, `Delete ${it.id}`, false);
+    }
+    setItem(null);
+    setSelection(EMPTY_SELECTION);
+  };
+
+  const resolve = () => commit(base(), "Solve the mates");
+
+  /** The assembly's components as the kernel places them. */
+  const placedForKernel = () => (asm?.components ?? []).map((k) => ({ id: k.id, part: k.part, ...placementOf(k) }));
+
+  const interference = async () => {
+    if (!asm || !doc) return;
+    setBusy("Checking interference…");
+    try {
+      const r = await o.kernel.assembly("interference", "assembly", docs, placedForKernel());
+      if (!r.ok) return o.notice(`Interference: ${r.error}`, "error");
+      setClashes(r.interference ?? []);
+      o.notice(r.interference?.length ? `${r.interference.length} pair${r.interference.length === 1 ? "" : "s"} of components overlap: see the list in Properties.` : "No components overlap.", r.interference?.length ? "error" : "info");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const exportStep = async () => {
+    if (!asm || !doc) return;
+    const name = `${typeof doc.name === "string" ? doc.name : "part"}-assembly`;
+    setBusy("Writing STEP…");
+    try {
+      const r = await o.kernel.assembly("step", name, docs, placedForKernel());
+      if (!r.ok || r.text === undefined) return o.notice(`STEP export: ${r.ok ? "nothing written" : r.error}`, "error");
+      saveFile(`${name}.step`, r.text, "application/step");
+      o.notice(`Exported ${name}.step: ${asm.components.length} component${asm.components.length === 1 ? "" : "s"}, each a named solid where it sits.`, "info");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** The parts list: each part and how many components use it. */
+  const bom = useMemo(() => {
+    const rows = new Map<string, { part: string; name: string; qty: number }>();
+    for (const k of asm?.components ?? []) {
+      const r = rows.get(k.part) ?? { part: k.part, name: doc ? partName(doc as Record<string, unknown>, k.part) : k.part, qty: 0 };
+      r.qty++;
+      rows.set(k.part, r);
+    }
+    return [...rows.values()];
+  }, [asm, doc]);
+
+  const pick = (t: PickTarget | null, additive: boolean) => {
+    // Faces and edges only: what mates hold.
+    if (t && t.kind !== "face" && t.kind !== "edge") return;
+    setSelection((s) => pickInto(s, t, additive));
+    const owner = t ? (t.kind === "face" ? scene.faceOwner[t.index] : scene.edgeOwner[t.index]) : null;
+    if (owner && !additive) setItem({ kind: "component", id: owner.component });
+  };
+
+  /** The selected component's drag handles: an arrow along each axis, and a turn about Z, at its middle. */
+  const handles = useMemo((): HandleSpec[] => {
+    const k = item?.kind === "component" ? asm?.components.find((x) => x.id === item.id) : undefined;
+    if (!k || k.fixed || k.hidden) return [];
+    const body = scene.view.bodies.find((b) => b.name === k.id);
+    if (!body || body.faces[1] <= body.faces[0]) return [];
+    // Its middle: the mean of its faces' centres, as the drag started (the handles stay put while it moves).
+    const fs = scene.view.faces.slice(body.faces[0], body.faces[1]);
+    const mid = [0, 1, 2].map((i) => fs.reduce((sum, f) => sum + f.centroid[i], 0) / fs.length) as Vec3;
+    const now = dragging?.id === k.id ? dragging : { at: (k.at ?? [0, 0, 0]) as Vec3, rotation: (k.rotation ?? [0, 0, 0]) as Vec3 };
+    const base = (now.at as Vec3).slice() as Vec3;
+    const start = dragging?.id === k.id ? [mid[0] - (now.at[0] - (k.at?.[0] ?? 0)), mid[1] - (now.at[1] - (k.at?.[1] ?? 0)), mid[2] - (now.at[2] - (k.at?.[2] ?? 0))] as Vec3 : mid;
+    const arrow = (axis: 0 | 1 | 2): HandleSpec => ({
+      id: `${k.id}:move:${"xyz"[axis]}`,
+      feature: k.id,
+      key: `at.${axis}`,
+      label: `Move ${"XYZ"[axis]}`,
+      value: base[axis],
+      origin: start,
+      dir: [0, 1, 2].map((i) => (i === axis ? 1 : 0)) as Vec3,
+      scale: 1,
+      offset: k.at?.[axis] ?? 0,
+      min: null,
+    });
+    const turn: HandleSpec = {
+      id: `${k.id}:turn:z`,
+      feature: k.id,
+      key: "rotation.2",
+      label: "Turn about Z",
+      value: now.rotation[2],
+      kind: "angle",
+      origin: start,
+      dir: [0, 0, 1],
+      axis: [0, 0, 1],
+      zero: [1, 0, 0],
+      radius: 40,
+      scale: 1,
+      offset: k.rotation?.[2] ?? 0,
+      min: null,
+    };
+    return [arrow(0), arrow(1), arrow(2), turn];
+  }, [item, asm, scene, dragging]);
+
+  /** A handle dragged: shown live, written (with the mates solved) when let go. */
+  const onHandle = (h: HandleSpec, phase: "start" | "move" | "end" | "cancel", value: number | [number, number]) => {
+    const k = asm?.components.find((x) => x.id === h.feature);
+    if (!k || typeof value !== "number") return;
+    const cur = dragging?.id === k.id ? dragging : { id: k.id, at: ((k.at ?? [0, 0, 0]) as Vec3).slice() as Vec3, rotation: ((k.rotation ?? [0, 0, 0]) as Vec3).slice() as Vec3 };
+    const [what, i] = h.key.split(".");
+    const next = { id: k.id, at: cur.at.slice() as Vec3, rotation: cur.rotation.slice() as Vec3 };
+    (what === "at" ? next.at : next.rotation)[Number(i)] = Math.round(value * 1000) / 1000;
+    if (phase === "cancel") return setDragging(null);
+    if (phase === "end") {
+      setDragging(null);
+      editComponent(k.id, { at: next.at, rotation: next.rotation }, what === "at" ? `Move ${k.id}` : `Turn ${k.id}`);
+      return;
+    }
+    setDragging(next);
+  };
+
+  return {
+    doc,
+    asm,
+    handles,
+    onHandle,
+    views,
+    scene,
+    solve,
+    selection,
+    setSelection,
+    item,
+    setItem,
+    fitToken,
+    fit: () => setFitToken((t) => t + 1),
+    clashes,
+    busy,
+    bom,
+    mateChoices,
+    pick,
+    insertSelf,
+    insertFile,
+    insertExample,
+    mate,
+    editComponent,
+    editMate,
+    remove,
+    resolve,
+    interference,
+    exportStep,
+    partName: (key: string) => (doc ? partName(doc as Record<string, unknown>, key) : key),
+    partDocument: (key: string) => (doc ? partDocument(doc as Record<string, unknown>, key) : undefined),
+    examples: Object.keys(o.examples),
+  };
+}
+
+export type AssemblyWorkspace = ReturnType<typeof useAssembly>;
+
+/** An object without its undefined and false-default keys. */
+function clean<T extends object>(x: T): T {
+  const out = { ...x } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(out)) if (v === undefined || v === false || v === null) delete out[k];
+  return out as T;
+}

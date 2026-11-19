@@ -127,6 +127,8 @@ export function commandLabel(cmd: Command): string {
       return `Set parameter ${(cmd as { name: string }).name}`;
     case "setRollback":
       return "Move the rollback bar";
+    case "setAssembly":
+      return (cmd as { label?: string }).label ?? "Edit the assembly";
     default: {
       // "setParameter" → "Set parameter".
       const words = c.type.replace(/([A-Z])/g, " $1").toLowerCase();
