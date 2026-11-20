@@ -88,6 +88,8 @@ export class LocalKernel implements KernelPort {
   private last: { key: string; provenance: boolean; result: RebuildResult } | null = null;
   /** The last rebuild's views, by spec (and their parents'): a sheet edit doesn't project the part again. */
   private projections = new Map<string, ProjectedView>();
+  /** The assembly's parts' info (mass, material, name), by the assembly's key. */
+  private assemblyParts = new Map<string, Record<string, AssemblyPartInfo>>();
   /** The last rebuild's bodies' keyed edges. */
   private keys: KeyCache = new Map();
 
@@ -98,6 +100,7 @@ export class LocalKernel implements KernelPort {
     this.last?.result.dispose();
     this.last = null;
     this.projections.clear();
+    this.assemblyParts.clear();
     this.keys = new Map();
   }
 
@@ -146,12 +149,17 @@ export class LocalKernel implements KernelPort {
   }
 
   async project(doc: unknown, views: ViewSpec[]): Promise<DrawingGeometry | null> {
+    return this.projectNow(doc, views);
+  }
+
+  /** The views projected now (project, for a caller that can't wait): from the cache where nothing they show changed. */
+  projectNow(doc: unknown, views: ViewSpec[]): DrawingGeometry | null {
     const r = this.built(doc);
     const assembled = views.some((v) => v.source);
     if (!r.solid && !assembled) return null;
     // A view's key is its spec and its parent's key: a view from a parent is projected again when the parent changes.
     // An assembly view's is the assembly too (the part's rebuild doesn't see it).
-    const asmKey = assembled ? JSON.stringify((doc as { assembly?: unknown }).assembly ?? null) : "";
+    const asmKey = assembled ? assemblyKey(doc) : "";
     const keyOf = new Map<string, string>();
     for (const v of views) {
       const parent = v.frame && "parent" in v.frame ? keyOf.get(v.frame.parent) : undefined;
@@ -162,14 +170,24 @@ export class LocalKernel implements KernelPort {
       const hit = this.projections.get(keyOf.get(v.id)!);
       if (hit) known.set(v.id, { ...hit, id: v.id });
     }
-    // The assembly's views are projected again together (their parts' info comes with them), the part's from the cache.
-    for (const v of views) if (v.source) known.delete(v.id);
-    const all = projectAllViews(this.oc(), doc as Record<string, unknown>, views, r.solid ? { bodies: r.bodies, label: (topo) => r.label(topo) } : null, this.keys, known);
-    const out = all.views;
+    // The assembly's views from the cache too, while the assembly, its parts' shapes and the views are as they were:
+    // only the ones that changed are projected again (their parts' info is kept with the assembly's key).
+    const fresh = views.filter((v) => !known.has(v.id));
+    const cachedParts = assembled ? this.assemblyParts.get(asmKey) : undefined;
+    const needParts = assembled && !cachedParts && !fresh.some((v) => v.source);
+    const ask = needParts ? [...fresh, ...views.filter((v) => v.source && !fresh.includes(v)).slice(0, 1)] : fresh;
+    const all = ask.length ? projectAllViews(this.oc(), doc as Record<string, unknown>, parentsOf(views, ask), r.solid ? { bodies: r.bodies, label: (topo) => r.label(topo) } : null, this.keys, known) : { views: [] as ProjectedView[] };
+    for (const pv of all.views) known.set(pv.id, pv);
+    const out = views.map((v) => known.get(v.id)).filter((x): x is ProjectedView => !!x);
     // Keep the newest few hundred; a long session of edits doesn't grow it without end.
-    for (const pv of out) if (!views.find((v) => v.id === pv.id)?.source) this.projections.set(keyOf.get(pv.id)!, pv);
+    for (const pv of all.views) this.projections.set(keyOf.get(pv.id)!, pv);
     while (this.projections.size > 200) this.projections.delete(this.projections.keys().next().value!);
-    return { views: out, holes: r.holes, ...(all.parts ? { assemblyParts: all.parts } : {}) };
+    const parts = "parts" in all && all.parts ? all.parts : cachedParts;
+    if (assembled && parts) {
+      this.assemblyParts.set(asmKey, parts);
+      while (this.assemblyParts.size > 8) this.assemblyParts.delete(this.assemblyParts.keys().next().value!);
+    }
+    return { views: out, holes: r.holes, ...(parts ? { assemblyParts: parts } : {}) };
   }
 
   async inspect(doc: unknown, query: InspectQuery): Promise<InspectResult> {
@@ -186,4 +204,31 @@ export class LocalKernel implements KernelPort {
     const img = shotOf(this.oc(), r.solid, opts);
     return { png: await encodePNG(img), width: img.width, height: img.height };
   }
+}
+
+/**
+ * What an assembly view depends on: the components and their places, the
+ * explode, each part's shape (not its drawing or its notes) and the
+ * document's own shape (the part "self" is it).
+ */
+function assemblyKey(doc: unknown): string {
+  const d = doc as { assembly?: { parts?: Record<string, unknown> } & Record<string, unknown> };
+  const asm = d.assembly;
+  if (!asm) return "null";
+  const parts = Object.fromEntries(Object.entries(asm.parts ?? {}).map(([k, p]) => [k, p && typeof p === "object" && "features" in (p as object) ? geometryKey(p) : p]));
+  return JSON.stringify({ ...asm, parts, self: geometryKey(doc) });
+}
+
+/** The views asked for, with the parents they are projected from (a section or a projected view needs its parent's frame). */
+function parentsOf(all: ViewSpec[], ask: ViewSpec[]): ViewSpec[] {
+  const byId = new Map(all.map((v) => [v.id, v]));
+  const out = new Set<ViewSpec>();
+  const add = (v: ViewSpec | undefined) => {
+    if (!v || out.has(v)) return;
+    const parent = v.frame && "parent" in v.frame ? byId.get(v.frame.parent) : undefined;
+    add(parent);
+    out.add(v);
+  };
+  for (const v of ask) add(v);
+  return all.filter((v) => out.has(v));
 }

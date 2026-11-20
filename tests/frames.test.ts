@@ -143,6 +143,21 @@ describe("joints", () => {
     expect(length("leg_c")).toBe(858);
   });
 
+  it("cuts a sloped member flush on the face it butts against, not square to its slope", () => {
+    // A rafter-like member rising 1:10 from the side of a level one: cut plumb on the level member's face (y = 20).
+    const doc = withFeatures([
+      { id: "beam", op: "member", profile: "SHS", size: "SHS 40x40x3", from: [0, 0, 1000], to: [1000, 0, 1000] },
+      { id: "rake", op: "member", profile: "SHS", size: "SHS 40x40x3", from: [500, 0, 1000], to: [500, 800, 1080] },
+      { id: "j", op: "joint", node: "N", type: "butt", through: "beam" },
+    ]);
+    doc.nodes = { ...(doc.nodes as object), N: [500, 0, 1000] };
+    (doc.features as Record<string, unknown>[])[(doc.features as unknown[]).length - 2].from = "N";
+    const b = built(doc);
+    expect(b.errors).toEqual([]);
+    expect(b.interference).toEqual([]);
+    expect(b.bodies.get("rake")!.min[1]).toBeCloseTo(20, 6);
+  });
+
   it("says why a joint can't be made, and makes none of it", () => {
     // Two members in line can be spliced square, but not butted.
     const line = withFeatures([

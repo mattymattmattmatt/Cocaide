@@ -101,7 +101,9 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     views[1] = { id: "front", kind: "section", parent: "top", line: [r2([topOutline.max[0] + margin, y]), r2([topOutline.min[0] - margin, y])], label: "A" };
     }
   }
-  const generalTolerance = weldment ? "ISO 13920-BF" : "ISO 2768-mK";
+  // A timber frame (its sections tagged timber, or the part's material a timber) is screwed or nailed, not welded.
+  const timber = weldment && isTimberFrame(v, members);
+  const generalTolerance = timber ? TIMBER_TOLERANCE : weldment ? "ISO 13920-BF" : "ISO 2768-mK";
   let planned = views;
   if (!weldment) {
     // The auto-dimension engine v2 (src/drafting/autodim.ts): sizes and places from the features' intent.
@@ -164,7 +166,9 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     annotations.push(...lengths);
   }
   if (weldment) {
-    const lines = [`GENERAL TOLERANCES ${generalTolerance}.`, "WELDS TO ISO 2553; REMOVE SPATTER AND SLAG.", "BREAK ALL SHARP EDGES.", "DIMENSIONS IN MILLIMETRES. DO NOT SCALE."];
+    const lines = timber
+      ? [`GENERAL TOLERANCES ${generalTolerance}.`, "JOINTS GLUED AND SCREWED, 2 SCREWS PER JOINT UNLESS NOTED.", "CUT LENGTHS ARE FINISHED SIZES; SEAL CUT ENDS OF TREATED TIMBER.", "ARRIS ALL EXPOSED EDGES.", "DIMENSIONS IN MILLIMETRES. DO NOT SCALE."]
+      : [`GENERAL TOLERANCES ${generalTolerance}.`, "WELDS TO ISO 2553; REMOVE SPATTER AND SLAG.", "BREAK ALL SHARP EDGES.", "DIMENSIONS IN MILLIMETRES. DO NOT SCALE."];
     annotations.push({ id: "general_notes", type: "note", text: lines.join("\n"), at: [0, 0], numbered: true, title: "NOTES:" });
   }
   if (items.length) annotations.push({ id: "cut_list", type: "table", table: "cutList" });
@@ -300,4 +304,16 @@ function profileLost(geometry: DrawingGeometry | null, y: number): boolean {
   }
   if (!Number.isFinite(lo)) return false;
   return hi - keptHi > 0.5 || keptLo - lo > 0.5;
+}
+
+/** A carpentry tolerance for a timber frame's sizes and angles. */
+export const TIMBER_TOLERANCE = "X ±2, ANG ±1°";
+
+const TIMBER = /timber|wood|pine|mgp|lvl|hardwood|oak|spruce|fir|cedar|ply/i;
+
+/** Whether a member frame is timber: every member's section tagged timber, or else the part's material a timber. */
+export function isTimberFrame(v: { profiles?: Record<string, { tags?: string[]; material?: string }>; material?: { name?: string } }, members: { profile?: string }[]): boolean {
+  const defs = members.map((x) => (x.profile ? v.profiles?.[x.profile] : undefined));
+  if (defs.length && defs.every((d) => d && ((d.tags ?? []).some((t) => /timber/i.test(t)) || TIMBER.test(d.material ?? "")))) return true;
+  return TIMBER.test(v.material?.name ?? "");
 }

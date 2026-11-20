@@ -13,7 +13,7 @@
 
 import type { JointFeature, MemberFeature, Vec3 } from "../doc/types";
 import { reach, type PlacedSection } from "../geom/member";
-import { add3, dot3, len3, normalize3, scale3, sub3 } from "../geom/vec";
+import { add3, cross3, dot3, len3, normalize3, scale3, sub3 } from "../geom/vec";
 
 /** A plane that trims a member: the side its normal points to is cut away. */
 export interface CutPlane {
@@ -120,12 +120,17 @@ export function frameEnds(members: FrameMember[], joints: JointFeature[], nodes:
           break;
         }
         const v = scale3(u, 1 / across);
-        const h = reach(t.placed, v) + gap;
+        // On the face of the target it comes up to (a raked plate meeting a level one is cut plumb on its face),
+        // else square to the way it comes in.
+        const face = faceToward(t.placed, v);
+        const n = face?.normal ?? v;
+        const h = (face ? face.reach : reach(t.placed, v)) + gap;
+        const c = dot3(dq, n);
         // The point on the target's line nearest the node.
         const foot = add3(t.f.from, scale3(t.placed.dir, dot3(sub3(at, t.f.from), t.placed.dir)));
-        cut.planes.push({ point: add3(foot, scale3(v, h)), normal: scale3(v, -1) });
+        cut.planes.push({ point: add3(foot, scale3(n, h)), normal: scale3(n, -1) });
         // Long enough to reach back to the plane from wherever the section is.
-        cut.extend = Math.max(cut.extend, (q.placed.radius + dot3(sub3(at, foot), v) - h) / across + 1, 0);
+        cut.extend = Math.max(cut.extend, (q.placed.radius + dot3(sub3(at, foot), n) - h) / c + 1, 0);
       }
       if (failed) break;
       plan.set(q.f.id, cut);
@@ -144,6 +149,33 @@ export function frameEnds(members: FrameMember[], joints: JointFeature[], nodes:
     shaped.set(j.id, [...new Set([...targets.map((t) => t.f.id), ...plan.keys()])]);
   }
   return { ends, errors, shaped };
+}
+
+/**
+ * The flat face of a placed section that faces `v` (its outward normal within
+ * 45° of it, the nearest such): its normal and how far it is from the line.
+ * None when no face is that near (a round section: square to `v` instead).
+ */
+export function faceToward(p: PlacedSection, v: Vec3): { normal: Vec3; reach: number } | null {
+  const o = p.outline;
+  if (o.length < 3) return null;
+  const mid = scale3(o.reduce((a, b) => add3(a, b), [0, 0, 0] as Vec3), 1 / o.length);
+  let best: { normal: Vec3; reach: number; fit: number } | null = null;
+  for (let i = 0; i < o.length; i++) {
+    const a = o[i];
+    const b = o[(i + 1) % o.length];
+    const e = sub3(b, a);
+    if (len3(e) < 1) continue;
+    let n = normalize3(cross3(e, p.dir));
+    if (dot3(n, sub3(scale3(add3(a, b), 0.5), mid)) < 0) n = scale3(n, -1);
+    const fit = dot3(n, v);
+    const r = dot3(a, n);
+    // The outermost face that way: a section's inner faces (a hollow's) are behind it.
+    if (fit > Math.SQRT1_2 && (!best || fit > best.fit + 1e-9 || (Math.abs(fit - best.fit) < 1e-9 && r > best.reach))) best = { normal: n, reach: r, fit };
+  }
+  // Only a face the whole section is behind (an outer face, not a hollow's inside).
+  if (!best || best.reach < reach(p, best.normal) - 1e-6) return null;
+  return { normal: best.normal, reach: best.reach };
 }
 
 function round(x: number): number {

@@ -317,7 +317,7 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     const doc = await withDrawing(table);
     const views = viewSpecs(validateDocument(doc).drawing!);
     const geometry = await kernel.project(doc, views);
-    const front = geometry.views.find((v) => v.id === "front")!;
+    const front = geometry!.views.find((v) => v.id === "front")!;
     const bodiesOf = new Map<string, Set<string>>();
     for (const e of front.edges) if (!e.key.startsWith("?")) bodiesOf.set(e.key, new Set([...(bodiesOf.get(e.key) ?? []), e.body]));
     expect([...bodiesOf].filter(([, b]) => b.size > 1).map(([k]) => k)).toEqual([]);

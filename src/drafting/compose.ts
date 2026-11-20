@@ -1839,6 +1839,12 @@ class Composer {
       const rows = v2
         ? v2.items.map((i) => [String(i.item), i.kind === "member" ? i.designation : `${i.designation}${i.width !== undefined ? ` × ${fmt(i.width)}` : ""}`, fmt(i.length), i.kind === "member" ? (i.endsText.split(",")[0] ?? "") : i.description.split(" ")[0].toLowerCase(), String(i.quantity), i.massTotal.toFixed(2)])
         : this.cut.map((i) => [String(i.item), i.designation, fmt(i.length), anglesText(i.angles), String(i.quantity), i.kgTotal.toFixed(2)]);
+      // Items alike but for their material (a frame's treated bottom plates): the list says which is which.
+      const materials = v2 ? new Set(v2.items.map((i) => i.material ?? "")) : new Set<string>();
+      if (v2 && materials.size > 1) {
+        const withMaterial = rows.map((r, k) => [...r.slice(0, 4), v2.items[k].material ?? "", ...r.slice(4)]);
+        return { widths: [12, 34, 21, 28, 51, 12, 22], rows: [["CUT LIST"], ["ITEM", "SIZE", "LENGTH", "ENDS", "MATERIAL", "QTY", "KG"], ...withMaterial] };
+      }
       return { widths: [14, 52, 24, 40, 16, 34], rows: [["CUT LIST"], ["ITEM", "SIZE", "LENGTH", "ENDS", "QTY", "KG"], ...rows] };
     }
     return {

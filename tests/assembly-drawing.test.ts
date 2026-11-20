@@ -95,5 +95,18 @@ describe("an assembly drawing", () => {
     // The assembly's views sheet: front, top, right of the assembly, laid out without overlaps.
     const check = await call("checkDrawing");
     expect(check.findings.filter((f: string) => /overlap|runs off|shows nothing/.test(f))).toEqual([]);
+
+    // Projected again with nothing changed: the assembly's views come from the cache, as they were, with the parts' info.
+    const specs = () => viewSpecs((s as unknown as { doc: R }).doc.drawing);
+    const now = () => (s as unknown as { doc: R }).doc as never;
+    const g1 = (await inspector.project(now(), specs()))!;
+    const g2 = (await inspector.project(now(), specs()))!;
+    const iso = (g: typeof g1) => g.views.find((x) => x.id === plan.iso)!;
+    expect(iso(g2).edges).toBe(iso(g1).edges);
+    expect(g2.assemblyParts).toEqual(g1.assemblyParts);
+    // A component hidden: the views are projected again without it.
+    expect(await call("setComponent", { id: "bolt-m8-2", patch: { hidden: true } })).toMatchObject({ ok: true });
+    const g3 = (await inspector.project(now(), specs()))!;
+    expect(new Set(iso(g3).edges.map((e) => e.body)).has("bolt-m8-2")).toBe(false);
   }, 600_000);
 });

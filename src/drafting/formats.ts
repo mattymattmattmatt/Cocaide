@@ -112,6 +112,13 @@ function text(prims: Prim[], at: Vec2, t: string, size: number, anchor: "start" 
   if (t) prims.push({ k: "text", at, text: t, size, anchor, ...(bold ? { bold: true } : {}), owner });
 }
 
+/** The largest size from `size` down to `min` at which the text fits the width (else `min`: it is then cut short). */
+export function fitSize(t: string, width: number, size: number, min: number, bold = false): number {
+  let s = size;
+  while (s > min && textWidth(t, s, bold) > width) s = Math.max(min, s * 0.95);
+  return s;
+}
+
 /** Shortens text to fit a width, with "...". */
 export function fit(t: string, width: number, size: number, bold = false): string {
   if (textWidth(t, size, bold) <= width) return t;
@@ -305,9 +312,8 @@ function iso(ctx: FormatContext, width: number, height: number): FormatLayout {
   list.push({ x: x0 + 158, y: y2, w: 22, h: 10 });
   cells(prims, list);
   // The title, large, and its second line.
-  const tsize = 7.6;
-  const tfit = fit(title, 106, tsize, true);
-  text(prims, [x0 + 2, y0 + (subtitle ? 9.4 : 6.2)], tfit, textWidth(title, tsize, true) > 106 ? 6 : tsize, "start", true);
+  const tsize = fitSize(title, 106, 7.6, 4.8, true);
+  text(prims, [x0 + 2, y0 + (subtitle ? 9.4 : 6.2)], fit(title, 106, tsize, true), tsize, "start", true);
   if (subtitle) text(prims, [x0 + 2, y0 + 3], fit(subtitle, 106, TEXT.cell), TEXT.cell);
   projectionSymbol(prims, [x0 + 158 + 2.2, y2 + 5], ctx.projection, 0.95);
   const titleBlock: Box = { min: [x0, y0], max: [frame.max[0], y2 + 10] };
@@ -420,7 +426,7 @@ function ansi(ctx: FormatContext, width: number, height: number): FormatLayout {
   // The title.
   const title = f("title");
   const subtitle = f("subtitle");
-  const tsize = 6.4;
+  const tsize = fitSize(title, rw - 4, 6.4, 4.2, true);
   text(prims, [rx + rw / 2, y0 + 18 + (subtitle ? 9 : 6.5)], fit(title, rw - 4, tsize, true), tsize, "middle", true);
   if (subtitle) text(prims, [rx + rw / 2, y0 + 20.5], fit(subtitle, rw - 4, TEXT.cell), TEXT.cell, "middle");
   const titleBlock: Box = { min: [x0, y0], max: [frame.max[0], y0 + H] };

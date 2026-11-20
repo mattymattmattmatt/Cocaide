@@ -8,7 +8,6 @@
 import { assemblyBom } from "../assembly/bom";
 import { composePack, packParts } from "../drafting/pack";
 import type { ComposeContext } from "../drafting/compose";
-import { projectAllViews } from "../kernel/assemblyViews";
 import { runAssemblyTool, ASSEMBLY_TOOLS, type AssemblyEnv } from "../assembly/tools";
 import type { PartTopology } from "../assembly/resolve";
 import { partDocuments } from "../assembly/model";
@@ -1040,9 +1039,9 @@ export class AgentSession {
   // ------------------------------------------------------------ drawing
 
   /** The part projected for these views, with where its holes were drilled. */
+  /** The drawing's views, from the inspector's cache where nothing they show changed (a sheet edit projects nothing again). */
   private geometry(views: ViewSpec[]): DrawingGeometry {
-    const all = projectAllViews(this.oc, this.doc as Record<string, unknown>, views, this.built.solid ? { bodies: this.built.bodies, label: (topo) => this.built.label(topo) } : null);
-    return { views: all.views, holes: this.built.holes, ...(all.parts ? { assemblyParts: all.parts } : {}) };
+    return this.inspector.projectNow(this.doc, views) ?? { views: [], holes: this.built.holes };
   }
 
   private composed() {
