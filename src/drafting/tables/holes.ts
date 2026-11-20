@@ -165,7 +165,8 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
   const onRim = (b: Box) => rims.some(({ c, r }) => Math.hypot(Math.max(b.x0 - c[0], 0, c[0] - b.x1), Math.max(b.y0 - c[1], 0, c[1] - b.y1)) < r);
   // The view's own lines (sheet mm) too: a tag sat on an outline is hard to read.
   const segs: [Vec2, Vec2][] = lines.flatMap((l) => l.slice(1).map((q, i) => [l[i], q] as [Vec2, Vec2]));
-  const crosses = (b: Box) => segs.some(([a, c]) => segmentHitsBox(a, c, b));
+  let near = segs;
+  const crosses = (b: Box) => near.some(([a, c]) => segmentHitsBox(a, c, b));
   const hits = (b: Box) => onRim(b) || taken.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1) || crosses(b);
   const dirs: Vec2[] = [[1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
   for (const r of rows) {
@@ -174,6 +175,9 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
     const w = textWidth(r.tag, size);
     const h = size * 0.72;
     let placed: { p: Vec2; far: boolean } | null = null;
+    // Only the lines within reach of this hole's tag places.
+    const reach = (rim + 1.2) * 2.6 + 3 * 2.5 + w + h;
+    near = segs.filter(([a, q]) => Math.max(a[0], q[0]) > c[0] - reach && Math.min(a[0], q[0]) < c[0] + reach && Math.max(a[1], q[1]) > c[1] - reach && Math.min(a[1], q[1]) < c[1] + reach);
     for (const far of [0, 1, 2, 3]) {
       for (const [dx, dy] of dirs) {
         const d = (rim + 1.2) * (far ? 2.6 : 1) + far * 2.5;
@@ -191,7 +195,8 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
       if (placed) break;
     }
     const p: Vec2 = placed?.p ?? [c[0] + rim + 1.2, c[1] + rim + 1.2];
-    if (placed?.far) out.push({ k: "line", pts: [c, [p[0] + w / 2, p[1] + h / 2]], w: 0.18, owner });
+    // The leader stops at the tag's nearest edge, not through its text.
+    if (placed?.far) out.push({ k: "line", pts: [c, [Math.min(Math.max(c[0], p[0]), p[0] + w), Math.min(Math.max(c[1], p[1] - 0.6), p[1] + h + 0.6)]], w: 0.18, owner });
     out.push({ k: "text", at: p, text: r.tag, size, anchor: "start", owner });
   }
   // The origin: a small cross and "0,0", the datum the X and Y are measured from.
