@@ -62,7 +62,7 @@ export function layoutNote(a: NoteAnnotation, ctx: AnnotationContext): LayoutRes
   const indent = a.numbered ? richWidth(parseRich("10. "), size) : 0;
   // Wrapped to its width (mm), or by default to the sheet's border: a long line goes on under itself (a numbered
   // one's continuation under its text, not its number), never off the paper. Not for a note at an angle.
-  const room = a.width ?? (a.angle ? Infinity : ctx.sheet.frame.max[0] - at[0] - 3);
+  const room = a.width ?? (a.angle ? Infinity : ctx.sheet.frame.max[0] - at[0] - 6);
   if (Number.isFinite(room) && room > 20) {
     const fits = (t: string, extra: number) => richWidth(parseRich(t), size) + extra <= room;
     const out: string[] = [];

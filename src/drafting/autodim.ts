@@ -608,11 +608,18 @@ export function weldmentSetout(viewId: string, pv: Pick<ProjectedView, "edges">,
   }
   const set = (list: { v: number; ref: string }[], lo: number, origin: string, direction: "horizontal" | "vertical") => {
     const places: { v: number; ref: string }[] = [];
-    for (const p of list.sort((a, b) => a.v - b.v)) if (p.v - lo > 0.5 && !places.some((q) => Math.abs(q.v - p.v) < 0.5)) places.push(p);
+    for (const p of list.sort((a, b) => a.v - b.v)) if (p.v - lo > 0.5 && !places.some((q) => Math.abs(q.v - p.v) < 0.5 || Math.round(q.v - lo) === Math.round(p.v - lo))) places.push(p);
     if (places.length >= 2) out.push({ id: id("d"), type: "dimension", view: viewId, kind: "ordinate", origin, points: places.map((p) => p.ref), direction } as DimensionAnnotation);
     else if (places.length === 1) out.push({ id: id("d"), type: "dimension", view: viewId, from: origin, to: places[0].ref, direction } as DimensionAnnotation);
   };
-  set(xs, o.min[0], "@left", "horizontal");
-  set(ys, o.min[1], "@bottom", "vertical");
+  // The far ends too (the last member's outer face, the top): the ordinates end at the overall size.
+  const far = (axis: 0 | 1) => {
+    const along = lines.filter((e) => Math.abs(e.pts[0][axis] - e.pts[e.pts.length - 1][axis]) < 0.01).sort((p, q) => q.pts[0][axis] - p.pts[0][axis])[0];
+    return along && Math.abs(along.pts[0][axis] - o.max[axis]) < 0.5 ? { v: along.pts[0][axis], ref: `${viewId}:v${along.key}.0` } : null;
+  };
+  const fx = far(0);
+  const fy = far(1);
+  set(fx ? [...xs, fx] : xs, o.min[0], "@left", "horizontal");
+  set(fy ? [...ys, fy] : ys, o.min[1], "@bottom", "vertical");
   return out;
 }

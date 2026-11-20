@@ -1155,7 +1155,12 @@ export class AgentSession {
         if (typeof props.description === "string" && !sh.format.subtitle) sh.format.subtitle = props.description;
         if (typeof props.partNumber === "string" && !sh.format.number) sh.format.number = props.partNumber;
         const notes = sh.annotations.find((x) => x.id === "general_notes" && x.type === "note");
-        if (notes && item) notes.text = [`REQUIRED: ${item.quantity} PER ASSEMBLY (ITEM ${item.item} OF THE PARTS LIST).`, ...(notes.text ?? "").split("\n")].join("\n");
+        if (notes && item) {
+          notes.text = [`REQUIRED: ${item.quantity} PER ASSEMBLY (ITEM ${item.item} OF THE PARTS LIST).`, ...(notes.text ?? "").split("\n")].join("\n");
+          // A line more: the block grows up from where it was placed, clear of the border.
+          const at = (notes as { at?: number[] }).at;
+          if (at) at[1] += 6;
+        }
       }
     }
     const next = { ...part, drawing };
