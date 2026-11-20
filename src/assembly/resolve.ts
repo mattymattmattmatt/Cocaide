@@ -11,6 +11,8 @@ import type { MateGeom } from "./solve";
 export interface PartTopology {
   faces: FaceInfo[];
   edges: EdgeInfo[];
+  /** The part's drilled holes, when it was built here (a STEP part has none): a tapped one's drill and thread. */
+  holes?: { diameter: number; thread?: { major: number; designation: string } }[];
 }
 
 const DATUMS: Record<string, MateGeom> = {

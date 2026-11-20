@@ -10,7 +10,7 @@ import { geometryKey } from "../doc/drawing";
 import type { Assembly, AssemblyComponent, Mate, MateRef, Vec3 } from "../doc/types";
 import { MATE_TYPES } from "../doc/types";
 import { Checker } from "../doc/validate";
-import { mateFeatures, suggestMates } from "./features";
+import { copiesThatHold, linedHoles, mateFeatures, occupiedHoles, sortClashes, suggestMates, type Clash } from "./features";
 import { componentStates, floatingGroups, motionWords, partBox, partDocument, partDocuments, partName, partSize, placed, solveAssembly, type AssemblySolve } from "./model";
 import type { PartTopology } from "./resolve";
 import { placementOf, pointTo } from "./transform";
@@ -33,7 +33,7 @@ export interface AssemblyEnv {
 export type AssemblyOutcome = { ok: true; result: Raw; command?: Command } | { ok: false; error: string };
 
 export const ASSEMBLY_READ_TOOLS = ["assembly", "mateFeatures", "suggestMates", "checkAssembly"] as const;
-export const ASSEMBLY_WRITE_TOOLS = ["insertComponent", "setComponent", "deleteComponent", "addMate", "editMate", "deleteMate"] as const;
+export const ASSEMBLY_WRITE_TOOLS = ["insertComponent", "setComponent", "deleteComponent", "addMate", "editMate", "deleteMate", "copyToHoles"] as const;
 export const ASSEMBLY_TOOLS = new Set<string>([...ASSEMBLY_READ_TOOLS, ...ASSEMBLY_WRITE_TOOLS]);
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000 + 0;
@@ -187,11 +187,11 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
     case "setComponent": {
       const k = need(a.id);
       if (typeof k === "string") return fail(k);
-      if (!isObject(a.patch)) return fail('patch must be an object: { "at"?: [x, y, z], "rotation"?: [rx, ry, rz] degrees, "fixed"?: true | false, "hidden"?: true | false }');
-      const extra = Object.keys(a.patch).filter((x) => !["at", "rotation", "fixed", "hidden"].includes(x));
-      if (extra.length) return fail(`patch takes at, rotation, fixed, hidden (got ${extra.join(", ")})`);
+      if (!isObject(a.patch)) return fail('patch must be an object: { "at"?: [x, y, z], "rotation"?: [rx, ry, rz] degrees, "fixed"?: true | false, "hidden"?: true | false, "transparent"?: true | false }');
+      const extra = Object.keys(a.patch).filter((x) => !["at", "rotation", "fixed", "hidden", "transparent"].includes(x));
+      if (extra.length) return fail(`patch takes at, rotation, fixed, hidden, transparent (got ${extra.join(", ")})`);
       const nk = { ...k, ...(a.patch as Partial<AssemblyComponent>) } as AssemblyComponent;
-      for (const key of ["fixed", "hidden"] as const) if (!nk[key]) delete nk[key];
+      for (const key of ["fixed", "hidden", "transparent"] as const) if (!nk[key]) delete nk[key];
       for (const key of ["at", "rotation"] as const) if (nk[key] === null) delete nk[key];
       return commit(env, { ...base, components: base.components.map((x) => (x.id === k.id ? nk : x)) }, `Edit ${k.id}`);
     }
@@ -245,6 +245,19 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       return commit(env, next, `Delete ${String(a.id)}`, { extra: { deleted: a.id } });
     }
 
+    case "copyToHoles": {
+      const k = need(a.id);
+      if (typeof k === "string") return fail(k);
+      const { views } = await topologies(env, base);
+      const partOf = (id: string) => {
+        const c = base.components.find((x) => x.id === id);
+        return c ? views.get(c.part) : undefined;
+      };
+      const plan = copiesThatHold(base, k.id, partOf, views);
+      if (typeof plan === "string") return fail(plan);
+      return commit(env, plan.next, `Copy ${k.id} to ${plan.copies.length} hole${plan.copies.length === 1 ? "" : "s"}`, { extra: { copies: plan.copies, ...(plan.skipped ? { skipped: `${plan.skipped} hole(s) where the copy's mates didn't hold` } : {}) } });
+    }
+
     case "mateFeatures": {
       const k = need(a.component);
       if (typeof k === "string") return fail(k);
@@ -265,9 +278,16 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       const ta = await env.topology(partDocument(env.doc as Raw, ka.part) ?? {});
       const tb = await env.topology(partDocument(env.doc as Raw, kb.part) ?? {});
       if (typeof ta === "string" || typeof tb === "string") return fail(`a part doesn't build: ${typeof ta === "string" ? ta : tb}`);
-      // A hole with a pin in it (a concentric mate holds it) isn't offered again.
-      const taken = (base.mates ?? []).filter((m) => m.type === "concentric" && !m.suppressed).flatMap((m) => [m.a, m.b]);
-      const s = suggestMates(ka, ta, kb, tb, { taken });
+      // A hole with a pin in it (a concentric mate holds a boss in it) isn't offered again.
+      const tops = new Map<string, PartTopology>();
+      for (const k of base.components) {
+        if (tops.has(k.id)) continue;
+        const t = await env.topology(partDocument(env.doc as Raw, k.part) ?? {});
+        if (typeof t !== "string") tops.set(k.id, t);
+      }
+      const taken = occupiedHoles(base, (id) => tops.get(id));
+      const lined = linedHoles(base, ka.id, kb.id);
+      const s = suggestMates(ka, ta, kb, tb, { taken, lined });
       return { ok: true, result: { suggestions: s, note: s.length ? "best first; add each of a suggestion's mates with addMate (check the result: a coincident may want aligned)" : "nothing obvious: pick faces with mateFeatures" } };
     }
 
@@ -283,11 +303,17 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
         if (st.fixed) continue;
         if (st.motions.length === 6) issues.push(`${st.id} is held by nothing: mate it, or fix it`);
       }
-      let clashes: { components: [string, string]; volume: number }[] | string | undefined;
+      let clashes: Clash[] | string | undefined;
       if (env.interference && asm.components.length > 1) {
         const docs = partDocuments(env.doc as Raw, asm);
-        clashes = await env.interference(docs, asm.components.map((k) => ({ id: k.id, part: k.part, ...placementOf(k) })));
-        if (Array.isArray(clashes)) for (const c of clashes) issues.push(`${c.components[0]} and ${c.components[1]} overlap by ${r3(c.volume)} mm³`);
+        const raw = await env.interference(docs, asm.components.map((k) => ({ id: k.id, part: k.part, ...placementOf(k) })));
+        clashes = Array.isArray(raw)
+          ? sortClashes(asm, raw, (id) => {
+              const c = asm.components.find((x) => x.id === id);
+              return c ? views.get(c.part) : undefined;
+            })
+          : raw;
+        if (Array.isArray(clashes)) for (const c of clashes) if (!c.expected) issues.push(`${c.components[0]} and ${c.components[1]} overlap by ${r3(c.volume)} mm³`);
       }
       return {
         ok: true,

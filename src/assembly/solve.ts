@@ -135,6 +135,38 @@ const norm = (r: number[]) => Math.sqrt(r.reduce((s, x) => s + x * x, 0));
  * holds the first part put in).
  */
 export function solveMates(placements: Map<string, Placement>, fixed: Set<string>, mates: SolverMate[], opts: { iterations?: number } = {}): SolveResult {
+  // First only what is out of place moves: the components of the mates that don't hold yet (a new mate's two
+  // parts), the rest held where they are, as other CAD moves the part being mated and leaves the placed ones be.
+  // Failing that, everything not fixed may move.
+  const anchor = fixed.size ? fixed : new Set([...placements.keys()].slice(0, 1));
+  const unmet = new Set(
+    mates.flatMap((m) => {
+      const r = residuals(m, world(m.a.geom, placements.get(m.a.component)!), world(m.b.geom, placements.get(m.b.component)!));
+      return typeof r !== "string" && norm(r) >= 1e-5 ? [m.a.component, m.b.component] : [];
+    }),
+  );
+  // Placed already: a component with a mate that holds now. Of a new mate's two parts, the new one moves first.
+  const settled = new Set(
+    mates.flatMap((m) => {
+      const r = residuals(m, world(m.a.geom, placements.get(m.a.component)!), world(m.b.geom, placements.get(m.b.component)!));
+      return typeof r !== "string" && norm(r) < 1e-5 ? [m.a.component, m.b.component] : [];
+    }),
+  );
+  const fresh = new Set([...unmet].filter((k) => !settled.has(k)));
+  // Failing that, the one put in last (a second mate on a part placed by its first), then both.
+  const order = [...placements.keys()];
+  const last = new Set([...unmet].filter((k) => !anchor.has(k)).sort((x, y) => order.indexOf(y) - order.indexOf(x)).slice(0, 1));
+  for (const moving of [fresh, last, unmet]) {
+    if (!moving.size || ![...placements.keys()].some((k) => !moving.has(k) && !anchor.has(k))) continue;
+    const held = new Set([...placements.keys()].filter((k) => anchor.has(k) || !moving.has(k)));
+    const near = withFlips(placements, held, mates, opts);
+    if (near.solved) return near;
+  }
+  return withFlips(placements, fixed, mates, opts);
+}
+
+/** One solve, and when it sticks, again with each stuck component turned half round about each axis; the best. */
+function withFlips(placements: Map<string, Placement>, fixed: Set<string>, mates: SolverMate[], opts: { iterations?: number }): SolveResult {
   const first = solveOnce(placements, fixed, mates, opts);
   if (first.solved) return first;
   // Stuck (a part would have to turn over to meet its mates, through places where they hold less): try each stuck
@@ -171,16 +203,26 @@ function solveOnce(placements: Map<string, Placement>, fixed: Set<string>, mates
       const r = residuals(m, world(m.a.geom, pl.get(m.a.component)!), world(m.b.geom, pl.get(m.b.component)!));
       return typeof r === "string" ? [] : r;
     });
-  // A component moved by its 6 numbers: a shift, then a turn about its own origin's place.
+  // Each component's reach: how far its mated geometry is from its origin (a turn of θ moves it θ × that), so its
+  // turns are counted in mm like its shifts and the least move is the least for both.
+  const reach = new Map<string, number>(free.map((k) => [k, 20]));
+  for (const m of mates)
+    for (const side of [m.a, m.b])
+      if (reach.has(side.component)) reach.set(side.component, Math.max(reach.get(side.component)!, Math.hypot(...side.geom.p)));
+  // A component moved by its 6 numbers: a shift, then a turn about its own origin's place (in mm at its reach).
   const moved = (base: Map<string, Placement>, x: number[]): Map<string, Placement> => {
     const out = new Map(base);
     free.forEach((k, i) => {
       const p = base.get(k)!;
-      const dw: Vec3 = [x[6 * i + 3], x[6 * i + 4], x[6 * i + 5]];
+      const L = reach.get(k)!;
+      const dw: Vec3 = [x[6 * i + 3] / L, x[6 * i + 4] / L, x[6 * i + 5] / L];
       out.set(k, { R: mul(rotationOf(dw), p.R), t: [p.t[0] + x[6 * i], p.t[1] + x[6 * i + 1], p.t[2] + x[6 * i + 2]] });
     });
     return out;
   };
+  // What a mate moves when it could move either part: the one put in later. Earlier components (placed already) weigh
+  // more, so the least weighted move leaves them be, as other CAD moves the part being mated, not the ones it mates to.
+  const weight = free.map((_, i) => Math.pow(8, Math.min(6, free.length - 1 - i)));
   let iterations = 0;
   let r = all(live);
   let lambda = 1e-3;
@@ -189,7 +231,7 @@ function solveOnce(placements: Map<string, Placement>, fixed: Set<string>, mates
   while (n && norm(r) > 1e-10 && iterations < max) {
     iterations++;
     // Numeric Jacobian, column by column.
-    const h = 1e-7;
+    const h = 1e-6;
     const J: number[][] = r.map(() => new Array(n).fill(0));
     for (let j = 0; j < n; j++) {
       const x = new Array(n).fill(0);
@@ -201,8 +243,11 @@ function solveOnce(placements: Map<string, Placement>, fixed: Set<string>, mates
     const JtJ: number[][] = Array.from({ length: n }, (_, a) => Array.from({ length: n }, (_, b) => J.reduce((s, row) => s + row[a] * row[b], 0)));
     const Jtr: number[] = Array.from({ length: n }, (_, a) => J.reduce((s, row, i) => s + row[a] * r[i], 0));
     let improved = false;
+    // Damped in every direction, the ones no mate cares about too: a step moves nothing its mates don't ask it to (an
+    // under-held component stays where it is rather than drifting off along what it is free to do).
+    const big = Math.max(1e-12, ...JtJ.map((row, a) => row[a]));
     for (let tries = 0; tries < 12 && !improved; tries++) {
-      const A = JtJ.map((row, a) => row.map((v, b) => (a === b ? v + lambda * (v + 1e-9) + 1e-12 : v)));
+      const A = JtJ.map((row, a) => row.map((v, b) => (a === b ? v + (lambda * (v + 1e-3 * big) + 1e-9 * big) * weight[Math.floor(a / 6)] : v)));
       const delta = solveLinear(A, Jtr.map((v) => -v));
       if (!delta) {
         lambda *= 10;

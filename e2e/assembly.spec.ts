@@ -17,7 +17,7 @@ test.afterEach(async ({ page }) => {
   expect((page as unknown as { problems: string[] }).problems).toEqual([]);
 });
 
-type Asm = { components: { id: string; part: string; at?: number[]; rotation?: number[]; fixed?: boolean; hidden?: boolean }[]; mates?: { id: string; type: string; value?: number; aligned?: boolean }[] };
+type Asm = { components: { id: string; part: string; at?: number[]; rotation?: number[]; fixed?: boolean; hidden?: boolean; transparent?: boolean }[]; mates?: { id: string; type: string; value?: number; aligned?: boolean }[] };
 const assembly = async (page: Page) => (await savedDocument(page)).assembly as Asm | undefined;
 
 async function clickAt(page: Page, p: Vec3, ctrl = false) {
@@ -153,4 +153,30 @@ test("a STEP file put in: its hole found to line up with this part's (Suggested 
   await expect(page.getByTestId("asm-check-results")).toContainText(/bought-plate-1: can still turn about an axis along \[0, 0, -?1\] through \[30, 0,/);
   await expect(page.getByTestId("asm-clashes")).toContainText("No components overlap");
   await page.screenshot({ path: "test-results/assembly-checked.png" });
+});
+
+test("see-through, temporary axes, a transparent component and isolate", async ({ page }) => {
+  // The part first: see-through and the axes are view toggles, the same in every tab.
+  await page.getByTestId("view-xray").click();
+  await expect(page.getByTestId("view-xray")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("view-axes").click();
+  await expect(page.getByTestId("view-axes")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("view-xray").click();
+  await page.getByTestId("mode-assembly").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-self").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-example-flange").click();
+  await page.getByTestId("asm-component-flange-1").locator(".asm-row").click();
+  // Transparent: kept in the file with the component.
+  await page.getByTestId("asm-transparent").click();
+  await expect.poll(async () => (await assembly(page))?.components.find((k) => k.id === "flange-1")).toMatchObject({ transparent: true });
+  await expect(page.getByTestId("asm-transparent")).toHaveAttribute("aria-pressed", "true");
+  // Isolate: only the flange drawn, a banner with the way out; a view state, not saved.
+  await page.getByTestId("asm-isolate").click();
+  await expect(page.getByTestId("asm-isolate-hint")).toContainText("Isolated: flange-1");
+  await page.screenshot({ path: "test-results/assembly-isolate.png" });
+  await page.getByTestId("asm-isolate-exit").click();
+  await expect(page.getByTestId("asm-isolate-hint")).toHaveCount(0);
+  expect((await assembly(page))?.components.map((k) => k.id)).toEqual(["bracket-1", "flange-1"]);
 });

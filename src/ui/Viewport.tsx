@@ -135,6 +135,8 @@ interface Props {
   onPhotoPoint?: ((px: Vec2) => void) | null;
   /** Bodies not drawn (and not picked). */
   hiddenBodies?: ReadonlySet<string>;
+  /** Bodies drawn translucent and picked through (an assembly's transparent components). */
+  clearBodies?: ReadonlySet<string>;
   /** Sketches not drawn (and not picked): hidden in the tree, or used by a feature and not shown. */
   hiddenSketches?: ReadonlySet<string>;
   /** A frame's nodes (Phase J), drawn as labelled points with the sketches. */
@@ -256,6 +258,8 @@ interface ViewportApi {
   setUnderlay(u: Underlay | null): void;
   /** See the photo through the part (while picking points on it). */
   setGhost(ghost: boolean): void;
+  /** Bodies drawn translucent and picked through (an assembly's transparent components). */
+  setClearBodies(names: ReadonlySet<string>): void;
   /** Frame the whole photo from above. */
   fitPhoto(): void;
   fit(dir?: Vec3, up?: Vec3): void;
@@ -317,6 +321,7 @@ export function Viewport({
   underlay = null,
   onPhotoPoint = null,
   hiddenBodies = NO_BODIES,
+  clearBodies = NO_BODIES,
   hiddenSketches = NO_BODIES,
   nodes = NO_NODES,
   onMessage,
@@ -431,6 +436,9 @@ export function Viewport({
     // Phase P wave 3B: cosmetic threads (thread features, tapped holes) drawn as bands on their faces.
     const threads = new ThreadLayer();
     scene.add(threads.group);
+    // Temporary axes: every round face's axis, drawn while the view asks for them.
+    const axesGroup = new THREE.Group();
+    scene.add(axesGroup);
     // Phase P wave 2A: the plane of an open sketch, drawn faintly.
     const sketchPlane = new SketchPlaneLayer({ fill: cssColor(el, "--sketch-plane", "#3a8dde"), border: cssColor(el, "--sketch-plane-border", "#2f74c0") });
     scene.add(sketchPlane.group);
@@ -474,6 +482,14 @@ export function Viewport({
     /** The visible bodies' bounding box: what a rotation turns about while it is on screen, and what Fit frames. */
     let visibleBox: THREE.Box3 | null = null;
     let style: DisplayStyle = DEFAULT_DISPLAY.style;
+    /** See-through (every surface translucent), and the temporary axes shown. */
+    let xray = false;
+    let showAxes = false;
+    /** The photo's point picking, or a sketch's See-through model: the part drawn translucent. */
+    let ghost = false;
+    /** Bodies drawn translucent (an assembly's transparent components): looked through when picking. */
+    let clear: ReadonlySet<string> = NO_BODIES;
+    const isClear = (body: string | undefined) => body !== undefined && clear.has(body);
     let pickFilter: SelectFilter = NO_FILTER;
     let handleList: HandleSpec[] = [];
     /** The section view, and its active planes as three clips with them (keeps where the distance is ≥ 0): the same array while only their numbers change. */
@@ -1131,16 +1147,62 @@ export function Viewport({
 
     const edgeMaterials = (obj: THREE.LineSegments | null) => (obj ? ([obj.material].flat() as THREE.LineBasicMaterial[]) : []);
     /** Draws the part the way the display style says: surfaces, edges, hidden edges dashed, outlines. */
+    /** The temporary axes: one dashed line per round face's axis (faces on one axis share it), a little past the faces' ends. */
+    const drawAxes = () => {
+      disposeGroup(axesGroup);
+      if (!showAxes || !shownView) return;
+      const lines = new Map<string, { o: THREE.Vector3; d: THREE.Vector3; lo: number; hi: number }>();
+      for (const f of shownView.faces) {
+        const c = f.cylinder;
+        if (!c || isHidden(f.body)) continue;
+        // The axis as a line: its direction one way round, and its point nearest the world's origin.
+        const d = new THREE.Vector3(...c.axis).normalize();
+        if (d.x < -1e-9 || (Math.abs(d.x) <= 1e-9 && (d.y < -1e-9 || (Math.abs(d.y) <= 1e-9 && d.z < 0)))) d.negate();
+        const p = new THREE.Vector3(...c.origin);
+        const o = p.clone().addScaledVector(d, -p.dot(d));
+        const key = `${d.toArray().map((x) => Math.round(x * 1e4)).join(",")}|${o.toArray().map((x) => Math.round(x * 100)).join(",")}`;
+        const s0 = p.dot(d) + c.axial[0] * new THREE.Vector3(...c.axis).normalize().dot(d);
+        const s1 = p.dot(d) + c.axial[1] * new THREE.Vector3(...c.axis).normalize().dot(d);
+        const lo = Math.min(s0, s1);
+        const hi = Math.max(s0, s1);
+        const had = lines.get(key);
+        if (had) {
+          had.lo = Math.min(had.lo, lo);
+          had.hi = Math.max(had.hi, hi);
+        } else lines.set(key, { o, d, lo, hi });
+      }
+      if (!lines.size) return;
+      const pts: number[] = [];
+      for (const l of lines.values()) {
+        const pad = Math.max(2, 0.12 * (l.hi - l.lo));
+        const a = l.o.clone().addScaledVector(l.d, l.lo - pad);
+        const b = l.o.clone().addScaledVector(l.d, l.hi + pad);
+        pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+      const size = shownView.mesh ? Math.max(1, (visibleBox && !visibleBox.isEmpty() ? visibleBox.getSize(new THREE.Vector3()).length() : 100) / 120) : 1;
+      const segs = new THREE.LineSegments(g, new THREE.LineDashedMaterial({ color: 0x1c64b8, dashSize: size * 3, gapSize: size, depthTest: false, transparent: true, opacity: 0.85 }));
+      segs.computeLineDistances();
+      segs.renderOrder = 9;
+      axesGroup.add(segs);
+    };
     const applyDisplay = () => {
       if (mesh) {
         const lines = style === "hiddenRemoved" || style === "hiddenVisible" || style === "wireframe";
         mesh.visible = style !== "wireframe";
         // Lines only: the surfaces still hide what is behind them, but draw nothing themselves (and go first).
         mesh.renderOrder = lines ? -1 : 0;
-        for (const m of [mesh.material].flat() as THREE.MeshStandardMaterial[]) {
+        const names = (shownView?.bodies ?? []).map((b) => b.name);
+        ([mesh.material].flat() as THREE.MeshStandardMaterial[]).forEach((m, i) => {
           m.colorWrite = !lines;
+          // Translucent: everything (see-through, the photo's picking), or this body (a transparent component).
+          const see = ghost || xray || isClear(names[i]);
+          m.transparent = see;
+          m.opacity = see ? (ghost ? 0.25 : 0.3) : 1;
+          m.depthWrite = !see;
           m.needsUpdate = true;
-        }
+        });
       }
       if (edgeLines) {
         edgeLines.visible = style !== "shaded";
@@ -1150,6 +1212,7 @@ export function Viewport({
         }
       }
       if (hiddenLines) hiddenLines.visible = style === "hiddenVisible";
+      drawAxes();
       for (const outline of outlines) {
         (outline.seen.material as THREE.LineBasicMaterial).depthTest = style !== "wireframe";
         (outline.seen.material as THREE.Material).needsUpdate = true;
@@ -1530,10 +1593,13 @@ export function Viewport({
       if (!mesh) return null;
       const may = (kind: PickTarget["kind"]) => everything || allows(pickFilter, kind);
       // Hidden bodies are still in the mesh: look through them, and through what a section cuts away.
-      const faceHit = raycaster.intersectObject(mesh, false).find((h) => {
+      // Through a transparent body to what is behind it (as other CAD picks through a transparent component); it is
+      // picked only when nothing is behind it.
+      const hits = raycaster.intersectObject(mesh, false).filter((h) => {
         const body = faceBody(faceAt(h));
         return !isHidden(body) && !cutAway(h.point, body);
       });
+      const faceHit = hits.find((h) => !isClear(faceBody(faceAt(h)))) ?? hits[0];
       const worldPerPixel = controls.worldPerPixel();
       const slack = 2 * PICK_PIXELS * worldPerPixel;
       raycaster.params.Line = { threshold: PICK_PIXELS * worldPerPixel };
@@ -2073,16 +2139,13 @@ export function Viewport({
         const half = (Math.max(photo.height, photo.width / camera.aspect) * photo.mmPerPx) / 2;
         fit(VIEWS.top.dir, { center: photoToWorld(photo, [photo.width / 2, photo.height / 2]), radius: half }, VIEWS.top.up);
       },
-      setGhost(ghost: boolean) {
-        if (mesh) {
-          for (const m of [mesh.material].flat() as THREE.MeshStandardMaterial[]) {
-            m.transparent = ghost;
-            m.opacity = ghost ? 0.25 : 1;
-            m.depthWrite = !ghost;
-            m.needsUpdate = true;
-          }
-        }
-        render();
+      setGhost(next: boolean) {
+        ghost = next;
+        applyDisplay();
+      },
+      setClearBodies(next: ReadonlySet<string>) {
+        clear = next;
+        applyDisplay();
       },
       setHiddenBodies(next: ReadonlySet<string>) {
         hidden = next;
@@ -2120,6 +2183,8 @@ export function Viewport({
       roll: rollBy,
       setDisplay(d: DisplayState) {
         style = d.style;
+        xray = !!d.xray;
+        showAxes = !!d.axes;
         perspective = d.perspective;
         controls.orthographic = !perspective;
         applyDisplay();
@@ -2306,6 +2371,9 @@ export function Viewport({
     api.current?.setHiddenBodies(hiddenBodies);
   }, [hiddenBodies]);
   useEffect(() => {
+    api.current?.setClearBodies(clearBodies);
+  }, [clearBodies]);
+  useEffect(() => {
     api.current?.setHiddenSketches(hiddenSketches);
   }, [hiddenSketches]);
 
@@ -2425,6 +2493,8 @@ export function Viewport({
   const togglePlanes = () => onDatumView?.({ ...datumView, planes: !datumView.planes });
   const setStyle = (s: DisplayStyle) => onDisplay?.({ ...display, style: s });
   const togglePerspective = () => onDisplay?.({ ...display, perspective: !display.perspective });
+  const toggleXray = () => onDisplay?.({ ...display, xray: !display.xray });
+  const toggleAxes = () => onDisplay?.({ ...display, axes: !display.axes });
   const zoomSelection = () => {
     if (!api.current?.zoomToSelection(selection)) onMessage?.("Zoom to selection needs something selected: click a face, an edge, a vertex or a plane first.");
   };
@@ -2499,6 +2569,8 @@ export function Viewport({
     "view.zoomSelection": zoomSelection,
     "view.previous": previousView,
     "view.perspective": togglePerspective,
+    "view.xray": toggleXray,
+    "view.axes": toggleAxes,
     "view.zoomArea": toggleArea,
     "view.selectOther": () => selectOther(),
     "view.saveView": () => {
@@ -2665,6 +2737,26 @@ export function Viewport({
           data-testid="view-perspective"
         >
           <Icon name={display.perspective ? "perspective" : "orthographic"} />
+        </button>
+        <button
+          className="icon-only"
+          aria-pressed={!!display.xray}
+          onClick={toggleXray}
+          aria-label="See-through"
+          title={`See-through: ${display.xray ? "on — click to make the surfaces solid again" : "make every surface translucent to see inside and behind (edges stay drawn; clicks still pick the faces)"}${keyHint("view.xray", prefs)}`}
+          data-testid="view-xray"
+        >
+          <Icon name="seeThrough" />
+        </button>
+        <button
+          className="icon-only"
+          aria-pressed={!!display.axes}
+          onClick={toggleAxes}
+          aria-label="Temporary axes"
+          title={`Temporary axes: ${display.axes ? "on — click to hide them" : "show the axis of every hole, boss and round face, dashed"}${keyHint("view.axes", prefs)}`}
+          data-testid="view-axes"
+        >
+          <Icon name="axis" />
         </button>
         <span className="sep" />
         <button

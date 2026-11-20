@@ -63,13 +63,31 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo }: { a: AssemblyWo
             <span className="sep" />
             <ToolButton icon="fix" label={sel?.fixed ? "Float" : "Fix"} onClick={() => sel && a.editComponent(sel.id, { fixed: !sel.fixed }, `${sel.fixed ? "Float" : "Fix"} ${sel.id}`, false)} disabled={!sel} pressed={!!sel?.fixed} title={sel ? (sel.fixed ? "Let it move: mates move it" : "Hold it where it is: mates move the others to it") : "Select a component"} testId="asm-fix" />
             <ToolButton icon={sel?.hidden ? "eye" : "eyeOff"} label={sel?.hidden ? "Show" : "Hide"} onClick={() => sel && a.editComponent(sel.id, { hidden: !sel.hidden }, `${sel.hidden ? "Show" : "Hide"} ${sel.id}`, false)} disabled={!sel} title="Hide or show the selected component" testId="asm-hide" />
+            <ToolButton
+              icon="seeThrough"
+              label="Transparent"
+              onClick={() => sel && a.editComponent(sel.id, { transparent: !sel.transparent }, `${sel.transparent ? "Opaque" : "Transparent"} ${sel.id}`, false)}
+              disabled={!sel}
+              pressed={!!sel?.transparent}
+              title={sel ? (sel.transparent ? "Make it solid again" : "See through it, and click through it to faces inside or behind it (to mate them)") : "Select a component"}
+              testId="asm-transparent"
+            />
+            <ToolButton
+              icon="isolate"
+              label={a.isolated ? "Exit isolate" : "Isolate"}
+              onClick={() => a.setIsolated(a.isolated ? null : sel ? [sel.id, ...(a.selection.faces.length || a.selection.edges.length ? a.selectedComponents().filter((id) => id !== sel.id) : [])] : null)}
+              disabled={!a.isolated && !sel}
+              pressed={!!a.isolated}
+              title={a.isolated ? "Show every component again" : sel ? "Show only this component (and the one picked with it), the rest hidden for now" : "Select a component"}
+              testId="asm-isolate"
+            />
             <ToolButton icon="trash" label="Delete" onClick={() => a.item && a.remove(a.item)} disabled={!a.item} title="Delete the selected component (and its mates) or mate" testId="asm-delete" />
           </span>
           <span className="cm-group">
             <span className="sep" />
             <ToolButton icon="check" label="Solve" onClick={a.resolve} disabled={!a.solve || a.solve.solved} title={a.solve && !a.solve.solved ? "Move the components so the mates hold (after the parts changed)" : "Every mate holds"} testId="asm-solve" />
             <ToolButton icon="diagnose" label="Check" onClick={() => void a.check()} disabled={!a.asm?.components.length || !!a.busy} title="Find what's wrong: mates that don't hold, parts held by nothing or free to slide, parts that overlap" testId="asm-check" />
-            <ToolButton icon="seeThrough" label="Interference" onClick={() => void a.interference()} disabled={!a.asm || a.asm.components.length < 2 || !!a.busy} title="Find components that overlap" testId="asm-interference" />
+            <ToolButton icon="combine" label="Interference" onClick={() => void a.interference()} disabled={!a.asm || a.asm.components.length < 2 || !!a.busy} title="Find components that overlap" testId="asm-interference" />
             <ToolButton icon="export" label="Export STEP" onClick={() => void a.exportStep()} disabled={!has || !!a.busy} title="The assembly as one STEP file: each component a named solid where it sits" testId="asm-export-step" />
           </span>
         </div>
@@ -135,7 +153,16 @@ export function AssemblyMain({ a, display, onDisplay }: { a: AssemblyWorkspace; 
         )}
       </aside>
       <section className="center">
-        <Viewport view={a.scene.view} fitToken={a.fitToken} selection={a.selection} onPick={a.pick} peek={peek} handles={a.handles} onHandle={a.onHandle} memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`} display={display} onDisplay={onDisplay} />
+        <Viewport view={a.scene.view} fitToken={a.fitToken} selection={a.selection} onPick={a.pick} peek={peek} handles={a.handles} onHandle={a.onHandle} memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`} display={display} onDisplay={onDisplay} clearBodies={a.clearBodies} hiddenBodies={a.isolateHides} />
+        {a.isolated && (
+          <div className="view-hint asm-isolate-hint" role="status" data-testid="asm-isolate-hint">
+            <Icon name="isolate" />
+            Isolated: {a.isolated.join(", ")}
+            <button onClick={() => a.setIsolated(null)} data-testid="asm-isolate-exit">
+              Exit isolate
+            </button>
+          </div>
+        )}
         {a.busy && <div className="asm-busy">{a.busy}</div>}
       </section>
       <SidePanel title="Properties" testId="assembly-props">
@@ -187,6 +214,14 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
           <Vec3Input value={rot} onCommit={(v) => a.editComponent(k.id, { rotation: v.map(Number) as Vec3 }, `Turn ${k.id}`)} testId="asm-prop-rotation" />
         </Field>
         <p className="muted small">Turned about X, then Y, then Z, then moved. A mated component goes back where its mates hold it.</p>
+        {a.holeCopyPlan && (
+          <div className="asm-copy-holes">
+            <button onClick={a.copyToHoles} data-testid="asm-copy-holes" title="Put a copy of this component, with its mates, in each of the other free holes of its size on that part">
+              <Icon name="circularPattern" size={14} />
+              Copy to {a.holeCopyPlan.copies.length} matching hole{a.holeCopyPlan.copies.length === 1 ? "" : "s"}
+            </button>
+          </div>
+        )}
       </section>,
     );
   }
@@ -278,8 +313,8 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
         {a.clashes.length ? (
           <ul className="asm-plain">
             {a.clashes.map((c) => (
-              <li key={c.components.join("|")}>
-                {c.components[0]} and {c.components[1]}: {Math.round(c.volume * 1000) / 1000} mm³
+              <li key={c.components.join("|")} className={c.expected ? "muted" : "error-text"}>
+                {c.components[0]} and {c.components[1]}: {Math.round(c.volume * 1000) / 1000} mm³{c.expected ? ` — expected: ${c.expected}` : ""}
               </li>
             ))}
           </ul>

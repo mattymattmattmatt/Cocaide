@@ -52,7 +52,7 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
   },
   {
     name: "setComponent",
-    description: 'Move, turn, fix or float, hide or show a component: { "id", "patch": { "at"?, "rotation"?, "fixed"?, "hidden"? } }. The mates are solved after (a mated component goes where they hold it).',
+    description: 'Move, turn, fix or float, hide or show, make transparent a component: { "id", "patch": { "at"?, "rotation"?, "fixed"?, "hidden"?, "transparent"? } } (transparent: drawn see-through and clicked through, to reach what is inside or behind it). The mates are solved after (a mated component goes where they hold it).',
     input: { id: z.string(), patch: obj },
     readOnly: false,
   },
@@ -80,6 +80,12 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
     name: "editMate",
     description: 'Change a mate: { "id", "patch": { "type"?, "value"?, "aligned"?, "suppressed"?, "a"?, "b"? } } (flip a coincident by toggling aligned). Refused when it then can\'t hold.',
     input: { id: z.string(), patch: obj },
+    readOnly: false,
+  },
+  {
+    name: "copyToHoles",
+    description: 'Copy a component that sits in a hole (a bolt, a pin: concentric with the hole) into every other free hole of that size on the same part, each copy with the original\'s mates: { "id" }. Copies whose mates would not hold are left out.',
+    input: { id: z.string() },
     readOnly: false,
   },
   {

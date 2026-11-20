@@ -94,6 +94,7 @@ export function composeScene(components: SceneComponent[], name = "assembly"): A
         ...(e.center ? { center: pt(e.center) } : {}),
         ...(e.axis ? { axis: dir(e.axis) } : {}),
         faces: e.faces.map((x) => x + faceBase),
+        body: k.id,
       });
       edgeOwner.push({ component: k.id, local: e.index });
     }

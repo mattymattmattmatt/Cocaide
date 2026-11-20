@@ -12,7 +12,7 @@ import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
 import type { KernelClient } from "../../worker/client";
 import type { RebuildView } from "../../worker/protocol";
 import { componentStates, facesAlign, floatingGroups, motionWords, partSize, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
-import { suggestMates, type MateSuggestion } from "../../assembly/features";
+import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, type Clash, type MateSuggestion } from "../../assembly/features";
 import { stepPart } from "../files/plan";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
 import { placementOf, pointTo, apply as rotate } from "../../assembly/transform";
@@ -48,10 +48,12 @@ export function useAssembly(o: AssemblyOptions) {
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [item, setItem] = useState<AssemblyItem>(null);
   const [fitToken, setFitToken] = useState(0);
-  const [clashes, setClashes] = useState<{ components: [string, string]; volume: number }[] | null>(null);
+  const [clashes, setClashes] = useState<Clash[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** A component being dragged by its handles: where it is shown meanwhile (the document changes when the drag ends). */
   const [dragging, setDragging] = useState<{ id: string; at: Vec3; rotation: Vec3 } | null>(null);
+  /** Isolate: only these components drawn (a view state, not saved); null: all. */
+  const [isolated, setIsolated] = useState<string[] | null>(null);
 
   // Each part the assembly uses, built in the worker (again when it changes).
   const docs = useMemo(() => (doc && asm ? partDocuments(doc as Record<string, unknown>, asm) : {}), [doc, asm]);
@@ -300,8 +302,11 @@ export function useAssembly(o: AssemblyOptions) {
       const to = views.get(other.part);
       if (!to) continue;
       // The other component first, so a new mate reads "fixed part ↔ this one".
-      const taken = (asm.mates ?? []).filter((m) => m.type === "concentric" && !m.suppressed).flatMap((m) => [m.a, m.b]);
-      for (const sg of suggestMates(other, to, k, tk, { taken })) out.push({ ...sg, other: other.id });
+      const taken = occupiedHoles(asm, (id) => {
+        const c = asm.components.find((x) => x.id === id);
+        return c ? views.get(c.part) : undefined;
+      });
+      for (const sg of suggestMates(other, to, k, tk, { taken, lined: linedHoles(asm, other.id, k.id) })) out.push({ ...sg, other: other.id });
     }
     // Leave out what is mated already: a suggestion whose concentric pair is in the mates.
     const have = new Set((asm.mates ?? []).map((m) => JSON.stringify([m.type, m.a, m.b])));
@@ -347,8 +352,13 @@ export function useAssembly(o: AssemblyOptions) {
     try {
       const r = await o.kernel.assembly("interference", "assembly", docs, placedForKernel());
       if (!r.ok) return o.notice(`Interference: ${r.error}`, "error");
-      setClashes(r.interference ?? []);
-      o.notice(r.interference?.length ? `${r.interference.length} pair${r.interference.length === 1 ? "" : "s"} of components overlap: see the list in Properties.` : "No components overlap.", r.interference?.length ? "error" : "info");
+      const sorted = sortClashes(asm, r.interference ?? [], (id) => {
+        const c = asm.components.find((x) => x.id === id);
+        return c ? views.get(c.part) : undefined;
+      });
+      setClashes(sorted);
+      const real = sorted.filter((c) => !c.expected).length;
+      o.notice(real ? `${real} pair${real === 1 ? "" : "s"} of components overlap: see the list in Properties.` : sorted.length ? "No components clash (the overlaps listed are expected: bolts in tapped holes)." : "No components overlap.", real ? "error" : "info");
     } finally {
       setBusy(null);
     }
@@ -448,9 +458,40 @@ export function useAssembly(o: AssemblyOptions) {
     setDragging(next);
   };
 
+  // The view's see-through components, and what isolate hides (components gone from the assembly drop out).
+  const clearBodies = useMemo(() => new Set((asm?.components ?? []).filter((k) => k.transparent).map((k) => k.id)), [asm]);
+  const isolateHides = useMemo(() => (isolated ? new Set((asm?.components ?? []).filter((k) => !isolated.includes(k.id)).map((k) => k.id)) : new Set<string>()), [asm, isolated]);
+
+  // The selected component copied into the other holes of its size (when it sits in a hole): what the button offers.
+  const holeCopyPlan = useMemo(() => {
+    if (!asm || item?.kind !== "component") return null;
+    const partOf = (id: string) => {
+      const c = asm.components.find((x) => x.id === id);
+      return c ? views.get(c.part) : undefined;
+    };
+    const plan = copiesThatHold(asm, item.id, partOf, views);
+    return typeof plan === "string" ? null : plan;
+  }, [asm, item, views]);
+  const copyToHoles = () => {
+    if (!holeCopyPlan || item?.kind !== "component") return;
+    const why = commit(holeCopyPlan.next, `Copy ${item.id} to ${holeCopyPlan.copies.length} hole${holeCopyPlan.copies.length === 1 ? "" : "s"}`);
+    if (why) o.notice(why, "error");
+    else o.notice(`${item.id} copied into ${holeCopyPlan.copies.length} more hole${holeCopyPlan.copies.length === 1 ? "" : "s"}: ${holeCopyPlan.copies.join(", ")}${holeCopyPlan.skipped ? ` (${holeCopyPlan.skipped} left out: their mates wouldn't hold)` : ""}.`, "info");
+  };
+
+  /** The components of the faces and edges picked. */
+  const selectedComponents = () => [...new Set([...selection.faces.map((i) => scene.faceOwner[i]?.component), ...selection.edges.map((i) => scene.edgeOwner[i]?.component)].filter((x): x is string => !!x))];
+
   return {
     doc,
     asm,
+    selectedComponents,
+    holeCopyPlan,
+    copyToHoles,
+    isolated,
+    setIsolated,
+    clearBodies,
+    isolateHides,
     suggestions,
     applySuggestion,
     checked,

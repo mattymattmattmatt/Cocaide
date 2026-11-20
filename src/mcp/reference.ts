@@ -397,7 +397,9 @@ Assembling, step by step:
    "parallel", "perpendicular", "angle". A mate that can't hold is refused with the reason.
 4. checkAssembly: mates that don't hold, components held by nothing, what each can still do (a pin in a hole can
    still turn about its axis — fine — but a plate that can still slide needs another mate), and overlaps.
-5. exportAssemblySTEP when it is right.
+5. A bolt or pin in one hole: copyToHoles { "id" } copies it into every other free hole of that size on that part,
+   each with the same mates (a bolt circle filled in one go).
+6. exportAssemblySTEP when it is right.
 { "id": "c1", "type": "concentric", "a": { "component": "plate-1", "face": { "type": "cylindrical", "radius": 3.3,
   "pick": "nearest", "near": [30, 0, 3] } }, "b": { "component": "pin-1", "face": { "type": "cylindrical", "radius": 3,
   "pick": "largest" } } }

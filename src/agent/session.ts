@@ -151,6 +151,7 @@ export const EDIT_TOOLS = [
   "addMate",
   "editMate",
   "deleteMate",
+  "copyToHoles",
 ] as const;
 export const READ_TOOLS = [
   "listFeatures",
@@ -339,7 +340,7 @@ export class AgentSession {
       const solid = r.solid;
       const topo = scoped((s) => {
         const f = describeFaces(this.oc, s, solid);
-        return { faces: f.infos, edges: describeEdges(this.oc, s, solid, f.faces).infos };
+        return { faces: f.infos, edges: describeEdges(this.oc, s, solid, f.faces).infos, holes: r.holes };
       });
       if (this.partTopology.size > 24) this.partTopology.clear();
       this.partTopology.set(key, topo);

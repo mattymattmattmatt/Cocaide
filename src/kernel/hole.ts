@@ -61,11 +61,19 @@ export function holeSites(oc: OC, s: Scope, f: HoleFeature, part: DescribedPart,
     const centres: [Vec2, string][] = f.centers ? f.centers.map((c, i) => [c, `centers[${i}] ${fmt2(c)}`]) : [[f.center!, `center ${fmt2(f.center!)}`]];
     sites = centres.map(([c, label]) => ({ entry: to3D(frame, c), label }));
   }
+  // The faces a hole may start on: the selected one and the others in its plane facing the same way (a base's top
+  // split in two by a rib is one plane: a hole either side of it is on it, as when drilling the plate).
+  const coplanar = part.faceInfos.filter((g) => g.index !== info.index && g.type === "plane" && g.normal && g.point && dot3(g.normal, n) > 1 - 1e-9 && Math.abs(dot3(sub3(g.point, info.point!), n)) < 1e-6);
+  const distTo = (vertex: ReturnType<typeof oc.BRepBuilderAPI_MakeVertex.prototype.Vertex>, target: (typeof part.faces)[number]): number => {
+    const d = s.track(new oc.BRepExtrema_DistShapeShape(vertex, target));
+    return d.IsDone() ? d.Value() : Infinity;
+  };
   for (const site of sites) {
     const vertex = s.track(s.track(new oc.BRepBuilderAPI_MakeVertex(pnt(oc, s, site.entry))).Vertex());
-    const dist = s.track(new oc.BRepExtrema_DistShapeShape(vertex, face));
-    if (!dist.IsDone()) throw new OpError(`could not locate the hole at ${site.label} on the face`);
-    if (dist.Value() > 1e-6) throw new OpError(`${site.label} is not on the selected face (it is ${roundTo(dist.Value(), 4)} mm outside it)`);
+    const own = distTo(vertex, face);
+    if (!Number.isFinite(own)) throw new OpError(`could not locate the hole at ${site.label} on the face`);
+    if (own <= 1e-6 || coplanar.some((g) => distTo(vertex, part.faces[g.index]) <= 1e-6)) continue;
+    throw new OpError(`${site.label} is not on the selected face (it is ${roundTo(own, 4)} mm outside it)`);
   }
   return sites.map((site) => ({ entry: site.entry, into: scale3(n, -1), radial: frame.x, label: site.label }));
 }

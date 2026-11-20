@@ -36,6 +36,7 @@ export interface PartTopology {
   edges: EdgeInfo[];
   /** Per face: the feature that first made it. */
   faceOrigins: (string | null)[];
+  holes?: { diameter: number; thread?: { major: number; designation: string } }[];
 }
 
 export type SelectResult =
@@ -127,7 +128,8 @@ export class LocalKernel implements KernelPort {
     if (!r.solid) return null;
     const topo = topologyOf(this.oc(), r.solid, r.bodies);
     r.label(topo);
-    return { ...topo, faceOrigins: r.faceOrigins ?? [] };
+    const holes = (r as unknown as { holes?: PartTopology["holes"] }).holes;
+    return { ...topo, faceOrigins: r.faceOrigins ?? [], ...(holes ? { holes } : {}) };
   }
 
   async select(doc: unknown, selector: unknown): Promise<SelectResult> {

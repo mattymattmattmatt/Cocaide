@@ -14,6 +14,10 @@ export interface DisplayState {
   style: DisplayStyle;
   /** Perspective (true) or orthographic. */
   perspective: boolean;
+  /** See-through: every surface translucent, edges drawn. */
+  xray?: boolean;
+  /** Temporary axes: every round face's axis drawn, dashed. */
+  axes?: boolean;
 }
 
 /** Orthographic by default, as on a drawing and in the usual CAD tools; perspective is a toggle away. */
@@ -67,7 +71,7 @@ export function parseMemory(raw: unknown): ViewMemory {
   if (c && isVec3(c.position) && isVec3(c.target) && isVec3(c.up)) out.camera = { position: c.position, target: c.target, up: c.up };
   const d = r.display as Record<string, unknown> | undefined;
   // A display remembered before orthographic became the default keeps what it said (perspective unless it said otherwise).
-  if (d && typeof d.style === "string" && STYLES.has(d.style)) out.display = { style: d.style as DisplayStyle, perspective: d.perspective !== false };
+  if (d && typeof d.style === "string" && STYLES.has(d.style)) out.display = { style: d.style as DisplayStyle, perspective: d.perspective !== false, ...(d.xray === true ? { xray: true } : {}), ...(d.axes === true ? { axes: true } : {}) };
   if (Array.isArray(r.views)) {
     const views = r.views
       .map((v) => v as Record<string, unknown>)

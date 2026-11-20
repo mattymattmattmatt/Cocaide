@@ -75,6 +75,8 @@ export interface AssemblyComponent {
   fixed?: boolean;
   /** Not drawn (still mated, listed and exported). */
   hidden?: boolean;
+  /** Drawn translucent and clicked through, to see and pick what is behind or inside it. */
+  transparent?: boolean;
 }
 
 export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric"] as const;
