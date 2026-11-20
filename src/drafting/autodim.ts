@@ -592,24 +592,29 @@ export function weldmentSetout(viewId: string, pv: Pick<ProjectedView, "edges">,
   const o = { min: [Math.min(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1]))], max: [Math.max(...all.map((p) => p[0])), Math.max(...all.map((p) => p[1]))] };
   const byBody = new Map<string, typeof lines>();
   for (const e of lines) byBody.set(e.body, [...(byBody.get(e.body) ?? []), e]);
-  const xs: { v: number; ref: string }[] = [];
-  const ys: { v: number; ref: string }[] = [];
+  const xs: { v: number; ref: string; body: string }[] = [];
+  const ys: { v: number; ref: string; body: string }[] = [];
   const first = (e: (typeof lines)[number]) => e.pts[0];
-  for (const [, es] of byBody) {
-    const pts = es.flatMap((e) => e.pts);
+  for (const [body, es] of byBody) {
+    // Its extent from all its edges, hidden ones too (a rail seen end on may show one line).
+    const pts = pv.edges.filter((e) => e.body === body).flatMap((e) => e.pts);
     const w = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
     const h = Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]));
     const vert = es.filter((e) => Math.abs(first(e)[0] - e.pts[e.pts.length - 1][0]) < 0.01 && Math.abs(first(e)[1] - e.pts[e.pts.length - 1][1]) > 20);
     const horz = es.filter((e) => Math.abs(first(e)[1] - e.pts[e.pts.length - 1][1]) < 0.01 && Math.abs(first(e)[0] - e.pts[e.pts.length - 1][0]) > 20);
-    if (h > w && vert.length) {
+    // Long in the view (a member seen end on is neither).
+    if (h > 3 * w && vert.length) {
       const e = vert.sort((p, q) => first(p)[0] - first(q)[0])[0];
-      xs.push({ v: first(e)[0], ref: `${viewId}:v${e.key}.0` });
-    } else if (w > h && horz.length) {
+      xs.push({ v: first(e)[0], ref: `${viewId}:v${e.key}.0`, body });
+    } else if (w > 3 * h && horz.length) {
       const e = horz.sort((p, q) => first(p)[1] - first(q)[1])[0];
-      ys.push({ v: first(e)[1], ref: `${viewId}:v${e.key}.0` });
+      ys.push({ v: first(e)[1], ref: `${viewId}:v${e.key}.0`, body });
     }
   }
-  const set = (list: { v: number; ref: string }[], lo: number, origin: string, direction: "horizontal" | "vertical") => {
+  const set = (list: { v: number; ref: string; body: string }[], lo: number, origin: string, direction: "horizontal" | "vertical", farBody?: string) => {
+    // Only where there is a member between the two outer ones: else the ordinates are the overall size again.
+    const own = list.filter((p) => p.v - lo > 0.5 && p.body !== farBody).map((p) => Math.round(p.v));
+    if (new Set(own).size < 2) return;
     const places: { v: number; ref: string }[] = [];
     for (const p of list.sort((a, b) => a.v - b.v)) if (p.v - lo > 0.5 && !places.some((q) => Math.abs(q.v - p.v) < 0.5 || Math.round(q.v - lo) === Math.round(p.v - lo))) places.push(p);
     if (places.length >= 2) out.push({ id: id("d"), type: "dimension", view: viewId, kind: "ordinate", origin, points: places.map((p) => p.ref), direction } as DimensionAnnotation);
@@ -618,11 +623,11 @@ export function weldmentSetout(viewId: string, pv: Pick<ProjectedView, "edges">,
   // The far ends too (the last member's outer face, the top): the ordinates end at the overall size.
   const far = (axis: 0 | 1) => {
     const along = lines.filter((e) => Math.abs(e.pts[0][axis] - e.pts[e.pts.length - 1][axis]) < 0.01).sort((p, q) => q.pts[0][axis] - p.pts[0][axis])[0];
-    return along && Math.abs(along.pts[0][axis] - o.max[axis]) < 0.5 ? { v: along.pts[0][axis], ref: `${viewId}:v${along.key}.0` } : null;
+    return along && Math.abs(along.pts[0][axis] - o.max[axis]) < 0.5 ? { v: along.pts[0][axis], ref: `${viewId}:v${along.key}.0`, body: along.body } : null;
   };
   const fx = far(0);
   const fy = far(1);
-  set(fx ? [...xs, fx] : xs, o.min[0], "@left", "horizontal");
-  set(fy ? [...ys, fy] : ys, o.min[1], "@bottom", "vertical");
+  set(fx ? [...xs, { ...fx, body: "" }] : xs, o.min[0], "@left", "horizontal", "");
+  set(fy ? [...ys, { ...fy, body: "" }] : ys, o.min[1], "@bottom", "vertical", "");
   return out;
 }

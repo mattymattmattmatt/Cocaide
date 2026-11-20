@@ -22,7 +22,7 @@ import { cutListOf } from "../weldment/items";
 import { autoDimension, weldmentSetout } from "./autodim";
 import { composeSheet } from "./compose";
 import { withShownScales } from "./fit";
-import { viewFrame } from "./views";
+import { inView, viewFrame } from "./views";
 
 /** What New drawing projects first: the planned views' looks. */
 export const DEFAULT_VIEWS: (ViewSpec & { look: ViewLook })[] = [
@@ -146,6 +146,20 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     for (const viewId of ["front", "right"]) {
       const pv = geometry?.views.find((x) => x.id === viewId);
       if (pv) lengths.push(...weldmentSetout(viewId, pv, bodies, id));
+    }
+    // A frame with no member between its outer ones (a table's four legs): each cut list item's length once instead,
+    // where a member of it lies flat in the front and its length is not an overall size.
+    if (!lengths.length) {
+      const bb = m?.boundingBox?.size;
+      const f = viewFrame("front");
+      for (const item of cutList(members)) {
+        const mem = item.members.map((mid) => members.find((x) => x.id === mid)!).find((x) => {
+          const d = inView(x.ends[1], f).map((c, i) => c - inView(x.ends[0], f)[i]);
+          return Math.abs(Math.hypot(d[0], d[1]) - x.length) < 1e-3 && (Math.abs(d[0]) < 1e-6 || Math.abs(d[1]) < 1e-6);
+        });
+        if (!mem || (bb && bb.some((sz) => Math.abs(sz - mem.length) < 0.05))) continue;
+        lengths.push({ id: id("d"), type: "dimension", view: "front", member: mem.id });
+      }
     }
     annotations.push(...lengths);
   }

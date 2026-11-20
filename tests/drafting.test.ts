@@ -317,7 +317,9 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     let doc = await withDrawing(table);
     doc = run(doc, { type: "setAnnotation", id: "b9", annotation: { type: "balloon", view: "front", member: "rail_back" } });
     const { sheet: s1 } = await sheetOf(doc);
-    expect(said(s1, "b9").problem).toBe("rail_back can't be seen in front: balloon it in a view that shows it");
+    // Hidden behind rail_front, the same cut list item: the balloon goes on the copy the view shows.
+    expect(said(s1, "b9").problem).toBeUndefined();
+    expect(said(s1, "b9").text).toBe("1");
     doc = run(doc, { type: "setAnnotation", id: "b9", annotation: null }, { type: "setAnnotation", id: "d9", annotation: { type: "dimension", view: "top", member: "leg_a" } });
     const { sheet: s2, checks } = await sheetOf(doc);
     expect(said(s2, "d9").problem).toBe("leg_a doesn't lie flat in top (it runs straight at the viewer): dimension it in a view it lies flat in");
