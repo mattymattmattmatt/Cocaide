@@ -378,13 +378,18 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
   const arcs = visible.filter((e) => e.look === "arc" && e.circle && body.has(e.feature ?? "") && onOutline(e, pO));
   const byR = new Map<number, ProjectedEdge[]>();
   for (const e of arcs) byR.set(r2(e.model?.radius ?? e.circle!.r), [...(byR.get(r2(e.model?.radius ?? e.circle!.r)) ?? []), e]);
-  for (const [, list] of byR) {
+  /** The radii called out already (a fillet that made the outline's corners is not called out again). */
+  const radiiGiven = new Set<number>();
+  for (const [r, list] of byR) {
     const e = list.sort((a, b) => b.circle!.c[0] - a.circle!.c[0] || b.circle!.c[1] - a.circle!.c[1])[0];
     dim({ view: plan.id, kind: "radius", refs: [`${plan.id}:e${e.key}`], ...(list.length > 1 ? { typ: true } : {}) });
+    radiiGiven.add(r);
   }
   for (const f of feats(v)) {
     const op = (f as { op?: string }).op;
     if (op !== "fillet" && op !== "chamfer") continue;
+    const fr = (f as { radius?: unknown }).radius;
+    if (op === "fillet" && typeof fr === "number" && radiiGiven.has(r2(fr))) continue;
     let placed = false;
     for (const view of [plan, ...square.filter((x) => x !== plan && x.kind !== "section")]) {
       const pv = pvOf(view.id);
