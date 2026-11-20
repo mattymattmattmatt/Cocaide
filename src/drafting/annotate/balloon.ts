@@ -62,7 +62,12 @@ export function layoutBalloon(a: BalloonAnnotation, ctx: AnnotationContext, cv: 
   let tip: Vec2 | null = null;
   if (a.on) tip = tipOf(ctx, a.on)?.tip ?? null;
   else if (body) {
-    const anchor = visibleAnchor(cv, body);
+    // On a body the view doesn't show, the one of its item it shows most (another copy of the same part).
+    let anchor = visibleAnchor(cv, body);
+    if (!anchor && item !== null) {
+      const seen = (ctx.data.bodiesOf?.(item) ?? []).filter((b) => b !== body).map((b) => visibleAnchor(cv, b)).filter((x): x is NonNullable<typeof x> => !!x);
+      anchor = seen.sort((p, q) => q.length - p.length)[0] ?? null;
+    }
     if (!anchor) return failed(`${name} can't be seen in ${cv.id}: balloon it in a view that shows it`);
     tip = viewToSheet(cv, anchor.at);
   }

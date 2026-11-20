@@ -273,6 +273,15 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: "Write the drawing to the output folder: a vector PDF (every sheet a page, the font embedded; one sheet with sheet), or one sheet (the first unless named) as SVG or DXF (R2000, a layer per kind of line).",
     input: { format: z.enum(["pdf", "svg", "dxf"]), file: z.string().optional().describe("File name; default <document name>-drawing.<format>"), sheet: z.string().optional() },
   },
+  exportDrawingPack: {
+    description: "The drawing pack as one PDF in the output folder: this document's drawing (its sheets in order: put the assembly's first), then the drawing of each part the assembly carries (drawPart), in the parts list's order, every sheet numbered in the pack. png: true also writes a picture of each sheet to look over.",
+    input: { file: z.string().optional(), png: z.boolean().optional() },
+    readOnly: true,
+  },
+  drawPart: {
+    description: "A drawing for a part the assembly carries (by its part key), kept with the part so the pack has it: planned from the part as newDrawing plans this one's (views, sizes, holes, notes, its name and number in the title block), or the drawing given (to change one: read it from assembly, edit, give it back).",
+    input: { part: z.string(), drawing: z.record(z.string(), z.unknown()).optional(), date: z.string().optional() },
+  },
   // Detailing (wave Q3B): the plan by rules, carrying it out, the critic, the sheet as a picture.
   detailPlan: {
     description:

@@ -19,10 +19,10 @@ import type { Measurements } from "../kernel/measure";
 import type { ViewSpec } from "../kernel/drawingViews";
 import { cutList } from "../weldment/cutlist";
 import { cutListOf } from "../weldment/items";
-import { autoDimension } from "./autodim";
+import { autoDimension, weldmentSetout } from "./autodim";
 import { composeSheet } from "./compose";
 import { withShownScales } from "./fit";
-import { inView, viewFrame } from "./views";
+import { viewFrame } from "./views";
 
 /** What New drawing projects first: the planned views' looks. */
 export const DEFAULT_VIEWS: (ViewSpec & { look: ViewLook })[] = [
@@ -53,6 +53,16 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   const annotations: Annotation[] = [];
   let n = 0;
   const id = (prefix: string) => `${prefix}${++n}`;
+  // A flat plate or sheet (thin one way, 6 mm or less and far smaller than its others): drawn face on, its thickness
+  // in the notes — no edge views of a line, no section through it, no detail.
+  const size = m?.boundingBox?.size;
+  const thin = size ? Math.min(...size) : Infinity;
+  const plate = !weldment && !!size && thin <= 6 && thin * 15 <= [...size].sort((a, b) => a - b)[1];
+  if (plate) {
+    const axis = size!.indexOf(thin);
+    const face: ViewLook = axis === 2 ? "top" : axis === 1 ? "front" : "right";
+    views.splice(0, views.length, { id: face, look: face }, { id: "iso", look: "iso" });
+  }
 
   // Hidden insides: the front view becomes a full section, cut along the top view through the most holes (or the middle).
   const top = geometry?.views.find((x) => x.id === "top");
@@ -65,7 +75,7 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     const f = vf.feature as { op?: string; operation?: string; suppressed?: boolean } | null;
     return !!f && !f.suppressed && (f.op === "hole" || f.op === "cut" || f.op === "shell" || f.op === "rib" || f.operation === "remove");
   });
-  if (!weldment && top && topOutline && insides > 1e-6 && removes) {
+  if (!weldment && !plate && top && topOutline && insides > 1e-6 && removes) {
     const mid = (topOutline.min[1] + topOutline.max[1]) / 2;
     // Each line across the top view through a circle's centre, scored by the circles on it.
     const score = new Map<number, number>();
@@ -98,6 +108,10 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     const r = autoDimension({ v, m, geometry, views, looks: look, id, generalTolerance });
     planned = views.filter((x) => !r.unneeded.includes(x.id));
     annotations.push(...r.annotations);
+    if (plate) {
+      const notes = annotations.find((a) => a.id === "general_notes");
+      if (notes && notes.type === "note") notes.text = [`MATERIAL THICKNESS ${Math.round(thin * 100) / 100} mm.`, ...notes.text.split("\n")].join("\n");
+    }
   }
   /** A weldment's member lengths: after its balloons and welds (they keep the ids they had). */
   const lengths: Annotation[] = [];
@@ -126,16 +140,12 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   }
   for (const w of v.welds) annotations.push({ id: id("w"), type: "weld", view: "front", weld: w.id });
   if (weldment) {
-    // Each cut list item's length once, where a member of it lies flat in the front and its length is not an overall size.
-    const bb = m?.boundingBox?.size;
-    const f = viewFrame("front");
-    for (const item of cutList(members)) {
-      const mem = item.members.map((mid) => members.find((x) => x.id === mid)!).find((x) => {
-        const d = inView(x.ends[1], f).map((c, i) => c - inView(x.ends[0], f)[i]);
-        return Math.abs(Math.hypot(d[0], d[1]) - x.length) < 1e-3 && (Math.abs(d[0]) < 1e-6 || Math.abs(d[1]) < 1e-6);
-      });
-      if (!mem || (bb && bb.some((s) => Math.abs(s - mem.length) < 0.05))) continue;
-      lengths.push({ id: id("d"), type: "dimension", view: "front", member: mem.id });
+    // Where the members are (set-out ordinates from the left and the bottom) on the front and side: their lengths
+    // are the cut list's.
+    const bodies = new Set(members.map((x) => x.body ?? x.id));
+    for (const viewId of ["front", "right"]) {
+      const pv = geometry?.views.find((x) => x.id === viewId);
+      if (pv) lengths.push(...weldmentSetout(viewId, pv, bodies, id));
     }
     annotations.push(...lengths);
   }
@@ -152,7 +162,7 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
     generalTolerance,
   };
   placeNotes(doc, drawing, m, geometry);
-  addDetail(doc, drawing, m, geometry);
+  if (!plate) addDetail(doc, drawing, m, geometry);
   keepPlannedScale(doc, drawing, m, geometry);
   return drawing;
 }

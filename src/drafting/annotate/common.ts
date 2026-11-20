@@ -79,6 +79,8 @@ export interface AnnotationData {
   itemOf?: (bodyOrMember: string) => number | null;
   /** How many of an item. */
   quantityOf?: (item: number) => number;
+  /** An item's bodies (an assembly's: the components of one part), so a balloon on a hidden one finds one seen. */
+  bodiesOf?: (item: number) => string[];
   props: PropContext;
 }
 

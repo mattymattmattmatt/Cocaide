@@ -60,6 +60,8 @@ export interface ComposeContext {
    * a sheet stored without one (made before Q4) is drawn as it always was.
    */
   arrange?: boolean;
+  /** A drawing pack (an assembly's drawing and its parts' after it): this drawing's first sheet's number in the pack, and the pack's sheet count, for the title blocks. */
+  pack?: { first: number; total: number };
 }
 
 /** A break as composed: along x (0) or y (1), view mm, with the paper it leaves as view mm. */
@@ -344,7 +346,7 @@ class Composer {
         material: m?.mass.material ?? v.material?.name ?? "steel",
         ...(m ? { mass: `${m.mass.kg.toFixed(2)} kg`, volume: `${fmt(m.volume / 1000)} cm³` } : {}),
       },
-      sheet: { sheet: String(index + 1), sheets: String(d.sheets.length), size: s.format.size, name: s.name ?? `Sheet ${index + 1}` },
+      sheet: { sheet: String((ctx.pack?.first ?? 1) + index), sheets: String(ctx.pack?.total ?? d.sheets.length), size: s.format.size, name: s.name ?? `Sheet ${index + 1}` },
     };
     // A sheet of the assembly: its title block weighs the whole assembly, and its material is the parts list's.
     if (s.views.some((x) => x.source === "assembly") && doc) {
@@ -363,7 +365,7 @@ class Composer {
       this.format = null;
     } else {
       // The format's size and blocks don't depend on the scale; the scale's text is filled in once it is known.
-      const probe = drawFormat({ format: s.format, projection: s.projection, drawing: d, props: this.props, scaleText: "", sheetNumber: index + 1, sheetCount: d.sheets.length });
+      const probe = drawFormat({ format: s.format, projection: s.projection, drawing: d, props: this.props, scaleText: "", sheetNumber: (ctx.pack?.first ?? 1) + index, sheetCount: ctx.pack?.total ?? d.sheets.length });
       this.width = probe.width;
       this.height = probe.height;
       this.frame = probe.frame;
@@ -419,7 +421,7 @@ class Composer {
     if (this.template === "classic") this.border();
     else {
       this.props.sheet.scale = scaleText(scale);
-      const f = drawFormat({ format: this.s.format, projection: this.s.projection, drawing: this.d, props: this.props, scaleText: scaleText(scale), sheetNumber: this.index + 1, sheetCount: this.d.sheets.length });
+      const f = drawFormat({ format: this.s.format, projection: this.s.projection, drawing: this.d, props: this.props, scaleText: scaleText(scale), sheetNumber: (this.ctx.pack?.first ?? 1) + this.index, sheetCount: this.ctx.pack?.total ?? this.d.sheets.length });
       this.prims.push(...f.prims);
     }
     for (const cv of views) this.drawView(cv);
@@ -1809,6 +1811,7 @@ class Composer {
         const l = list();
         return l ? itemNumberFor(l, id) : null;
       },
+      bodiesOf: (item) => bom?.items.find((i) => i.item === item)?.bodies ?? list()?.items.find((i) => i.item === item)?.bodies ?? [],
       quantityOf: (item) => bom?.items.find((i) => i.item === item)?.quantity ?? list()?.items.find((i) => i.item === item)?.quantity ?? this.cut.find((i) => i.item === item)?.quantity ?? 1,
       props: this.props,
     };
@@ -1955,7 +1958,7 @@ class Composer {
       [36, "DRAWN", s.drawnBy ?? p.author ?? ""],
       [28, "DATE", s.date ?? ""],
       [44, `${s.projection.toUpperCase()} ANGLE`, ""],
-      [20, "SHEET", `${this.index + 1} of ${this.d.sheets.length}`],
+      [20, "SHEET", `${(this.ctx.pack?.first ?? 1) + this.index} of ${this.ctx.pack?.total ?? this.d.sheets.length}`],
       [52, "UNITS", "mm. Do not scale."],
     ]);
     const line = (pts: Vec2[], w: number = LINE.thin) => this.prims.push({ k: "line", pts, w, owner: "titleBlock" });

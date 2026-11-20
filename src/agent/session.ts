@@ -5,6 +5,9 @@
 //
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
+import { assemblyBom } from "../assembly/bom";
+import { composePack, packParts } from "../drafting/pack";
+import type { ComposeContext } from "../drafting/compose";
 import { projectAllViews } from "../kernel/assemblyViews";
 import { runAssemblyTool, ASSEMBLY_TOOLS, type AssemblyEnv } from "../assembly/tools";
 import type { PartTopology } from "../assembly/resolve";
@@ -154,6 +157,7 @@ export const EDIT_TOOLS = [
   "deleteMate",
   "copyToHoles",
   "explodeAssembly",
+  "drawPart",
 ] as const;
 export const READ_TOOLS = [
   "listFeatures",
@@ -167,6 +171,7 @@ export const READ_TOOLS = [
   "drawing",
   "geoRefs",
   "exportDrawing",
+  "exportDrawingPack",
   "saveBody",
   "partSummary",
   "listFaces",
@@ -516,6 +521,10 @@ export class AgentSession {
         return this.geoRefs(String(a.view ?? ""));
       case "exportDrawing":
         return this.exportDrawing(a.format, a.file, a.sheet);
+      case "drawPart":
+        return await this.drawPart(a);
+      case "exportDrawingPack":
+        return await this.exportDrawingPack(a);
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), value: a.value as number | string });
       case "renameDimension":
@@ -1119,6 +1128,76 @@ export class AgentSession {
     writeFileSync(path, bytes);
     const failing = drawingChecks(c.sheets, this.doc, this.built.measurements, c.geometry).filter((x) => !x.ok).map((x) => `${x.label}: ${x.actual}`);
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision, ...(format === "pdf" ? { pages: typeof sheetId === "string" ? 1 : c.sheets.length } : {}), ...(failing.length ? { failingChecks: failing } : {}) } };
+  }
+
+  /**
+   * A drawing for a part the assembly carries, kept with the part (assembly.parts[key].drawing): planned from the
+   * part as New drawing plans this document's, or the drawing given.
+   */
+  private async drawPart(a: Record<string, unknown>): Promise<CallResult> {
+    const asm = isObject(this.doc.assembly) ? (this.doc.assembly as unknown as Assembly) : null;
+    const key = typeof a.part === "string" ? a.part : "";
+    const part = asm?.parts?.[key] as Record<string, unknown> | undefined;
+    if (!part) return this.fail(`drawPart: no part "${key}" in the assembly (parts: ${Object.keys(asm?.parts ?? {}).join(", ") || "none"}; this document's own part is drawn by newDrawing)`);
+    let drawing: unknown = a.drawing;
+    if (!isObject(drawing)) {
+      const check = await this.inspector.check(part);
+      if (!check.measurements) return this.fail(`drawPart: ${key} doesn't build: ${check.errors.join("; ")}`);
+      const g = await this.inspector.project(part, DEFAULT_VIEWS);
+      drawing = planDrawing(part, check.measurements, g, typeof a.date === "string" ? { date: a.date } : {});
+      // The part's own name (as a title: "BACK PANEL"), number and description in its title block; how many the
+      // assembly needs, and its item in the parts list, in its notes.
+      const d = drawing as { sheets: { format: Record<string, unknown>; annotations: { id: string; type: string; text?: string }[] }[] };
+      const props = (isObject(part.properties) ? part.properties : {}) as Record<string, unknown>;
+      const item = assemblyBom(this.doc as Record<string, unknown>)?.items.find((i) => (asm?.components ?? []).some((k) => k.part === key && i.bodies.includes(k.id)));
+      for (const sh of d.sheets) {
+        if (typeof part.name === "string" && !sh.format.title) sh.format.title = part.name.replace(/[-_]+/g, " ").toUpperCase();
+        if (typeof props.description === "string" && !sh.format.subtitle) sh.format.subtitle = props.description;
+        if (typeof props.partNumber === "string" && !sh.format.number) sh.format.number = props.partNumber;
+        const notes = sh.annotations.find((x) => x.id === "general_notes" && x.type === "note");
+        if (notes && item) notes.text = [`REQUIRED: ${item.quantity} PER ASSEMBLY (ITEM ${item.item} OF THE PARTS LIST).`, ...(notes.text ?? "").split("\n")].join("\n");
+      }
+    }
+    const next = { ...part, drawing };
+    const problems = validateDocument(next).drawingErrors;
+    if (problems.length) return this.fail(`drawPart: the drawing is not valid: ${problems.join("; ")}`);
+    return this.editMany([{ type: "setAssemblyPart", key, part: next as Record<string, unknown> }], { extra: { part: key, sheets: (drawing as { sheets: unknown[] }).sheets.length } });
+  }
+
+  /**
+   * The drawing pack as one PDF: this document's drawing (its assembly sheets first, as it orders them), then each
+   * carried part's drawing in the parts list's order, every sheet numbered in the pack. "png": also a picture of each
+   * sheet, to look over.
+   */
+  private async exportDrawingPack(a: Record<string, unknown>): Promise<CallResult> {
+    if (!validateDocument(this.doc).drawing) return this.fail("exportDrawingPack: the document has no drawing (newDrawing, then the assembly's sheets)");
+    const parts = packParts(this.doc as Record<string, unknown>);
+    const ctx = new Map<unknown, ComposeContext>();
+    const main = validateDocument(this.doc).drawing!;
+    ctx.set(this.doc, { measurements: this.built.measurements, geometry: this.geometry(viewSpecs(main)) });
+    for (const p of parts) {
+      const check = await this.inspector.check(p.doc);
+      const d = validateDocument(p.doc).drawing;
+      ctx.set(p.doc, { measurements: check.measurements, geometry: d ? await this.inspector.project(p.doc, viewSpecs(d)) : null });
+    }
+    const sheets = composePack(this.doc as Record<string, unknown>, parts, (d) => ctx.get(d) ?? { measurements: null, geometry: null });
+    if (!sheets.length) return this.fail("exportDrawingPack: nothing to draw");
+    const name = typeof a.file === "string" && a.file.trim() ? basename(a.file.trim()) : `${safeName(this.built.name)}-drawing-pack.pdf`;
+    const path = join(this.outDir, name.endsWith(".pdf") ? name : `${name}.pdf`);
+    const bytes = drawingPDF(sheets, { title: this.drawingTitle(), ...(sheetFonts() ? { fonts: sheetFonts()! } : {}), ...(familyFonts("serif") ? { serifFonts: familyFonts("serif")! } : {}), ...(familyFonts("mono") ? { monoFonts: familyFonts("mono")! } : {}) });
+    mkdirSync(this.outDir, { recursive: true });
+    writeFileSync(path, bytes);
+    const pictures: string[] = [];
+    if (a.png === true) {
+      for (const [i, sh] of sheets.entries()) {
+        const shot = await sheetRaster(sh, { side: 2000 });
+        const file = join(this.outDir, `${safeName(this.built.name)}-sheet-${String(i + 1).padStart(2, "0")}.png`);
+        writeFileSync(file, shot.png);
+        pictures.push(file);
+      }
+    }
+    const problems = sheets.flatMap((sh, i) => sh.problems.map((p) => `sheet ${i + 1}: ${p}`));
+    return { result: { ok: true, file: path, pages: sheets.length, bytes: bytes.length, parts: parts.map((p) => p.key), ...(pictures.length ? { pictures } : {}), ...(problems.length ? { problems: problems.slice(0, 40) } : {}) } };
   }
 
   /** The drawing's title for a PDF: the first sheet's title, else the part's name. */

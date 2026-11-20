@@ -97,7 +97,16 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
   const taken = (along: Vec3, value: number) => done.some((d) => same(d.value, value, 0.05) && Math.abs(Math.abs(d.along[0] * along[0] + d.along[1] * along[1] + d.along[2] * along[2]) - 1) < 1e-6);
   const mark = (along: Vec3, value: number) => done.push({ along, value });
 
-  if (weldment) return { annotations: out, unneeded: [] };
+  if (weldment) {
+    // A weldment's views: where its members are (set-out), as ordinate sets from the view's left and bottom.
+    const bodies = new Set(members.map((x) => x.body ?? x.id));
+    for (const view of square) {
+      if (view.kind === "section") continue;
+      const pv = pvOf(view.id);
+      if (pv) out.push(...weldmentSetout(view.id, pv, bodies, id));
+    }
+    return { annotations: out, unneeded: [] };
+  }
 
   // The plan view: the square view most holes are seen end on in (else the top, else the first).
   const holes = geometry?.holes ?? [];
@@ -251,6 +260,19 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
     dim({ view: plan.id, from: "@bottom", to: "@top" });
     mark(pF.right, w);
     mark(pF.up, h);
+    // An outline not square at a corner (a raked top, a stepped side): its other side's height and its short top's
+    // or bottom's width too, from the same datums.
+    const vEdges = visible.filter((e) => e.look === "line" && e.pts.length >= 2 && !e.key.startsWith("?") && Math.abs(e.pts[0][0] - e.pts[e.pts.length - 1][0]) < 0.01);
+    for (const x of [pO.max[0], pO.min[0]]) {
+      const side = vEdges.filter((e) => Math.abs(e.pts[0][0] - x) < 0.01).sort((p, q) => Math.max(q.pts[0][1], q.pts[q.pts.length - 1][1]) - Math.max(p.pts[0][1], p.pts[p.pts.length - 1][1]))[0];
+      if (!side) continue;
+      const topEnd = side.pts[0][1] > side.pts[side.pts.length - 1][1] ? 0 : side.pts.length - 1;
+      const yTop = side.pts[topEnd][1];
+      if (pO.max[1] - yTop > 0.5 && !taken(pF.up, yTop - pO.min[1])) {
+        dim({ view: plan.id, from: "@bottom", to: `${plan.id}:v${side.key}.${topEnd === 0 ? 0 : 1}`, direction: "vertical" });
+        mark(pF.up, yTop - pO.min[1]);
+      }
+    }
   }
   if (elevation && !(isRound && side)) {
     const eLook = elevation.kind === "section" ? "front" : looks[elevation.id];
@@ -549,4 +571,48 @@ export function autoDimensionSheetView(doc: unknown, sheet: import("./compose").
   return r.annotations
     .filter((a) => "view" in a && a.view === viewId && a.type !== "note" && a.type !== "datum" && !have.has(key(a)))
     .map((a) => ({ ...a, id: nextId(a.type === "dimension" ? "d" : a.type === "hole" ? "h" : a.type === "centerMark" || a.type === "centerline" ? "c" : "a") }) as Annotation);
+}
+
+
+/**
+ * A weldment view's set-out: each upright member's left face along the view
+ * (from its left edge) and each level member's underside up it (from its
+ * bottom), as one ordinate set a way — what a fabricator marks out from,
+ * where a member's length is the cut list's. Sloped members are left to the
+ * cut list; a lone place is a plain dimension.
+ */
+export function weldmentSetout(viewId: string, pv: Pick<ProjectedView, "edges">, members: Set<string>, id: (prefix: string) => string): Annotation[] {
+  const out: Annotation[] = [];
+  const lines = pv.edges.filter((e) => e.visible && e.look === "line" && e.pts.length >= 2 && !e.key.startsWith("?") && members.has(e.body));
+  if (!lines.length) return out;
+  const all = pv.edges.flatMap((e) => (e.visible ? e.pts : []));
+  const o = { min: [Math.min(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1]))], max: [Math.max(...all.map((p) => p[0])), Math.max(...all.map((p) => p[1]))] };
+  const byBody = new Map<string, typeof lines>();
+  for (const e of lines) byBody.set(e.body, [...(byBody.get(e.body) ?? []), e]);
+  const xs: { v: number; ref: string }[] = [];
+  const ys: { v: number; ref: string }[] = [];
+  const first = (e: (typeof lines)[number]) => e.pts[0];
+  for (const [, es] of byBody) {
+    const pts = es.flatMap((e) => e.pts);
+    const w = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
+    const h = Math.max(...pts.map((p) => p[1])) - Math.min(...pts.map((p) => p[1]));
+    const vert = es.filter((e) => Math.abs(first(e)[0] - e.pts[e.pts.length - 1][0]) < 0.01 && Math.abs(first(e)[1] - e.pts[e.pts.length - 1][1]) > 20);
+    const horz = es.filter((e) => Math.abs(first(e)[1] - e.pts[e.pts.length - 1][1]) < 0.01 && Math.abs(first(e)[0] - e.pts[e.pts.length - 1][0]) > 20);
+    if (h > w && vert.length) {
+      const e = vert.sort((p, q) => first(p)[0] - first(q)[0])[0];
+      xs.push({ v: first(e)[0], ref: `${viewId}:v${e.key}.0` });
+    } else if (w > h && horz.length) {
+      const e = horz.sort((p, q) => first(p)[1] - first(q)[1])[0];
+      ys.push({ v: first(e)[1], ref: `${viewId}:v${e.key}.0` });
+    }
+  }
+  const set = (list: { v: number; ref: string }[], lo: number, origin: string, direction: "horizontal" | "vertical") => {
+    const places: { v: number; ref: string }[] = [];
+    for (const p of list.sort((a, b) => a.v - b.v)) if (p.v - lo > 0.5 && !places.some((q) => Math.abs(q.v - p.v) < 0.5)) places.push(p);
+    if (places.length >= 2) out.push({ id: id("d"), type: "dimension", view: viewId, kind: "ordinate", origin, points: places.map((p) => p.ref), direction } as DimensionAnnotation);
+    else if (places.length === 1) out.push({ id: id("d"), type: "dimension", view: viewId, from: origin, to: places[0].ref, direction } as DimensionAnnotation);
+  };
+  set(xs, o.min[0], "@left", "horizontal");
+  set(ys, o.min[1], "@bottom", "vertical");
+  return out;
 }

@@ -406,6 +406,10 @@ id; "bodies" picks some), "exploded": true draws it exploded with explode lines 
 from it show the same. A "bom" table on a sheet with an assembly view lists the assembly's parts (item, qty, part,
 description, material, mass), and a balloon { "type": "balloon", "view", "body": "<component id>" } reads its item.
 { "id": "ex", "look": "iso", "source": "assembly", "exploded": true, "display": "shadedEdges" }
+A drawing pack for fabrication: the assembly's sheets first in this document's drawing (moveSheet), drawPart for each
+part the assembly carries (its drawing kept with it; give a "drawing" to replace it), then exportDrawingPack writes one
+PDF of them all, numbered as one set (SHEET 3 OF 12). Give each part properties.partNumber and description: the parts
+list and the part's title block show them.
 { "id": "c1", "type": "concentric", "a": { "component": "plate-1", "face": { "type": "cylindrical", "radius": 3.3,
   "pick": "nearest", "near": [30, 0, 3] } }, "b": { "component": "pin-1", "face": { "type": "cylindrical", "radius": 3,
   "pick": "largest" } } }
