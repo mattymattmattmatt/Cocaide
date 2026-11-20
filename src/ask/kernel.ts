@@ -2,11 +2,12 @@
 // the browser it is served by the kernel worker; in Node (tests) by
 // LocalKernel directly. Both run the same code (LocalKernel).
 
+import { projectAllViews, type AssemblyPartInfo } from "../kernel/assemblyViews";
 import { geometryKey } from "../doc/drawing";
 import type { SketchEntity } from "../doc/types";
 import type { Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel";
-import { projectDrawingViews, specKey, type KeyCache, type ProjectedView, type ViewSpec } from "../kernel/drawingViews";
+import { specKey, type KeyCache, type ProjectedView, type ViewSpec } from "../kernel/drawingViews";
 import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
 import { rebuild, type HoleRecord, type RebuildResult } from "../kernel/rebuild";
 import { inspectQuery, type InspectQuery, type InspectResult } from "../kernel/agentQueries";
@@ -54,6 +55,8 @@ export interface Shot {
 export interface DrawingGeometry {
   views: ProjectedView[];
   holes: HoleRecord[];
+  /** The assembly's parts as the BOM lists them (mass, material, name), by part key: when a view shows the assembly. */
+  assemblyParts?: Record<string, AssemblyPartInfo>;
 }
 
 export interface KernelPort {
@@ -144,23 +147,29 @@ export class LocalKernel implements KernelPort {
 
   async project(doc: unknown, views: ViewSpec[]): Promise<DrawingGeometry | null> {
     const r = this.built(doc);
-    if (!r.solid) return null;
+    const assembled = views.some((v) => v.source);
+    if (!r.solid && !assembled) return null;
     // A view's key is its spec and its parent's key: a view from a parent is projected again when the parent changes.
+    // An assembly view's is the assembly too (the part's rebuild doesn't see it).
+    const asmKey = assembled ? JSON.stringify((doc as { assembly?: unknown }).assembly ?? null) : "";
     const keyOf = new Map<string, string>();
     for (const v of views) {
       const parent = v.frame && "parent" in v.frame ? keyOf.get(v.frame.parent) : undefined;
-      keyOf.set(v.id, `${specKey(v)}|${parent ?? ""}`);
+      keyOf.set(v.id, `${specKey(v)}|${parent ?? ""}${v.source ? `|${asmKey}` : ""}`);
     }
     const known = new Map<string, ProjectedView>();
     for (const v of views) {
       const hit = this.projections.get(keyOf.get(v.id)!);
       if (hit) known.set(v.id, { ...hit, id: v.id });
     }
-    const out = projectDrawingViews(this.oc(), { bodies: r.bodies, label: (topo) => r.label(topo) }, views, this.keys, known);
+    // The assembly's views are projected again together (their parts' info comes with them), the part's from the cache.
+    for (const v of views) if (v.source) known.delete(v.id);
+    const all = projectAllViews(this.oc(), doc as Record<string, unknown>, views, r.solid ? { bodies: r.bodies, label: (topo) => r.label(topo) } : null, this.keys, known);
+    const out = all.views;
     // Keep the newest few hundred; a long session of edits doesn't grow it without end.
-    for (const pv of out) this.projections.set(keyOf.get(pv.id)!, pv);
+    for (const pv of out) if (!views.find((v) => v.id === pv.id)?.source) this.projections.set(keyOf.get(pv.id)!, pv);
     while (this.projections.size > 200) this.projections.delete(this.projections.keys().next().value!);
-    return { views: out, holes: r.holes };
+    return { views: out, holes: r.holes, ...(all.parts ? { assemblyParts: all.parts } : {}) };
   }
 
   async inspect(doc: unknown, query: InspectQuery): Promise<InspectResult> {

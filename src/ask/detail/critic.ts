@@ -13,6 +13,7 @@
 // - readability: text over text, a table or the title block;
 // - standards: a general tolerance, the material, the drawing checks.
 
+import { holeSignature } from "../../drafting/autodim";
 import type { RawDocument } from "../../doc/commands";
 import type { Annotation, DimensionAnnotation, Drawing, Vec3 } from "../../doc/types";
 import { allAnnotations, parseGeoRef } from "../../doc/drawing";
@@ -75,7 +76,12 @@ export function critique(input: CriticInput): Finding[] {
   if (!weldment) {
     for (const h of holes) {
       const makers = new Set([h.feature, ...(input.intent?.holes.find((x) => x.features.includes(h.feature))?.makers ?? [])]);
-      const sized = anns.some((a) => drawn(a.id) && ((a.type === "hole" && (a.hole === h.feature || sameKind(input, a.hole, h.feature))) || (a.type === "dimension" && (a.kind === "diameter" || a.kind === "radius") && (a.refs ?? []).some((r) => edgeFeature(sheets, r, makers)))));
+      // A counted callout ("2× Ø6.6 THRU") sizes every hole alike to the one it is on, as the drawing checks read it.
+      const counted = (a: (typeof anns)[number]) => a.type === "hole" && a.count !== undefined && (() => {
+        const on = holes.find((x) => x.feature === a.hole);
+        return !!on && holeSignature(on) === holeSignature(h);
+      })();
+      const sized = anns.some((a) => drawn(a.id) && ((a.type === "hole" && (a.hole === h.feature || sameKind(input, a.hole, h.feature) || counted(a))) || (a.type === "dimension" && (a.kind === "diameter" || a.kind === "radius") && (a.refs ?? []).some((r) => edgeFeature(sheets, r, makers)))));
       if (!sized) out.push({ rule: "sized", severity: "error", message: `hole ${h.feature} (Ø${r3(h.diameter)}) has no size: call it out (a hole callout on its circle).`, ids: [h.feature] });
       const where = locationOf(input, h.feature, makers);
       if (!where) out.push({ rule: "located", severity: "error", message: `hole ${h.feature} is not located: dimension its centre from the datum edges (or give it a position frame with basic dimensions).`, ids: [h.feature] });

@@ -4,10 +4,11 @@
 // that makes the change (setAssembly: the assembly with the mates solved).
 // What the user can do in the Assembly tab, the AI can do here, and check.
 
+import { autoExplode, explodeWithout } from "./explode";
 import { nextComponentId, nextMateId, SELF, validateAssembly } from "../doc/assembly";
 import type { Command, RawDocument } from "../doc/commands";
 import { geometryKey } from "../doc/drawing";
-import type { Assembly, AssemblyComponent, Mate, MateRef, Vec3 } from "../doc/types";
+import type { Assembly, AssemblyComponent, ExplodeStep, Mate, MateRef, Vec3 } from "../doc/types";
 import { MATE_TYPES } from "../doc/types";
 import { Checker } from "../doc/validate";
 import { copiesThatHold, linedHoles, mateFeatures, occupiedHoles, sortClashes, suggestMates, type Clash } from "./features";
@@ -33,7 +34,7 @@ export interface AssemblyEnv {
 export type AssemblyOutcome = { ok: true; result: Raw; command?: Command } | { ok: false; error: string };
 
 export const ASSEMBLY_READ_TOOLS = ["assembly", "mateFeatures", "suggestMates", "checkAssembly"] as const;
-export const ASSEMBLY_WRITE_TOOLS = ["insertComponent", "setComponent", "deleteComponent", "addMate", "editMate", "deleteMate", "copyToHoles"] as const;
+export const ASSEMBLY_WRITE_TOOLS = ["insertComponent", "setComponent", "deleteComponent", "addMate", "editMate", "deleteMate", "copyToHoles", "explodeAssembly"] as const;
 export const ASSEMBLY_TOOLS = new Set<string>([...ASSEMBLY_READ_TOOLS, ...ASSEMBLY_WRITE_TOOLS]);
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000 + 0;
@@ -204,7 +205,8 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       const used = new Set(left.map((x) => x.part));
       const parts = Object.fromEntries(Object.entries(base.parts ?? {}).filter(([key]) => used.has(key)));
       if (!left.length) return { ok: true, command: { type: "setAssembly", assembly: null, label: `Delete ${k.id}` }, result: { deleted: k.id, note: "the assembly is empty now, so it is gone" } };
-      return commit(env, { components: left, ...(mates.length ? { mates } : {}), ...(Object.keys(parts).length ? { parts } : {}) }, `Delete ${k.id}`, { extra: { deleted: k.id, matesRemoved: (base.mates ?? []).length - mates.length } });
+      const explode = explodeWithout(base.explode, k.id);
+      return commit(env, { components: left, ...(mates.length ? { mates } : {}), ...(Object.keys(parts).length ? { parts } : {}), ...(explode.length ? { explode } : {}) }, `Delete ${k.id}`, { extra: { deleted: k.id, matesRemoved: (base.mates ?? []).length - mates.length } });
     }
 
     case "addMate": {
@@ -256,6 +258,22 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       const plan = copiesThatHold(base, k.id, partOf, views);
       if (typeof plan === "string") return fail(plan);
       return commit(env, plan.next, `Copy ${k.id} to ${plan.copies.length} hole${plan.copies.length === 1 ? "" : "s"}`, { extra: { copies: plan.copies, ...(plan.skipped ? { skipped: `${plan.skipped} hole(s) where the copy's mates didn't hold` } : {}) } });
+    }
+
+    case "explodeAssembly": {
+      // Steps given, or worked out from the mates (each part off the one it is mated to, `scale` times as far); none: collapsed.
+      let steps: ExplodeStep[];
+      if (Array.isArray(a.steps)) steps = a.steps as ExplodeStep[];
+      else if (a.collapse === true) steps = [];
+      else {
+        const { views } = await topologies(env, base);
+        steps = autoExplode(base, (id) => views.get(base.components.find((x) => x.id === id)?.part ?? ""), typeof a.scale === "number" ? a.scale : 1);
+        if (!steps.length) return fail("nothing to explode: mate the components first (each moves off the part it is mated to)");
+      }
+      const next: Assembly = { ...base };
+      if (steps.length) next.explode = steps;
+      else delete next.explode;
+      return commit(env, next, steps.length ? "Explode" : "Collapse", { extra: { explode: steps, note: steps.length ? 'a drawing view shows it with { "look": "iso", "source": "assembly", "exploded": true }' : "collapsed" } });
     }
 
     case "mateFeatures": {

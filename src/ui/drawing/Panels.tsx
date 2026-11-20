@@ -171,6 +171,7 @@ function ViewPanel({ ws, view }: { ws: Workspace; view: DrawingView }) {
   const cv = p.sheet?.views.find((v) => v.id === view.id);
   const kind = viewKind(view);
   const set = (patch: Record<string, unknown>) => ws.run({ type: "setView", id: view.id, view: viewBody(view, patch as Partial<DrawingView>) });
+  const hasAssembly = !!(ws.p.doc as { assembly?: { components?: unknown[] } } | null)?.assembly?.components?.length;
   const al = alignmentOf(view, sheetDoc.views, sheetDoc.projection);
   const free = (view as { free?: boolean }).free;
   const locked = (view as { locked?: boolean }).locked;
@@ -196,6 +197,24 @@ function ViewPanel({ ws, view }: { ws: Workspace; view: DrawingView }) {
                 {l}
               </option>
             ))}
+          </select>
+        </Field>
+      )}
+      {kind === "model" && (
+        <Field label="Shows">
+          <select
+            value={view.source === "assembly" ? (view.exploded ? "exploded" : "assembly") : "part"}
+            onChange={(e) => set(e.target.value === "part" ? { source: undefined, exploded: undefined, bodies: undefined } : { source: "assembly", exploded: e.target.value === "exploded" || undefined, bodies: undefined })}
+            data-testid="prop-view-source"
+            title="The part, or the document's assembly (each component drawn; exploded: moved apart by the assembly's explode steps). Views made from it show the same."
+          >
+            <option value="part">the part</option>
+            <option value="assembly" disabled={!hasAssembly}>
+              the assembly
+            </option>
+            <option value="exploded" disabled={!hasAssembly}>
+              the assembly, exploded
+            </option>
           </select>
         </Field>
       )}

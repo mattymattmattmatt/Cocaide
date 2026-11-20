@@ -5,6 +5,7 @@
 //
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
+import { projectAllViews } from "../kernel/assemblyViews";
 import { runAssemblyTool, ASSEMBLY_TOOLS, type AssemblyEnv } from "../assembly/tools";
 import type { PartTopology } from "../assembly/resolve";
 import { partDocuments } from "../assembly/model";
@@ -38,7 +39,7 @@ import { drawingPDF, type FontFile } from "../drafting/pdf";
 import { DEFAULT_VIEWS, planDrawing } from "../drafting/plan";
 import { viewSpecs } from "../drafting/specs";
 import { sheetSVG } from "../drafting/svg";
-import { projectDrawingViews, type ViewSpec } from "../kernel/drawingViews";
+import type { ViewSpec } from "../kernel/drawingViews";
 import { deflateSync } from "node:zlib";
 import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
@@ -152,6 +153,7 @@ export const EDIT_TOOLS = [
   "editMate",
   "deleteMate",
   "copyToHoles",
+  "explodeAssembly",
 ] as const;
 export const READ_TOOLS = [
   "listFeatures",
@@ -1030,7 +1032,8 @@ export class AgentSession {
 
   /** The part projected for these views, with where its holes were drilled. */
   private geometry(views: ViewSpec[]): DrawingGeometry {
-    return { views: projectDrawingViews(this.oc, { bodies: this.built.bodies, label: (topo) => this.built.label(topo) }, views), holes: this.built.holes };
+    const all = projectAllViews(this.oc, this.doc as Record<string, unknown>, views, this.built.solid ? { bodies: this.built.bodies, label: (topo) => this.built.label(topo) } : null);
+    return { views: all.views, holes: this.built.holes, ...(all.parts ? { assemblyParts: all.parts } : {}) };
   }
 
   private composed() {

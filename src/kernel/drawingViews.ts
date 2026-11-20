@@ -61,6 +61,8 @@ export interface ViewSpec {
   brokenOut?: { profile: Vec2[]; depth: number }[];
   /** Also the faces as shaded triangles. */
   shaded?: boolean;
+  /** What it projects: the part (default), the assembly, or the assembly exploded. */
+  source?: "assembly" | "exploded";
 }
 
 export interface ProjectedBody {
@@ -127,6 +129,8 @@ export interface ProjectedView {
   shaded?: ShadedTriangle[];
   /** The cut's plane in the view, for an aligned section: where its two halves meet. */
   problems?: string[];
+  /** An exploded assembly's explode lines (view mm): each moved component's middle, from where it comes off to where it is drawn. */
+  trails?: Vec2[][];
 }
 
 /** Arcs are drawn in steps of at most this angle. */
@@ -221,7 +225,7 @@ function sample(oc: OC, s: Scope, edge: Parameters<typeof edgeInfo>[2]): Vec3[] 
 export interface BuiltPart {
   bodies: { name: string; shape: TopoDS_Shape }[];
   /** Labels edges and faces described from the part with the features that made them. */
-  label(topo: { faces: FaceInfo[]; edges: EdgeInfo[] }): void;
+  label(topo: { faces: FaceInfo[]; edges: EdgeInfo[] }, body?: string): void;
 }
 
 /** A body's model edges (seams left out) with their keys, and its round faces. */
@@ -243,7 +247,7 @@ function keyed(oc: OC, s: Scope, body: { name: string; shape: TopoDS_Shape }, la
     }
   }
   infos.forEach((e, i) => (e.seam = count[i] === 1));
-  label({ faces: faceInfos, edges: infos });
+  label({ faces: faceInfos, edges: infos }, body.name);
   const keys = edgeKeys(infos);
   const edges: KeyedEdge[] = [];
   infos.forEach((info, i) => {

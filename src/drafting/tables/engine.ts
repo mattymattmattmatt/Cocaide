@@ -22,6 +22,8 @@ import type { DrawingTable, RevisionRow, TableCorner } from "./types";
 /** What a table reads from the part. Give what the drawing has; a table whose source is missing says so in `problems`. */
 export interface TableContext {
   cutList?: CutListResult | null;
+  /** An assembly drawing's BOM (src/assembly/bom.ts): what a BOM table lists instead of the part's cut list. */
+  bom?: CutListResult | null;
   welds?: Weld[];
   revisions?: RevisionRow[];
   /** A hole table's rows, worked out for its view and origin (src/drafting/tables/holes.ts holesInView + holeTable). */
@@ -88,7 +90,7 @@ export function tableData(table: DrawingTable, ctx: TableContext): TableData {
   switch (table.kind) {
     case "cutList":
     case "bom": {
-      const list = ctx.cutList;
+      const list = table.kind === "bom" ? (ctx.bom ?? ctx.cutList) : ctx.cutList;
       if (!list) {
         problems.push(`${table.id}: the part has no cut list yet (rebuild it)`);
         break;
@@ -212,7 +214,7 @@ export function tableData(table: DrawingTable, ctx: TableContext): TableData {
 
 function itemValue(kind: "cutList" | "bom", key: string, i: CutItem): string | number {
   if (kind === "bom") {
-    if (key === "part") return i.bodies.length === 1 ? i.bodies[0] : i.description;
+    if (key === "part") return i.partName ?? (i.bodies.length === 1 ? i.bodies[0] : i.description);
     const c = cutColumn(key);
     return c ? c.value(i) : "";
   }

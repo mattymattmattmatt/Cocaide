@@ -89,6 +89,12 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
     readOnly: false,
   },
   {
+    name: "explodeAssembly",
+    description: 'The exploded view\'s steps: worked out from the mates ({} or { "scale": 1.5 } — each part off the one it is mated to, out of its hole along the axis, off its face along the normal), given ({ "steps": [{ "components": ["bolt-1"], "move": [0, 0, 60] }] }), or { "collapse": true }. A drawing view { "look": "iso", "source": "assembly", "exploded": true } draws it, with explode lines.',
+    input: { scale: z.number().optional(), steps: z.array(obj).optional(), collapse: z.boolean().optional() },
+    readOnly: false,
+  },
+  {
     name: "deleteMate",
     description: "Remove a mate.",
     input: { id: z.string() },

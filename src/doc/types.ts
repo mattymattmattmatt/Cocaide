@@ -62,6 +62,13 @@ export interface Assembly {
   parts?: Record<string, unknown>;
   components: AssemblyComponent[];
   mates?: Mate[];
+  /** The exploded view: steps in order, each moving some components by a distance (mm, assembly axes); a component's offset is the sum of the steps it is in. */
+  explode?: ExplodeStep[];
+}
+
+export interface ExplodeStep {
+  components: string[];
+  move: Vec3;
 }
 
 export interface AssemblyComponent {
@@ -73,7 +80,7 @@ export interface AssemblyComponent {
   rotation?: Vec3;
   /** Held where it is: mates move the others to it. */
   fixed?: boolean;
-  /** Not drawn (still mated, listed and exported). */
+  /** Not drawn (still mated, listed and exported; left out of drawings too). */
   hidden?: boolean;
   /** Drawn translucent and clicked through, to see and pick what is behind or inside it. */
   transparent?: boolean;
@@ -385,8 +392,14 @@ export interface DrawingView {
   showScale?: boolean;
   /** Turned on the sheet, degrees counter-clockwise about its centre (its dimensions turn with it; notes stay upright). Default 0. */
   rotation?: number;
+  /** model: what it shows — the part (default) or the document's assembly, each component a body named by its id. Views made from it show the same. */
+  source?: "part" | "assembly";
+  /** model, with source "assembly": the components moved apart by the assembly's explode steps. Views made from it are exploded too. */
+  exploded?: boolean;
 }
 export const VIEW_KEYS = [
+  "source",
+  "exploded",
   "id",
   "kind",
   "look",

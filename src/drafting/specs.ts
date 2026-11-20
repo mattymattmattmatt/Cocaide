@@ -18,6 +18,19 @@ export function projectionOf(views: Map<string, DrawingView>, id: string): strin
   return v?.id ?? id;
 }
 
+/** What a view shows: its first ancestor's (a model view's) source — the assembly, exploded or not — or the part (undefined). */
+export function viewSource(views: Map<string, DrawingView>, id: string): "assembly" | "exploded" | undefined {
+  let v = views.get(id);
+  const seen = new Set<string>();
+  while (v && v.parent && !seen.has(v.id)) {
+    seen.add(v.id);
+    const p = views.get(v.parent);
+    if (!p) break;
+    v = p;
+  }
+  return v?.source === "assembly" ? (v.exploded ? "exploded" : "assembly") : undefined;
+}
+
 /** The views in an order where each comes after its parent (a view whose parent is missing comes as it is). */
 export function parentsFirst(views: DrawingView[]): DrawingView[] {
   const byId = new Map(views.map((v) => [v.id, v]));
@@ -46,7 +59,9 @@ export function viewSpecs(drawing: Drawing): ViewSpec[] {
     const kind = viewKind(v);
     if (kind === "detail") continue;
     const parent = v.parent ? projectionOf(byId, v.parent) : undefined;
+    const source = viewSource(byId, v.id);
     const common: Partial<ViewSpec> = {
+      ...(source ? { source } : {}),
       ...(v.bodies ? { bodies: v.bodies } : {}),
       ...(v.brokenOut?.length ? { brokenOut: v.brokenOut } : {}),
       ...(v.display === "shaded" || v.display === "shadedEdges" ? { shaded: true } : {}),

@@ -4,7 +4,9 @@
 // over MCP alike.
 
 import type { DrawingGeometry } from "../ask/kernel";
-import { allAnnotations } from "../doc/drawing";
+import { assemblyBom } from "../assembly/bom";
+import { allAnnotations, allViews } from "../doc/drawing";
+import { viewSource } from "./specs";
 import { validateDocument } from "../doc/validate";
 import type { Check } from "../intent/critic";
 import type { Measurements } from "../kernel/measure";
@@ -29,10 +31,26 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
   const empty = views.filter((v) => !v.outline).map((v) => v.id);
   add("Every view shows the part", empty.length === 0 && views.length > 0, "every view", views.length === 0 ? "no views" : empty.length ? `${empty.join(", ")} show${empty.length === 1 ? "s" : ""} nothing` : `${views.map((v) => v.id).join(", ")}`);
 
+  // What the views show: the part's checks (sizes, holes, welds, the cut list) are for sheets that draw the part; an
+  // assembly's sheets are checked for their parts list's balloons instead.
+  const v = validateDocument(doc);
+  const byId = new Map((v.drawing ? allViews(v.drawing) : []).map((x) => [x.id, x]));
+  const partViews = views.filter((x) => !viewSource(byId, x.id));
+  const assemblyShown = views.length > partViews.length;
+  const partShown = partViews.length > 0;
+  if (assemblyShown && doc) {
+    const bom = assemblyBom(doc as Record<string, unknown>);
+    const asmIds = new Set(views.filter((x) => viewSource(byId, x.id)).map((x) => x.id));
+    const ballooned = new Set(drawn.filter((a) => a.type === "balloon" && asmIds.has((a as { view?: string }).view ?? "")).map((a) => a.item));
+    const items = bom?.items ?? [];
+    const missing = items.filter((i) => !ballooned.has(i.item));
+    if (items.length) add("Every parts list item has a balloon", missing.length === 0, `items 1–${items.length}`, missing.length ? `no balloon for ${missing.map((i) => `item ${i.item} (${i.partName ?? i.description})`).join(", ")}` : `${items.length} of ${items.length}`);
+  }
+
   const loose = annotations.filter((a) => a.problem);
   add("Every annotation is attached", loose.length === 0, "all", loose.length ? loose.map((a) => `${a.id}: ${a.problem}`).join("; ") : `${annotations.length} annotation${annotations.length === 1 ? "" : "s"}`);
 
-  if (cut.length) {
+  if (cut.length && partShown) {
     // The cut list v2's items (its plates and gussets too: Q4 polish), numbered as the balloons are.
     const v2 = m && doc ? cutListOf(doc, m).items.map((i) => ({ item: i.item, members: i.kind === "member" ? i.members : i.bodies })) : null;
     const items = v2 ?? cut.map((i) => ({ item: i.item, members: i.members }));
@@ -47,7 +65,7 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
   }
 
   const bb = m?.boundingBox;
-  if (bb) {
+  if (bb && partShown) {
     const dims = drawn.filter((a) => a.type === "dimension" && a.value !== undefined && a.along);
     // A round part's diameter is its size across both ways it is seen round.
     const diameters = drawn.filter((a) => a.type === "dimension" && a.value !== undefined && a.text.includes("Ø"));
@@ -60,11 +78,10 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
     );
   }
 
-  const v = validateDocument(doc);
   const attached = (type: string) => (v.drawing ? allAnnotations(v.drawing) : []).filter((a) => a.type === type && drawn.some((d) => d.id === a.id));
 
   const holes = geometry?.holes ?? [];
-  if (holes.length) {
+  if (holes.length && partShown) {
     const called = new Set(attached("hole").map((a) => (a.type === "hole" ? a.hole : "")));
     // A callout of several alike holes ("4×") calls out the features it counts.
     const groups = attached("hole").filter((a) => a.type === "hole" && a.count !== undefined).map((a) => (a.type === "hole" ? holes.find((h) => h.feature === a.hole) : undefined)).filter((h): h is NonNullable<typeof h> => !!h).map(holeSignature);
@@ -72,7 +89,7 @@ export function drawingChecks(sheets: ComposedSheet | ComposedSheet[] | Composed
     add("Every hole is called out", missing.length === 0, `${holes.length}`, missing.length ? `no callout for ${missing.join(", ")}` : `${holes.length} of ${holes.length}`);
   }
 
-  if (v.welds.length) {
+  if (v.welds.length && partShown) {
     const symbols = new Set(attached("weld").map((a) => (a.type === "weld" ? a.weld : "")));
     const missing = v.welds.filter((w) => !symbols.has(w.id)).map((w) => w.id);
     add("Every weld has a symbol", missing.length === 0, `${v.welds.length}`, missing.length ? `no symbol for ${missing.join(", ")}` : `${v.welds.length} of ${v.welds.length}`);

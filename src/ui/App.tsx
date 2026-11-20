@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { assemblyBom } from "../assembly/bom";
+import { autoExplode } from "../assembly/explode";
+import { partDocuments } from "../assembly/model";
+import { heroCommands, planAssemblySheet, sheetCommands } from "../drafting/assemblyPlan";
+import { fitViews } from "../drafting/fit";
 import { AssemblyBar, AssemblyMain } from "./assembly/Assembly";
 import { useAssembly } from "./assembly/useAssembly";
 import bracketText from "../../examples/bracket.cocaide.json?raw";
@@ -20,7 +25,8 @@ import { FILE_EXTENSION, formatDocument, parseDocumentText } from "../doc/format
 import { documentParameters, resolvedDocument, restoreExpressions } from "../doc/parameters";
 import { rollbackAt, rollbackIndex, rollbackNext, rollbackPrevious, rolledBack } from "../doc/rollback";
 import { exportRefusal, mmPerPixel, photoOf } from "../doc/photo";
-import type { Constraint, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2, Vec3 } from "../doc/types";
+import type { Assembly, Constraint, Material, PlaneSpec, ProfileDef, SketchEntity, SketchFeature, Vec2, Vec3 } from "../doc/types";
+import type { PartTopology } from "../assembly/resolve";
 import { validateDocument } from "../doc/validate";
 import { DATUM_OPS, DEFAULT_DATUMS, frameAsDatumPlane } from "../features/datum";
 import { planeFrame } from "../geom/frame";
@@ -1195,6 +1201,58 @@ export function App() {
     }
   };
 
+  /**
+   * New assembly drawing: a sheet of the assembly (front, top, an exploded iso, the BOM, a balloon per item), added to
+   * the drawing (or the drawing, when there is none), laid out and scaled to fit. The assembly is exploded first when it
+   * has no explode steps yet. One undo step.
+   */
+  const newAssemblyDrawing = async () => {
+    const asm = doc?.assembly as Assembly | undefined;
+    if (!doc || !asm?.components?.length) return setNotice({ kind: "error", text: "There is no assembly to draw: put parts together on the Assembly tab first." });
+    try {
+      const cmds: Command[] = [];
+      let withAsm: RawDocument = doc;
+      // Exploded from its mates when it has no steps yet (each part's faces and edges, from the kernel).
+      if (!asm.explode?.length && asm.components.length > 1) {
+        const tops = new Map<string, PartTopology>();
+        for (const [key, part] of Object.entries(partDocuments(doc as Record<string, unknown>, asm))) {
+          const t = await kernel.port.topology(part);
+          if (t) tops.set(key, t);
+        }
+        const steps = autoExplode(asm, (id) => tops.get(asm.components.find((k) => k.id === id)?.part ?? ""));
+        if (steps.length) {
+          const next = { ...asm, explode: steps };
+          cmds.push({ type: "setAssembly", assembly: next as unknown as Record<string, unknown>, label: "Explode" });
+          withAsm = { ...doc, assembly: next } as RawDocument;
+        }
+      }
+      const exploded = !!(withAsm.assembly as Assembly).explode?.length;
+      const planned = planDrawing(doc, view?.measurements ?? null, null, { date: new Date().toISOString().slice(0, 10) });
+      const base = docDrawing?.sheets[0] ?? planned.sheets[0];
+      // The BOM's items first without masses (the balloons only need the items); the table reads them as drawn.
+      const plan = planAssemblySheet(docDrawing ?? undefined, base.format, base.projection, assemblyBom(withAsm as Record<string, unknown>), exploded, typeof doc.name === "string" ? `${doc.name} assembly` : undefined, asm.components.filter((k) => k.hidden).map((k) => k.id));
+      const drawing = docDrawing ? { ...docDrawing, sheets: [...docDrawing.sheets, ...plan.sheets] } : { ...planned, sheets: plan.sheets };
+      if (docDrawing) for (const sh of plan.sheets) cmds.push(...sheetCommands(sh));
+      else cmds.push({ type: "setDrawing", drawing });
+      // Each sheet laid out at the largest scale that fits.
+      const trial = { ...withAsm, drawing } as RawDocument;
+      const g = await kernel.port.project(trial, viewSpecs(drawing));
+      // The orthographic sheet laid out as any; the iso drawn large and centred beside the parts list.
+      const [orthoSheet, isoSheet] = plan.sheets;
+      const fit = fitViews(trial, { measurements: view?.measurements ?? null, geometry: g }, orthoSheet);
+      if ("commands" in fit) cmds.push(...fit.commands);
+      cmds.push(...heroCommands(isoSheet, g?.views.find((x) => x.id === plan.iso), (doc.assembly as Assembly).components.length ? new Set((doc.assembly as Assembly).components.map((k) => k.part)).size : 0));
+      const problem = batch(cmds);
+      if (problem) return setNotice({ kind: "error", text: `No assembly drawing: ${problem}` });
+      const last = plan.sheets[plan.sheets.length - 1];
+      setActiveSheet(last.id);
+      setMode("drawing");
+      setNotice({ kind: "info", text: `Assembly drawing: "${plan.sheets[0].name}" (front, top, right) and "${last.name}" (${exploded ? "exploded " : ""}iso, the BOM, ${last.annotations.length} balloon${last.annotations.length === 1 ? "" : "s"}). Ctrl+Z takes it back.` });
+    } catch (e) {
+      setNotice({ kind: "error", text: `No assembly drawing: ${(e as Error).message}` });
+    }
+  };
+
   /** A blank sheet in manual mode: the format and title block New drawing would choose, no views, nothing laid out for the user. */
   const blankDrawing = async () => {
     if (!doc || !view?.measurements) return setNotice({ kind: "error", text: "The part needs to rebuild before it can be drawn." });
@@ -1216,6 +1274,27 @@ export function App() {
   const balloonAll = () => {
     if (!docDrawing || !sheet) return;
     const ballooned = new Set(sheet.annotations.filter((a) => a.type === "balloon" && !a.problem).map((a) => a.item));
+    // An assembly view on the sheet (an exploded one first): a balloon per BOM item, on the component of it seen most.
+    const sheetDoc = docDrawing.sheets.find((x) => x.id === sheet.id) ?? docDrawing.sheets[0];
+    const asmViews = sheetDoc.views.filter((v) => v.source === "assembly");
+    if (asmViews.length && doc) {
+      const bom = assemblyBom(doc as Record<string, unknown>, geometry?.g?.assemblyParts);
+      const target = asmViews.find((v) => v.exploded && v.look === "iso") ?? asmViews.find((v) => v.exploded) ?? asmViews.find((v) => v.look === "iso") ?? asmViews[0];
+      const items = (bom?.items ?? []).filter((i) => !ballooned.has(i.item));
+      if (!items.length) return setNotice({ kind: "info", text: "Every BOM item has a balloon." });
+      const taken = new Set<string>();
+      const cmds: Command[] = [];
+      for (const item of items) {
+        const body = [...item.bodies].sort((x, y) => visibleLength(geometry?.g ?? null, target.id, y) - visibleLength(geometry?.g ?? null, target.id, x))[0];
+        const id = nextDrawingId(docDrawing, "b", taken);
+        taken.add(id);
+        cmds.push({ type: "setAnnotation", id, annotation: { type: "balloon" as const, view: target.id, body } });
+      }
+      const problem = batch(cmds);
+      if (problem) setNotice({ kind: "error", text: problem });
+      else setNotice({ kind: "info", text: `Ballooned ${items.length} BOM item${items.length === 1 ? "" : "s"} in ${target.id}.` });
+      return;
+    }
     const missing = sheet.cutList.filter((i) => !ballooned.has(i.item));
     if (!missing.length) return setNotice({ kind: "info", text: "Every cut list item has a balloon." });
     const here = docDrawing.sheets.find((x) => x.id === sheet.id) ?? docDrawing.sheets[0];
@@ -1267,6 +1346,7 @@ export function App() {
     previewing: !!previewDoc,
     project: (specs) => kernel.port.project(doc ?? {}, specs),
     newDrawing: () => void newDrawing(),
+    newAssemblyDrawing: (doc?.assembly as Assembly | undefined)?.components?.length ? () => void newAssemblyDrawing() : undefined,
     balloonAll,
     openAsk: (target, x, y, prompt) => openAskRef.current(target, x, y, undefined, undefined, prompt),
     kernel: kernel.port,
@@ -2493,7 +2573,7 @@ export function App() {
         </header>
 
         {!sketch && mode === "drawing" && <DrawingCommandBar ws={drawingWs} undoLabel={d.undoLabel} redoLabel={d.redoLabel} />}
-        {!sketch && mode === "assembly" && <AssemblyBar a={assemblyWs} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} />}
+        {!sketch && mode === "assembly" && <AssemblyBar a={assemblyWs} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} onDrawing={() => void newAssemblyDrawing()} />}
         {!sketch && mode === "model" && (
           <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
@@ -2520,6 +2600,11 @@ export function App() {
                   <button className="primary" onClick={() => void newDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} data-testid="drawing-new-empty">
                     New drawing
                   </button>
+                  {(doc?.assembly as Assembly | undefined)?.components?.length ? (
+                    <button onClick={() => void newAssemblyDrawing()} disabled={kernelState.phase !== "ready"} title="A sheet of the assembly: front, top, an exploded iso, the BOM and balloons" data-testid="drawing-new-assembly-empty">
+                      Assembly drawing
+                    </button>
+                  ) : null}
                   <button onClick={() => void blankDrawing()} disabled={kernelState.phase !== "ready" || !view?.measurements} title="An empty sheet in manual mode: you place every view and annotation yourself" data-testid="drawing-new-blank">
                     Blank sheet (manual)
                   </button>
@@ -2991,6 +3076,7 @@ export function App() {
                 ? MODEL_TOOLS.map((t) => ({ id: t.id, icon: t.icon, label: t.label, disabled: t.disabled?.(toolCtx), run: () => runTool(t.id) }))
                 : [
                     { id: "drawing-new", icon: "drawing" as IconName, label: "New drawing", disabled: undefined, run: () => void newDrawing() },
+                    { id: "drawing-new-assembly", icon: "assembly" as IconName, label: "New assembly drawing (exploded view, BOM, balloons)", disabled: (doc?.assembly as Assembly | undefined)?.components?.length ? undefined : "there is no assembly", run: () => void newAssemblyDrawing() },
                     { id: "balloon-all", icon: "balloon" as IconName, label: "Balloon all", disabled: !sheet ? "No drawing yet" : undefined, run: balloonAll },
                     { id: "export-pdf", icon: "export" as IconName, label: "Export PDF", disabled: !sheet ? "No drawing yet" : undefined, run: () => void exportDrawing("pdf") },
                   ]

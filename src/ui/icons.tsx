@@ -765,6 +765,13 @@ const ICONS = {
       <path d="M12 12l8-4.5 M12 12v9 M12 12 4 7.5" style={dash} />
     </>
   ),
+  explode: (
+    <>
+      <path d="M9 9l3-1.7L15 9v3.4l-3 1.7-3-1.7z" {...face} fillOpacity={0.25} />
+      <path d="M9 9l3-1.7L15 9v3.4l-3 1.7-3-1.7z" />
+      <path d="M12 5.3V2 M17 8l3-1.7 M17 13.5l3 1.7 M12 16v4.5 M7 13.5 4 15.2 M7 8 4 6.3" />
+    </>
+  ),
   isolate: (
     <>
       <path d="M12 7l5 2.8v5.4L12 18l-5-2.8V9.8z" {...face} fillOpacity={0.25} />

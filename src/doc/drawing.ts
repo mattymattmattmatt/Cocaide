@@ -308,7 +308,7 @@ export function checkFormat(f: unknown, path: string, c: Checker): void {
 
 /** The fields each kind of view takes beyond the ones every view does. */
 const KIND_KEYS: Record<ViewKind, readonly string[]> = {
-  model: ["look", "orientation"],
+  model: ["look", "orientation", "source", "exploded"],
   projected: ["parent", "direction", "free"],
   section: ["parent", "line", "label", "half", "aligned", "flip", "depth", "showBehind", "hatch", "free"],
   detail: ["parent", "circle", "profile", "style", "label"],
@@ -432,7 +432,9 @@ function checkView(v: Record<string, unknown>, at: string, views: Map<string, { 
   if (v.scale !== undefined && parseScale(v.scale) === null) c.fail(`${at}.scale`, `must be a scale like "1:10" (got ${describe(v.scale)})`);
   if (v.display !== undefined && !DISPLAY_MODES.includes(v.display as never)) c.fail(`${at}.display`, `must be ${DISPLAY_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.display)})`);
   if (v.tangent !== undefined && !TANGENT_MODES.includes(v.tangent as never)) c.fail(`${at}.tangent`, `must be ${TANGENT_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.tangent)})`);
-  for (const k of ["threads", "showLabel", "showScale", "free", "locked"]) bool(k);
+  for (const k of ["threads", "showLabel", "showScale", "free", "locked", "exploded"]) bool(k);
+  if (v.source !== undefined && v.source !== "part" && v.source !== "assembly") c.fail(`${at}.source`, `must be "part" or "assembly" (got ${describe(v.source)})`);
+  if (v.exploded === true && v.source !== "assembly") c.fail(`${at}.exploded`, `an exploded view shows the assembly: give it source "assembly" too`);
   if (v.rotation !== undefined) {
     c.num(v, "rotation", at, {});
     if (typeof v.rotation === "number" && Math.abs(v.rotation) > 360) c.fail(`${at}.rotation`, `must be degrees from -360 to 360 (got ${v.rotation})`);

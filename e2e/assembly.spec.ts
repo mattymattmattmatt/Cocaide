@@ -180,3 +180,33 @@ test("see-through, temporary axes, a transparent component and isolate", async (
   await expect(page.getByTestId("asm-isolate-hint")).toHaveCount(0);
   expect((await assembly(page))?.components.map((k) => k.id)).toEqual(["bracket-1", "flange-1"]);
 });
+
+test("exploded in the Assembly tab, then drawn: the assembly's views, an exploded iso, its parts list and balloons", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-self").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-example-flange").click();
+  await expect(page.getByTestId("asm-component-flange-1")).toBeVisible();
+  await page.waitForTimeout(1500);
+  // The flange's hole on the bracket's, as suggested: something to explode.
+  await page.getByTestId("asm-component-flange-1").locator(".asm-row").click();
+  await page.getByTestId("asm-suggestions").locator("li").first().getByRole("button", { name: "Apply" }).click();
+  await expect.poll(async () => ((await assembly(page))?.mates ?? []).length).toBeGreaterThan(0);
+  // Explode: the steps worked out from the mates, kept in the file; the view moves the flange off the bracket.
+  await page.getByTestId("asm-explode").click();
+  await expect(page.getByTestId("asm-explode-props")).toBeVisible();
+  await expect.poll(async () => ((await assembly(page)) as unknown as { explode?: { components: string[] }[] })?.explode?.[0]?.components).toEqual(["flange-1"]);
+  // Make drawing: two sheets, the second the exploded iso with the parts list and a balloon per part.
+  await page.getByTestId("asm-make-drawing").click();
+  await expect(page.getByTestId("sheet-tabs")).toContainText("Exploded view", { timeout: 30000 });
+  const drawing = (await savedDocument(page)).drawing as { sheets: { name?: string; views: { id: string; source?: string; exploded?: boolean }[]; tables?: { kind: string }[]; annotations: { type: string; body?: string }[] }[] };
+  const ex = drawing.sheets.find((s) => s.name === "Exploded view")!;
+  expect(ex.views).toEqual([expect.objectContaining({ source: "assembly", exploded: true })]);
+  expect(ex.tables?.map((t) => t.kind)).toEqual(["bom"]);
+  expect(ex.annotations.map((a) => a.body).sort()).toEqual(["bracket-1", "flange-1"]);
+  const asm = drawing.sheets.find((s) => s.name === "Assembly")!;
+  expect(asm.views.map((v) => v.id)).toEqual(["asm_front", "asm_top", "asm_right"]);
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: "test-results/assembly-drawing.png" });
+});

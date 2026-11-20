@@ -24,7 +24,7 @@ const MATE_WORDS: Record<MateType, { label: string; icon: IconName; hint: string
   angle: { label: "Angle", icon: "angle", hint: "Two faces or edges at an angle" },
 };
 
-export function AssemblyBar({ a, undo, redo, canUndo, canRedo }: { a: AssemblyWorkspace; undo(): void; redo(): void; canUndo: boolean; canRedo: boolean }) {
+export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing }: { a: AssemblyWorkspace; undo(): void; redo(): void; canUndo: boolean; canRedo: boolean; onDrawing?: () => void }) {
   const has = !!a.asm?.components.length;
   const sel = a.item?.kind === "component" ? a.asm?.components.find((k) => k.id === a.item!.id) : undefined;
   const ready = a.mateChoices.some((c) => c.ok);
@@ -87,7 +87,17 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo }: { a: AssemblyWo
             <span className="sep" />
             <ToolButton icon="check" label="Solve" onClick={a.resolve} disabled={!a.solve || a.solve.solved} title={a.solve && !a.solve.solved ? "Move the components so the mates hold (after the parts changed)" : "Every mate holds"} testId="asm-solve" />
             <ToolButton icon="diagnose" label="Check" onClick={() => void a.check()} disabled={!a.asm?.components.length || !!a.busy} title="Find what's wrong: mates that don't hold, parts held by nothing or free to slide, parts that overlap" testId="asm-check" />
+            <ToolButton
+              icon="explode"
+              label={a.exploded ? "Collapse view" : "Explode"}
+              onClick={a.toggleExplode}
+              disabled={!a.asm || a.asm.components.length < 2}
+              pressed={a.exploded}
+              title={a.exploded ? "Back to the assembled view (the explode steps are kept for drawings)" : "Move the parts apart along their mates (worked out the first time; kept in the file for exploded drawing views)"}
+              testId="asm-explode"
+            />
             <ToolButton icon="combine" label="Interference" onClick={() => void a.interference()} disabled={!a.asm || a.asm.components.length < 2 || !!a.busy} title="Find components that overlap" testId="asm-interference" />
+            <ToolButton icon="drawing" label="Make drawing" onClick={() => onDrawing?.()} disabled={!has || !!a.busy} title="A drawing sheet of the assembly: front, top, an exploded iso, the BOM and balloons" testId="asm-make-drawing" />
             <ToolButton icon="export" label="Export STEP" onClick={() => void a.exportStep()} disabled={!has || !!a.busy} title="The assembly as one STEP file: each component a named solid where it sits" testId="asm-export-step" />
           </span>
         </div>
@@ -222,6 +232,34 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
             </button>
           </div>
         )}
+      </section>,
+    );
+  }
+  if (a.exploded && a.asm) {
+    const off = k ? (a.offsets.get(k.id) ?? [0, 0, 0]) : null;
+    sections.push(
+      <section key="explode" className="asm-section" data-testid="asm-explode-props">
+        <h3>Exploded view</h3>
+        {k && off && (
+          <Field label={`${k.id} moved`} unit="mm">
+            <Vec3Input value={off as Vec3} onCommit={(v) => a.setExplodeOffset(k.id, v.map(Number) as Vec3)} testId="asm-explode-offset" />
+          </Field>
+        )}
+        <div className="asm-explode-actions">
+          <button onClick={() => a.reExplode(1)} data-testid="asm-explode-again" title="Work the moves out again from the mates">
+            Explode again
+          </button>
+          <button onClick={() => a.reExplode(1.6)} data-testid="asm-explode-farther" title="Further apart">
+            Farther
+          </button>
+          <button onClick={() => a.reExplode(0.6)} title="Closer together">
+            Closer
+          </button>
+          <button onClick={a.clearExplode} data-testid="asm-explode-clear" title="Remove the explode steps">
+            Clear
+          </button>
+        </div>
+        <p className="muted small">{a.asm.explode?.length ?? 0} step{a.asm.explode?.length === 1 ? "" : "s"}. Select a component to move it on its own. A drawing view with "Exploded" shows this.</p>
       </section>,
     );
   }

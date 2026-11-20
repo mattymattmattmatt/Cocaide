@@ -399,7 +399,13 @@ Assembling, step by step:
    still turn about its axis — fine — but a plate that can still slide needs another mate), and overlaps.
 5. A bolt or pin in one hole: copyToHoles { "id" } copies it into every other free hole of that size on that part,
    each with the same mates (a bolt circle filled in one go).
-6. exportAssemblySTEP when it is right.
+6. explodeAssembly {} works out the exploded view from the mates (or give "steps"); exportAssemblySTEP when it is right.
+
+Drawing the assembly: a model view with "source": "assembly" draws the assembly (each component a body named by its
+id; "bodies" picks some), "exploded": true draws it exploded with explode lines (thin chain lines); views projected
+from it show the same. A "bom" table on a sheet with an assembly view lists the assembly's parts (item, qty, part,
+description, material, mass), and a balloon { "type": "balloon", "view", "body": "<component id>" } reads its item.
+{ "id": "ex", "look": "iso", "source": "assembly", "exploded": true, "display": "shadedEdges" }
 { "id": "c1", "type": "concentric", "a": { "component": "plate-1", "face": { "type": "cylindrical", "radius": 3.3,
   "pick": "nearest", "near": [30, 0, 3] } }, "b": { "component": "pin-1", "face": { "type": "cylindrical", "radius": 3,
   "pick": "largest" } } }

@@ -64,6 +64,8 @@ export interface WorkspaceProps {
   previewing: boolean;
   project(specs: ViewSpec[]): Promise<DrawingGeometry | null>;
   newDrawing(): void;
+  /** A sheet of the document's assembly (when it has one). */
+  newAssemblyDrawing?: () => void;
   balloonAll(): void;
   /** Opens the assistant on what was right-clicked. */
   openAsk(target: AskTarget, x: number, y: number, prompt?: { text: string; submit: boolean }): void;
@@ -612,6 +614,7 @@ export function DrawingCommandBar({ ws, undoLabel, redoLabel }: { ws: Workspace;
         <ToolButton icon="redo" label="Redo" onClick={p.d.redo} disabled={!p.d.canRedo} title={`Redo${redoLabel && p.d.canRedo ? `: ${redoLabel}` : ""} (Ctrl+Y)`} testId="redo" />
         <span className="sep" />
         <ToolButton icon="drawing" label="New drawing" onClick={p.newDrawing} disabled={!p.ready} title="Plan the sheet from the part: views, overall size, holes, balloons, tables (Ctrl+Z puts the old one back)" testId="drawing-new" />
+        {p.newAssemblyDrawing && <ToolButton icon="assembly" label="Assembly sheet" onClick={p.newAssemblyDrawing} disabled={!p.ready} title="Add a sheet of the assembly: front, top, an exploded iso, the BOM and a balloon per item" testId="drawing-new-assembly" />}
         <ToolButton
           icon="pin"
           label={ws.manual ? "Manual: on" : "Manual"}

@@ -65,6 +65,8 @@ export interface CutItem {
   notes: string;
   /** Custom properties, the item's and its members' together. */
   properties: Record<string, string>;
+  /** An assembly's BOM item: the part's name (or number), what its PART column shows. */
+  partName?: string;
 }
 
 export interface ProfileTotal {

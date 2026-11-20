@@ -2,6 +2,8 @@
 // built in the kernel worker, the scene on screen, the solve, what is
 // selected, and every edit as one undo step with the mates solved.
 
+import { explodeOffsets } from "../../doc/assembly";
+import { autoExplode, explodeWithout, withOffset } from "../../assembly/explode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nextComponentId, nextMateId, SELF, validateAssembly } from "../../doc/assembly";
 import type { Command, RawDocument } from "../../doc/commands";
@@ -81,14 +83,63 @@ export function useAssembly(o: AssemblyOptions) {
   }, [docs, o.active]);
 
   const solve = useMemo((): AssemblySolve | null => (asm && asm.mates?.length ? solveAssembly(asm, views) : null), [asm, views]);
+  // Exploded: each component moved by its explode steps (a view state; the steps are in the file).
+  const [exploded, setExploded] = useState(false);
+  const offsets = useMemo(() => explodeOffsets(asm ?? undefined), [asm]);
   const scene = useMemo(
     (): AssemblyScene =>
       composeScene(
-        (asm?.components ?? []).map((k) => ({ id: k.id, placement: placementOf(dragging?.id === k.id ? dragging : k), view: views.get(k.part), hidden: k.hidden })),
+        (asm?.components ?? []).map((k) => {
+          const P = placementOf(dragging?.id === k.id ? dragging : k);
+          const o = exploded ? offsets.get(k.id) : undefined;
+          return { id: k.id, placement: o ? { R: P.R, t: [P.t[0] + o[0], P.t[1] + o[1], P.t[2] + o[2]] as Vec3 } : P, view: views.get(k.part), hidden: k.hidden };
+        }),
         typeof doc?.name === "string" ? `${doc.name} assembly` : "assembly",
       ),
-    [asm, views, doc?.name, dragging],
+    [asm, views, doc?.name, dragging, exploded, offsets],
   );
+  const partOfComponent = (id: string) => {
+    const c = asm?.components.find((x) => x.id === id);
+    return c ? views.get(c.part) : undefined;
+  };
+  /** Explode on or off; the first time, the steps are worked out from the mates (one undo step). */
+  const toggleExplode = () => {
+    if (exploded) return setExploded(false);
+    if (!asm) return;
+    if (!asm.explode?.length) {
+      const steps = autoExplode(asm, partOfComponent);
+      if (!steps.length) return o.notice("Nothing to explode: mate the components first (each moves off the part it is mated to).", "error");
+      commit({ ...asm, explode: steps }, "Explode", false);
+    }
+    setExploded(true);
+    setFitToken((t) => t + 1);
+  };
+  /** The steps worked out again from the mates, `scale` times as far. */
+  const reExplode = (scale = 1) => {
+    if (!asm) return;
+    const steps = autoExplode(asm, partOfComponent, scale);
+    const next: Assembly = { ...asm };
+    if (steps.length) next.explode = steps;
+    else delete next.explode;
+    commit(next, scale === 1 ? "Explode again" : `Explode ×${scale}`, false);
+    setExploded(true);
+    setFitToken((t) => t + 1);
+  };
+  const clearExplode = () => {
+    if (!asm?.explode) return;
+    const next: Assembly = { ...asm };
+    delete next.explode;
+    commit(next, "Collapse", false);
+    setExploded(false);
+  };
+  const setExplodeOffset = (id: string, offset: Vec3) => {
+    if (!asm) return;
+    const steps = withOffset(asm, id, offset);
+    const next: Assembly = { ...asm };
+    if (steps.length) next.explode = steps;
+    else delete next.explode;
+    commit(next, `Explode ${id}`, false);
+  };
   // The view fits the assembly when it first shows something, and again when a component comes in (so it is in view).
   const shownCount = scene.view.bodies.length;
   const lastCount = useRef(0);
@@ -282,7 +333,8 @@ export function useAssembly(o: AssemblyOptions) {
       // A part no component uses any more goes from the file too.
       const used = new Set(left.map((k) => k.part));
       const parts = Object.fromEntries(Object.entries(a.parts ?? {}).filter(([key]) => used.has(key)));
-      const next: Assembly = { components: left, ...(mates.length ? { mates } : {}), ...(Object.keys(parts).length ? { parts } : {}) };
+      const explode = explodeWithout(a.explode, it.id);
+      const next: Assembly = { components: left, ...(mates.length ? { mates } : {}), ...(Object.keys(parts).length ? { parts } : {}), ...(explode.length ? { explode } : {}) };
       commit(left.length ? next : null, `Delete ${it.id}`, false);
     }
     setItem(null);
@@ -400,7 +452,7 @@ export function useAssembly(o: AssemblyOptions) {
   /** The selected component's drag handles: an arrow along each axis, and a turn about Z, at its middle. */
   const handles = useMemo((): HandleSpec[] => {
     const k = item?.kind === "component" ? asm?.components.find((x) => x.id === item.id) : undefined;
-    if (!k || k.fixed || k.hidden) return [];
+    if (!k || k.fixed || k.hidden || exploded) return [];
     const body = scene.view.bodies.find((b) => b.name === k.id);
     if (!body || body.faces[1] <= body.faces[0]) return [];
     // Its middle: the mean of its faces' centres, as the drag started (the handles stay put while it moves).
@@ -439,7 +491,7 @@ export function useAssembly(o: AssemblyOptions) {
       min: null,
     };
     return [arrow(0), arrow(1), arrow(2), turn];
-  }, [item, asm, scene, dragging]);
+  }, [item, asm, scene, dragging, exploded]);
 
   /** A handle dragged: shown live, written (with the mates solved) when let go. */
   const onHandle = (h: HandleSpec, phase: "start" | "move" | "end" | "cancel", value: number | [number, number]) => {
@@ -485,6 +537,12 @@ export function useAssembly(o: AssemblyOptions) {
   return {
     doc,
     asm,
+    exploded,
+    offsets,
+    toggleExplode,
+    reExplode,
+    clearExplode,
+    setExplodeOffset,
     selectedComponents,
     holeCopyPlan,
     copyToHoles,

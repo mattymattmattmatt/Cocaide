@@ -2,7 +2,7 @@
 // strictly, as the drawing is, and never in the way of the part: what is
 // wrong with it is listed as the assembly's errors. Pure.
 
-import { MATE_TYPES, type Assembly, type AssemblyComponent, type Mate, type MateRef, type Vec3 } from "./types";
+import { MATE_TYPES, type Assembly, type AssemblyComponent, type ExplodeStep, type Mate, type MateRef, type Vec3 } from "./types";
 import { Checker, validateEdgeSelector, validateFaceSelector } from "./validate";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -18,7 +18,7 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
     c.fail("assembly", `must be { "components": [...], "mates"?: [...], "parts"?: {...} } (got ${describe(raw)})`);
     return null;
   }
-  c.keys(raw, "assembly", ["parts", "components", "mates"]);
+  c.keys(raw, "assembly", ["parts", "components", "mates", "explode"]);
   const parts: Record<string, unknown> = {};
   if (raw.parts !== undefined) {
     if (!isObject(raw.parts)) c.fail("assembly.parts", `must map part keys to part documents (got ${describe(raw.parts)})`);
@@ -83,7 +83,33 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
         mates.push(mate);
       });
   }
-  return { ...(Object.keys(parts).length ? { parts } : {}), components, ...(mates.length ? { mates } : {}) };
+  const explode: ExplodeStep[] = [];
+  if (raw.explode !== undefined) {
+    if (!Array.isArray(raw.explode)) c.fail("assembly.explode", `must be a list of steps { "components": [...], "move": [x, y, z] } (got ${describe(raw.explode)})`);
+    else
+      raw.explode.forEach((x, i) => {
+        const at = `assembly.explode[${i}]`;
+        if (!isObject(x)) return c.fail(at, `must be a step { "components": [...], "move": [x, y, z] } (got ${describe(x)})`);
+        c.keys(x, at, ["components", "move"]);
+        if (!Array.isArray(x.components) || !x.components.length || !x.components.every((id) => typeof id === "string" && components.some((k) => k.id === id))) {
+          return c.fail(`${at}.components`, `must list components of the assembly (${components.map((k) => k.id).join(", ") || "none"}; got ${describe(x.components)})`);
+        }
+        const move = c.vec3(x, "move", at);
+        if (move) explode.push({ components: x.components as string[], move });
+      });
+  }
+  return { ...(Object.keys(parts).length ? { parts } : {}), components, ...(mates.length ? { mates } : {}), ...(explode.length ? { explode } : {}) };
+}
+
+/** Each component's exploded offset: the sum of the explode steps it is in (none: not moved). */
+export function explodeOffsets(asm: Assembly | undefined): Map<string, Vec3> {
+  const out = new Map<string, Vec3>();
+  for (const step of asm?.explode ?? [])
+    for (const id of step.components) {
+      const o = out.get(id) ?? [0, 0, 0];
+      out.set(id, [o[0] + step.move[0], o[1] + step.move[1], o[2] + step.move[2]]);
+    }
+  return out;
 }
 
 function mateRef(raw: unknown, at: string, c: Checker, components: AssemblyComponent[]): MateRef | null {

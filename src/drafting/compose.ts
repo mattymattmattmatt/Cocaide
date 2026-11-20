@@ -8,6 +8,8 @@
 // title block. An annotation that points at something the part no longer
 // has, or that its view can't show, is not drawn: it is listed in `problems`.
 
+import type { CutListResult } from "../weldment/items";
+import { assemblyBom } from "../assembly/bom";
 import type { DrawingGeometry } from "../ask/kernel";
 import { allViews, parseGeoRef, parseScale, STANDARD_SCALES, viewKind } from "../doc/drawing";
 import {
@@ -342,6 +344,11 @@ class Composer {
       },
       sheet: { sheet: String(index + 1), sheets: String(d.sheets.length), size: s.format.size, name: s.name ?? `Sheet ${index + 1}` },
     };
+    // A sheet of the assembly: its title block weighs the whole assembly, and its material is the parts list's.
+    if (s.views.some((x) => x.source === "assembly") && doc) {
+      const bom = assemblyBom(doc as Record<string, unknown>, ctx.geometry?.assemblyParts);
+      if (bom) this.props.model = { ...this.props.model, name: `${v.name} assembly`, material: "see parts list", ...(ctx.geometry?.assemblyParts ? { mass: `${bom.totals.massKg.toFixed(2)} kg` } : {}) };
+    }
     this.points = {
       nodes: v.nodes,
       members: (m?.members ?? []).map((x) => ({ id: x.id, body: x.body, ends: x.ends, length: x.length })),
@@ -467,6 +474,7 @@ class Composer {
     const cutList = m && this.doc ? cutListOf(this.doc, m) : null;
     const base: TableContext = {
       cutList,
+      bom: this.assemblyList(),
       welds: this.v.welds,
       revisions: (this.d.revisions ?? []).map((r): RevisionRow => ({ rev: r.rev, ...(r.description !== undefined ? { description: r.description } : {}), ...(r.date ? { date: r.date } : {}), ...(r.by ? { by: r.by } : {}), ...(r.approved ? { approved: r.approved } : {}), ...(r.zone ? { zone: r.zone } : {}) })),
       nesting: cutList && tables.some((t) => t.kind === "stock") ? nestCutList(cutList) : null,
@@ -1192,6 +1200,8 @@ class Composer {
         this.prims.push({ k: "area", loops: [t.pts.map((q) => this.toSheet(cv, q))], fill: hex, owner: cv.id });
       }
     }
+    // An exploded assembly's explode lines: thin chain lines, under the edges.
+    if (pv.trails?.length) this.emit(cv, pv.trails, { w: LINE.thin, dash: CENTER_DASH, layer: "CENTER" });
     // Hatching, under the edges.
     this.hatch(cv, view, pv);
     const edgeW = display === "shaded" ? 0 : display === "shadedEdges" ? LINE.thin * 1.2 : LINE.visible;
@@ -1577,7 +1587,7 @@ class Composer {
     if (kind === "section") lines = asme ? [`SECTION ${label}-${label}`] : [`${label}–${label}`];
     else if (kind === "detail") lines = asme ? [`DETAIL ${label}`] : [showScale ? `${label} (${scaleTxt})` : label];
     else if (kind === "auxiliary") lines = asme ? [`VIEW ${label}`] : [label];
-    else if (view.showLabel || own) lines = [view.id.toUpperCase()];
+    else if (view.showLabel || own) lines = [view.source === "assembly" && view.exploded ? "EXPLODED VIEW" : view.id.toUpperCase()];
     if (view.showLabel === false) return [];
     if (showScale && (asme || kind !== "detail") && lines.length) lines.push(`SCALE ${scaleTxt}`);
     return lines;
@@ -1737,6 +1747,15 @@ class Composer {
     }
   }
 
+  /** The assembly's BOM, when the drawing shows the assembly (a view with source "assembly"); else null. */
+  private assemblyListCache: CutListResult | null | undefined;
+  private assemblyList(): CutListResult | null {
+    if (this.assemblyListCache !== undefined) return this.assemblyListCache;
+    const shows = [...this.allViews.values()].some((x) => x.source === "assembly");
+    this.assemblyListCache = shows && this.doc ? assemblyBom(this.doc as Record<string, unknown>, this.ctx.geometry?.assemblyParts) : null;
+    return this.assemblyListCache;
+  }
+
   /** What the annotations read from the model: holes, patterns, welds, members, items, properties. */
   private annotationData(): AnnotationData {
     const m = this.ctx.measurements;
@@ -1748,7 +1767,10 @@ class Composer {
       if ((x.op === "circularPattern" || x.op === "linearPattern" || x.op === "mirror") && !x.suppressed) for (const id of of) if (!patterns.has(id)) patterns.set(id, { op: x.op, id: x.id, count: typeof x.count === "number" ? x.count : 0 });
     }
     let v2: ReturnType<typeof cutListOf> | null = null;
-    const list = () => (v2 ??= m && this.doc ? cutListOf(this.doc, m) : null);
+    const partList = () => (v2 ??= m && this.doc ? cutListOf(this.doc, m) : null);
+    // On an assembly drawing a component's balloon numbers by the BOM; anything else by the part's cut list.
+    const bom = this.assemblyList();
+    const list = () => partList();
     return {
       holes: this.holes,
       holeCounts: this.holeCounts,
@@ -1758,10 +1780,12 @@ class Composer {
       bodies: m?.bodies ?? [],
       cutList: this.cut,
       itemOf: (id) => {
+        const a = bom ? itemNumberFor(bom, id) : null;
+        if (a !== null) return a;
         const l = list();
         return l ? itemNumberFor(l, id) : null;
       },
-      quantityOf: (item) => list()?.items.find((i) => i.item === item)?.quantity ?? this.cut.find((i) => i.item === item)?.quantity ?? 1,
+      quantityOf: (item) => bom?.items.find((i) => i.item === item)?.quantity ?? list()?.items.find((i) => i.item === item)?.quantity ?? this.cut.find((i) => i.item === item)?.quantity ?? 1,
       props: this.props,
     };
   }

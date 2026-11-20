@@ -2301,3 +2301,6 @@ table.cells th { color: var(--muted); font-weight: 500; font-size: 11px; padding
 .asm-copy-holes { margin-top: 10px; }
 .asm-copy-holes button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); color: var(--accent); cursor: pointer; font-weight: 600; }
 .asm-copy-holes button:hover { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+.asm-explode-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.asm-explode-actions button { height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
+.asm-explode-actions button:hover { border-color: var(--accent); }

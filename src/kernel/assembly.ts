@@ -17,7 +17,7 @@ export interface PlacedComponent {
 }
 
 /** Runs `use` with each component's placed solid (components whose part didn't build are left out, and named). */
-export function withAssemblyShapes<T>(oc: OC, s: Scope, parts: Record<string, unknown>, components: PlacedComponent[], use: (shapes: { name: string; shape: TopoDS_Shape }[], missing: string[]) => T): T {
+export function withAssemblyShapes<T>(oc: OC, s: Scope, parts: Record<string, unknown>, components: PlacedComponent[], use: (shapes: { name: string; shape: TopoDS_Shape }[], missing: string[], built: Map<string, RebuildResult>) => T): T {
   const built = new Map<string, RebuildResult>();
   try {
     const shapes: { name: string; shape: TopoDS_Shape }[] = [];
@@ -38,7 +38,7 @@ export function withAssemblyShapes<T>(oc: OC, s: Scope, parts: Record<string, un
       const moved = s.track(s.track(new oc.BRepBuilderAPI_Transform(r.solid, trsf, true, false)).Shape());
       shapes.push({ name: k.id, shape: moved });
     }
-    return use(shapes, missing);
+    return use(shapes, missing, built);
   } finally {
     for (const r of built.values()) r.dispose();
   }
