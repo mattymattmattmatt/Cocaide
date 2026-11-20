@@ -5,6 +5,7 @@
 // names), and its size from the hole feature that made it (Ø6.6 THRU,
 // M6×1 - 6H). Pure: the kernel's hole measurements and records in, rows out.
 
+import { textWidth } from "../text";
 import type { Vec2, Vec3 } from "../../doc/types";
 import { threadCallout } from "../../features/hole/standards";
 import type { HoleMeasurement } from "../../kernel/measure";
@@ -155,11 +156,41 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
     return [view.centre[0] + d[0] * Math.cos(t) - d[1] * Math.sin(t), view.centre[1] + d[0] * Math.sin(t) + d[1] * Math.cos(t)];
   };
   const out: Prim[] = [];
+  // Each tag beside its hole, clear of the other tags and holes: up and right first, then round the hole, then a
+  // little further out with a short leader (holes close together, a plate's pair, keep their tags apart).
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const taken: Box[] = rows.map((r) => {
+    const c = at(r.center);
+    const rim = (r.outer / 2) * view.scale;
+    return { x0: c[0] - rim, y0: c[1] - rim, x1: c[0] + rim, y1: c[1] + rim };
+  });
+  const hits = (b: Box) => taken.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1);
+  const dirs: Vec2[] = [[1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
   for (const r of rows) {
     const c = at(r.center);
     const rim = (r.outer / 2) * view.scale;
-    const d = rim * Math.SQRT1_2 + 1.2;
-    out.push({ k: "text", at: [c[0] + d, c[1] + d], text: r.tag, size, anchor: "start", owner });
+    const w = textWidth(r.tag, size);
+    const h = size * 0.72;
+    let placed: { p: Vec2; far: boolean } | null = null;
+    for (const far of [false, true]) {
+      for (const [dx, dy] of dirs) {
+        const d = (rim + 1.2) * (far ? 2.6 : 1) + (far ? 2 : 0);
+        const ox = c[0] + dx * (dx && dy ? d * Math.SQRT1_2 : d);
+        const oy = c[1] + dy * (dx && dy ? d * Math.SQRT1_2 : d);
+        const x0 = dx < 0 ? ox - w : dx === 0 ? ox - w / 2 : ox;
+        const y0 = dy < 0 ? oy - h : dy === 0 ? oy - h / 2 : oy;
+        const b = { x0: x0 - 0.4, y0: y0 - 0.4, x1: x0 + w + 0.4, y1: y0 + h + 0.4 };
+        if (!hits(b)) {
+          taken.push(b);
+          placed = { p: [x0, y0], far };
+          break;
+        }
+      }
+      if (placed) break;
+    }
+    const p: Vec2 = placed?.p ?? [c[0] + rim + 1.2, c[1] + rim + 1.2];
+    if (placed?.far) out.push({ k: "line", pts: [c, [p[0] + w / 2, p[1] + h / 2]], w: 0.18, owner });
+    out.push({ k: "text", at: p, text: r.tag, size, anchor: "start", owner });
   }
   // The origin: a small cross and "0,0", the datum the X and Y are measured from.
   const o = at(origin);

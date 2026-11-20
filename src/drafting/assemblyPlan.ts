@@ -131,7 +131,9 @@ export function heroCommands(sheet: DrawingSheet, projected: { edges: { pts: Vec
   const outline = { min: [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1]))] as Vec2, max: [Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))] as Vec2 };
   const place = heroPlacement(sheet.format, outline, listRows);
   if (!place) return [];
-  const { id, ...body } = view;
+  // At the sheet's scale (a scale of its own, an iso's a step smaller, let go).
+  const { id, scale: _own, ...body } = view;
+  void _own;
   return [
     { type: "setSheet", sheet: sheet.id, patch: { scale: place.scale } },
     { type: "setView", id, sheet: sheet.id, view: { ...body, at: place.at, showLabel: true } as Record<string, unknown> },
