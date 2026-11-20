@@ -687,6 +687,8 @@ export interface NoteAnnotation {
   frame?: boolean;
   /** Degrees, counter-clockwise. */
   angle?: number;
+  /** Lines longer than this (mm) wrap onto the next; default: wrapped at the sheet's border. */
+  width?: number;
 }
 
 /** A centre mark: a cross on a circle's centre, its arms a little past the circle (thin chain lines). A new view gets one for every circle it sees end on; delete the ones not wanted. */
@@ -981,7 +983,7 @@ export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
   balloon: ["id", "type", "view", "member", "body", "item", "on", "at", "shape", "size", "quantity", "stack", "arrow", "hidden"],
   weld: ["id", "type", "view", "weld", "on", "at", "arrowSide", "otherSide", "staggered", "allAround", "field", "process", "reference", "more", "hidden"],
   table: ["id", "type", "table", "at"],
-  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle", "hidden"],
+  note: ["id", "type", "text", "at", "view", "leaders", "height", "bold", "italic", "underline", "numbered", "title", "frame", "angle", "width", "hidden"],
   centerMark: ["id", "type", "view", "at", "extend", "style", "hidden"],
   centerline: ["id", "type", "view", "between", "extend", "hidden"],
   gdt: ["id", "type", "view", "rows", "composite", "on", "dimension", "extension", "at", "count", "above", "below", "arrow", "hidden"],

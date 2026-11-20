@@ -16,7 +16,7 @@
 import { holeSignature } from "../../drafting/autodim";
 import type { RawDocument } from "../../doc/commands";
 import type { Annotation, DimensionAnnotation, Drawing, Vec3 } from "../../doc/types";
-import { allAnnotations, parseGeoRef } from "../../doc/drawing";
+import { allAnnotations, allViews, parseGeoRef } from "../../doc/drawing";
 import { validateDocument } from "../../doc/validate";
 import { datumLabels, gdtProblems } from "../../drafting/annotate";
 import { drawingChecks } from "../../drafting/checks";
@@ -101,6 +101,16 @@ export function critique(input: CriticInput): Finding[] {
       if (!ka || !kb) continue;
       if ([ka, kb].some((d) => d.tolerance?.kind === "reference")) continue;
       if (ka.count || kb.count) continue;
+      // On one sheet, of one thing: a pack's assembly sheet and its frame sheets each give the overall size, as views
+      // of different bodies (a wall's frame, the whole) each do — that is no duplicate.
+      const sheetOf = (id: string) => sheets.find((sh) => sh.annotations.some((x) => x.id === id))?.id;
+      if (sheetOf(a.id) !== sheetOf(b.id)) continue;
+      const viewOf = (d: DimensionAnnotation) => allViews(drawing).find((v) => v.id === d.view);
+      const what = (d: DimensionAnnotation) => {
+        const v = viewOf(d);
+        return JSON.stringify([v?.source ?? "part", v?.exploded ?? false, v?.bodies ?? null]);
+      };
+      if (what(ka) !== what(kb)) continue;
       // The same points measured: a true duplicate; different points of the same length are fine.
       if (!samePoints(ka, kb)) continue;
       out.push({ rule: "twice", severity: "error", message: `${a.id} and ${b.id} both give ${a.text}: keep one (delete ${b.id}, or make it a reference dimension).`, ids: [a.id, b.id] });

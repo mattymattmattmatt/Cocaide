@@ -737,6 +737,7 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
         if (h !== undefined && (h < 1.8 || h > 20)) c.fail(`${at}.height`, `lettering is 1.8 to 20 mm high (ISO 3098: 2.5, 3.5, 5, 7, 10; got ${h})`);
       }
       if (a.angle !== undefined) c.num(a, "angle", at, {});
+      if ((a as { width?: unknown }).width !== undefined) c.num(a, "width", at, { positive: true });
       for (const k of ["bold", "italic", "underline", "numbered", "frame"]) bool(k);
       str("title", 80);
       oneOf("anchor", ["start", "middle", "end"]);

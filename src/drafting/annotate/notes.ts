@@ -60,7 +60,36 @@ export function layoutNote(a: NoteAnnotation, ctx: AnnotationContext): LayoutRes
     y -= size * 1.1 * 1.6;
   }
   const indent = a.numbered ? richWidth(parseRich("10. "), size) : 0;
+  // Wrapped to its width (mm), or by default to the sheet's border: a long line goes on under itself (a numbered
+  // one's continuation under its text, not its number), never off the paper. Not for a note at an angle.
+  const room = a.width ?? (a.angle ? Infinity : ctx.sheet.frame.max[0] - at[0] - 3);
+  if (Number.isFinite(room) && room > 20) {
+    const fits = (t: string, extra: number) => richWidth(parseRich(t), size) + extra <= room;
+    const out: string[] = [];
+    for (const l of lines) {
+      const m = a.numbered ? /^(\d+\. )(.*)$/.exec(l) : null;
+      const head = m ? m[1] : "";
+      const words = (m ? m[2] : l).split(" ");
+      let cur = "";
+      let first = true;
+      for (const w of words) {
+        const next = cur ? `${cur} ${w}` : w;
+        if (cur && !fits(next, a.numbered ? indent : 0)) {
+          out.push(first ? `${head}${cur}` : `\u0000${cur}`);
+          first = false;
+          cur = w;
+        } else cur = next;
+      }
+      out.push(first ? `${head}${cur}` : `\u0000${cur}`);
+    }
+    lines = out;
+  }
   lines.forEach((l) => {
+    if (l.startsWith("\u0000")) {
+      prims.push(...richBlock(wrap(l.slice(1)), [at[0] + indent, y], { size, angle: a.angle ?? 0 }).prims);
+      y -= size * 1.4;
+      return;
+    }
     const m = a.numbered ? /^(\d+\. )(.*)$/.exec(l) : null;
     if (m) {
       prims.push(...richBlock(m[1], [at[0], y], { size, angle: a.angle ?? 0 }).prims);
@@ -70,7 +99,7 @@ export function layoutNote(a: NoteAnnotation, ctx: AnnotationContext): LayoutRes
   });
   box = boxOf(prims.flatMap((p) => (p.k === "text" ? [p.at, [p.at[0] + 0.1, p.at[1] + size * CAP]] : p.k === "line" ? p.pts : p.k === "circle" ? [p.c] : [])));
   // Text width: the box above holds only starts; measure each line.
-  const width = Math.max(a.title ? richWidth(parseRich(`**${a.title}**`), size * 1.1) : 0, ...lines.map((l) => richWidth(parseRich(l), size) + (a.numbered ? indent : 0)));
+  const width = Math.max(a.title ? richWidth(parseRich(`**${a.title}**`), size * 1.1) : 0, ...lines.map((l) => richWidth(parseRich(l.replace("\u0000", "")), size) + (a.numbered || l.startsWith("\u0000") ? indent : 0)));
   const top = at[1] + size * CAP + (a.title ? 0 : 0);
   const bottom = y + size * 1.4 - 0.25 * size;
   box = { min: [at[0], Math.min(bottom, box?.min[1] ?? bottom)], max: [at[0] + width, top] };
