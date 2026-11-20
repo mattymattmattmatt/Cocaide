@@ -11,7 +11,7 @@ import { Checker } from "../../doc/validate";
 import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
 import type { KernelClient } from "../../worker/client";
 import type { RebuildView } from "../../worker/protocol";
-import { componentStates, facesAlign, motionWords, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
+import { componentStates, facesAlign, floatingGroups, motionWords, partSize, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
 import { suggestMates, type MateSuggestion } from "../../assembly/features";
 import { stepPart } from "../files/plan";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
@@ -329,8 +329,9 @@ export function useAssembly(o: AssemblyOptions) {
   const check = async () => {
     if (!asm) return;
     const s = solveAssembly(asm, views);
-    const states = componentStates(asm, s);
+    const states = componentStates(asm, s, new Map([...views].map(([key, t]) => [key, partSize(t)])));
     const issues: string[] = [];
+    for (const g of floatingGroups(asm)) issues.push(`${g.join(", ")} are mated to each other but to nothing fixed: they float together (mate one of them to the rest, or fix one)`);
     for (const m of s.mates) if (!m.ok) issues.push(`${m.id} ${m.problem ?? "doesn't hold"}`);
     for (const st of states) if (!st.fixed && st.motions.length === 6) issues.push(`${st.id} is held by nothing: mate it, or fix it`);
     setChecked({ issues, freedom: states.map((st) => ({ id: st.id, fixed: st.fixed, motions: st.motions.map(motionWords) })) });
@@ -417,6 +418,7 @@ export function useAssembly(o: AssemblyOptions) {
       label: "Turn about Z",
       value: now.rotation[2],
       kind: "angle",
+      snap: "angle",
       origin: start,
       dir: [0, 0, 1],
       axis: [0, 0, 1],

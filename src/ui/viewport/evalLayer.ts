@@ -419,11 +419,14 @@ export class EvalLayer {
     for (const t of order) {
       const v = new THREE.Vector3(...t.at).project(camera);
       t.el.style.display = v.z < 1 ? "" : "none";
-      const x = ((v.x + 1) / 2) * w + t.dx;
+      let x = ((v.x + 1) / 2) * w + t.dx;
       let y = ((1 - v.y) / 2) * h + t.dy;
       const tw = t.el.offsetWidth;
       const th = t.el.offsetHeight;
       if (tw && th) {
+        // Kept inside the view, so a handle near its edge still shows its value and takes its click.
+        x = Math.max(4, Math.min(x, w - tw - 4));
+        y = Math.max(4, Math.min(y, h - th - 4));
         for (let k = 0; k < 6; k++) {
           const hit = placed.find((r) => x < r.x + r.w && r.x < x + tw && y < r.y + r.h && r.y < y + th);
           if (!hit) break;

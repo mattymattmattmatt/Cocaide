@@ -11,7 +11,7 @@ import type { Assembly, AssemblyComponent, Mate, MateRef, Vec3 } from "../doc/ty
 import { MATE_TYPES } from "../doc/types";
 import { Checker } from "../doc/validate";
 import { mateFeatures, suggestMates } from "./features";
-import { componentStates, motionWords, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "./model";
+import { componentStates, floatingGroups, motionWords, partBox, partDocument, partDocuments, partName, partSize, placed, solveAssembly, type AssemblySolve } from "./model";
 import type { PartTopology } from "./resolve";
 import { placementOf, pointTo } from "./transform";
 
@@ -72,10 +72,12 @@ async function summary(env: AssemblyEnv, asm: Assembly): Promise<Raw> {
     components: asm.components.map((k) => {
       const v = views.get(k.part);
       const P = placementOf(k);
-      // Where it sits: the box round its faces' centres, in the assembly.
+      // Where it sits: its part's box (from its edges), turned and moved, in the assembly.
       let box: { min: Vec3; max: Vec3 } | null = null;
-      if (v?.faces.length) {
-        const pts = v.faces.map((f) => pointTo(P, f.centroid));
+      const pb = v ? partBox(v) : null;
+      if (pb) {
+        const pts: Vec3[] = [];
+        for (let i = 0; i < 8; i++) pts.push(pointTo(P, [i & 1 ? pb.max[0] : pb.min[0], i & 2 ? pb.max[1] : pb.min[1], i & 4 ? pb.max[2] : pb.min[2]]));
         box = { min: [0, 1, 2].map((i) => r3(Math.min(...pts.map((p) => p[i])))) as Vec3, max: [0, 1, 2].map((i) => r3(Math.max(...pts.map((p) => p[i])))) as Vec3 };
       }
       return { id: k.id, part: k.part, partName: partName(doc, k.part), at: k.at ?? [0, 0, 0], rotation: k.rotation ?? [0, 0, 0], ...(k.fixed ? { fixed: true } : {}), ...(k.hidden ? { hidden: true } : {}), ...(box ? { roughly: box } : {}) };
@@ -97,8 +99,15 @@ async function commit(env: AssemblyEnv, next: Assembly, label: string, opts: { s
     const s = solveAssembly(next, views);
     const failing = s.mates.filter((m) => !m.ok && (!opts.strict || opts.strict.includes(m.id)));
     if (opts.strict && failing.length) {
+      // What it fights: the other mates on its components (they held before it came).
+      const fights = (id: string) => {
+        const m = next.mates?.find((x) => x.id === id);
+        if (!m) return "";
+        const others = (next.mates ?? []).filter((x) => x.id !== id && !x.suppressed && [x.a.component, x.b.component].some((c) => c === m.a.component || c === m.b.component));
+        return others.length ? `; it fights ${others.map((x) => `${x.id} (${x.type} ${x.a.component} ↔ ${x.b.component})`).join(", ")}: change or suppress one of them` : "";
+      };
       return fail(
-        `${failing.map((m) => `${m.id} ${m.problem ?? `doesn't hold (${Number.isFinite(m.error) ? `${r3(m.error)} off` : "can't"})`}`).join("; ")}: nothing changed. Check the faces or edges with mateFeatures (a mate's two things must suit its type), and that it doesn't fight the component's other mates (checkAssembly lists them).`,
+        `${failing.map((m) => `${m.id} ${m.problem ?? `doesn't hold (${Number.isFinite(m.error) ? `${r3(m.error)} off` : "can't"})${fights(m.id)}`}`).join("; ")}: nothing changed. Check the faces or edges with mateFeatures (a mate's two things must suit its type).`,
       );
     }
     out = placed(next, new Map([...s.placements].filter(([id]) => !next.components.find((k) => k.id === id)?.fixed)));
@@ -266,8 +275,9 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       if (!asm) return fail("there is no assembly to check");
       const { views, problems } = await topologies(env, asm);
       const s = solveAssembly(asm, views);
-      const states = componentStates(asm, s);
+      const states = componentStates(asm, s, new Map([...views].map(([key, t]) => [key, partSize(t)])));
       const issues: string[] = [...problems];
+      for (const g of floatingGroups(asm)) issues.push(`${g.join(", ")} are mated to each other but to nothing fixed: they float together (mate one of them to the rest, or fix one)`);
       for (const m of s.mates) if (!m.ok) issues.push(`mate ${m.id} ${m.problem ?? `doesn't hold (${Number.isFinite(m.error) ? `${r3(m.error)} off` : "can't"})`}`);
       for (const st of states) {
         if (st.fixed) continue;

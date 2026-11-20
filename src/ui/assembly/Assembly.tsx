@@ -314,6 +314,6 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
       </section>,
     );
   }
-  if (!sections.length) return <p className="muted small">Insert a part to start. Select a component in the tree or the view to place it; select a face of one and Ctrl-click one of another to mate them.</p>;
+  if (!sections.length) return <section className="asm-section"><p className="muted small">Insert a part to start. Select a component in the tree or the view to place it; select a face of one and Ctrl-click one of another to mate them.</p></section>;
   return <>{sections}</>;
 }

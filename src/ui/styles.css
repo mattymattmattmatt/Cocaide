@@ -711,6 +711,7 @@ svg.icon { flex: none; display: block; }
 
 /* menus */
 .menu-items { top: calc(100% + 4px); min-width: 210px; gap: 1px; }
+.assembly-bar .menu-items { min-width: 270px; }
 .menu-items button {
   display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px;
   border: 0; border-radius: 6px; background: none; font-size: 13px; text-align: left; cursor: pointer;
@@ -859,7 +860,8 @@ svg.icon { flex: none; display: block; }
 
 /* a narrower window: the file buttons keep their icons, the brand its mark */
 .topbar > * { flex: none; }
-.topbar .doc-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.topbar .doc-title { flex: 0 0 auto; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; }
+.doc-title input { flex: none; max-width: 24ch; }
 .actions button, .mode-switch button { white-space: nowrap; }
 @media (max-width: 1360px) {
   .actions button:not(.primary) .label { display: none; }

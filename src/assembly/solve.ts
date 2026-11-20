@@ -260,7 +260,7 @@ export type FreeMotion = { kind: "slide"; along: Vec3 } | { kind: "turn"; axis: 
  * placed; six: nothing holds it). Read from the null space of its mates'
  * Jacobian over its own move and turn.
  */
-export function freeMotions(placements: Map<string, Placement>, mates: SolverMate[], id: string): FreeMotion[] {
+export function freeMotions(placements: Map<string, Placement>, mates: SolverMate[], id: string, size = 100): FreeMotion[] {
   const p = placements.get(id);
   if (!p) return [];
   const mine = mates.filter((m) => m.a.component === id || m.b.component === id);
@@ -269,14 +269,16 @@ export function freeMotions(placements: Map<string, Placement>, mates: SolverMat
       const r = residuals(m, world(m.a.geom, pl.get(m.a.component)!), world(m.b.geom, pl.get(m.b.component)!));
       return typeof r === "string" ? [] : r;
     });
+  // The six numbers: a slide (mm) and a turn about the component's origin scaled to mm at its size (radians × size),
+  // so a slide and a turn weigh alike.
+  const L = Math.max(1, size);
   const at = (x: number[]) => {
     const out = new Map(placements);
-    out.set(id, { R: mul(rotationOf([x[3], x[4], x[5]]), p.R), t: [p.t[0] + x[0], p.t[1] + x[1], p.t[2] + x[2]] });
+    out.set(id, { R: mul(rotationOf([x[3] / L, x[4] / L, x[5] / L]), p.R), t: [p.t[0] + x[0], p.t[1] + x[1], p.t[2] + x[2]] });
     return out;
   };
   const r0 = rows(placements);
   const h = 1e-6;
-  // Turns are about the component's origin; scaled to mm at its size so slides and turns weigh alike.
   const J: number[][] = r0.map(() => new Array(6).fill(0));
   for (let j = 0; j < 6; j++) {
     const x = new Array(6).fill(0);
@@ -284,35 +286,44 @@ export function freeMotions(placements: Map<string, Placement>, mates: SolverMat
     const rj = rows(at(x));
     for (let i = 0; i < r0.length; i++) J[i][j] = (rj[i] - r0[i]) / h;
   }
-  const JtJ: number[][] = Array.from({ length: 6 }, (_, a) => Array.from({ length: 6 }, (_, b) => J.reduce((s, row) => s + row[a] * row[b], 0)));
+  const JtJ: number[][] = Array.from({ length: 6 }, (_, a) => Array.from({ length: 6 }, (_, b) => J.reduce((sum, row) => sum + row[a] * row[b], 0)));
   const { values, vectors } = symmetricEigen(JtJ);
   const big = Math.max(1e-12, ...values.map(Math.abs));
-  const free = values.map((v, i) => ({ v, vec: vectors.map((row) => row[i]) })).filter((e) => Math.abs(e.v) < 1e-7 * Math.max(1, big));
-  return describeMotions(free.map((e) => e.vec), p.t);
+  const basis = values.map((v, i) => ({ v, vec: vectors.map((row) => row[i]) })).filter((e) => Math.abs(e.v) < 1e-6 * Math.max(1, big)).map((e) => e.vec);
+  // Back to radians for the turn part.
+  return describeMotions(basis.map((v) => [v[0], v[1], v[2], v[3] / L, v[4] / L, v[5] / L]), p.t, L);
 }
 
-/** Null-space vectors (a slide t and a turn w about the component's origin o) as slides and turns, tidied. */
-function describeMotions(basis: number[][], o: Vec3): FreeMotion[] {
-  const tidy = (v: Vec3): Vec3 => {
-    const u = unit(v);
-    return u.map((x) => (Math.abs(x) < 1e-6 ? 0 : Math.round(x * 1e6) / 1e6 + 0)) as Vec3;
-  };
-  // Turns first (their slide part is where the axis is), then the pure slides left over.
+/**
+ * A null space (slides t and turns w about the component's origin o) as
+ * its turns and its pure slides: the combinations with no turn in them are
+ * slides; the rest are turns, each about its own axis.
+ */
+function describeMotions(basis: number[][], o: Vec3, L: number): FreeMotion[] {
+  const k = basis.length;
+  if (!k) return [];
+  const tidy = (v: Vec3): Vec3 => unit(v).map((x) => (Math.abs(x) < 1e-6 ? 0 : Math.round(x * 1e6) / 1e6 + 0)) as Vec3;
+  // How much each combination turns: the k × k matrix of the turn parts' dot products.
+  const W = basis.map((v) => [v[3] * L, v[4] * L, v[5] * L]);
+  const G = W.map((a) => W.map((b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+  const { values, vectors } = symmetricEigen(G);
   const turns: FreeMotion[] = [];
-  const slides: Vec3[] = [];
-  for (const v of basis) {
+  const slides: FreeMotion[] = [];
+  values.forEach((ev, i) => {
+    const c = vectors.map((row) => row[i]);
+    const v = [0, 1, 2, 3, 4, 5].map((j) => basis.reduce((sum, b, n) => sum + c[n] * b[j], 0));
     const t: Vec3 = [v[0], v[1], v[2]];
     const w: Vec3 = [v[3], v[4], v[5]];
     const lw = Math.hypot(...w);
-    if (lw < 1e-6) {
-      slides.push(t);
-      continue;
+    if (ev < 1e-6 || lw * L < 1e-4 * Math.max(1, Math.hypot(...t))) {
+      if (Math.hypot(...t) > 1e-9) slides.push({ kind: "slide", along: tidy(t) });
+      return;
     }
-    // A turn about an axis along w through p (from o): t = −w × (p − o)  ⇒  p − o = (w × t) / |w|².
+    // A turn about an axis along w through p: t = −w × (p − o)  ⇒  p − o = (w × t) / |w|² (the slide along w, a screw, is left out).
     const off = scale(cross(w, t), 1 / (lw * lw));
     turns.push({ kind: "turn", axis: tidy(w), through: add(o, off).map((x) => Math.round(x * 1000) / 1000 + 0) as Vec3 });
-  }
-  return [...turns, ...slides.map((t) => ({ kind: "slide" as const, along: tidy(t) }))];
+  });
+  return [...turns, ...slides];
 }
 
 /** Eigenvalues and eigenvectors (columns) of a small symmetric matrix, by Jacobi rotations. */
