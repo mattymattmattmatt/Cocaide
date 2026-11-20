@@ -380,6 +380,30 @@ under its body's name.
 "bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } } at the top of the document
 gives a body its own material (setBodyMaterial); its mass and the part's follow.
 
+## assembly (parts put together and mated: the Assembly tab)
+The document can hold an assembly beside the part: components (this part, "self", or parts the file carries — from
+an example, a .cocaide.json, or a STEP file, whose faces are mateable like any), each placed by "at" [x, y, z] mm and
+"rotation" [rx, ry, rz] degrees (turned about X, then Y, then Z, then moved), and mates between their faces, edges
+or default planes and axes. The first component is fixed at the origin; mates move the others (never a fixed one).
+The assembly never changes the part.
+Assembling, step by step:
+1. insertComponent each part ({ "part": "self" }, { "part": { "example": "flange" } }, { "part": { "file": "pin.step" } });
+   a second copy of a part: insertComponent with the part key the assembly carries.
+2. suggestMates(a, b) for two components: a boss or pin into a hole of its size, bolt holes in line, big faces
+   flush — each suggestion lists its addMate calls. Or mateFeatures(component) for every flat face, hole and boss
+   with the ref a mate takes, in the assembly's coordinates.
+3. addMate { type, a, b, value?, aligned? }: "concentric" for a pin in a hole, then "coincident" for the face it sits
+   on (facing; "aligned": true when the faces should point the same way, e.g. two tops level); "distance",
+   "parallel", "perpendicular", "angle". A mate that can't hold is refused with the reason.
+4. checkAssembly: mates that don't hold, components held by nothing, what each can still do (a pin in a hole can
+   still turn about its axis — fine — but a plate that can still slide needs another mate), and overlaps.
+5. exportAssemblySTEP when it is right.
+{ "id": "c1", "type": "concentric", "a": { "component": "plate-1", "face": { "type": "cylindrical", "radius": 3.3,
+  "pick": "nearest", "near": [30, 0, 3] } }, "b": { "component": "pin-1", "face": { "type": "cylindrical", "radius": 3,
+  "pick": "largest" } } }
+Selectors in a mate are on the component's own part (its own coordinates), as features use them: take them from
+mateFeatures, which gives them ready made.
+
 ## drawing (sheets of views, measured on the rebuild)
 "drawing": { "sheets": [{ "id": "sheet1", "name": "Sheet 1" (optional),
     "format": { "size": "A4".."A0" | "ANSI A".."ANSI E", "orientation": "landscape" | "portrait", "template": "iso" | "ansi" | "minimal" | "classic",

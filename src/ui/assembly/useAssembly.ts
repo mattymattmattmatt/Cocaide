@@ -11,7 +11,9 @@ import { Checker } from "../../doc/validate";
 import { edgeSelectorFor, faceSelectorFor } from "../../kernel/synthesize";
 import type { KernelClient } from "../../worker/client";
 import type { RebuildView } from "../../worker/protocol";
-import { facesAlign, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
+import { componentStates, facesAlign, motionWords, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
+import { suggestMates, type MateSuggestion } from "../../assembly/features";
+import { stepPart } from "../files/plan";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
 import { placementOf, pointTo, apply as rotate } from "../../assembly/transform";
 import { pickInto, EMPTY_SELECTION, type PickTarget, type Selection } from "../model/selection";
@@ -154,10 +156,19 @@ export function useAssembly(o: AssemblyOptions) {
   };
 
   const insertFile = async () => {
-    const file = await pickFile(".json,.cocaide.json,application/json");
+    const file = await pickFile(".json,.cocaide.json,application/json,.step,.stp,.STEP,.STP");
     if (!file) return;
     try {
-      insertDocument(JSON.parse(await file.text()));
+      const text = await file.text();
+      // A STEP file comes in as a part of its own (an imported solid): its faces, holes and bosses mate like any.
+      if (/\.(step|stp)$/i.test(file.name)) {
+        const made = stepPart(file.name, text);
+        if (typeof made === "string") return o.notice(made, "error");
+        insertDocument(made.doc as Record<string, unknown>);
+        if (made.warning) o.notice(made.warning, "info");
+        return;
+      }
+      insertDocument(JSON.parse(text));
     } catch (e) {
       o.notice(`${file.name} couldn't be read as a part: ${(e as Error).message}`, "error");
     }
@@ -278,6 +289,54 @@ export function useAssembly(o: AssemblyOptions) {
 
   const resolve = () => commit(base(), "Solve the mates");
 
+  /** The mates the selected component most likely wants with each other component, best first (from their holes, bosses and faces). */
+  const suggestions = useMemo((): (MateSuggestion & { other: string })[] => {
+    const k = item?.kind === "component" ? asm?.components.find((x) => x.id === item.id) : undefined;
+    const tk = k ? views.get(k.part) : undefined;
+    if (!k || !tk || !asm) return [];
+    const out: (MateSuggestion & { other: string })[] = [];
+    for (const other of asm.components) {
+      if (other.id === k.id) continue;
+      const to = views.get(other.part);
+      if (!to) continue;
+      // The other component first, so a new mate reads "fixed part ↔ this one".
+      const taken = (asm.mates ?? []).filter((m) => m.type === "concentric" && !m.suppressed).flatMap((m) => [m.a, m.b]);
+      for (const sg of suggestMates(other, to, k, tk, { taken })) out.push({ ...sg, other: other.id });
+    }
+    // Leave out what is mated already: a suggestion whose concentric pair is in the mates.
+    const have = new Set((asm.mates ?? []).map((m) => JSON.stringify([m.type, m.a, m.b])));
+    return out.filter((sg) => !sg.mates.every((m) => have.has(JSON.stringify([m.type, m.a, m.b])))).sort((a, b) => b.score - a.score).slice(0, 5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item, asm, views]);
+
+  /** Adds a suggestion's mates as one step, solved; refused when they don't then hold. */
+  const applySuggestion = (sg: MateSuggestion) => {
+    let a = base();
+    const ids: string[] = [];
+    for (const m of sg.mates) {
+      const id = nextMateId(a, m.type);
+      ids.push(id);
+      a = { ...a, mates: [...(a.mates ?? []), { id, ...m } as Mate] };
+    }
+    const s = solveAssembly(a, views);
+    const bad = s.mates.filter((m) => ids.includes(m.id) && !m.ok);
+    if (bad.length) return o.notice(`That doesn't go together as suggested (${bad.map((m) => m.id).join(", ")} wouldn't hold): mate it by hand.`, "error");
+    if (!commit(a, sg.what.length > 60 ? `Mate ${ids.join(", ")}` : `Mate: ${sg.what}`)) setItem({ kind: "mate", id: ids[0] });
+  };
+
+  /** The assembly checked: mates that don't hold, components held by nothing, what each can still do, and (when asked) overlaps. */
+  const [checked, setChecked] = useState<{ issues: string[]; freedom: { id: string; fixed: boolean; motions: string[] }[] } | null>(null);
+  const check = async () => {
+    if (!asm) return;
+    const s = solveAssembly(asm, views);
+    const states = componentStates(asm, s);
+    const issues: string[] = [];
+    for (const m of s.mates) if (!m.ok) issues.push(`${m.id} ${m.problem ?? "doesn't hold"}`);
+    for (const st of states) if (!st.fixed && st.motions.length === 6) issues.push(`${st.id} is held by nothing: mate it, or fix it`);
+    setChecked({ issues, freedom: states.map((st) => ({ id: st.id, fixed: st.fixed, motions: st.motions.map(motionWords) })) });
+    if (asm.components.length > 1) await interference();
+  };
+
   /** The assembly's components as the kernel places them. */
   const placedForKernel = () => (asm?.components ?? []).map((k) => ({ id: k.id, part: k.part, ...placementOf(k) }));
 
@@ -390,6 +449,10 @@ export function useAssembly(o: AssemblyOptions) {
   return {
     doc,
     asm,
+    suggestions,
+    applySuggestion,
+    checked,
+    check,
     handles,
     onHandle,
     views,

@@ -234,6 +234,15 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       allowed = has("drawing") || inViews || (has(`annotation:${cmd.id}`) && sameView);
       break;
     }
+    case "setAssembly":
+    case "setComponent":
+    case "setMate":
+    case "setAssemblyPart":
+    case "placeComponents":
+      // The assembly changes no feature of the part: it is the assembly's, as the drawing is the drawing's.
+      what = cmd.type;
+      allowed = has("assembly");
+      break;
     default:
       return "writeScope: unknown command";
   }

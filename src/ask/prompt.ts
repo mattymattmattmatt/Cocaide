@@ -5,6 +5,7 @@ import { ADD_LIBRARY_PROFILE_HELP, LIBRARY_SIZE_RULE, WELDMENT_RULE } from "../w
 import type Anthropic from "@anthropic-ai/sdk";
 import { coreReference, opIndex, referenceSection, sectionIndex } from "../mcp/sections";
 import { anthropicTool, TOOL_ISSUE_RULE } from "./tools/specs";
+import { ASSEMBLY_READ_TOOLS, ASSEMBLY_WRITE_TOOLS } from "../assembly/tools";
 import type { AskTarget, Packet, PacketKind } from "./packet";
 
 export type AskMode = "explain" | "edit";
@@ -205,6 +206,7 @@ Rules:
 - Drawings: a right-click on the sheet scopes the ask to a view and its annotations ("view:<id>"), one annotation ("annotation:<id>"), one table ("table:<id>", setTable on it alone) or the drawing ("drawing", also from a sheet's tab or title block: the packet's sheet is that one); the packet's "selection" lists what else the user had selected on the sheet, which "this" and "these" may mean; the part's features are never in scope from there. Every number on a sheet is measured on the rebuild: you choose what to dimension, never the value. A dimension runs between two points (a node "A", a member end "leg_a.start", a hole "hole_1", a side of the view "@left", "@right", "@top", "@bottom", or a GeoRef from the packet's view.geoRefs such as "front:vextrude_1/l3.0"), or along a member ({ "member": "leg_a" }: its cut length, only where the packet says liesFlat). Use the packet's view.shows to find the points, and its checks to see what is missing. Dimensions go in front, top, side views, never iso. Give a new annotation a short new id (d4, b4).
 - Units are millimetres. If the user gives inches, convert once and say so (1 in = 25.4 mm). Metric screw clearance holes: M3 3.4, M4 4.5, M5 5.5, M6 6.6, M8 9, M10 11 (normal fit).
 - Selectors choose faces and edges by query. Use the packet's selection for the picked face or edge rather than writing your own.
+- Assemblies (the Assembly tab: this part and others put together and mated): assembly shows it; insertComponent puts parts in (the first is fixed); suggestMates finds the mates two components want (a pin into a hole, holes in line, faces flush) and mateFeatures every mateable face with its ref; addMate mates them (refused, with the reason, when it can't hold); checkAssembly finds what's wrong (mates that don't hold, components held by nothing or free to slide, overlaps). Read reference("assembly") first.
 - Look before you write: listFaces and listEdges give a selector for every face and edge (never guess one), facePlane a face's frame, getSketch what holds a sketch, measureBetween any distance or angle, screenshot a picture. reference("<op>") gives an op's full section before you first use it.
 - Several related edits go in one batch call (a sketch, its extrude, its holes): all are kept or none, and the result tells you what each step made. sketchProfile draws a fully defined sketch; holes lays out a bolt circle or grid.
 - Building or reworking a whole part (the ask says so, or the part is empty): call plan first (the feature tree and the checks), build in batches, then verify with partSummary, measureBetween and a screenshot, and fix what disagrees (see strategy below).
@@ -226,6 +228,7 @@ Rules:
 - Work only through the tools. Every edit is rebuilt and kept only if nothing newly fails; a failed edit returns the error: read it, fix the call, or stop and say why. Never repeat a call that failed without changing it.
 - writeScope is enforced: "*" anything; a feature id: that feature, or a new feature using it; "<sketch>/*" that sketch's entities and constraints; "param:<name>"; "body:<name>"; "+" one new feature (from a face or edge it must use that face or edge, through the packet's selection).
 - Your edits are a proposal the user accepts or discards. Do not ask for confirmation; make the proposal.
+- Assemblies (the Assembly tab: this part and others put together and mated): assembly shows it; insertComponent puts parts in (the first is fixed); suggestMates finds the mates two components want (a pin into a hole, holes in line, faces flush) and mateFeatures every mateable face with its ref; addMate mates them (refused, with the reason, when it can't hold); checkAssembly finds what's wrong (mates that don't hold, components held by nothing or free to slide, overlaps). Read reference("assembly") first.
 - Look before you write: listFaces / listEdges give a ready selector for every face and edge (never guess one), facePlane a face's frame, getSketch a sketch, measureBetween distances, partSummary the whole part. reference("<op>") gives an op's full section: read it before you first use an op.
 - Related edits go in one batch call (a sketch, its extrude, its holes): all are kept or none. sketchProfile draws a fully defined sketch; holes lays out bolt circles and grids. Any edit tool not offered directly runs as a batch step: { "tool": "<name>", ...its arguments }.
 - A whole new part: call plan first, build in batches, then check with partSummary and measureBetween, and fix what disagrees.
@@ -538,12 +541,16 @@ export function isDetailRequest(text: string): boolean {
   return /\b(fully|completely|properly)\s+(detail|dimension|tolerance)|\bdetail (this|the|my|it)\b|\bauto-?detail|manufacturing drawing|\b(add|apply) (all )?(the )?(tolerances|gd&?t)\b.*\b(drawing|sheet|view)\b|\btolerance (this|the) (drawing|sheet|view)\b/.test(t);
 }
 
-export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS, ...BUILD_TOOLS, ...DETAIL_WRITE_TOOLS].map((t) => t.name));
+export const WRITE_TOOL_NAMES = new Set([...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS, ...BUILD_TOOLS, ...DETAIL_WRITE_TOOLS].map((t) => t.name).concat(ASSEMBLY_WRITE_TOOLS));
 
 /** The write tools a batch step may name in the right-click agent. */
 export const BATCH_STEP_TOOLS: readonly string[] = [...FEATURE_TOOLS, ...SKETCH_TOOLS, ...DRAWING_TOOLS].map((t) => t.name).concat(["sketchProfile", "fullyDefine", "holes"]);
 
 const PLAN_TOOL = anthropicTool("plan");
+
+/** The assembly tools (src/assembly/tools.ts): offered when the ask may change the whole document. */
+const ASSEMBLY_READ = ASSEMBLY_READ_TOOLS.map(anthropicTool);
+const ASSEMBLY_WRITE = ASSEMBLY_WRITE_TOOLS.map(anthropicTool);
 
 const DRAWING_KINDS = new Set<string>(["view", "annotation", "table", "sheet", "drawing"]);
 
@@ -557,8 +564,8 @@ const DRAWING_KINDS = new Set<string>(["view", "annotation", "table", "sheet", "
 export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; drawing: boolean; build?: boolean }): Anthropic.Tool[] {
   const drawingTarget = !!kind && DRAWING_KINDS.has(kind);
   const read = [...READ_TOOLS, ...INSPECT_TOOLS];
-  if (mode === "explain") return wide?.part || !drawingTarget ? [...read, ...(wide?.drawing ? DETAIL_READ_TOOLS : [])] : [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DETAIL_READ_TOOLS];
-  if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...(wide.drawing ? [...DRAWING_TOOLS, ...DETAIL_READ_TOOLS, ...DETAIL_WRITE_TOOLS] : [])];
+  if (mode === "explain") return wide?.part || !drawingTarget ? [...read, ...(wide?.part ? ASSEMBLY_READ : []), ...(wide?.drawing ? DETAIL_READ_TOOLS : [])] : [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DETAIL_READ_TOOLS];
+  if (wide?.part) return [...read, ...(wide.build ? [PLAN_TOOL] : []), ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS, ...ASSEMBLY_READ, ...ASSEMBLY_WRITE, ...(wide.drawing ? [...DRAWING_TOOLS, ...DETAIL_READ_TOOLS, ...DETAIL_WRITE_TOOLS] : [])];
   // The whole sheet (its title block among it) may change the part's properties; a view or an annotation may not.
   if (drawingTarget) return [...READ_TOOLS.filter((t) => t.name === "escalate"), ...DRAWING_TOOLS, ...DETAIL_READ_TOOLS, ...DETAIL_WRITE_TOOLS, ...(kind === "drawing" || kind === "sheet" ? [SET_PROPERTIES, SET_CUT_LIST] : [])];
   return [...read, ...FEATURE_TOOLS, ...SKETCH_TOOLS, ...BUILD_TOOLS];

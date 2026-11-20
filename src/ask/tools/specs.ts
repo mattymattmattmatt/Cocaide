@@ -26,7 +26,93 @@ export interface ToolSpec {
 export const TOOL_ISSUE_RULE =
   "If a Cocaide tool fails in a way that looks like a bug, refuses something it should take, its description or the reference misled you, or no tool does what the user asked (so you had to work around it), call reportToolIssue once per problem: which tool, what you tried, what happened, and what would have helped. It goes into the user's tool-issue log for Cocaide's developers. Then carry on with the task; never report the user's own mistakes or a refusal that was right (a write scope, a size the user must confirm).";
 
+const mateRefSpec = obj.describe('What a mate holds on a component: { "component": "<id>", "face": <face selector> } (a flat face: its plane; a round face: its axis), or "edge": <edge selector>, or "datum": "Top" | "Front" | "Right" | "X" | "Y" | "Z" | "Origin" of its part. mateFeatures gives a ready ref for every mateable face');
+
+/** The assembly tools (src/assembly/tools.ts): put parts together and mate them, as the Assembly tab does. */
+const ASSEMBLY_SPECS: ToolSpec[] = [
+  {
+    name: "assembly",
+    description:
+      "The assembly at a glance (the document's Assembly tab): each component (its part, where it is: at [x,y,z] mm and rotation [rx,ry,rz] degrees about X then Y then Z, fixed or not, and roughly where it sits), the parts it uses, each mate and whether it holds. Start here before changing an assembly.",
+    input: {},
+    readOnly: true,
+  },
+  {
+    name: "insertComponent",
+    description:
+      'Put a part in the assembly as a component (the first one goes in fixed at the origin; mate the others to it). "part": "self" (this document\'s own part, the default), a part key the assembly carries already, { "example": "<example name>" }, or { "file": "<path to a .cocaide.json part or a .step/.stp file>" } (a STEP file comes in as an imported part; its holes and faces are mateable like any). "at" and "rotation" place it; else it goes at the origin.',
+    input: {
+      part: z.unknown().optional().describe('"self", a carried part key, { "example": "flange" } or { "file": "path" }'),
+      id: z.string().optional().describe("Its id (default <part name>-<n>)"),
+      at: vec3.optional(),
+      rotation: vec3.optional().describe("Degrees about X, then Y, then Z"),
+      fixed: z.boolean().optional(),
+    },
+    readOnly: false,
+  },
+  {
+    name: "setComponent",
+    description: 'Move, turn, fix or float, hide or show a component: { "id", "patch": { "at"?, "rotation"?, "fixed"?, "hidden"? } }. The mates are solved after (a mated component goes where they hold it).',
+    input: { id: z.string(), patch: obj },
+    readOnly: false,
+  },
+  {
+    name: "deleteComponent",
+    description: "Take a component out of the assembly, with its mates (a part no other component uses goes from the file too).",
+    input: { id: z.string() },
+    readOnly: false,
+  },
+  {
+    name: "addMate",
+    description:
+      'Mate two things of two components; the components that aren\'t fixed move until every mate holds. Refused (nothing changes) when the new mate can\'t hold, saying why. Types: "coincident" (flat faces against each other — facing unless "aligned": true; an edge or axis on a face; two axes in line), "distance" (value mm between faces), "concentric" (two round faces or edges on one axis: a pin in a hole), "parallel", "perpendicular", "angle" (value degrees). Take a and b from mateFeatures or suggestMates.',
+    input: {
+      type: z.string(),
+      a: mateRefSpec,
+      b: mateRefSpec,
+      value: z.number().optional().describe("distance: mm; angle: degrees"),
+      aligned: z.boolean().optional().describe("coincident or distance between flat faces: the faces face the same way, not each other"),
+      id: z.string().optional(),
+    },
+    readOnly: false,
+  },
+  {
+    name: "editMate",
+    description: 'Change a mate: { "id", "patch": { "type"?, "value"?, "aligned"?, "suppressed"?, "a"?, "b"? } } (flip a coincident by toggling aligned). Refused when it then can\'t hold.',
+    input: { id: z.string(), patch: obj },
+    readOnly: false,
+  },
+  {
+    name: "deleteMate",
+    description: "Remove a mate.",
+    input: { id: z.string() },
+    readOnly: false,
+  },
+  {
+    name: "mateFeatures",
+    description:
+      "What can be mated on a component, biggest first, in the assembly's coordinates as it sits now: its flat faces (normal, centre, area) and its holes and bosses (round faces: diameter, axis, a point on it, length), each with the ref a mate takes. Works on parts imported from STEP too.",
+    input: { component: z.string(), kind: z.enum(["all", "planes", "round"]).optional(), limit: z.number().optional() },
+    readOnly: true,
+  },
+  {
+    name: "suggestMates",
+    description:
+      "The mates two components most likely want, best first, found from their features: a boss or pin into a hole of its size (concentric, and the faces that then meet), holes of one size in line (bolt holes), or their biggest facing faces flush. Each suggestion lists the addMate calls to make.",
+    input: { a: z.string(), b: z.string() },
+    readOnly: true,
+  },
+  {
+    name: "checkAssembly",
+    description:
+      "Find what is wrong with the assembly: mates that don't hold (and why), components held by nothing, what each component can still do (slides and turns its mates don't stop — fine for a hinge or a slider, else a mate is missing), and components that overlap (interference) where the host can check. Run it after assembling, and fix what it lists.",
+    input: {},
+    readOnly: true,
+  },
+];
+
 export const SPECS: ToolSpec[] = [
+  ...ASSEMBLY_SPECS,
   {
     name: "reportToolIssue",
     description:

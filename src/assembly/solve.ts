@@ -135,6 +135,30 @@ const norm = (r: number[]) => Math.sqrt(r.reduce((s, x) => s + x * x, 0));
  * holds the first part put in).
  */
 export function solveMates(placements: Map<string, Placement>, fixed: Set<string>, mates: SolverMate[], opts: { iterations?: number } = {}): SolveResult {
+  const first = solveOnce(placements, fixed, mates, opts);
+  if (first.solved) return first;
+  // Stuck (a part would have to turn over to meet its mates, through places where they hold less): try each stuck
+  // component turned half round about each axis, and keep the best.
+  const total = (r: SolveResult) => r.mates.reduce((s, m) => s + (Number.isFinite(m.error) ? m.error : 1e9), 0);
+  const held = new Set(fixed.size ? fixed : [...placements.keys()].slice(0, 1));
+  const stuck = [...new Set(first.mates.filter((m) => !m.ok && !m.problem).flatMap((m) => {
+    const x = mates.find((y) => y.id === m.id);
+    return x ? [x.a.component, x.b.component] : [];
+  }))].filter((k) => !held.has(k));
+  let best = first;
+  for (const k of stuck)
+    for (const w of [[Math.PI, 0, 0], [0, Math.PI, 0], [0, 0, Math.PI]] as Vec3[]) {
+      const start = new Map(best.placements);
+      const p = start.get(k)!;
+      start.set(k, { R: mul(rotationOf(w), p.R), t: p.t });
+      const r = solveOnce(start, fixed, mates, opts);
+      if (total(r) < total(best) - 1e-12) best = { ...r, iterations: best.iterations + r.iterations };
+      if (best.solved) return best;
+    }
+  return best;
+}
+
+function solveOnce(placements: Map<string, Placement>, fixed: Set<string>, mates: SolverMate[], opts: { iterations?: number } = {}): SolveResult {
   const ids = [...placements.keys()];
   const held = new Set(fixed.size ? fixed : ids.slice(0, 1));
   const live = new Map([...placements].map(([k, p]) => [k, { R: p.R.map((r) => [...r]) as Placement["R"], t: [...p.t] as Vec3 }]));
@@ -225,4 +249,107 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
     x[r] = s / M[r][r];
   }
   return x;
+}
+
+/** A way a component can still move with its mates holding: a slide along a direction, or a turn about an axis (through a point). */
+export type FreeMotion = { kind: "slide"; along: Vec3 } | { kind: "turn"; axis: Vec3; through: Vec3 };
+
+/**
+ * What a component can still do with the other components where they are and
+ * its mates holding: the motions its mates don't stop (none: it is fully
+ * placed; six: nothing holds it). Read from the null space of its mates'
+ * Jacobian over its own move and turn.
+ */
+export function freeMotions(placements: Map<string, Placement>, mates: SolverMate[], id: string): FreeMotion[] {
+  const p = placements.get(id);
+  if (!p) return [];
+  const mine = mates.filter((m) => m.a.component === id || m.b.component === id);
+  const rows = (pl: Map<string, Placement>) =>
+    mine.flatMap((m) => {
+      const r = residuals(m, world(m.a.geom, pl.get(m.a.component)!), world(m.b.geom, pl.get(m.b.component)!));
+      return typeof r === "string" ? [] : r;
+    });
+  const at = (x: number[]) => {
+    const out = new Map(placements);
+    out.set(id, { R: mul(rotationOf([x[3], x[4], x[5]]), p.R), t: [p.t[0] + x[0], p.t[1] + x[1], p.t[2] + x[2]] });
+    return out;
+  };
+  const r0 = rows(placements);
+  const h = 1e-6;
+  // Turns are about the component's origin; scaled to mm at its size so slides and turns weigh alike.
+  const J: number[][] = r0.map(() => new Array(6).fill(0));
+  for (let j = 0; j < 6; j++) {
+    const x = new Array(6).fill(0);
+    x[j] = h;
+    const rj = rows(at(x));
+    for (let i = 0; i < r0.length; i++) J[i][j] = (rj[i] - r0[i]) / h;
+  }
+  const JtJ: number[][] = Array.from({ length: 6 }, (_, a) => Array.from({ length: 6 }, (_, b) => J.reduce((s, row) => s + row[a] * row[b], 0)));
+  const { values, vectors } = symmetricEigen(JtJ);
+  const big = Math.max(1e-12, ...values.map(Math.abs));
+  const free = values.map((v, i) => ({ v, vec: vectors.map((row) => row[i]) })).filter((e) => Math.abs(e.v) < 1e-7 * Math.max(1, big));
+  return describeMotions(free.map((e) => e.vec), p.t);
+}
+
+/** Null-space vectors (a slide t and a turn w about the component's origin o) as slides and turns, tidied. */
+function describeMotions(basis: number[][], o: Vec3): FreeMotion[] {
+  const tidy = (v: Vec3): Vec3 => {
+    const u = unit(v);
+    return u.map((x) => (Math.abs(x) < 1e-6 ? 0 : Math.round(x * 1e6) / 1e6 + 0)) as Vec3;
+  };
+  // Turns first (their slide part is where the axis is), then the pure slides left over.
+  const turns: FreeMotion[] = [];
+  const slides: Vec3[] = [];
+  for (const v of basis) {
+    const t: Vec3 = [v[0], v[1], v[2]];
+    const w: Vec3 = [v[3], v[4], v[5]];
+    const lw = Math.hypot(...w);
+    if (lw < 1e-6) {
+      slides.push(t);
+      continue;
+    }
+    // A turn about an axis along w through p (from o): t = −w × (p − o)  ⇒  p − o = (w × t) / |w|².
+    const off = scale(cross(w, t), 1 / (lw * lw));
+    turns.push({ kind: "turn", axis: tidy(w), through: add(o, off).map((x) => Math.round(x * 1000) / 1000 + 0) as Vec3 });
+  }
+  return [...turns, ...slides.map((t) => ({ kind: "slide" as const, along: tidy(t) }))];
+}
+
+/** Eigenvalues and eigenvectors (columns) of a small symmetric matrix, by Jacobi rotations. */
+function symmetricEigen(M: number[][]): { values: number[]; vectors: number[][] } {
+  const n = M.length;
+  const A = M.map((r) => [...r]);
+  const V: number[][] = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) off += A[i][j] * A[i][j];
+    if (off < 1e-30) break;
+    for (let p = 0; p < n; p++)
+      for (let q = p + 1; q < n; q++) {
+        if (Math.abs(A[p][q]) < 1e-300) continue;
+        const theta = (A[q][q] - A[p][p]) / (2 * A[p][q]);
+        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+        const c = 1 / Math.sqrt(t * t + 1);
+        const s = t * c;
+        for (let k = 0; k < n; k++) {
+          const akp = A[k][p];
+          const akq = A[k][q];
+          A[k][p] = c * akp - s * akq;
+          A[k][q] = s * akp + c * akq;
+        }
+        for (let k = 0; k < n; k++) {
+          const apk = A[p][k];
+          const aqk = A[q][k];
+          A[p][k] = c * apk - s * aqk;
+          A[q][k] = s * apk + c * aqk;
+        }
+        for (let k = 0; k < n; k++) {
+          const vkp = V[k][p];
+          const vkq = V[k][q];
+          V[k][p] = c * vkp - s * vkq;
+          V[k][q] = s * vkp + c * vkq;
+        }
+      }
+  }
+  return { values: A.map((r, i) => r[i]), vectors: V };
 }

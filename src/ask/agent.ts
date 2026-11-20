@@ -3,6 +3,7 @@
 // accepts or discards. Edits run in a sandbox copy of the document, each one
 // a checked transaction; the user's document is untouched until accept.
 
+import { ASSEMBLY_READ_TOOLS, ASSEMBLY_TOOLS, runAssemblyTool } from "../assembly/tools";
 import { DRAWING_EDITS, keepScales } from "../drafting/fit";
 import type Anthropic from "@anthropic-ai/sdk";
 import { apply, type Command, type RawDocument } from "../doc/commands";
@@ -560,6 +561,18 @@ class Sandbox {
         this.plan = p;
         return planReply(p, this.check.measurements);
       }
+    }
+    if (ASSEMBLY_TOOLS.has(name)) {
+      if (this.mode === "explain" && !(ASSEMBLY_READ_TOOLS as readonly string[]).includes(name)) return { ok: false, error: "this ask is a question; it cannot change the assembly" };
+      const out = await runAssemblyTool(name, a, {
+        doc: this.doc,
+        topology: async (part) => (await this.kernel.topology(part)) ?? "the part doesn't build",
+        examples: {},
+      });
+      if (!out.ok) return { ok: false, error: `${name}: ${out.error}` };
+      if (!out.command) return { ok: true, ...out.result };
+      const done = await this.editMany([out.command]);
+      return done.ok ? { ...done, ...out.result } : done;
     }
     if (!WRITE_TOOL_NAMES.has(name)) return { ok: false, error: `unknown tool "${name}"` };
     if (this.mode === "explain") return { ok: false, error: "this ask is a question; it cannot change the part" };

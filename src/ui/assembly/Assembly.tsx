@@ -42,7 +42,7 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo }: { a: AssemblyWo
               {(close) => (
                 <>
                   <MenuItem icon="model" label="This part" hint="The part of this document (its Model tab)" onClick={() => (close(), a.insertSelf())} testId="asm-insert-self" />
-                  <MenuItem icon="open" label="From a file…" hint="A .cocaide.json part: it is carried in this file" onClick={() => (close(), void a.insertFile())} testId="asm-insert-file" />
+                  <MenuItem icon="open" label="From a file…" hint="A .cocaide.json part or a STEP file (.step, .stp): it is carried in this file, and its holes and faces mate like any" onClick={() => (close(), void a.insertFile())} testId="asm-insert-file" />
                   {a.examples.map((name) => (
                     <MenuItem key={name} icon="examples" label={`Example: ${name}`} onClick={() => (close(), a.insertExample(name))} testId={`asm-insert-example-${name.replace(/\W+/g, "-")}`} />
                   ))}
@@ -68,6 +68,7 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo }: { a: AssemblyWo
           <span className="cm-group">
             <span className="sep" />
             <ToolButton icon="check" label="Solve" onClick={a.resolve} disabled={!a.solve || a.solve.solved} title={a.solve && !a.solve.solved ? "Move the components so the mates hold (after the parts changed)" : "Every mate holds"} testId="asm-solve" />
+            <ToolButton icon="diagnose" label="Check" onClick={() => void a.check()} disabled={!a.asm?.components.length || !!a.busy} title="Find what's wrong: mates that don't hold, parts held by nothing or free to slide, parts that overlap" testId="asm-check" />
             <ToolButton icon="seeThrough" label="Interference" onClick={() => void a.interference()} disabled={!a.asm || a.asm.components.length < 2 || !!a.busy} title="Find components that overlap" testId="asm-interference" />
             <ToolButton icon="export" label="Export STEP" onClick={() => void a.exportStep()} disabled={!has || !!a.busy} title="The assembly as one STEP file: each component a named solid where it sits" testId="asm-export-step" />
           </span>
@@ -189,6 +190,24 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
       </section>,
     );
   }
+  if (k && a.suggestions.length) {
+    sections.push(
+      <section key="suggest" className="asm-section" data-testid="asm-suggestions">
+        <h3>Suggested mates</h3>
+        <p className="muted small">Found from the parts' holes, bosses and faces:</p>
+        <ul className="asm-suggest">
+          {a.suggestions.map((sg, i) => (
+            <li key={i}>
+              <span>{sg.what}</span>
+              <button onClick={() => a.applySuggestion(sg)} title={sg.mates.map((x) => x.type).join(" + ")} data-testid={`asm-suggest-apply-${i}`}>
+                Apply
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>,
+    );
+  }
   if (m) {
     sections.push(
       <section key="m" className="asm-section" data-testid="asm-mate-props">
@@ -225,6 +244,30 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
         <p className={`small ${st && !st.ok ? "error-text" : "muted"}`} data-testid="asm-prop-mate-status">
           {m.suppressed ? "Suppressed: it holds nothing." : !st ? "…" : st.ok ? "Holds." : (st.problem ?? `Doesn't hold (${st.error < 1e6 ? `${Math.round(st.error * 1000) / 1000} off` : "can't"}): another mate fights it, or the parts changed (Solve).`)}
         </p>
+      </section>,
+    );
+  }
+  if (a.checked) {
+    sections.push(
+      <section key="check" className="asm-section" data-testid="asm-check-results">
+        <h3>Check</h3>
+        {a.checked.issues.length ? (
+          <ul className="asm-plain error-text">
+            {a.checked.issues.map((x) => (
+              <li key={x}>{x}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted small">Every mate holds, and every part is held.</p>
+        )}
+        <ul className="asm-plain">
+          {a.checked.freedom.map((f) => (
+            <li key={f.id}>
+              <b>{f.id}</b>: {f.fixed ? "fixed" : f.motions.length === 0 ? "fully placed" : f.motions.length === 6 ? "free (nothing holds it)" : `can still ${f.motions.join("; ")}`}
+            </li>
+          ))}
+        </ul>
+        <p className="muted small">A part that can still turn or slide is fine when it should (a hinge, a slider); otherwise add a mate that stops it.</p>
       </section>,
     );
   }

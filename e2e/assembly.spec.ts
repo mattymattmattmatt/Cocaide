@@ -124,3 +124,33 @@ test("an example part put in beside this one is carried in the file; a pin's hol
   await expect(page.getByTestId("asm-component-flange-1")).toBeVisible();
   await page.screenshot({ path: "test-results/assembly-example.png" });
 });
+
+test("a STEP file put in: its hole found to line up with this part's (Suggested mates), applied in one click, then checked", async ({ page }) => {
+  // The bracket as STEP, from the app's own export.
+  const wait = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export STEP" }).click();
+  const stepText = readFileSync((await (await wait).path())!, "utf8");
+  await page.getByTestId("mode-assembly").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-self").click();
+  await page.getByTestId("asm-insert").click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByTestId("asm-insert-file").click();
+  await (await chooser).setFiles({ name: "bought-plate.step", mimeType: "application/octet-stream", buffer: Buffer.from(stepText) });
+  await expect(page.getByTestId("asm-component-bought-plate-1")).toBeVisible();
+  // Its part is the STEP, imported: carried in the file.
+  const a = (await assembly(page)) as unknown as { parts: Record<string, { features: { op: string; format?: string }[] }> };
+  expect(a.parts["bought-plate"].features[0]).toMatchObject({ op: "import", format: "step" });
+  // Selected, it shows what it most likely mates with: the holes of one size in line.
+  await page.getByTestId("asm-component-bought-plate-1").locator(".asm-row").click();
+  await expect(page.getByTestId("asm-suggestions")).toContainText("Ø6.6 holes in line");
+  await page.screenshot({ path: "test-results/assembly-suggest.png" });
+  await page.getByTestId("asm-suggestions").locator("li", { hasText: "holes in line" }).first().getByRole("button", { name: "Apply" }).click();
+  await expect.poll(async () => ((await assembly(page))?.mates ?? []).map((m) => m.type)).toEqual(["concentric", "coincident"]);
+  // Checked: the mates hold; the plate can still turn about the hole's axis (one bolt hole: that's right).
+  await page.getByTestId("asm-check").click();
+  await expect(page.getByTestId("asm-check-results")).toContainText("Every mate holds, and every part is held.");
+  await expect(page.getByTestId("asm-check-results")).toContainText(/bought-plate-1: can still turn about an axis along \[0, 0, -?1\] through \[30, 0,/);
+  await expect(page.getByTestId("asm-clashes")).toContainText("No components overlap");
+  await page.screenshot({ path: "test-results/assembly-checked.png" });
+});

@@ -5,6 +5,16 @@
 //
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
+import { runAssemblyTool, ASSEMBLY_TOOLS, type AssemblyEnv } from "../assembly/tools";
+import type { PartTopology } from "../assembly/resolve";
+import { partDocuments } from "../assembly/model";
+import { placementOf } from "../assembly/transform";
+import { assemblyInterference, assemblySTEP } from "../kernel/assembly";
+import { describeEdges, describeFaces } from "../kernel/topology";
+import { scoped } from "../kernel/oc";
+import { stepPart } from "../ui/files/plan";
+import { exampleParts } from "./examples";
+import type { Assembly } from "../doc/types";
 import { libraryProfileCommand } from "../weldment/libraryTool";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -135,6 +145,12 @@ export const EDIT_TOOLS = [
   "importStep",
   "applyDetailPlan",
   "deleteAnnotations",
+  "insertComponent",
+  "setComponent",
+  "deleteComponent",
+  "addMate",
+  "editMate",
+  "deleteMate",
 ] as const;
 export const READ_TOOLS = [
   "listFeatures",
@@ -165,6 +181,11 @@ export const READ_TOOLS = [
   "detailPlan",
   "checkDrawing",
   "renderSheet",
+  "assembly",
+  "mateFeatures",
+  "suggestMates",
+  "checkAssembly",
+  "exportAssemblySTEP",
 ] as const;
 export type ToolName = (typeof EDIT_TOOLS)[number] | (typeof READ_TOOLS)[number];
 
@@ -306,7 +327,92 @@ export class AgentSession {
     return out;
   }
 
+  /** An assembly part's faces and edges, built here and kept by its geometry. */
+  private partTopology = new Map<string, PartTopology>();
+  private topologyOf(part: Record<string, unknown>): PartTopology | string {
+    const key = geometryKey(part);
+    const known = this.partTopology.get(key);
+    if (known) return known;
+    const r = rebuild(part, this.oc);
+    try {
+      if (!r.solid) return r.errors.join("; ") || "nothing builds";
+      const solid = r.solid;
+      const topo = scoped((s) => {
+        const f = describeFaces(this.oc, s, solid);
+        return { faces: f.infos, edges: describeEdges(this.oc, s, solid, f.faces).infos };
+      });
+      if (this.partTopology.size > 24) this.partTopology.clear();
+      this.partTopology.set(key, topo);
+      return topo;
+    } finally {
+      r.dispose();
+    }
+  }
+
+  /** A part from a file next to the document: a .cocaide.json part, or a STEP file as an imported part. */
+  private readPartFile(path: string): Record<string, unknown> | string {
+    const full = resolve(this.opts.docPath ? dirname(this.opts.docPath) : process.cwd(), path.trim());
+    let text: string;
+    try {
+      text = readFileSync(full, "utf8");
+    } catch {
+      return `no file ${full}`;
+    }
+    if (/\.(step|stp)$/i.test(full)) {
+      const made = stepPart(basename(full), text);
+      return typeof made === "string" ? made : (made.doc as Record<string, unknown>);
+    }
+    try {
+      const doc = JSON.parse(text) as unknown;
+      return isObject(doc) ? doc : `${basename(full)} isn't a part document`;
+    } catch (e) {
+      return `${basename(full)} isn't JSON: ${(e as Error).message}`;
+    }
+  }
+
+  private assemblyEnv(): AssemblyEnv {
+    return {
+      doc: this.doc,
+      topology: async (part) => this.topologyOf(part),
+      examples: exampleParts(),
+      readPart: async (path) => this.readPartFile(path),
+      interference: async (parts, components) => {
+        try {
+          return scoped((s) => assemblyInterference(this.oc, s, parts, components));
+        } catch (e) {
+          return (e as Error).message;
+        }
+      },
+    };
+  }
+
+  private async assemblyTool(tool: string, a: Record<string, unknown>): Promise<CallResult> {
+    const out = await runAssemblyTool(tool, a, this.assemblyEnv());
+    if (!out.ok) return this.fail(`${tool}: ${out.error}`);
+    if (!out.command) return { result: { ok: true, revision: this.revision, ...out.result } };
+    const done = this.edit(out.command);
+    return done.result.ok ? { result: { ...done.result, ...out.result } } : done;
+  }
+
+  private exportAssemblySTEP(a: Record<string, unknown>): CallResult {
+    const asm = isObject(this.doc.assembly) ? (this.doc.assembly as unknown as Assembly) : null;
+    if (!asm?.components?.length) return this.fail("exportAssemblySTEP: there is no assembly (insertComponent puts parts in)");
+    const name = typeof a.name === "string" && a.name.trim() ? a.name.trim() : `${typeof this.doc.name === "string" ? this.doc.name : "part"}-assembly`;
+    let text: string;
+    try {
+      text = scoped((s) => assemblySTEP(this.oc, s, name, partDocuments(this.doc as Record<string, unknown>, asm), asm.components.map((k) => ({ id: k.id, part: k.part, ...placementOf(k) }))));
+    } catch (e) {
+      return this.fail(`exportAssemblySTEP: ${(e as Error).message}`);
+    }
+    const path = join(this.outDir, name.endsWith(".step") ? name : `${name}.step`);
+    mkdirSync(this.outDir, { recursive: true });
+    writeFileSync(path, text);
+    return { result: { ok: true, file: path, bytes: Buffer.byteLength(text), components: asm.components.length, revision: this.revision } };
+  }
+
   private async run(tool: string, a: Record<string, unknown>): Promise<CallResult> {
+    if (ASSEMBLY_TOOLS.has(tool)) return this.assemblyTool(tool, a);
+    if (tool === "exportAssemblySTEP") return this.exportAssemblySTEP(a);
     switch (tool as ToolName) {
       case "addFeature": {
         const feature = isObject(a.feature) ? { ...a.feature } : a.feature;
@@ -669,9 +775,12 @@ export class AgentSession {
   private status() {
     const m = this.built.measurements;
     const out: Record<string, unknown> = { revision: this.revision, hash: this.hash.slice(0, 12) };
+    // A document that is only an assembly (no features of its own) has no part to build: that's no error.
+    const assemblyOnly = !this.doc.features.length && isObject(this.doc.assembly);
     if (m) out.volume = round6(m.volume);
-    else out.solid = false;
-    if (this.built.errors.length) out.errors = this.built.errors;
+    else if (!assemblyOnly) out.solid = false;
+    const errors = assemblyOnly ? this.built.errors.filter((e) => !/no solid/.test(e)) : this.built.errors;
+    if (errors.length) out.errors = errors;
     return out;
   }
 

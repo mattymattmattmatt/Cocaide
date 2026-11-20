@@ -150,6 +150,10 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: "Write the part as STEP (AP214, mm) to the output folder. Refused if the part has errors.",
     input: { file: z.string().optional().describe("File name; default <document name>.step") },
   },
+  exportAssemblySTEP: {
+    description: "Write the assembly as one STEP file (AP214, mm) to the output folder: each component a named solid where it sits.",
+    input: { name: z.string().optional().describe("File name; default <document name>-assembly.step") },
+  },
   exportSTL: {
     description: "Write the part as binary STL (a mesh, for printing) to the output folder.",
     input: { file: z.string().optional().describe("File name; default <document name>.stl") },

@@ -4,9 +4,8 @@
 
 import { SELF } from "../doc/assembly";
 import type { Assembly, AssemblyComponent, Mate, Vec3 } from "../doc/types";
-import type { RebuildView } from "../worker/protocol";
-import { mateGeometry } from "./resolve";
-import { solveMates, type MateStatus, type SolverMate } from "./solve";
+import { mateGeometry, type PartTopology } from "./resolve";
+import { freeMotions, solveMates, type FreeMotion, type MateStatus, type SolverMate } from "./solve";
 import { placementOf, written, type Placement } from "./transform";
 
 /** The part document a component uses: this document's own part (without its drawing and assembly), or one the assembly carries. */
@@ -42,10 +41,12 @@ export interface AssemblySolve {
   placements: Map<string, Placement>;
   mates: MateStatus[];
   solved: boolean;
+  /** The mates as the solver held them (those whose geometry was found, not suppressed). */
+  held: SolverMate[];
 }
 
 /** The assembly solved on its parts as built (`views` by part key). */
-export function solveAssembly(asm: Assembly, views: Map<string, RebuildView>): AssemblySolve {
+export function solveAssembly(asm: Assembly, views: Map<string, PartTopology>): AssemblySolve {
   const placements = new Map(asm.components.map((k) => [k.id, placementOf(k)]));
   const fixed = new Set(asm.components.filter((k) => k.fixed).map((k) => k.id));
   const byId = new Map(asm.components.map((k) => [k.id, k]));
@@ -64,7 +65,26 @@ export function solveAssembly(asm: Assembly, views: Map<string, RebuildView>): A
   const r = solveMates(placements, fixed, solverMates);
   const order = new Map((asm.mates ?? []).map((m, i) => [m.id, i]));
   const mates = [...r.mates, ...problems].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
-  return { placements: r.placements, mates, solved: mates.every((m) => m.ok) };
+  return { placements: r.placements, mates, solved: mates.every((m) => m.ok), held: solverMates };
+}
+
+export interface ComponentState {
+  id: string;
+  fixed: boolean;
+  /** What it can still do with its mates holding (none: fully placed). */
+  motions: FreeMotion[];
+}
+
+/** Each component's freedom, on the solved assembly: what a check reports as under-constrained. */
+export function componentStates(asm: Assembly, solve: AssemblySolve): ComponentState[] {
+  const held = new Set(asm.components.filter((k) => k.fixed).map((k) => k.id));
+  if (!held.size && asm.components.length) held.add(asm.components[0].id);
+  return asm.components.map((k) => ({ id: k.id, fixed: held.has(k.id), motions: held.has(k.id) ? [] : freeMotions(solve.placements, solve.held, k.id) }));
+}
+
+/** A motion in words, after "can still": "slide along [1, 0, 0]", "turn about an axis along [0, 0, 1] through [30, 0, 0]". */
+export function motionWords(m: FreeMotion): string {
+  return m.kind === "slide" ? `slide along [${m.along.join(", ")}]` : `turn about an axis along [${m.axis.join(", ")}] through [${m.through.join(", ")}]`;
 }
 
 /** The assembly with each component where `placements` puts it (written to the micron and the millionth of a degree). */
