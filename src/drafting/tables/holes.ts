@@ -149,7 +149,7 @@ export interface PlacedView {
  * hole, clear of its rim), and the origin's mark: what links the view to
  * its hole table. Owned by the table's id.
  */
-export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec2, owner: string, size = 3.5): Prim[] {
+export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec2, owner: string, size = 3.5, lines: Vec2[][] = []): Prim[] {
   const at = (p: Vec2): Vec2 => {
     const t = ((view.rotation ?? 0) * Math.PI) / 180;
     const d: Vec2 = [(p[0] - view.origin[0]) * view.scale, (p[1] - view.origin[1]) * view.scale];
@@ -159,12 +159,14 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
   // Each tag beside its hole, clear of the other tags and holes: up and right first, then round the hole, then a
   // little further out with a short leader (holes close together, a plate's pair, keep their tags apart).
   type Box = { x0: number; y0: number; x1: number; y1: number };
-  const taken: Box[] = rows.map((r) => {
-    const c = at(r.center);
-    const rim = (r.outer / 2) * view.scale;
-    return { x0: c[0] - rim, y0: c[1] - rim, x1: c[0] + rim, y1: c[1] + rim };
-  });
-  const hits = (b: Box) => taken.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1);
+  // The holes' rims as circles (a square would refuse the diagonal place beside the hole), the placed tags as boxes.
+  const rims = rows.map((r) => ({ c: at(r.center), r: (r.outer / 2) * view.scale }));
+  const taken: Box[] = [];
+  const onRim = (b: Box) => rims.some(({ c, r }) => Math.hypot(Math.max(b.x0 - c[0], 0, c[0] - b.x1), Math.max(b.y0 - c[1], 0, c[1] - b.y1)) < r);
+  // The view's own lines (sheet mm) too: a tag sat on an outline is hard to read.
+  const segs: [Vec2, Vec2][] = lines.flatMap((l) => l.slice(1).map((q, i) => [l[i], q] as [Vec2, Vec2]));
+  const crosses = (b: Box) => segs.some(([a, c]) => segmentHitsBox(a, c, b));
+  const hits = (b: Box) => onRim(b) || taken.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1) || crosses(b);
   const dirs: Vec2[] = [[1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
   for (const r of rows) {
     const c = at(r.center);
@@ -172,9 +174,9 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
     const w = textWidth(r.tag, size);
     const h = size * 0.72;
     let placed: { p: Vec2; far: boolean } | null = null;
-    for (const far of [false, true]) {
+    for (const far of [0, 1, 2, 3]) {
       for (const [dx, dy] of dirs) {
-        const d = (rim + 1.2) * (far ? 2.6 : 1) + (far ? 2 : 0);
+        const d = (rim + 1.2) * (far ? 2.6 : 1) + far * 2.5;
         const ox = c[0] + dx * (dx && dy ? d * Math.SQRT1_2 : d);
         const oy = c[1] + dy * (dx && dy ? d * Math.SQRT1_2 : d);
         const x0 = dx < 0 ? ox - w : dx === 0 ? ox - w / 2 : ox;
@@ -182,7 +184,7 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
         const b = { x0: x0 - 0.4, y0: y0 - 0.4, x1: x0 + w + 0.4, y1: y0 + h + 0.4 };
         if (!hits(b)) {
           taken.push(b);
-          placed = { p: [x0, y0], far };
+          placed = { p: [x0, y0], far: far > 0 };
           break;
         }
       }
@@ -198,4 +200,27 @@ export function holeTagPrims(rows: HoleTableRow[], view: PlacedView, origin: Vec
   out.push({ k: "line", pts: [[o[0], o[1] - 2.5], [o[0], o[1] + 2.5]], w: 0.25, owner });
   out.push({ k: "text", at: [o[0] - 1, o[1] - 1 - size * 0.72], text: "0,0", size: size * 0.85, anchor: "end", owner });
   return out;
+}
+
+/** Whether the segment a-c crosses or lies in the box. */
+function segmentHitsBox(a: Vec2, c: Vec2, b: { x0: number; y0: number; x1: number; y1: number }): boolean {
+  if (Math.max(a[0], c[0]) < b.x0 || Math.min(a[0], c[0]) > b.x1 || Math.max(a[1], c[1]) < b.y0 || Math.min(a[1], c[1]) > b.y1) return false;
+  const inside = (p: Vec2) => p[0] >= b.x0 && p[0] <= b.x1 && p[1] >= b.y0 && p[1] <= b.y1;
+  if (inside(a) || inside(c)) return true;
+  // Clip against each side (Liang-Barsky).
+  let t0 = 0;
+  let t1 = 1;
+  const dx = c[0] - a[0];
+  const dy = c[1] - a[1];
+  for (const [p, q] of [[-dx, a[0] - b.x0], [dx, b.x1 - a[0]], [-dy, a[1] - b.y0], [dy, b.y1 - a[1]]] as [number, number][]) {
+    if (Math.abs(p) < 1e-12) {
+      if (q < 0) return false;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) t0 = Math.max(t0, r);
+    else t1 = Math.min(t1, r);
+    if (t0 > t1) return false;
+  }
+  return true;
 }

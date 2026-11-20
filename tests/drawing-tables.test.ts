@@ -227,11 +227,15 @@ describe("the hole table", () => {
     expect(outlineOrigin("top:v12", outline)).toBeNull();
     const rows = holeTable([{ center: [40, 20], diameter: 6.6, outer: 11, size: "Ø6.6" }], [-50, -30]);
     const prims = holeTagPrims(rows, { centre: [100, 100], origin: [0, 0], scale: 2 }, [-50, -30], "holes");
-    // The tag up and right of the hole, clear of its 11 mm counterbore at 2:1: (100 + 80 + 11·0.707 + 1.2, 100 + 40 + ...).
+    // The tag up and right of the hole, its corner 1.2 clear of the 11 mm counterbore's rim at 2:1: (100 + 80 + 12.2·0.707, ...).
     const tag = prims[0] as Extract<Prim, { k: "text" }>;
     expect(tag.text).toBe("A1");
-    expect(tag.at[0]).toBeCloseTo(180 + 11 * Math.SQRT1_2 + 1.2, 9);
-    expect(tag.at[1]).toBeCloseTo(140 + 11 * Math.SQRT1_2 + 1.2, 9);
+    expect(tag.at[0]).toBeCloseTo(180 + 12.2 * Math.SQRT1_2, 9);
+    expect(tag.at[1]).toBeCloseTo(140 + 12.2 * Math.SQRT1_2, 9);
+    // Beside a line of the view, it moves round the hole instead of sitting on it.
+    const crossed = holeTagPrims(rows, { centre: [100, 100], origin: [0, 0], scale: 2 }, [-50, -30], "holes", 3.5, [[[185, 145], [200, 160]]]);
+    const moved = crossed.find((p) => p.k === "text" && p.text === "A1") as Extract<Prim, { k: "text" }>;
+    expect(moved.at).not.toEqual(tag.at);
   });
 });
 

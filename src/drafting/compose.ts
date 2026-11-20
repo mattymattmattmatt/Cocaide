@@ -434,7 +434,10 @@ class Composer {
       for (const p of t.rendered.problems) this.problems.push(`${t.table.id}: ${p}`);
       // A hole table's tags beside its holes, and its origin's mark.
       const cv = t.holes ? this.cv(t.holes.view) : undefined;
-      if (t.holes && cv) this.prims.push(...holeTagPrims(t.holes.rows, cv, t.holes.origin, t.table.id));
+      if (t.holes && cv) {
+        const lines = this.prims.flatMap((q) => (q.k === "line" && q.owner === cv.id ? [q.closed ? [...q.pts, q.pts[0]] : q.pts] : []));
+        this.prims.push(...holeTagPrims(t.holes.rows, cv, t.holes.origin, t.table.id, 3.5, lines));
+      }
     }
     if (this.template === "classic") this.drawTitleBlock(scale);
 
