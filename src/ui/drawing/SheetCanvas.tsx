@@ -17,7 +17,7 @@ import type { Annotation, Drawing, DrawingSheet, Vec2 } from "../../doc/types";
 import type { ComposedSheet } from "../../drafting/compose";
 import { primBox, type Box, type Prim } from "../../drafting/sheet";
 import { textWidth } from "../../drafting/text";
-import { SHEET_FONT, sheetSVG } from "../../drafting/svg";
+import { SHEET_FONT, SHEET_FONTS, sheetSVG } from "../../drafting/svg";
 import { wheelZoom } from "../input";
 import { alignmentOf, constrain, followers, keepOff, pulledOff, snapToViews, tenth, type Guide } from "./align";
 import { snapAt, type SnapIndex, type SnapKind, type SnapTarget } from "./snap";
@@ -743,7 +743,7 @@ function PrimsPreview({ prims, colour, H }: { prims: Prim[]; colour: string; H: 
         if (p.k === "circle") return <circle key={i} cx={p.c[0]} cy={y(p.c[1])} r={p.r} strokeWidth={Math.max(p.w, 0.18)} fill={p.fill ? "currentColor" : "none"} />;
         if (p.k === "area") return null;
         return (
-          <text key={i} x={p.at[0]} y={y(p.at[1])} fontSize={p.size} textAnchor={p.anchor} fontWeight={p.bold ? "bold" : undefined} fontStyle={p.italic ? "italic" : undefined} transform={p.angle ? `rotate(${-p.angle} ${p.at[0]} ${y(p.at[1])})` : undefined} fill="currentColor" stroke="none" fontFamily={SHEET_FONT}>
+          <text key={i} x={p.at[0]} y={y(p.at[1])} fontSize={p.size} textAnchor={p.anchor} fontWeight={p.bold ? "bold" : undefined} fontStyle={p.italic ? "italic" : undefined} transform={p.angle ? `rotate(${-p.angle} ${p.at[0]} ${y(p.at[1])})` : undefined} fill="currentColor" stroke="none" fontFamily={p.font ? SHEET_FONTS[p.font] : SHEET_FONT}>
             {p.text}
           </text>
         );

@@ -251,7 +251,7 @@ function keyed(oc: OC, s: Scope, body: { name: string; shape: TopoDS_Shape }, la
   const keys = edgeKeys(infos);
   const edges: KeyedEdge[] = [];
   infos.forEach((info, i) => {
-    if (info.seam) return;
+    // Seams are kept: a revolve seen across its seam draws it where a silhouette would be (dimensions take it).
     edges.push({ key: keys[i], ...(info.createdBy ? { feature: info.createdBy } : {}), info, pts3: sample(oc, s, list.edges[i]) });
   });
   const round = faceInfos.filter((f) => f.type === "cylinder" && f.cylinder);

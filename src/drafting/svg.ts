@@ -7,6 +7,8 @@ import type { ComposedSheet } from "./compose";
 import type { Prim } from "./sheet";
 
 export const SHEET_FONT = "Helvetica, Arial, 'Liberation Sans', sans-serif";
+/** The serif and monospace lettering (Times and Courier, and their metric twins). */
+export const SHEET_FONTS = { sans: SHEET_FONT, serif: "'Times New Roman', Times, 'Liberation Serif', serif", mono: "'Courier New', Courier, 'Liberation Mono', monospace" } as const;
 
 export interface SvgOptions {
   /** Ids drawn highlighted. */
@@ -39,7 +41,8 @@ export function sheetSVG(sheet: ComposedSheet, opts: SvgOptions = {}): string {
     }
     const anchor = p.anchor === "start" ? "" : ` text-anchor="${p.anchor}"`;
     const rot = p.angle ? ` transform="rotate(${n(-p.angle)} ${n(p.at[0])} ${y(p.at[1])})"` : "";
-    return `<text x="${n(p.at[0])}" y="${y(p.at[1])}" font-size="${n(p.size)}"${anchor}${p.bold ? ` font-weight="bold"` : ""}${p.italic ? ` font-style="italic"` : ""}${rot} fill="${p.color ? esc(p.color) : "currentColor"}" stroke="none">${esc(p.text)}</text>`;
+    const family = p.font ? ` font-family="${SHEET_FONTS[p.font].replace(/"/g, "'")}"` : "";
+    return `<text x="${n(p.at[0])}" y="${y(p.at[1])}" font-size="${n(p.size)}"${family}${anchor}${p.bold ? ` font-weight="bold"` : ""}${p.italic ? ` font-style="italic"` : ""}${rot} fill="${p.color ? esc(p.color) : "currentColor"}" stroke="none">${esc(p.text)}</text>`;
   };
   const groups: string[] = [];
   let owner: string | undefined;

@@ -47,7 +47,7 @@ import { nestCutList } from "../weldment/nesting";
 import type { PropContext } from "./props";
 import { boxOf, centre, grow, inside, overlaps, primBox, type Box, type Prim } from "./sheet";
 import { projectionOf } from "./specs";
-import { CAP, CENTER_DASH, HIDDEN_DASH, LINE, PHANTOM_DASH, TEXT, textWidth } from "./text";
+import { CAP, CENTER_DASH, HIDDEN_DASH, LINE, PHANTOM_DASH, setSheetFont, TEXT, textWidth, type SheetFont } from "./text";
 import { DIRECTION_VECTORS, inView, isSquareFrame, leftOf, placeFromFront, sameFrame, sectionSide, viewFrame, type ViewFrame } from "./views";
 
 export interface ComposeContext {
@@ -176,6 +176,8 @@ export interface ComposedSheet {
   problems: string[];
   /** The cut list the balloons and the table number by. */
   cutList: CutListItem[];
+  /** Its lettering's font, when not the default sans serif. */
+  font?: SheetFont;
   /** For resolving GeoRefs' Phase L points. */
   points: PointContext;
   /**
@@ -374,7 +376,27 @@ class Composer {
   /** View labels ("ISO  SCALE 1:20"): balloons and symbols keep clear of them. */
   private labels: Box[] = [];
 
+  /** The sheet laid out and drawn in the drawing's lettering (its font measured as it is set; slanted when it says). */
   compose(): ComposedSheet {
+    const was = setSheetFont(this.d.font);
+    try {
+      const sheet = this.composeInner();
+      const font = this.d.font && this.d.font !== "sans" ? this.d.font : undefined;
+      const slanted = this.d.lettering === "slanted";
+      if (font || slanted)
+        for (const p of sheet.prims) {
+          if (p.k !== "text") continue;
+          if (font) p.font = font;
+          if (slanted) p.italic = true;
+        }
+      if (font) sheet.font = font;
+      return sheet;
+    } finally {
+      setSheetFont(was);
+    }
+  }
+
+  private composeInner(): ComposedSheet {
     this.planDimensions();
     // The sheet's tables (src/drafting/tables): placed by their anchors before the views, which keep clear of them.
     // Tables with no anchor of their own may go to the top right instead when the views then fit at a larger scale
@@ -1588,6 +1610,8 @@ class Composer {
     else if (kind === "detail") lines = asme ? [`DETAIL ${label}`] : [showScale ? `${label} (${scaleTxt})` : label];
     else if (kind === "auxiliary") lines = asme ? [`VIEW ${label}`] : [label];
     else if (view.showLabel || own) lines = [view.source === "assembly" && view.exploded ? "EXPLODED VIEW" : view.id.toUpperCase()];
+    // A caption of its own replaces the standard label (a section's or detail's letter is kept in front of it).
+    if (view.caption?.trim()) lines = [kind === "section" || kind === "detail" || kind === "auxiliary" ? `${lines[0] ? `${lines[0]}  ` : ""}${view.caption.trim().toUpperCase()}` : view.caption.trim().toUpperCase()];
     if (view.showLabel === false) return [];
     if (showScale && (asme || kind !== "detail") && lines.length) lines.push(`SCALE ${scaleTxt}`);
     return lines;

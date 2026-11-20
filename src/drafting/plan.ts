@@ -57,8 +57,15 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   // Hidden insides: the front view becomes a full section, cut along the top view through the most holes (or the middle).
   const top = geometry?.views.find((x) => x.id === "top");
   const topOutline = outlineOf(geometry, "top");
-  const insides = visibleLength(geometry, "front", null, true) + visibleLength(geometry, "right", null, true);
-  if (!weldment && top && topOutline && insides > 1e-6) {
+  // Hidden insides: what the front view sees hidden, and the side's when the part has holes (a turned part's end view
+  // shows its far steps hidden: that is no inside to cut open).
+  const insides = visibleLength(geometry, "front", null, true) + ((geometry?.holes?.length ?? 0) > 0 ? visibleLength(geometry, "right", null, true) : 0);
+  // Something inside to cut open: a hole, a cut, a shell, a pocket made by removing (a solid turned shaft has none).
+  const removes = v.features.some((vf) => {
+    const f = vf.feature as { op?: string; operation?: string; suppressed?: boolean } | null;
+    return !!f && !f.suppressed && (f.op === "hole" || f.op === "cut" || f.op === "shell" || f.op === "rib" || f.operation === "remove");
+  });
+  if (!weldment && top && topOutline && insides > 1e-6 && removes) {
     const mid = (topOutline.min[1] + topOutline.max[1]) / 2;
     // Each line across the top view through a circle's centre, scored by the circles on it.
     const score = new Map<number, number>();

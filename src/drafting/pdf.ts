@@ -24,6 +24,9 @@ export interface PdfOptions {
   title?: string;
   /** Embed these (regular and bold) instead of naming Helvetica. */
   fonts?: { regular: FontFile; bold: FontFile };
+  /** A serif drawing's (Liberation Serif) and a monospace one's (Liberation Mono), to embed instead of naming Times and Courier. */
+  serifFonts?: { regular: FontFile; bold: FontFile };
+  monoFonts?: { regular: FontFile; bold: FontFile };
 }
 
 /** One sheet, one page. */
@@ -90,13 +93,14 @@ function pageContent(sheet: ComposedSheet): string {
     const a = ((p.angle ?? 0) * Math.PI) / 180;
     const c = Math.cos(a);
     const s = Math.sin(a);
-    const w = textWidth(p.text, p.size, p.bold);
+    const w = textWidth(p.text, p.size, p.bold, p.font ?? "sans");
     const shift = p.anchor === "start" ? 0 : p.anchor === "middle" ? -w / 2 : -w;
     const x = p.at[0] + shift * c;
     const y = p.at[1] + shift * s;
     // Italic: the letters sheared 12° (the fonts embedded are upright), turned with the text.
     const k = p.italic ? Math.tan((12 * Math.PI) / 180) : 0;
-    return [`BT /${p.bold ? "F2" : "F1"} ${n(p.size)} Tf ${n(c)} ${n(s)} ${n(k * c - s)} ${n(k * s + c)} ${n(x)} ${n(y)} Tm (${pdfString(p.text)}) Tj ET`];
+    const face = p.font === "serif" ? (p.bold ? "F4" : "F3") : p.font === "mono" ? (p.bold ? "F6" : "F5") : p.bold ? "F2" : "F1";
+    return [`BT /${face} ${n(p.size)} Tf ${n(c)} ${n(s)} ${n(k * c - s)} ${n(k * s + c)} ${n(x)} ${n(y)} Tm (${pdfString(p.text)}) Tj ET`];
   }
 }
 
@@ -115,19 +119,22 @@ export function drawingPDF(sheets: ComposedSheet[], opts: PdfOptions = {}): Uint
   };
   const catalog = add(""); // filled below
   const pages = add("");
-  let fonts: [number, number];
-  if (opts.fonts) {
-    fonts = [embedFont(add, opts.fonts.regular, "LiberationSans"), embedFont(add, opts.fonts.bold, "LiberationSans-Bold")];
-  } else {
-    fonts = [add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"), add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")];
-  }
+  // Each family the sheets use: embedded when given, else the PDF standard font of its metrics.
+  const std = (name: string) => add(`<< /Type /Font /Subtype /Type1 /BaseFont /${name} /Encoding /WinAnsiEncoding >>`);
+  const family = (given: { regular: FontFile; bold: FontFile } | undefined, embedName: string, stdName: [string, string]): [number, number] =>
+    given ? [embedFont(add, given.regular, embedName), embedFont(add, given.bold, `${embedName}-Bold`)] : [std(stdName[0]), std(stdName[1])];
+  const fonts = family(opts.fonts, "LiberationSans", ["Helvetica", "Helvetica-Bold"]);
+  const uses = (f: "serif" | "mono") => sheets.some((sh) => sh.prims.some((p) => p.k === "text" && p.font === f));
+  const serif = uses("serif") ? family(opts.serifFonts, "LiberationSerif", ["Times-Roman", "Times-Bold"]) : null;
+  const mono = uses("mono") ? family(opts.monoFonts, "LiberationMono", ["Courier", "Courier-Bold"]) : null;
+  const more = `${serif ? ` /F3 ${serif[0]} 0 R /F4 ${serif[1]} 0 R` : ""}${mono ? ` /F5 ${mono[0]} 0 R /F6 ${mono[1]} 0 R` : ""}`;
   const kids: number[] = [];
   for (const sheet of sheets) {
     const content = pageContent(sheet);
     const stream = add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
     const W = n(sheet.width * PT_PER_MM);
     const H = n(sheet.height * PT_PER_MM);
-    kids.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${fonts[0]} 0 R /F2 ${fonts[1]} 0 R >> >> /Contents ${stream} 0 R >>`));
+    kids.push(add(`<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 ${fonts[0]} 0 R /F2 ${fonts[1]} 0 R${more} >> >> /Contents ${stream} 0 R >>`));
   }
   objects[catalog - 1] = [`<< /Type /Catalog /Pages ${pages} 0 R >>`];
   objects[pages - 1] = [`<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(" ")}] /Count ${kids.length} >>`];

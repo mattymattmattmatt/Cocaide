@@ -19,7 +19,7 @@ import { sheetSVG } from "../../drafting/svg";
 import { DEFAULT_COLUMNS, DEFAULT_CORNERS, TABLE_COLUMNS, TABLE_CORNERS, type DrawingTable, type TableKind } from "../../drafting/tables";
 import { Icon } from "../icons";
 import { ScaleSelect } from "./Panels";
-import { pdfFonts, sheetPNG } from "./SheetView";
+import { pdfFamily, pdfFonts, sheetPNG } from "./SheetView";
 import type { Workspace } from "./Workspace";
 
 function Dialog({ title, onClose, children, wide, testId }: { title: string; onClose(): void; children: ReactNode; wide?: boolean; testId: string }) {
@@ -589,7 +589,12 @@ export async function exportSheets(kind: "pdf" | "svg" | "dxf" | "png", all: Com
   const pages = kind === "pdf" && opts.sheets !== "current" ? all : [current];
   const many = all.length > 1 && (kind !== "pdf" || opts.sheets === "current");
   const name = `${meta.base}-drawing${many ? `-${safeFileName(current.name)}` : ""}.${kind}`;
-  if (kind === "pdf") download(name, drawingPDF(pages.map(look), { title: meta.title, ...(await pdfFonts().then((f) => (f ? { fonts: f } : {}))) }), "application/pdf");
+  if (kind === "pdf") {
+    const lettered = (f: "serif" | "mono") => pages.some((s) => s.font === f);
+    const serif = lettered("serif") ? await pdfFamily("serif") : null;
+    const mono = lettered("mono") ? await pdfFamily("mono") : null;
+    download(name, drawingPDF(pages.map(look), { title: meta.title, ...(await pdfFonts().then((f) => (f ? { fonts: f } : {}))), ...(serif ? { serifFonts: serif } : {}), ...(mono ? { monoFonts: mono } : {}) }), "application/pdf");
+  }
   else if (kind === "svg") download(name, sheetSVG(look(current)), "image/svg+xml");
   else if (kind === "dxf") download(name, sheetDXF(look(current), { version: opts.dxfVersion ?? "R2000" }), "application/dxf");
   else download(name, await sheetPNG(look(current), opts.dpi ?? 200), "image/png");

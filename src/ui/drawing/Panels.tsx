@@ -229,6 +229,9 @@ function ViewPanel({ ws, view }: { ws: Workspace; view: DrawingView }) {
           </select>
         </Field>
       )}
+      <Field label="Label">
+        <TextField value={view.caption ?? ""} placeholder={kind === "model" ? "e.g. FRONT VIEW" : "added after the letter"} onCommit={(v) => set({ caption: v.trim() || undefined, ...(v.trim() && view.showLabel === false ? { showLabel: undefined } : {}) })} testId="prop-view-caption" />
+      </Field>
       <Field label="Scale">
         <ScaleSelect value={view.scale} auto={`${kind === "detail" ? "twice its parent's" : "the sheet's"} (${cv?.scaleText ?? "…"})`} onChange={(scale) => set({ scale })} testId="prop-view-scale" />
       </Field>
@@ -749,6 +752,20 @@ function SheetPanel({ ws }: { ws: Workspace }) {
         <select value={drawing.standard ?? "ISO"} onChange={(e) => ws.run({ type: "setDrawingOptions", patch: { standard: e.target.value } })} data-testid="drawing-standard">
           <option value="ISO">ISO</option>
           <option value="ASME">ASME</option>
+        </select>
+      </Field>
+      <h4 className="prop-sub">Lettering</h4>
+      <Field label="Font">
+        <select value={drawing.font ?? "sans"} onChange={(e) => ws.run({ type: "setDrawingOptions", patch: { font: e.target.value === "sans" ? null : e.target.value } })} data-testid="drawing-font" title="Every letter on the drawing: dimensions, notes, tables, the title block (the PDF carries the font)">
+          <option value="sans">Sans serif (Helvetica)</option>
+          <option value="serif">Serif (Times)</option>
+          <option value="mono">Monospace (Courier)</option>
+        </select>
+      </Field>
+      <Field label="Style">
+        <select value={drawing.lettering ?? "upright"} onChange={(e) => ws.run({ type: "setDrawingOptions", patch: { lettering: e.target.value === "upright" ? null : e.target.value } })} data-testid="drawing-lettering" title="Upright, or slanted 15° as ISO 3098 type B lettering">
+          <option value="upright">Upright</option>
+          <option value="slanted">Slanted (ISO 3098)</option>
         </select>
       </Field>
       <div className="drawing-buttons wrap">

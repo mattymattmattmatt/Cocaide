@@ -20,13 +20,45 @@ const BOLD = [
 /** The few others a drawing uses: Ø ° × ² ± µ – —. */
 const EXTRA: Record<string, number> = { "Ø": 778, "°": 400, "×": 584, "²": 333, "±": 584, "µ": 556, "–": 556, "—": 1000 };
 
-/** Width of `text` set at font size `size` (mm), mm. */
-export function textWidth(text: string, size: number, bold = false): number {
-  const table = bold ? BOLD : REGULAR;
+// Times (Liberation Serif) and Courier (Liberation Mono), the PDF standard fonts' metric twins, likewise.
+const SERIF = [
+  250, 333, 408, 500, 500, 833, 778, 180, 333, 333, 500, 564, 250, 333, 250, 278, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 278, 278, 564, 564,
+  564, 444, 921, 722, 667, 667, 722, 611, 556, 722, 722, 333, 389, 722, 611, 889, 722, 722, 556, 722, 667, 556, 611, 722, 722, 944, 722, 722, 611, 333,
+  278, 333, 469, 500, 333, 444, 500, 444, 500, 444, 333, 500, 500, 278, 278, 500, 278, 778, 500, 500, 500, 500, 333, 389, 278, 500, 500, 722, 500, 500,
+  444, 480, 200, 480, 541,
+];
+const SERIF_BOLD = [
+  250, 333, 555, 500, 500, 1000, 833, 278, 333, 333, 500, 570, 250, 333, 250, 278, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 570, 570,
+  570, 500, 930, 722, 667, 722, 722, 667, 611, 778, 778, 389, 500, 778, 667, 944, 722, 778, 611, 778, 722, 556, 667, 722, 722, 1000, 722, 722, 667, 333,
+  278, 333, 581, 500, 333, 500, 556, 444, 556, 444, 333, 500, 556, 278, 333, 556, 278, 833, 556, 500, 556, 556, 444, 389, 333, 556, 500, 722, 500, 500,
+  444, 394, 220, 394, 520,
+];
+const SERIF_EXTRA: Record<string, number> = {"Ø": 722, "°": 400, "×": 564, "²": 300, "±": 549, "µ": 576, "–": 500, "—": 1000};
+
+/** The drawing's lettering: a sans serif (Helvetica, the default), a serif (Times) or a monospace (Courier). */
+export const SHEET_FONTS = ["sans", "serif", "mono"] as const;
+export type SheetFont = (typeof SHEET_FONTS)[number];
+
+/** The font sheets are being laid out in now (compose sets it for a drawing, and puts the default back after). */
+let current: SheetFont = "sans";
+export function setSheetFont(font: SheetFont | undefined): SheetFont {
+  const was = current;
+  current = font ?? "sans";
+  return was;
+}
+export function sheetFont(): SheetFont {
+  return current;
+}
+
+/** Width of `text` set at font size `size` (mm), mm, in `font` (default: the font sheets are laid out in now). */
+export function textWidth(text: string, size: number, bold = false, font: SheetFont = current): number {
+  if (font === "mono") return ([...text].length * 600 / 1000) * size;
+  const table = font === "serif" ? (bold ? SERIF_BOLD : SERIF) : bold ? BOLD : REGULAR;
+  const extra = font === "serif" ? SERIF_EXTRA : EXTRA;
   let units = 0;
   for (const ch of text) {
     const c = ch.codePointAt(0)!;
-    units += c >= FIRST && c < FIRST + table.length ? table[c - FIRST] : (EXTRA[ch] ?? 556);
+    units += c >= FIRST && c < FIRST + table.length ? table[c - FIRST] : (extra[ch] ?? (font === "serif" ? 500 : 556));
   }
   return (units / 1000) * size;
 }

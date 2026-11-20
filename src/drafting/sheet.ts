@@ -39,6 +39,8 @@ export type Prim = (
       bold?: boolean;
       /** Slanted (rich text's *italic*): SVG's font-style, a sheared text matrix in the PDF. */
       italic?: boolean;
+      /** The drawing's lettering when not the sans serif: "serif" (Times) or "mono" (Courier). */
+      font?: "serif" | "mono";
       color?: string;
       owner?: string;
     }

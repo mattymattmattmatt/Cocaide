@@ -6,6 +6,28 @@ import type { FontFile } from "../../drafting/pdf";
 import { sheetSVG } from "../../drafting/svg";
 
 let fonts: Promise<{ regular: FontFile; bold: FontFile } | null> | null = null;
+const families = new Map<string, Promise<{ regular: FontFile; bold: FontFile } | null>>();
+
+/** Liberation Serif or Mono, regular and bold, fetched once (for a PDF of a drawing lettered in it). Null when they can't be had. */
+export function pdfFamily(family: "serif" | "mono"): Promise<{ regular: FontFile; bold: FontFile } | null> {
+  const stem = family === "serif" ? "LiberationSerif" : "LiberationMono";
+  let p = families.get(family);
+  if (!p) {
+    const one = async (file: string): Promise<FontFile> => {
+      const r = await fetch(`${import.meta.env.BASE_URL}fonts/${file}`);
+      if (!r.ok) throw new Error(`${file}: ${r.status}`);
+      const data = new Uint8Array(await r.arrayBuffer());
+      const deflated = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
+      return { data, deflated };
+    };
+    p = Promise.all([one(`${stem}-Regular.ttf`), one(`${stem}-Bold.ttf`)]).then(
+      ([regular, bold]) => ({ regular, bold }),
+      () => null,
+    );
+    families.set(family, p);
+  }
+  return p;
+}
 
 /** Liberation Sans regular and bold, fetched once and deflated, for PDFs that carry their font. Null when they can't be had. */
 export function pdfFonts(): Promise<{ regular: FontFile; bold: FontFile } | null> {

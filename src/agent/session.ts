@@ -1113,7 +1113,7 @@ export class AgentSession {
     const title = this.drawingTitle();
     const bytes =
       format === "pdf"
-        ? drawingPDF(typeof sheetId === "string" ? [sheet] : c.sheets, { title, ...(sheetFonts() ? { fonts: sheetFonts()! } : {}) })
+        ? drawingPDF(typeof sheetId === "string" ? [sheet] : c.sheets, { title, ...(sheetFonts() ? { fonts: sheetFonts()! } : {}), ...(familyFonts("serif") ? { serifFonts: familyFonts("serif")! } : {}), ...(familyFonts("mono") ? { monoFonts: familyFonts("mono")! } : {}) })
         : new TextEncoder().encode(format === "svg" ? sheetSVG(sheet) : sheetDXF(sheet));
     mkdirSync(this.outDir, { recursive: true });
     writeFileSync(path, bytes);
@@ -1230,6 +1230,26 @@ function safeName(s: string): string {
 }
 
 let fonts: { regular: FontFile; bold: FontFile } | null | undefined;
+
+const familyCache = new Map<string, { regular: FontFile; bold: FontFile } | null>();
+/** Liberation Serif or Mono, from the app's public folder (null when they aren't there): embedded when a drawing is lettered in them. */
+function familyFonts(family: "serif" | "mono"): { regular: FontFile; bold: FontFile } | null {
+  if (familyCache.has(family)) return familyCache.get(family)!;
+  let out: { regular: FontFile; bold: FontFile } | null = null;
+  try {
+    const dir = new URL("../../public/fonts/", import.meta.url);
+    const stem = family === "serif" ? "LiberationSerif" : "LiberationMono";
+    const read = (f: string): FontFile => {
+      const data = new Uint8Array(readFileSync(new URL(f, dir)));
+      return { data, deflated: new Uint8Array(deflateSync(data)) };
+    };
+    out = { regular: read(`${stem}-Regular.ttf`), bold: read(`${stem}-Bold.ttf`) };
+  } catch {
+    out = null;
+  }
+  familyCache.set(family, out);
+  return out;
+}
 
 /** Liberation Sans, from the app's public folder, to embed in PDFs (null when it isn't there). */
 function sheetFonts(): { regular: FontFile; bold: FontFile } | null {

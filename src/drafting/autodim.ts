@@ -122,13 +122,43 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
   /** Diameters given already (a turned part's in its side view), so the round view doesn't repeat them. */
   const diameters = new Set<number>();
   const usedViews = new Set<string>();
-  // A round part: its diameters and steps on a side view that is not cut (a section's edges have no keys yet), else the circles.
-  const side = round ? square.find((x) => x.kind !== "section" && x.id !== plan.id && !facing(outer.model?.axis ?? [0, 0, 1], looks[x.id])) : undefined;
-  if (round && side) {
+  // A round part: its diameters and steps on a side view that is not cut (a section's edges have no keys yet), else the
+  // circles. Round when the plan view sees it end on, or another view does (a shaft lying down: its end view).
+  let roundView = plan;
+  let roundOuter = outer;
+  let isRound = round;
+  if (!isRound)
+    for (const x of square) {
+      if (x.kind === "section" || x.id === plan.id) continue;
+      const xpv = pvOf(x.id);
+      const xo = xpv ? outlineOf(xpv) : null;
+      const oc = xpv?.edges.filter((e) => e.visible && e.look === "circle" && e.circle).sort((a, b) => b.circle!.r - a.circle!.r)[0];
+      if (!xo || !oc) continue;
+      const xw = xo.max[0] - xo.min[0];
+      const xh = xo.max[1] - xo.min[1];
+      if (same(2 * oc.circle!.r, xw, 0.02 * xw) && same(2 * oc.circle!.r, xh, 0.02 * xh)) {
+        roundView = x;
+        roundOuter = oc;
+        isRound = true;
+        break;
+      }
+    }
+  const side = isRound ? square.find((x) => x.kind !== "section" && x.id !== roundView.id && !facing(roundOuter.model?.axis ?? [0, 0, 1], looks[x.id])) : undefined;
+  if (isRound && side) {
     usedViews.add(side.id);
     const sPv = pvOf(side.id)!;
     const sO = outlineOf(sPv)!;
     const sF = viewFrame(looks[side.id]);
+    // Which way the axis runs in the side view: across it (a shaft lying down) or up it (standing).
+    const ax3 = roundOuter.model?.axis ?? [0, 0, 1];
+    const dot3 = (p: Vec3, q: Vec3) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    const horiz = Math.abs(dot3(ax3, sF.right)) > Math.abs(dot3(ax3, sF.up));
+    const along = (p: Vec2) => (horiz ? p[0] : p[1]);
+    const across = (p: Vec2) => (horiz ? p[1] : p[0]);
+    const alongDir = horiz ? sF.right : sF.up;
+    const acrossDir = horiz ? sF.up : sF.right;
+    const lo = horiz ? "@left" : "@bottom";
+    const hi = horiz ? "@right" : "@top";
     // Each round face seen from the side: its two outlines ("…/s1a", "…/s1b") apart, written Ø.
     const pairs = new Map<string, { a?: ProjectedEdge; b?: ProjectedEdge }>();
     for (const e of sPv.edges) {
@@ -136,30 +166,58 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
       const k = e.key.slice(0, -1);
       pairs.set(k, { ...pairs.get(k), [e.key.slice(-1)]: e });
     }
-    const list = [...pairs.values()].filter((x) => x.a && x.b).map((x) => ({ ...x, d: Math.abs(x.a!.pts[0][0] - x.b!.pts[0][0]) })).sort((p, q) => q.d - p.d);
+    // A silhouette whose other side is the revolve's seam (seen edge on: a model edge, not an outline) pairs with the
+    // line mirrored across the axis (the outline's middle across it).
+    const mid = horiz ? (sO.min[1] + sO.max[1]) / 2 : (sO.min[0] + sO.max[0]) / 2;
+    for (const x of pairs.values()) {
+      const one = x.a ?? x.b;
+      if (!one || (x.a && x.b)) continue;
+      const want = 2 * mid - across(one.pts[0]);
+      const lo1 = Math.min(...one.pts.map(along));
+      const hi1 = Math.max(...one.pts.map(along));
+      const other = sPv.edges.find(
+        (e) =>
+          e !== one &&
+          e.visible &&
+          e.pts.length >= 2 &&
+          e.pts.every((p) => Math.abs(across(p) - want) < 1e-3) &&
+          Math.abs(Math.min(...e.pts.map(along)) - lo1) < 0.5 &&
+          Math.abs(Math.max(...e.pts.map(along)) - hi1) < 0.5,
+      );
+      if (other) {
+        if (x.a) x.b = other;
+        else x.a = other;
+      }
+    }
+    const list = [...pairs.values()].filter((x) => x.a && x.b).map((x) => ({ ...x, d: Math.abs(across(x.a!.pts[0]) - across(x.b!.pts[0])) })).sort((p, q) => q.d - p.d);
     for (const x of list) {
       if (diameters.has(r2(x.d))) continue;
       diameters.add(r2(x.d));
       dim({ view: side.id, kind: "diameter", refs: [`${side.id}:e${x.a!.key}`, `${side.id}:e${x.b!.key}`] });
-      mark(sF.right, x.d);
+      mark(acrossDir, x.d);
+    }
+    const sMin = horiz ? sO.min[0] : sO.min[1];
+    const sMax = horiz ? sO.max[0] : sO.max[1];
+    const sh = sMax - sMin;
+    // Its length end to end (before the plan's sizes are counted given: the side view may be the plan view).
+    if (!taken(alongDir, sh)) {
+      dim({ view: side.id, from: lo, to: hi });
+      mark(alongDir, sh);
     }
     mark(pF.right, w);
     mark(pF.up, h);
-    const sh = sO.max[1] - sO.min[1];
-    dim({ view: side.id, from: "@bottom", to: "@top" });
-    mark(sF.up, sh);
-    // Its steps: each flat face across it (edge-on circles at one height), from the bottom, once. A chamfer or
-    // fillet puts circles a little either side of the face: of a cluster of heights, the one most edges are at.
+    // Its steps: each flat face across it (edge-on circles at one place along it), from the end, once. A chamfer or
+    // fillet puts circles a little either side of the face: of a cluster, the place most edges are at.
     const at = new Map<number, ProjectedEdge[]>();
-    const sw = sO.max[0] - sO.min[0];
-    // Heights the edge-on circles are at; hidden ones count (a fillet's edge on the face), seen ones carry the GeoRef.
+    const sw = horiz ? sO.max[1] - sO.min[1] : sO.max[0] - sO.min[0];
+    // Places the edge-on circles are at; hidden ones count (a fillet's edge on the face), seen ones carry the GeoRef.
     const makers = new Map<number, Set<string>>();
     for (const e of sPv.edges) {
       if (e.pts.length < 2) continue;
-      const ys = e.pts.map((p) => p[1]);
-      const xs = e.pts.map((p) => p[0]);
-      if (Math.max(...ys) - Math.min(...ys) > EPS || Math.max(...xs) - Math.min(...xs) < 0.2 * sw) continue;
-      const y = r2(ys[0]);
+      const as = e.pts.map(along);
+      const cs = e.pts.map(across);
+      if (Math.max(...as) - Math.min(...as) > EPS || Math.max(...cs) - Math.min(...cs) < 0.2 * sw) continue;
+      const y = r2(as[0]);
       makers.set(y, (makers.get(y) ?? new Set()).add(e.feature ?? e.key));
       if (e.visible) at.set(y, [...(at.get(y) ?? []), e]);
     }
@@ -175,17 +233,17 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
         i = j + 1;
         continue;
       }
-      if (!cluster.some((y) => same(y, sO.min[1]) || same(y, sO.max[1]))) levels.set(best, at.get(best)!.find((e) => !e.key.startsWith("?")) ?? at.get(best)![0]);
+      if (!cluster.some((y) => same(y, sMin) || same(y, sMax))) levels.set(best, at.get(best)!.find((e) => !e.key.startsWith("?")) ?? at.get(best)![0]);
       i = j + 1;
     }
     for (const [y, e] of [...levels].sort((p, q) => p[0] - q[0])) {
-      if (taken(sF.up, y - sO.min[1])) continue;
-      dim({ view: side.id, from: "@bottom", to: `${side.id}:v${e.key}.0`, direction: "vertical" });
-      mark(sF.up, y - sO.min[1]);
+      if (taken(alongDir, y - sMin)) continue;
+      dim({ view: side.id, from: lo, to: `${side.id}:v${e.key}.0`, direction: horiz ? "horizontal" : "vertical" });
+      mark(alongDir, y - sMin);
     }
-  } else if (round) {
-    dim({ view: plan.id, kind: "diameter", refs: [`${plan.id}:e${outer.key}`] });
-    diameters.add(r2(2 * (outer.model?.radius ?? outer.circle!.r)));
+  } else if (isRound) {
+    dim({ view: roundView.id, kind: "diameter", refs: [`${roundView.id}:e${roundOuter.key}`] });
+    diameters.add(r2(2 * (roundOuter.model?.radius ?? roundOuter.circle!.r)));
     mark(pF.right, w);
     mark(pF.up, h);
   } else {
@@ -194,7 +252,7 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
     mark(pF.right, w);
     mark(pF.up, h);
   }
-  if (elevation && !(round && side)) {
+  if (elevation && !(isRound && side)) {
     const eLook = elevation.kind === "section" ? "front" : looks[elevation.id];
     const eF = viewFrame(eLook ?? "front");
     const eO = outlineOf(pvOf(elevation.kind === "section" ? "front" : elevation.id));
@@ -336,7 +394,9 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
       placed = true;
       break;
     }
-    if (!placed) {
+    // A note only for one that built (it made edges somewhere): a failed fillet is no fillet on the part.
+    const built = geometry?.views.some((pv) => pv.edges.some((x) => x.feature === f.id)) ?? false;
+    if (!placed && built) {
       const ff = f as { radius?: unknown; distance?: unknown };
       if (op === "fillet" && typeof ff.radius === "number") notes.push(`FILLETS R${r2(ff.radius)} UNLESS OTHERWISE SHOWN.`);
       if (op === "chamfer" && typeof ff.distance === "number") notes.push(`CHAMFERS ${r2(ff.distance)} × 45° UNLESS OTHERWISE SHOWN.`);
@@ -368,7 +428,13 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
   ];
   out.push({ id: "general_notes", type: "note", text: lines.join("\n"), at: [0, 0], numbered: true, title: "NOTES:" });
 
-  const unneeded = square.filter((x) => x.kind === "projected" && x.id !== plan.id && x.id !== elevation?.id && !sideViews.has(x.id) && !usedViews.has(x.id) && !out.some((a) => "view" in a && a.view === x.id && a.type !== "centerMark" && a.type !== "centerline")).map((x) => x.id);
+  // A turned part drawn on its side view: a plan view that is another side view of it (the same silhouette) says
+  // nothing more — it goes too, with only a datum or centre lines on it.
+  const twin = isRound && side && plan.id !== side.id && plan.id !== roundView.id && !facing(roundOuter.model?.axis ?? [0, 0, 1], looks[plan.id]) ? plan.id : null;
+  const decor = (a: Annotation, x: DrawingView) => a.type === "centerMark" || a.type === "centerline" || (x.id === twin && a.type === "datum");
+  const unneeded = square
+    .filter((x) => x.kind === "projected" && (x.id !== plan.id || x.id === twin) && x.id !== elevation?.id && !sideViews.has(x.id) && !usedViews.has(x.id) && !out.some((a) => "view" in a && a.view === x.id && !decor(a, x)))
+    .map((x) => x.id);
   return { annotations: out.filter((a) => !("view" in a) || !unneeded.includes(String(a.view))), unneeded };
 }
 

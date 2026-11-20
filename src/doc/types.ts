@@ -139,8 +139,12 @@ export interface Drawing {
   precision?: number;
   /** Dimensions in the other unit too, in brackets ("25 [0.984]"). */
   dualUnits?: boolean;
+  /** The lettering's font: "sans" (Helvetica, the default), "serif" (Times) or "mono" (Courier). */
+  font?: "sans" | "serif" | "mono";
+  /** "upright" (default) or "slanted" (ISO 3098 type B slanted: every letter leaning 15° right). */
+  lettering?: "upright" | "slanted";
 }
-export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions", "precision", "dualUnits"] as const;
+export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions", "precision", "dualUnits", "font", "lettering"] as const;
 export const DRAFTING_STANDARDS = ["ISO", "ASME"] as const;
 export type DraftingStandard = (typeof DRAFTING_STANDARDS)[number];
 
@@ -392,12 +396,15 @@ export interface DrawingView {
   showScale?: boolean;
   /** Turned on the sheet, degrees counter-clockwise about its centre (its dimensions turn with it; notes stay upright). Default 0. */
   rotation?: number;
+  /** Its label's text instead of the standard one ("FRONT VIEW", "MOUNTING FACE"): shown under it (the scale under that when the view's own). */
+  caption?: string;
   /** model: what it shows — the part (default) or the document's assembly, each component a body named by its id. Views made from it show the same. */
   source?: "part" | "assembly";
   /** model, with source "assembly": the components moved apart by the assembly's explode steps. Views made from it are exploded too. */
   exploded?: boolean;
 }
 export const VIEW_KEYS = [
+  "caption",
   "source",
   "exploded",
   "id",

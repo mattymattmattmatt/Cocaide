@@ -206,6 +206,8 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
   if (input.generalTolerance !== undefined) text(input.generalTolerance, "drawing.generalTolerance", c, 200);
   if (input.precision !== undefined && (!Number.isInteger(input.precision) || (input.precision as number) < 0 || (input.precision as number) > 6)) c.fail("drawing.precision", `is the decimal places dimensions are written to, 0 to 6 (got ${describe(input.precision)})`);
   if (input.dualUnits !== undefined && typeof input.dualUnits !== "boolean") c.fail("drawing.dualUnits", `must be true or false (got ${describe(input.dualUnits)})`);
+  if (input.font !== undefined && !["sans", "serif", "mono"].includes(input.font as string)) c.fail("drawing.font", `must be "sans", "serif" or "mono" (got ${describe(input.font)})`);
+  if (input.lettering !== undefined && input.lettering !== "upright" && input.lettering !== "slanted") c.fail("drawing.lettering", `must be "upright" or "slanted" (got ${describe(input.lettering)})`);
   if (input.properties !== undefined) {
     if (!isObject(input.properties)) c.fail("drawing.properties", `must be an object of names to text (got ${describe(input.properties)})`);
     else
@@ -314,7 +316,7 @@ const KIND_KEYS: Record<ViewKind, readonly string[]> = {
   detail: ["parent", "circle", "profile", "style", "label"],
   auxiliary: ["parent", "edge", "label", "flip"],
 };
-const COMMON_KEYS = ["id", "kind", "hidden", "at", "locked", "scale", "display", "tangent", "threads", "breaks", "crop", "brokenOut", "bodies", "showLabel", "showScale", "rotation"];
+const COMMON_KEYS = ["id", "kind", "hidden", "at", "locked", "scale", "display", "tangent", "threads", "breaks", "crop", "brokenOut", "bodies", "showLabel", "showScale", "rotation", "caption"];
 const KIND_HELP: Record<ViewKind, string> = {
   model: "a model view looks at the part from a named orientation (look) or a custom one (orientation)",
   projected: "a projected view is made from a parent view and a direction",
@@ -433,6 +435,7 @@ function checkView(v: Record<string, unknown>, at: string, views: Map<string, { 
   if (v.display !== undefined && !DISPLAY_MODES.includes(v.display as never)) c.fail(`${at}.display`, `must be ${DISPLAY_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.display)})`);
   if (v.tangent !== undefined && !TANGENT_MODES.includes(v.tangent as never)) c.fail(`${at}.tangent`, `must be ${TANGENT_MODES.map((d) => `"${d}"`).join(", ")} (got ${describe(v.tangent)})`);
   for (const k of ["threads", "showLabel", "showScale", "free", "locked", "exploded"]) bool(k);
+  if (v.caption !== undefined && (typeof v.caption !== "string" || v.caption.length > 80)) c.fail(`${at}.caption`, `must be text, at most 80 characters (got ${describe(v.caption)})`);
   if (v.source !== undefined && v.source !== "part" && v.source !== "assembly") c.fail(`${at}.source`, `must be "part" or "assembly" (got ${describe(v.source)})`);
   if (v.exploded === true && v.source !== "assembly") c.fail(`${at}.exploded`, `an exploded view shows the assembly: give it source "assembly" too`);
   if (v.rotation !== undefined) {
