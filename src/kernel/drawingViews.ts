@@ -517,6 +517,18 @@ export function projectDrawingViews(oc: OC, part: BuiltPart, specs: ViewSpec[], 
 /** Each body's keyed model edges, by name: worked out once per rebuild. */
 export type KeyCache = Map<string, { edges: KeyedEdge[]; rounds: Prepared["rounds"] }>;
 
+/**
+ * A body's keys, with the edges another body's feature made (a weldment
+ * member's joint cut on the member it meets) named for this body too:
+ * "rail_1-post_2/l0", so a view's key names one edge however many members
+ * that cut touched. Other keys stay as they are.
+ */
+function qualified<K extends { edges: { key: string; feature?: string }[]; rounds: { key: string; feature?: string }[] }>(body: string, k: K, names: Set<string>): K {
+  const other = (x: { feature?: string }) => !!x.feature && x.feature !== body && names.has(x.feature);
+  if (!k.edges.some(other) && !k.rounds.some(other)) return k;
+  return { ...k, edges: k.edges.map((e) => (other(e) ? { ...e, key: `${body}-${e.key}` } : e)), rounds: k.rounds.map((r) => (other(r) ? { ...r, key: `${body}-${r.key}` } : r)) };
+}
+
 function projectOne(oc: OC, s: Scope, part: BuiltPart, spec: ViewSpec, f: ViewFrame, parentFrame: ViewFrame | undefined, cache: KeyCache): ProjectedView {
   const problems: string[] = [];
   const chosen = part.bodies.filter((b) => !spec.bodies || spec.bodies.includes(b.name));
@@ -524,6 +536,7 @@ function projectOne(oc: OC, s: Scope, part: BuiltPart, spec: ViewSpec, f: ViewFr
   const size = partSize(oc, s, chosen.map((b) => b.shape));
   const tol = Math.max(1e-4, size.diag * 1e-6);
   // The model edges, keyed on the bodies as built (a cut keeps the keys of what it leaves).
+  const names = new Set(part.bodies.map((b) => b.name));
   const original = chosen.map((b) => {
     let k = cache.get(b.name);
     if (!k) {
@@ -531,7 +544,7 @@ function projectOne(oc: OC, s: Scope, part: BuiltPart, spec: ViewSpec, f: ViewFr
       k = { edges, rounds };
       cache.set(b.name, k);
     }
-    return { name: b.name, ...k };
+    return { name: b.name, ...qualified(b.name, k, names) };
   });
   let shapes: (TopoDS_Shape | null)[] = chosen.map((b) => b.shape);
   let planes: CutPlane[] = [];

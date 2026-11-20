@@ -313,6 +313,16 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     expect(failed(after.checks)).toEqual([]);
   });
 
+  it("names each edge of a weldment's view once: a joint cut on two members keys each member's edge for it", async () => {
+    const doc = await withDrawing(table);
+    const views = viewSpecs(validateDocument(doc).drawing!);
+    const geometry = await kernel.project(doc, views);
+    const front = geometry.views.find((v) => v.id === "front")!;
+    const bodiesOf = new Map<string, Set<string>>();
+    for (const e of front.edges) if (!e.key.startsWith("?")) bodiesOf.set(e.key, new Set([...(bodiesOf.get(e.key) ?? []), e.body]));
+    expect([...bodiesOf].filter(([, b]) => b.size > 1).map(([k]) => k)).toEqual([]);
+  });
+
   it("a deleted member's balloon is a problem on the sheet, not a refused edit", async () => {
     let doc = await withDrawing(table);
     doc = run(doc, { type: "setAnnotation", id: "b9", annotation: { type: "balloon", view: "front", member: "rail_back" } });

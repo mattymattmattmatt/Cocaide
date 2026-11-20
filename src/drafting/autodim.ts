@@ -586,7 +586,16 @@ export function autoDimensionSheetView(doc: unknown, sheet: import("./compose").
  */
 export function weldmentSetout(viewId: string, pv: Pick<ProjectedView, "edges">, members: Set<string>, id: (prefix: string) => string): Annotation[] {
   const out: Annotation[] = [];
-  const lines = pv.edges.filter((e) => e.visible && e.look === "line" && e.pts.length >= 2 && !e.key.startsWith("?") && members.has(e.body));
+  // Only an edge its key names alone (one member's, all its pieces on one line): a reference to it must land on it.
+  const byKey = new Map<string, ProjectedView["edges"]>();
+  for (const e of pv.edges) byKey.set(e.key, [...(byKey.get(e.key) ?? []), e]);
+  const alone = (e: ProjectedView["edges"][number]) => {
+    const a = e.pts[0];
+    const b = e.pts[e.pts.length - 1];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return (byKey.get(e.key) ?? []).every((q) => q.body === e.body && q.pts.every((p) => len > 0 && Math.abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) / len < 0.05));
+  };
+  const lines = pv.edges.filter((e) => e.visible && e.look === "line" && e.pts.length >= 2 && !e.key.startsWith("?") && members.has(e.body) && alone(e));
   if (!lines.length) return out;
   const all = pv.edges.flatMap((e) => (e.visible ? e.pts : []));
   const o = { min: [Math.min(...all.map((p) => p[0])), Math.min(...all.map((p) => p[1]))], max: [Math.max(...all.map((p) => p[0])), Math.max(...all.map((p) => p[1]))] };
@@ -603,12 +612,15 @@ export function weldmentSetout(viewId: string, pv: Pick<ProjectedView, "edges">,
     const vert = es.filter((e) => Math.abs(first(e)[0] - e.pts[e.pts.length - 1][0]) < 0.01 && Math.abs(first(e)[1] - e.pts[e.pts.length - 1][1]) > 20);
     const horz = es.filter((e) => Math.abs(first(e)[1] - e.pts[e.pts.length - 1][1]) < 0.01 && Math.abs(first(e)[0] - e.pts[e.pts.length - 1][0]) > 20);
     // Long in the view (a member seen end on is neither).
+    // Its left face (or underside) itself, or nothing: never another face in its place.
+    const left = Math.min(...pts.map((p) => p[0]));
+    const under = Math.min(...pts.map((p) => p[1]));
     if (h > 3 * w && vert.length) {
       const e = vert.sort((p, q) => first(p)[0] - first(q)[0])[0];
-      xs.push({ v: first(e)[0], ref: `${viewId}:v${e.key}.0`, body });
+      if (Math.abs(first(e)[0] - left) < 0.5) xs.push({ v: first(e)[0], ref: `${viewId}:v${e.key}.0`, body });
     } else if (w > 3 * h && horz.length) {
       const e = horz.sort((p, q) => first(p)[1] - first(q)[1])[0];
-      ys.push({ v: first(e)[1], ref: `${viewId}:v${e.key}.0`, body });
+      if (Math.abs(first(e)[1] - under) < 0.5) ys.push({ v: first(e)[1], ref: `${viewId}:v${e.key}.0`, body });
     }
   }
   const set = (list: { v: number; ref: string; body: string }[], lo: number, origin: string, direction: "horizontal" | "vertical", farBody?: string) => {
