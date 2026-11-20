@@ -156,6 +156,13 @@ describe("joints", () => {
     expect(b.errors).toEqual([]);
     expect(b.interference).toEqual([]);
     expect(b.bodies.get("rake")!.min[1]).toBeCloseTo(20, 6);
+    // Its node inside the level member's section, off its line (its top kept on a roof plane): the same.
+    const off = structuredClone(doc);
+    off.nodes = { ...(off.nodes as object), N: [500, 0, 1012] };
+    (off.features as Record<string, unknown>[])[1].to = [500, 800, 1092];
+    const o = built(off);
+    expect(o.errors).toEqual([]);
+    expect(o.bodies.get("rake")!.min[1]).toBeCloseTo(20, 6);
   });
 
   it("says why a joint can't be made, and makes none of it", () => {

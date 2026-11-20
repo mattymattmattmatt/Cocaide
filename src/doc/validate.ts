@@ -2082,6 +2082,19 @@ export function memberAtNode(m: MemberFeature, node: string, at: Vec3): "ends" |
   return off <= 0.01 ? "passes" : null;
 }
 
+/** Whether a point is within a member's length and its section's reach of its line (half its two largest sizes' diagonal). */
+function insideSection(m: MemberFeature, at: Vec3, def: ProfileDef | undefined): boolean {
+  const d: Vec3 = [m.to[0] - m.from[0], m.to[1] - m.from[1], m.to[2] - m.from[2]];
+  const l2 = dot3(d, d);
+  if (!(l2 > 0)) return false;
+  const t = dot3([at[0] - m.from[0], at[1] - m.from[1], at[2] - m.from[2]], d) / l2;
+  if (t < 0 || t > 1) return false;
+  const off = Math.hypot(m.from[0] + t * d[0] - at[0], m.from[1] + t * d[1] - at[1], m.from[2] + t * d[2] - at[2]);
+  const values = def?.sizes?.find((x) => x.designation === m.size)?.values ?? def?.parameters ?? {};
+  const sizes = Object.values(values).filter((x): x is number => typeof x === "number").sort((a, b) => b - a);
+  return off <= 0.5 * Math.hypot(sizes[0] ?? 0, sizes[1] ?? 0);
+}
+
 /** A member named by a joint, gusset or end cap: an earlier member, valid. */
 function namedMember(id: unknown, path: string, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): MemberFeature | undefined {
   if (typeof id !== "string") {
@@ -2132,7 +2145,8 @@ function validateJoint(raw: Record<string, unknown>, c: Checker, earlier: Map<st
   } else if (raw.type === "butt") {
     if (raw.members !== undefined) c.fail("members", "is for a mitre; a butt joint names the member that runs through");
     const through = namedMember(raw.through, "through", c, earlier, ctx);
-    if (through && !memberAtNode(through, node, at)) c.fail("through", `${through.id} neither ends at ${node} nor passes through it`);
+    // On its line, or inside its section (a raked plate's end against a level plate's face).
+    if (through && !memberAtNode(through, node, at) && !insideSection(through, at, ctx.profiles[through.profile])) c.fail("through", `${through.id} neither ends at ${node} nor passes through it`);
     if (through && !ending.some((id) => id !== through.id)) c.fail("through", `no other member ends at ${node} to butt against ${through.id}`);
     if (through) f.through = through.id;
   }
