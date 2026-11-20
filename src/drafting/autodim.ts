@@ -268,7 +268,10 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
       if (!side) continue;
       const topEnd = side.pts[0][1] > side.pts[side.pts.length - 1][1] ? 0 : side.pts.length - 1;
       const yTop = side.pts[topEnd][1];
-      if (pO.max[1] - yTop > 0.5 && !taken(pF.up, yTop - pO.min[1])) {
+      // Raked: a straight, sloping edge goes on from its top (a corner's radius is called out on its own).
+      const at = side.pts[topEnd];
+      const raked = visible.some((e) => e !== side && e.look === "line" && e.pts.length >= 2 && [e.pts[0], e.pts[e.pts.length - 1]].some((p) => Math.hypot(p[0] - at[0], p[1] - at[1]) < 0.01) && Math.abs(e.pts[0][0] - e.pts[e.pts.length - 1][0]) > 0.01 && Math.abs(e.pts[0][1] - e.pts[e.pts.length - 1][1]) > 0.01);
+      if (raked && pO.max[1] - yTop > 0.5 && !taken(pF.up, yTop - pO.min[1])) {
         dim({ view: plan.id, from: "@bottom", to: `${plan.id}:v${side.key}.${topEnd === 0 ? 0 : 1}`, direction: "vertical" });
         mark(pF.up, yTop - pO.min[1]);
       }
