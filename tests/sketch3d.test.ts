@@ -113,3 +113,49 @@ describe("drawing on a work plane", () => {
     expect(snapToGrid([97, 3, 41], [5, 5, 40], "XZ", 10)).toEqual([95, 5, 40]);
   });
 });
+
+describe("3D sketch points that follow other sketches", () => {
+  /** A gable rafter on Front, and a purlin from halfway up it running 2000 back. */
+  const doc = (ridge = 1800): RawDocument =>
+    ({
+      version: 1,
+      units: "mm",
+      name: "roof",
+      profiles: structuredClone(table.profiles),
+      features: [
+        { id: "gable", op: "sketch", plane: { type: "ref", ref: { datum: "Front" } }, entities: [{ id: "r1", type: "line", start: [0, 1500], end: [1000, ridge] }] },
+        {
+          id: "purlins",
+          op: "sketch3d",
+          points: [
+            { id: "p1", at: { sketch: "gable", point: "r1", t: 0.5 } },
+            { id: "p2", from: "p1", by: [0, 2000, 0] },
+            { id: "p3", at: { sketch: "gable", point: "r1.end" } },
+          ],
+          lines: [{ id: "l1", start: "p1", end: "p2" }],
+        },
+      ],
+    }) as RawDocument;
+
+  it("are where the other sketch puts them, and move with it", () => {
+    const placed = (d: RawDocument) => (validateDocument(d).features.find((f) => f.id === "purlins")?.feature as { placed: Record<string, number[]> }).placed;
+    expect(placed(doc())).toEqual({ p1: [500, 0, 1650], p2: [500, 2000, 1650], p3: [1000, 0, 1800] });
+    // The ridge 200 higher: halfway up the rafter is 100 higher, and the purlin with it.
+    expect(placed(doc(2000))).toEqual({ p1: [500, 0, 1750], p2: [500, 2000, 1750], p3: [1000, 0, 2000] });
+  });
+
+  it("say what is wrong when what they follow is gone", () => {
+    const d = doc();
+    (d.features[1] as { points: Record<string, unknown>[] }).points[0].at = { sketch: "gable", point: "r9", t: 0.5 };
+    expect(allErrors(validateDocument(d)).join("\n")).toContain("gable has no r9");
+  });
+
+  it("members on its lines follow the gable too", () => {
+    const r = membersFromSketch(doc(), { size: "SHS 40x40x3", sketch: "purlins", line: "centre" });
+    if (!r.ok) throw new Error(r.error);
+    const moved = { ...r.doc, features: r.doc.features.map((f) => (f.id === "gable" ? { ...f, entities: [{ id: "r1", type: "line", start: [0, 1500], end: [1000, 2000] }] } : f)) };
+    const m = (d: unknown) => validateDocument(d).features.find((f) => f.feature?.op === "member")!.feature as unknown as { from: number[] };
+    expect(m(r.doc).from).toEqual([500, 0, 1650]);
+    expect(m(moved).from).toEqual([500, 0, 1750]);
+  });
+});

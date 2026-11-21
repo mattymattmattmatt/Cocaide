@@ -1024,7 +1024,10 @@ export const NODE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 /** A node that follows a point of a sketch: "l1.start", "l1.end", "l1.mid", "a1.center", "p1.at". */
 export interface NodeLink {
   sketch: string;
+  /** "l1.start", "l1.end", "l1.mid", "a1.center", "p1.at"; or a line's id ("l1") with `t`: that far along it. */
   point: string;
+  /** Along the line `point` names, 0 its start to 1 its end. */
+  t?: number;
 }
 
 /** A weld, as a note: where it is, what it is. Never modelled. */
@@ -1928,6 +1931,8 @@ export interface MemberFeature extends FeatureBase {
    */
   align?: Vec2;
   newBody?: string;
+  /** The sketch line it was put on (Members from sketch): the rebuild warns when the member has left it. */
+  along?: { sketch: string; entity: string };
 }
 
 // ------------------------------------------------------------------ joints

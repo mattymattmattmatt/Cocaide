@@ -28,7 +28,7 @@ export const def: FeatureDef<Sketch3dFeature> = {
     }
     raw.points.forEach((p, i) => x.isObject(p) && c.keys(p, `points[${i}]`, ["id", "at", "from", "by"]));
     raw.points.forEach((p, i) => x.isObject(p) && p.at !== undefined && p.from !== undefined && c.fail(`points[${i}]`, 'is at "at" or measured "from" a point, not both'));
-    const placed = sketch3dPositions(raw.points);
+    const placed = sketch3dPositions(raw.points, x.ctx.follow);
     if (!placed.ok) c.fail(placed.path, placed.error);
     const lines = raw.lines === undefined ? [] : raw.lines;
     if (!Array.isArray(lines)) c.fail("lines", 'must be a list of lines: { "id", "start": <point>, "end": <point> }');
@@ -66,8 +66,9 @@ export const def: FeatureDef<Sketch3dFeature> = {
   "points": [{ "id": "p1", "at": [0, 0, 0] }, { "id": "p2", "from": "p1", "by": [0, 0, "=post_h"] }, { "id": "p3", "from": "p2", "by": [1200, 0, 300] }],
   "lines": [{ "id": "l1", "start": "p1", "end": "p2" }, { "id": "l2", "start": "p2", "end": "p3" }] }
 A 3D sketch: points in space and straight lines between them, the layout of a frame that isn't flat. No body.
-A point is "at" [x, y, z], or measured "from" an earlier point "by" [dx, dy, dz] (so it moves with that point);
-numbers may be "=expressions". Lines name their points, so lines that meet share one. "construction": true keeps
+A point is "at" [x, y, z], or measured "from" an earlier point "by" [dx, dy, dz] (so it moves with that point),
+or follows another sketch's point: "at": { "sketch": "gable", "point": "r1.end" }, or partway along its line:
+"at": { "sketch": "gable", "point": "r1", "t": 0.3 } (a purlin on a rafter follows the rafter). Numbers may be "=expressions". Lines name their points, so lines that meet share one. "construction": true keeps
 a line for the layout only. Put members on its lines with membersFromSketch ({ "size", "sketch": "frame3d" }):
 their nodes follow the points ("A": { "sketch": "frame3d", "point": "p2.at" }, or "l1.end"), so editing the
 sketch moves the frame.

@@ -145,3 +145,36 @@ test("snap onto a corner of the part, drag a point, and click a point to go on f
   await expect.poll(async () => (await sketch3d(page))?.lines?.length).toBe(2);
   expect((await sketch3d(page)).lines[1]).toMatchObject({ start: "p1", end: "p3" });
 });
+
+test("draw onto another sketch: partway along its line, and on its end, the points follow it", async ({ page }) => {
+  const doc = {
+    version: 1,
+    units: "mm",
+    name: "roof",
+    features: [{ id: "gable", op: "sketch", plane: { type: "ref", ref: { datum: "Front" } }, entities: [{ id: "r1", type: "line", start: [0, 1500], end: [1000, 1800] }] }],
+  };
+  const text = JSON.stringify(doc, null, 2);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+  await page.getByText("Weldments", { exact: true }).click();
+  await page.getByTestId("tool-sketch3d").click();
+  // 30% up the rafter (halfway would be its midpoint, a point of its own): the tip names it, and the point follows it.
+  const [mx, my] = await screenOf(page, [300, 0, 1590]);
+  await page.mouse.move(mx + 2, my + 1);
+  await expect(page.getByTestId("draw3d-tip")).toContainText("gable's r1");
+  await page.mouse.click(mx + 2, my + 1);
+  await expect.poll(async () => (await sketch3d(page))?.points?.length).toBe(1);
+  const p1 = (await sketch3d(page)).points[0];
+  expect(p1.at).toMatchObject({ sketch: "gable", point: "r1" });
+  expect(Math.abs(p1.at.t - 0.3)).toBeLessThan(0.03);
+  // On the rafter's top end: follows r1.end, and a line joins the two.
+  const [ex, ey] = await screenOf(page, [1000, 0, 1800]);
+  await page.mouse.move(ex + 2, ey);
+  await expect(page.getByTestId("draw3d-tip")).toContainText("gable's r1.end");
+  await page.mouse.click(ex + 2, ey);
+  await expect.poll(async () => (await sketch3d(page))?.lines?.length).toBe(1);
+  expect((await sketch3d(page)).points[1]).toEqual({ id: "p2", at: { sketch: "gable", point: "r1.end" } });
+  // Properties says what each follows.
+  await expect(page.getByTestId("sketch3d-follows-p2")).toContainText("gable's r1.end");
+});

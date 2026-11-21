@@ -10,8 +10,8 @@ import type { Vec3 } from "../doc/types";
 
 export interface Sketch3dPoint {
   id: string;
-  /** Where it is. */
-  at?: Vec3;
+  /** Where it is: coordinates, or a point of another sketch it follows ({ sketch, point } or { sketch, point: <line>, t }). */
+  at?: Vec3 | { sketch: string; point: string; t?: number };
   /** Or measured from an earlier point: `by` from `from`. */
   from?: string;
   by?: Vec3;
@@ -35,8 +35,15 @@ const isVec3 = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && 
 
 export type Placed = { ok: true; at: Map<string, Vec3> } | { ok: false; path: string; error: string };
 
-/** Where every point is, in list order (a point is measured from an earlier one); or the first thing wrong. */
-export function sketch3dPositions(points: readonly unknown[]): Placed {
+/** Where a point that follows another sketch is (validation and the resolver of nodes supply it). */
+export type Follow = (link: unknown) => { ok: true; at: Vec3 } | { ok: false; error: string };
+
+/**
+ * Where every point is, in list order (a point is measured from an earlier
+ * one); or the first thing wrong. A point that follows another sketch needs
+ * `follow`.
+ */
+export function sketch3dPositions(points: readonly unknown[], follow?: Follow): Placed {
   const at = new Map<string, Vec3>();
   for (let i = 0; i < points.length; i++) {
     const p = points[i];
@@ -48,8 +55,14 @@ export function sketch3dPositions(points: readonly unknown[]): Placed {
       if (!isVec3(p.by)) return { ok: false, path: `${path}.by`, error: "must be [dx, dy, dz], numbers or =expressions" };
       const o = at.get(p.from)!;
       at.set(p.id, [o[0] + p.by[0], o[1] + p.by[1], o[2] + p.by[2]].map(clean) as Vec3);
+    } else if (isObject(p.at)) {
+      // Following a point of another sketch.
+      if (!follow) return { ok: false, path: `${path}.at`, error: "follows another sketch, which isn't known here" };
+      const r = follow(p.at);
+      if (!r.ok) return { ok: false, path: `${path}.at`, error: r.error };
+      at.set(p.id, r.at.map(clean) as Vec3);
     } else {
-      if (!isVec3(p.at)) return { ok: false, path: `${path}.at`, error: "must be [x, y, z], numbers or =expressions (or measure it from another point with from and by)" };
+      if (!isVec3(p.at)) return { ok: false, path: `${path}.at`, error: "must be [x, y, z], numbers or =expressions, or { \"sketch\", \"point\" } to follow another sketch (or measure it from another point with from and by)" };
       at.set(p.id, p.at.map(clean) as Vec3);
     }
   }
@@ -60,9 +73,9 @@ export function sketch3dPositions(points: readonly unknown[]): Placed {
 const clean = (x: number) => Math.round(x * 1e9) / 1e9 + 0;
 
 /** Each line's two ends, in 3D (lines whose points aren't there are left out). */
-export function sketch3dSegments(s: { points?: unknown; lines?: unknown }): { id: string; a: Vec3; b: Vec3; construction: boolean }[] {
-  const placed = sketch3dPositions(Array.isArray(s.points) ? s.points : []);
-  const at = placed.ok ? placed.at : new Map<string, Vec3>();
+export function sketch3dSegments(s: { points?: unknown; lines?: unknown }, known?: ReadonlyMap<string, Vec3>, follow?: Follow): { id: string; a: Vec3; b: Vec3; construction: boolean }[] {
+  const placed = known ? null : sketch3dPositions(Array.isArray(s.points) ? s.points : [], follow);
+  const at = known ?? (placed?.ok ? placed.at : new Map<string, Vec3>());
   return (Array.isArray(s.lines) ? s.lines : []).flatMap((l) => {
     if (!isObject(l)) return [];
     const a = at.get(String(l.start));
@@ -72,8 +85,8 @@ export function sketch3dSegments(s: { points?: unknown; lines?: unknown }): { id
 }
 
 /** The point a link names: "p1.at" (a point), or "l1.start", "l1.end", "l1.mid" (a line's). */
-export function sketch3dPoint(s: { points?: unknown; lines?: unknown }, ref: string): Vec3 | string {
-  const placed = sketch3dPositions(Array.isArray(s.points) ? s.points : []);
+export function sketch3dPoint(s: { points?: unknown; lines?: unknown }, ref: string, follow?: Follow): Vec3 | string {
+  const placed = sketch3dPositions(Array.isArray(s.points) ? s.points : [], follow);
   if (!placed.ok) return `its ${placed.path} ${placed.error}`;
   const [id, which] = ref.split(".");
   const p = placed.at.get(id);

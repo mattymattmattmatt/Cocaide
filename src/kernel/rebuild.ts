@@ -8,7 +8,8 @@
 
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import type { ThreadSpec } from "../features/hole/standards";
-import { seedIds, DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type Material, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
+import { seedIds, DEFAULT_BODY, DERIVED_SUFFIX, type JointFeature, type Material, type MemberFeature, type PlaneSpec, type SketchEntity, type SketchFeature, type Vec3 } from "../doc/types";
+import { resolveNodeLink } from "../weldment/sketchNodes";
 import { expressionFields, isConstruction, isReference } from "../doc/sketch";
 import { validateDocument } from "../doc/validate";
 import type { Datum } from "../features/datum";
@@ -475,6 +476,8 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
 
   /** The references the feature running now re-found from their hints (selectors.ts tells): its warnings. */
   let heals: HealNote[] = [];
+  /** What the feature running now builds but warns about (a member off its sketch line). */
+  let notes: string[] = [];
   const heard = (h: HealEvent) => {
     if (heals.some((x) => JSON.stringify(x.selector) === JSON.stringify(h.selector))) return;
     const healed = h.kind === "face" ? faceSelectorFor(h.faces, h.index) : edgeSelectorFor(h.edges, h.faces, h.index);
@@ -501,6 +504,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
   listenForHealing(heard, () => {
   for (const vf of v.features) {
     heals = [];
+    notes = [];
     uses = new Set();
     const raw = vf.feature;
     const op = vf.op;
@@ -675,6 +679,11 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name, member: line });
           });
           memberBodies.set(name, line);
+          // Put on a sketch line: still on it? (Its nodes follow one sketch; a line of another sketch at a shared corner doesn't move with it.)
+          if (raw.along) {
+            const off = offItsLine(raw, input, v.parameters, opts.sketchFrames);
+            if (off) notes.push(`${current}: ${off}`);
+          }
           break;
         }
         case "joint": {
@@ -830,7 +839,8 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
           runKernelOp(ctx, raw);
       }
       if (facesBefore) madeFaces.set(raw.id, new Set([...signatures()].filter((sig) => !facesBefore.has(sig))));
-      features.push({ id: raw.id, op, ok: true, ...(heals.length ? { warnings: heals.map((h) => h.message), heals } : {}), ...usesOf() });
+      const warned = [...heals.map((h) => h.message), ...notes];
+      features.push({ id: raw.id, op, ok: true, ...(warned.length ? { warnings: warned } : {}), ...(heals.length ? { heals } : {}), ...usesOf() });
     } catch (e) {
       const messages = e instanceof OpError ? e.message.split("\n") : [`kernel error: ${kernelMessage(oc, e)}`];
       const prefixed = messages.map((m) => `${raw.id}: ${m}`);
@@ -979,3 +989,20 @@ function kernelMessage(oc: OC, e: unknown): string {
     return String(e);
   }
 }
+
+/**
+ * How far a member put on a sketch line has left it, in words, or null when
+ * it is still on it (or the line can't be found, which validation says).
+ */
+function offItsLine(m: MemberFeature, input: unknown, params: Record<string, number>, frames?: Record<string, Frame>): string | null {
+  const features = isRecord(input) && Array.isArray(input.features) ? (input.features as unknown[]) : [];
+  const { sketch, entity } = m.along!;
+  const a = resolveNodeLink(features, { sketch, point: `${entity}.start` }, params, frames);
+  const b = resolveNodeLink(features, { sketch, point: `${entity}.end` }, params, frames);
+  if (!a.ok || !b.ok) return null;
+  const d = (p: Vec3, q: Vec3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+  const off = Math.min(Math.max(d(m.from, a.at), d(m.to, b.at)), Math.max(d(m.from, b.at), d(m.to, a.at)));
+  if (off <= 0.01) return null;
+  return `${m.id} is ${Math.round(off * 10) / 10} mm off its sketch line (${sketch}'s ${entity}): its end follows a corner another sketch moved; move the line to match, or put the member on it again`;
+}
+

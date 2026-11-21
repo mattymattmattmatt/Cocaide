@@ -189,7 +189,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     }
     const id = line.id ?? freeId(next, `${memberKind(ends[0], ends[1])}_1`, true);
     const align = spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined;
-    const problem = run({ type: "addFeature", feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}) } });
+    const problem = run({ type: "addFeature", feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}), along: { sketch: line.sketch, entity: line.entity } } });
     if (problem) return { ok: false, error: problem };
     members.push(id);
     touched.add(a).add(b);

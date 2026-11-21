@@ -338,7 +338,8 @@ catalogue section from the standard section library into the part. If the part h
 ## frames: nodes, joints, end caps, gussets, welds
 "nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] } at the top of the document: named points,
 coordinates numbers or "=expressions". A member's "from"/"to" can name a node ("from": "A"); it moves with it.
-A node can follow a point of a layout sketch instead: "A": { "sketch": "layout", "point": "l1.end" } (a line's start,
+A node can follow a point of a layout sketch instead: "A": { "sketch": "layout", "point": "l1.end" }, or { "sketch",
+"point": "l1", "t": 0.25 } a quarter along a line (a line's start,
 end or mid, an arc's or circle's center, a point's at; the sketch on a plane or a face).
 Editing the sketch then moves the members and joints on it. membersFromSketch does it all from a sketch's lines:
 a member per line, shared nodes that follow the sketch, and the corners mitred or butted.

@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import { resolveExpressions } from "../../doc/parameters";
 import { sketch3dPositions } from "../../geom/sketch3d";
+import { linkText, resolveNodeLink } from "../../weldment/sketchNodes";
 import type { Vec3 } from "../../doc/types";
 import { Icon } from "../../ui/icons";
 import { NumberInput, type NumberValue } from "../../ui/fields";
@@ -14,7 +15,9 @@ import { WORK_PLANES } from "../../ui/sketch3d/place";
 import type { EditorProps, UiOp } from "../uiDefs";
 
 type Raw = Record<string, unknown>;
-type Point = { id: string; at?: NumberValue[]; from?: string; by?: NumberValue[] };
+type Link = { sketch: string; point: string; t?: number };
+type Point = { id: string; at?: NumberValue[] | Link; from?: string; by?: NumberValue[] };
+const isLink = (v: unknown): v is Link => typeof v === "object" && v !== null && !Array.isArray(v);
 type Line = { id: string; start: string; end: string; construction?: boolean };
 
 const r2 = (x: number) => Math.round(x * 1e6) / 1e6 + 0;
@@ -27,7 +30,7 @@ function Editor({ f, doc, update }: EditorProps) {
   const lines = (Array.isArray(f.lines) ? f.lines : []) as Line[];
   // Where each point is now (expressions evaluated), for switching a point between "at" and "from".
   const params = Object.fromEntries(Object.entries((doc.parameters ?? {}) as Record<string, unknown>).filter(([, v]) => typeof v === "number")) as Record<string, number>;
-  const placedR = sketch3dPositions(resolveExpressions(points, params, []) as unknown[]);
+  const placedR = sketch3dPositions(resolveExpressions(points, params, []) as unknown[], (l) => resolveNodeLink(doc.features, l, params));
   const placed = placedR.ok ? placedR.at : new Map<string, Vec3>();
   // A new, empty 3D sketch starts drawing; leaving its properties stops.
   useEffect(() => {
@@ -79,7 +82,25 @@ function Editor({ f, doc, update }: EditorProps) {
       <ul className="sketch3d-list">
         {points.map((p, i) => {
           const earlier = points.slice(0, i).map((q) => q.id);
-          const vec = (p.from ? p.by : p.at) ?? [0, 0, 0];
+          if (isLink(p.at)) {
+            const link = p.at;
+            const here = placed.get(p.id);
+            return (
+              <li key={p.id} data-testid={`sketch3d-point-${p.id}`} className={`follows${draw.anchor === p.id && drawing ? " anchor" : ""}`}>
+                <span className="sketch3d-id">{p.id}</span>
+                <span className="sketch3d-follows" title={here ? `Now at ${here.map((x) => Math.round(x * 100) / 100).join(", ")}: it moves with ${link.sketch}` : `${link.sketch} can't be found`} data-testid={`sketch3d-follows-${p.id}`}>
+                  <Icon name="link" size={12} /> {linkText(link)}
+                </span>
+                <button type="button" className="link-button small" disabled={!here} onClick={() => here && setPoint(i, { id: p.id, at: here.map(r2) })} title="Keep it where it is, as numbers" data-testid={`sketch3d-unlink-${p.id}`}>
+                  Unlink
+                </button>
+                <button type="button" className="icon" aria-label={`Delete ${p.id}`} onClick={() => removePoint(i)} data-testid={`sketch3d-delete-${p.id}`}>
+                  <Icon name="trash" size={13} />
+                </button>
+              </li>
+            );
+          }
+          const vec = ((p.from ? p.by : p.at) as NumberValue[] | undefined) ?? [0, 0, 0];
           return (
             <li key={p.id} data-testid={`sketch3d-point-${p.id}`} className={draw.anchor === p.id && drawing ? "anchor" : ""}>
               <span className="sketch3d-id">{p.id}</span>

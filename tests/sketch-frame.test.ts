@@ -252,3 +252,25 @@ describe("ends that nearly meet", () => {
     expect(r.warnings).toEqual(["post_3 ends 60 mm from rail_2, so it isn't joined to it: take its sketch line onto rail_2's"]);
   });
 });
+
+describe("sketches that disagree at a shared corner", () => {
+  it("warns on the member that has left its own sketch line", () => {
+    const doc = layout();
+    doc.features.push({ id: "side", op: "sketch", plane: { type: "ref", ref: { datum: "Right" } }, entities: [line("s1", [0, 0], [800, 0])] });
+    const r = must(addSketchMembers(doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", lines: [...["l1", "l2", "l3", "l4"].map((entity) => ({ sketch: "layout", entity })), { sketch: "side", entity: "s1" }] }));
+    const side = r.doc.features.find((f) => (f.along as { sketch?: string })?.sketch === "side")!;
+    const warningsOf = (d: unknown) => {
+      const b = rebuild(d, oc);
+      try {
+        return b.features.find((f) => f.id === side.id)?.warnings ?? [];
+      } finally {
+        b.dispose();
+      }
+    };
+    expect(warningsOf(r.doc)).toEqual([]);
+    // The front sketch's corner moves 100 mm along: the side member's end goes with it, its own line doesn't.
+    const moved = apply(r.doc, { type: "updateFeature", id: "layout", patch: { entities: [line("l1", [100, 0], [1000, 0]), line("l2", [1000, 0], [1000, 600]), line("l3", [1000, 600], [100, 600]), line("l4", [100, 600], [100, 0]), line("l5", [500, 0], [500, 600])] } });
+    if (!moved.ok) throw new Error(moved.error);
+    expect(warningsOf(moved.doc)).toEqual([`${side.id}: ${side.id} is 100 mm off its sketch line (side's s1): its end follows a corner another sketch moved; move the line to match, or put the member on it again`]);
+  });
+});

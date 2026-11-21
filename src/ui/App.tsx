@@ -50,7 +50,7 @@ import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
 import { addSketchMembers, type SketchLine } from "../weldment/sketchFrame";
-import { framesOf } from "../weldment/sketchNodes";
+import { framesOf, resolveNodeLink } from "../weldment/sketchNodes";
 import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { SketchMembersPanel, type SketchMembersRequest } from "./SketchMembersPanel";
@@ -2592,7 +2592,8 @@ export function App() {
   const draw3d = useMemo<Draw3d | null>(() => {
     if (!drawFeature) return null;
     const resolved = resolveExpressions(drawFeature, params, []) as Record<string, unknown>;
-    const placed = sketch3dPositions(Array.isArray(resolved.points) ? resolved.points : []);
+    const follow = (l: unknown) => resolveNodeLink(doc!.features, l, params, sketchFrames);
+    const placed = sketch3dPositions(Array.isArray(resolved.points) ? resolved.points : [], follow);
     const at = placed.ok ? placed.at : new Map<string, Vec3>();
     const anchor = draw.anchor && at.has(draw.anchor) ? draw.anchor : null;
     const raw = drawFeature as { id: string; points?: Record<string, unknown>[]; lines?: { id: string; start: string; end: string }[] };
@@ -2611,10 +2612,10 @@ export function App() {
         if (problem) setNotice({ kind: "error", text: problem });
       },
       points: [...at].map(([id, p]) => ({ id, at: p })),
-      segments: sketch3dSegments(resolved),
+      segments: sketch3dSegments(resolved, at),
       onPlane: (plane) => setDraw({ plane }),
       onEnd: () => setDraw(anchor ? { anchor: null } : { feature: null }),
-      onPlace: ({ at: p, snap }) => {
+      onPlace: ({ at: p, snap, link }) => {
         const points = [...(raw.points ?? [])];
         const lines = [...(raw.lines ?? [])];
         const ids = [...points.map((q) => String(q.id)), ...lines.map((l) => l.id)];
@@ -2629,14 +2630,15 @@ export function App() {
         }
         const id = nextSketch3dId(ids, "p");
         const base = anchor ? at.get(anchor)! : null;
-        points.push(base ? { id, from: anchor, by: p.map((x, k) => Math.round((x - base[k]) * 1e6) / 1e6 + 0) } : { id, at: p });
+        // On another sketch's point or line: it follows it; else measured from the last point (or where it is).
+        points.push(link ? { id, at: link } : base ? { id, from: anchor, by: p.map((x, k) => Math.round((x - base[k]) * 1e6) / 1e6 + 0) } : { id, at: p });
         if (anchor) lines.push({ id: nextSketch3dId([...ids, id], "l"), start: anchor, end: id });
         const problem = d.dispatch({ type: "updateFeature", id: raw.id, patch: { points, lines } });
         if (problem) return setNotice({ kind: "error", text: problem });
         setDraw({ anchor: id });
       },
     };
-  }, [drawFeature, draw, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [drawFeature, draw, params, sketchFrames]); // eslint-disable-line react-hooks/exhaustive-deps
   // The members-from-sketch tool picking lines in the view (not while a sketch is open or a feature is being edited).
   const linePicking = memberPick !== null && !sketch && !session;
   const pickMemberLine = (hit: SketchEntityHit): boolean => {

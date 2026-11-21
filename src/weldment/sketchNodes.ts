@@ -25,7 +25,7 @@ export function isNodeLink(v: unknown): v is NodeLink {
 
 /** "layout's l1.end": how a message names the point. */
 export function linkText(link: NodeLink): string {
-  return `${link.sketch}'s ${link.point}`;
+  return link.t !== undefined ? `${link.sketch}'s ${link.point} at ${Math.round(link.t * 1000) / 10}%` : `${link.sketch}'s ${link.point}`;
 }
 
 /** The named points of an entity type, as a link writes them. */
@@ -59,18 +59,33 @@ type FromSolid = { solid: string };
  * Where a linked node is: the sketch point in 3D. `features` is the document's
  * feature list as written (expressions are evaluated with `params`).
  */
-export function resolveNodeLink(features: readonly unknown[], link: unknown, params: Parameters = {}, frames?: SketchFrames): Resolved {
+export function resolveNodeLink(features: readonly unknown[], link: unknown, params: Parameters = {}, frames?: SketchFrames, depth = 0): Resolved {
   if (!isObject(link)) return { ok: false, error: `must be [x, y, z] or { "sketch": <sketch id>, "point": "<entity>.<point>" }` };
-  const extra = Object.keys(link).filter((k) => k !== "sketch" && k !== "point");
-  if (extra.length) return { ok: false, error: `a node that follows a sketch has only "sketch" and "point" (not ${extra.map((k) => `"${k}"`).join(", ")})` };
+  const extra = Object.keys(link).filter((k) => k !== "sketch" && k !== "point" && k !== "t");
+  if (extra.length) return { ok: false, error: `a point that follows a sketch has only "sketch", "point" and "t" (not ${extra.map((k) => `"${k}"`).join(", ")})` };
   if (typeof link.sketch !== "string" || !link.sketch) return { ok: false, error: `"sketch" must be a sketch's id` };
-  if (typeof link.point !== "string" || !/^[^.]+\.[^.]+$/.test(link.point)) return { ok: false, error: `"point" must be "<entity>.<point>", like "l1.end" (got ${JSON.stringify(link.point)})` };
+  const along = link.t !== undefined;
+  if (along && (typeof link.t !== "number" || !(link.t >= 0 && link.t <= 1))) return { ok: false, error: `"t" is how far along the line, 0 (its start) to 1 (its end) (got ${JSON.stringify(link.t)})` };
+  if (typeof link.point !== "string" || !(along ? /^[^.]+$/ : /^[^.]+\.[^.]+$/).test(link.point)) {
+    return { ok: false, error: along ? `with "t", "point" is a line's id, like "l1" (got ${JSON.stringify(link.point)})` : `"point" must be "<entity>.<point>", like "l1.end" (got ${JSON.stringify(link.point)})` };
+  }
+  if (depth > 8) return { ok: false, error: `follows ${String(link.sketch)}, which follows back round to it` };
   const l = link as unknown as NodeLink;
+  if (along) {
+    // That far along a line: between its two ends.
+    const a = resolveNodeLink(features, { sketch: l.sketch, point: `${l.point}.start` }, params, frames, depth + 1);
+    const b = resolveNodeLink(features, { sketch: l.sketch, point: `${l.point}.end` }, params, frames, depth + 1);
+    if (!a.ok) return a;
+    if (!b.ok) return b;
+    const t = l.t!;
+    return { ok: true, at: a.at.map((x, k) => Math.round((x + t * (b.at[k] - x)) * 1e9) / 1e9 + 0) as Vec3 };
+  }
   const raw = features.find((f) => isObject(f) && f.id === l.sketch);
   if (!isObject(raw)) return { ok: false, error: `follows ${linkText(l)}, but there is no sketch "${l.sketch}"` };
   if (raw.op === "sketch3d") {
-    // A 3D sketch: its points are in space already.
-    const p = sketch3dPoint(resolveExpressions(raw, params, []) as Record<string, unknown>, l.point);
+    // A 3D sketch: its points are in space already (some following other sketches in turn).
+    const follow = (x: unknown) => resolveNodeLink(features, x, params, frames, depth + 1);
+    const p = sketch3dPoint(resolveExpressions(raw, params, []) as Record<string, unknown>, l.point, follow);
     return typeof p === "string" ? { ok: false, error: `follows ${linkText(l)}, but ${p}` } : { ok: true, at: p };
   }
   if (raw.op !== "sketch") return { ok: false, error: `follows ${linkText(l)}, but ${l.sketch} is a ${String(raw.op)}, not a sketch` };

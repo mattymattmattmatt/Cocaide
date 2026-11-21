@@ -11,7 +11,7 @@ const WORLD = { origin: [0, 0, 0] as Vec3, x: [1, 0, 0] as Vec3, y: [0, 1, 0] as
 export const kernel: KernelOp<Sketch3dFeature> = {
   op: "sketch3d",
   run(ctx, f) {
-    const segs = sketch3dSegments(f);
+    const segs = sketch3dSegments(f, new Map(Object.entries(f.placed)));
     ctx.showSketch({
       id: f.id,
       ok: true,

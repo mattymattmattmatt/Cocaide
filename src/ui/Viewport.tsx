@@ -266,8 +266,8 @@ export interface Draw3d {
   segments: { a: Vec3; b: Vec3 }[];
   /** The sketch being drawn (its own overlay isn't snapped to as another sketch's). */
   sketch: string;
-  /** A click: where (snapped), and the existing point it is on, if any. */
-  onPlace(p: { at: Vec3; snap: string | null }): void;
+  /** A click: where (snapped), the existing point it is on, if any, and the other sketch's point or line it is on, if any (it follows that). */
+  onPlace(p: { at: Vec3; snap: string | null; link?: { sketch: string; point: string; t?: number } }): void;
   /** One of its points dragged to a new place (on the work plane through where it was). */
   onMovePoint(id: string, at: Vec3): void;
   onPlane(plane: WorkPlane): void;
@@ -1883,21 +1883,37 @@ export function Viewport({
       live.current.onArea(on);
     };
     // ------------------------------------------------------------ drawing a 3D sketch
-    let drawHover: { at: Vec3; snap: string | null; on?: string } | null = null;
+    type Link = { sketch: string; point: string; t?: number };
+    let drawHover: { at: Vec3; snap: string | null; on?: string; link?: Link } | null = null;
     /** A point of the sketch being dragged: from where, and where it is now. */
     let pointDrag: { id: string; from: Vec3; at: Vec3; x: number; y: number; pointer: number } | null = null;
     /** Points elsewhere a click snaps onto: the part's corners, and other sketches' ends, centres and points. */
-    const outsideSnaps = (d: Draw3d): { at: Vec3; on: string }[] => {
-      const out: { at: Vec3; on: string }[] = vertices.filter((v) => !isHidden(shownView?.edges[v.edge]?.body)).map((v) => ({ at: v.p, on: "a corner of the part" }));
+    // Another sketch's point a click lands on is followed (the new point moves with it); a corner of the part is copied.
+    const outsideSnaps = (d: Draw3d): { at: Vec3; on: string; link?: Link }[] => {
+      const out: { at: Vec3; on: string; link?: Link }[] = vertices.filter((v) => !isHidden(shownView?.edges[v.edge]?.body)).map((v) => ({ at: v.p, on: "a corner of the part" }));
       for (const sk of drawnSketches()) {
         if (sk.id === d.sketch) continue;
-        for (const p of sk.points3d ?? []) out.push({ at: p.at, on: `${sk.id}'s ${p.id}` });
-        for (const pl of sk.polylines) {
-          if (pl.construction) continue;
-          const pts = pl.points;
-          if (pts.length) out.push({ at: pts[0], on: `a point of ${sk.id}` }, { at: pts[pts.length - 1], on: `a point of ${sk.id}` });
+        const add = (at: Vec3, point: string) => out.push({ at, on: `${sk.id}'s ${point}`, link: { sketch: sk.id, point } });
+        for (const p of sk.points3d ?? []) add(p.at, `${p.id}.at`);
+        for (const e of sk.entities) {
+          if (e.construction || e.ref) continue;
+          if (e.type === "line") {
+            add(to3D(sk.frame, e.start), `${e.id}.start`);
+            add(to3D(sk.frame, e.end), `${e.id}.end`);
+            add(to3D(sk.frame, [(e.start[0] + e.end[0]) / 2, (e.start[1] + e.end[1]) / 2]), `${e.id}.mid`);
+          } else if (e.type === "arc" || e.type === "circle") add(to3D(sk.frame, e.center), `${e.id}.center`);
+          else if (e.type === "point") add(to3D(sk.frame, e.at), `${e.id}.at`);
         }
-        for (const p of sk.points) out.push({ at: p.at, on: `a point of ${sk.id}` });
+      }
+      return out;
+    };
+    /** Straight lines a click can land on partway: other sketches' (followed, at that far along) and this one's own. */
+    const snapLines = (d: Draw3d): { a: Vec3; b: Vec3; on: string; sketch?: string; id?: string }[] => {
+      const out: { a: Vec3; b: Vec3; on: string; sketch?: string; id?: string }[] = d.segments.map((sg) => ({ a: sg.a, b: sg.b, on: "a line of this sketch" }));
+      for (const sk of drawnSketches()) {
+        if (sk.id === d.sketch) continue;
+        for (const l of sk.lines3d ?? []) if (!l.construction) out.push({ a: l.a, b: l.b, on: `${sk.id}'s ${l.id}`, sketch: sk.id, id: l.id });
+        for (const e of sk.entities) if (e.type === "line" && !e.construction && !e.ref) out.push({ a: to3D(sk.frame, e.start), b: to3D(sk.frame, e.end), on: `${sk.id}'s ${e.id}`, sketch: sk.id, id: e.id });
       }
       return out;
     };
@@ -1907,7 +1923,7 @@ export function Viewport({
      * the part or another sketch's point, else on the work plane through
      * `base`, snapped to the grid from it.
      */
-    const drawAt = (x: number, y: number, base?: Vec3, skip?: string): { at: Vec3; snap: string | null; on?: string } | null => {
+    const drawAt = (x: number, y: number, base?: Vec3, skip?: string): { at: Vec3; snap: string | null; on?: string; link?: Link } | null => {
       const d = draw3dRef.current;
       if (!d) return null;
       const near = (at: Vec3) => {
@@ -1921,15 +1937,34 @@ export function Viewport({
         if (px <= 10 && (!best || px < best.px)) best = { ...p, px };
       }
       if (best) return { at: best.at, snap: best.id };
-      let outside: { at: Vec3; on: string; px: number } | null = null;
+      let outside: { at: Vec3; on: string; link?: Link; px: number } | null = null;
       for (const p of outsideSnaps(d)) {
         const px = near(p.at);
         if (px <= 9 && (!outside || px < outside.px)) outside = { ...p, px };
       }
-      if (outside) return { at: outside.at.map((v) => Math.round(v * 1e6) / 1e6 + 0) as Vec3, snap: null, on: outside.on };
+      if (outside) return { at: outside.at.map((v) => Math.round(v * 1e6) / 1e6 + 0) as Vec3, snap: null, on: outside.on, ...(outside.link ? { link: outside.link } : {}) };
       aim(x, y);
       const o = raycaster.ray.origin;
       const dir = raycaster.ray.direction;
+      // Partway along a line: the point on it nearest the pointer's ray.
+      let online: { at: Vec3; on: string; link?: Link; px: number } | null = null;
+      for (const l of snapLines(d)) {
+        const u = [l.b[0] - l.a[0], l.b[1] - l.a[1], l.b[2] - l.a[2]];
+        const w = [o.x - l.a[0], o.y - l.a[1], o.z - l.a[2]];
+        const dv = [dir.x, dir.y, dir.z];
+        const B = dv[0] * u[0] + dv[1] * u[1] + dv[2] * u[2];
+        const C = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+        const D = dv[0] * w[0] + dv[1] * w[1] + dv[2] * w[2];
+        const E = u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
+        const den = C - B * B;
+        if (C < 1e-12 || Math.abs(den) < 1e-12) continue;
+        const t = Math.round(Math.max(0, Math.min(1, (E - B * D) / den)) * 1e4) / 1e4;
+        if (t <= 0 || t >= 1) continue; // its ends are points, snapped above
+        const at = l.a.map((v, k) => Math.round((v + t * u[k]) * 1e6) / 1e6 + 0) as Vec3;
+        const px = near(at);
+        if (px <= 8 && (!online || px < online.px)) online = { at, on: `${l.on} (${Math.round(t * 1000) / 10}% along)`, ...(l.sketch && l.id ? { link: { sketch: l.sketch, point: l.id, t } } : {}), px };
+      }
+      if (online) return { at: online.at, snap: null, on: online.on, ...(online.link ? { link: online.link } : {}) };
       const from = base ?? d.anchor ?? [0, 0, 0];
       const hit = rayPlane([o.x, o.y, o.z], [dir.x, dir.y, dir.z], from, d.plane);
       return hit ? { at: snapToGrid(hit, from, d.plane, niceStep(controls.worldPerPixel())), snap: null } : null;

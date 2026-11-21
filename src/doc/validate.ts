@@ -154,6 +154,8 @@ export interface FeatureContext {
   nodes: Record<string, Vec3>;
   /** Linked nodes whose sketch point can't be found, and why. */
   nodeProblems?: Record<string, string>;
+  /** Where a point that follows a sketch is (a 3D sketch's points may). */
+  follow?: (link: unknown) => { ok: true; at: Vec3 } | { ok: false; error: string };
   /** Valid members so far, by id. */
   members: Map<string, MemberFeature>;
   /** The joint at each node so far. */
@@ -297,7 +299,8 @@ export function validateDocument(input: unknown, opts: ValidateOptions = {}): Va
   result.headerErrors = header.errors;
   /** Every profile the part lists, valid or not: a member of a broken one points at its errors. */
   const listed = isObject(input.profiles) ? Object.keys(input.profiles) : [];
-  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, nodeProblems: result.nodeProblems, members: new Map(), joints: new Map(), sketches: new Map() };
+  const follow = (link: unknown) => resolveNodeLink(input.features as unknown[], link, symbols, opts.sketchFrames);
+  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, nodeProblems: result.nodeProblems, follow, members: new Map(), joints: new Map(), sketches: new Map() };
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
   // A { sketch, entity } reference is checked against the valid sketches before it.
@@ -2051,7 +2054,7 @@ function libraryRef(v: unknown, path: string, c: Checker): { id: string; version
 
 function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext): MemberFeature | null {
   const { profiles, listed } = ctx;
-  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "align", "newBody"]);
+  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "align", "newBody", "along"]);
   // A profile named by its family alone ("SHS") is the part's one profile of that family ("SHS (AS/NZS 1163)"), when just one is.
   let profileKey = typeof raw.profile === "string" ? raw.profile : undefined;
   if (profileKey !== undefined && !(profileKey in profiles) && !listed.includes(profileKey)) {
@@ -2096,6 +2099,8 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
     }
   }
   const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
+  const along = raw.along === undefined ? undefined : isObject(raw.along) && typeof raw.along.sketch === "string" && typeof raw.along.entity === "string" ? { sketch: raw.along.sketch, entity: raw.along.entity } : undefined;
+  if (raw.along !== undefined && !along) c.fail("along", 'is the sketch line it was put on: { "sketch", "entity" }');
   if (c.errors.length > 0 || !from || !to) return null;
   const f: MemberFeature = { id: raw.id as string, op: "member", profile: profileKey as string, size: size as string, from, to };
   if (fromNode) f.fromNode = fromNode;
@@ -2103,6 +2108,7 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   if (rotation !== undefined) f.rotation = rotation;
   if (align) f.align = align;
   if (newBody) f.newBody = newBody;
+  if (along) f.along = along;
   return f;
 }
 
