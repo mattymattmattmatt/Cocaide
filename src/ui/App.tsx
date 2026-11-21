@@ -130,7 +130,8 @@ import { clickedCentre } from "../features/hole/wizard";
 import { faceAppearances } from "../appearance";
 import { AppearancePicker } from "./appearance/AppearancePicker";
 import { AppearancePanel } from "./appearance/AppearancePanel";
-import { colourable, lookCommand, lookInfo, type LookTarget } from "./appearance/targets";
+import { colourable, lookCommand, lookInfo, lookInfoAll, withLook, type LookTarget } from "./appearance/targets";
+import type { Appearance } from "../doc/types";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -384,13 +385,26 @@ export function App() {
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
   const shown = useMemo(() => previewDoc ?? (parsed.ok ? parsed.value : null), [previewDoc, parsed]);
-  // How each face of the part in the view looks (null: the default colours), from the document's appearances.
+  // How each face of the part in the view looks (null: the default colours), from the document's appearances, with a
+  // look being tried in the picker (a swatch under the pointer, a drag) shown over them.
   const viewShown = (!previewDoc && pickView) || view;
+  const [lookTry, setLookTry] = useState<{ targets: LookTarget[]; look: Appearance | null } | null>(null);
   const appearances = useMemo(() => {
     if (!viewShown) return null;
-    const looks = faceAppearances(shown ?? d.doc, viewShown.faces);
+    const base = shown ?? d.doc;
+    const tried = lookTry && base ? (withLook(base as RawDocument, lookTry.targets, lookTry.look) ?? base) : base;
+    const looks = faceAppearances(tried, viewShown.faces);
     return looks.some(Boolean) ? looks : null;
-  }, [shown, d.doc, viewShown]);
+  }, [shown, d.doc, viewShown, lookTry]);
+  /** Gives the targets this look: one edit, one undo step, however many there are. */
+  const runLook = (targets: readonly LookTarget[], a: Appearance | null) => {
+    if (targets.length === 1) return run(lookCommand(targets[0], a));
+    if (!d.doc) return null;
+    const next = withLook(d.doc, targets, a);
+    if (!next) return run(lookCommand(targets[0], a));
+    d.replaceDoc(next);
+    return null;
+  };
   /**
    * What the 3D view rebuilds: in the model, the part as far as the rollback bar; with a handle's drag shown
    * live. The drawing, export and the assistant work on the whole part.
@@ -1662,9 +1676,9 @@ export function App() {
   // ------------------------------------------------------------ right-click menus
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  /** The appearance picker, open on the part, a body or a feature, where it was asked for. */
-  const [look, setLook] = useState<{ target: LookTarget; x: number; y: number } | null>(null);
-  const openLook = (target: LookTarget, x: number, y: number) => setLook({ target, x, y });
+  /** The appearance picker, open on the part, bodies or features, where it was asked for. */
+  const [look, setLook] = useState<{ targets: LookTarget[]; x: number; y: number } | null>(null);
+  const openLook = (target: LookTarget | LookTarget[], x: number, y: number) => setLook({ targets: Array.isArray(target) ? target : [target], x, y });
   // Read at the click, not when the menu opened: the right-click's own selection has landed by then.
   const runToolRef = useRef(runTool);
   runToolRef.current = runTool;
@@ -2713,8 +2727,9 @@ export function App() {
                 view={view}
                 selectedFeature={selectedFeature}
                 selectedFaces={selection.faces}
+                selectedEdges={selection.edges}
                 onOpen={openLook}
-                onReset={(t) => run(lookCommand(t, null))}
+                onReset={(t) => runLook(Array.isArray(t) ? t : [t], null)}
               />
             )}
             <MeasurementsPanel measurements={view?.measurements ?? null} />
@@ -3043,12 +3058,16 @@ export function App() {
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
         {look && doc && (
           <AppearancePicker
-            key={JSON.stringify(look.target)}
+            key={JSON.stringify(look.targets)}
             x={look.x}
             y={look.y}
-            {...lookInfo(doc as Record<string, unknown>, view, look.target)}
-            onChange={(a) => run(lookCommand(look.target, a))}
-            onClose={() => setLook(null)}
+            {...lookInfoAll(doc as Record<string, unknown>, view, look.targets)}
+            onChange={(a) => runLook(look.targets, a)}
+            onPreview={(a) => setLookTry(a === undefined ? null : { targets: look.targets, look: a })}
+            onClose={() => {
+              setLook(null);
+              setLookTry(null);
+            }}
           />
         )}
         {whatsWrongOpen && !sketch && mode === "model" && (

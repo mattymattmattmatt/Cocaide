@@ -1368,6 +1368,78 @@ export function Viewport({
     const dashedMaterial = (color: THREE.Color) =>
       new THREE.LineDashedMaterial({ color, dashSize: radius / 45, gapSize: radius / 70, transparent: true, opacity: 0.45, depthFunc: THREE.GreaterDepth, depthWrite: false });
 
+    /**
+     * The part's materials for the view's mesh, each face as it looks (its appearance, else the default colour for its
+     * body), as triangle groups on `g`; sets which body and look each material draws.
+     */
+    const paintMesh = (v: RebuildView, g: THREE.BufferGeometry): THREE.Material | THREE.Material[] => {
+    // A face's look, or the default: a colour per body for a part of several, else the part grey.
+    const partGrey = cssColor(el, "--part", "#c4cad3");
+    const surface = (look: Appearance | null, fallback: THREE.ColorRepresentation, visible = true) => {
+      const light = finishLight(look?.finish);
+      return new THREE.MeshStandardMaterial({
+        color: look ? new THREE.Color(look.color) : fallback,
+        metalness: light.metalness,
+        roughness: light.roughness,
+        ...(light.env > 0 ? { envMap: room(), envMapIntensity: light.env } : {}),
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+        visible,
+      });
+    };
+    const bodies = v.bodies ?? [];
+    const looks = faceLooks && faceLooks.length === v.faces.length && faceLooks.some(Boolean) ? faceLooks : null;
+    matBody = [];
+    matLook = [];
+    if (bodies.length > 1 || looks) {
+      // Triangle groups: runs of faces of one body and one look (each body's faces are contiguous), one material each.
+      const bodyIndex = new Map(bodies.map((b, i) => [b.name, i]));
+      const mats: THREE.Material[] = [];
+      const byKey = new Map<string, number>();
+      let run: { start: number; end: number; mat: number } | null = null;
+      const flush = () => run && g.addGroup(run.start, run.end - run.start, run.mat);
+      faceRanges.forEach((r, i) => {
+        const bi = bodies.length > 1 ? (bodyIndex.get(v.faces[i]?.body ?? "") ?? 0) : 0;
+        const look = looks?.[i] ?? null;
+        const key = `${bi}|${appearanceKey(look)}`;
+        let mat = byKey.get(key);
+        if (mat === undefined) {
+          mat = mats.length;
+          byKey.set(key, mat);
+          const name = bodies[bi]?.name ?? "";
+          mats.push(surface(look, bodies.length > 1 ? BODY_COLORS[bi % BODY_COLORS.length] : partGrey, !hidden.has(name)));
+          matBody.push(name);
+          matLook.push(look);
+        }
+        if (run && run.mat === mat && run.end === r.start) run.end = r.start + r.count;
+        else {
+          flush();
+          run = { start: r.start, end: r.start + r.count, mat };
+        }
+      });
+      flush();
+      return mats;
+    } else {
+      matBody = [bodies[0]?.name ?? ""];
+      matLook = [null];
+      return surface(null, partGrey);
+    }
+    };
+    /** Each face as it looks now, on the mesh as it is (its shape untouched): a picker's try shows at once. */
+    const repaint = () => {
+      const v = shownView;
+      if (!mesh || !v?.mesh) return setModel(v);
+      for (const m of [mesh.material].flat()) m.dispose();
+      mesh.geometry.clearGroups();
+      mesh.material = paintMesh(v, mesh.geometry);
+      dropCapCache();
+      applyDisplay();
+      clipPlanes = [];
+      applySection();
+      render();
+    };
+
     const setModel = (v: RebuildView | null) => {
       shownView = v;
       modelVersion++;
@@ -1393,58 +1465,8 @@ export function Viewport({
         g.setAttribute("normal", new THREE.BufferAttribute(v.mesh.normals, 3));
         g.setIndex(new THREE.BufferAttribute(v.mesh.indices, 1));
         g.computeBoundingSphere();
-        // A face's look, or the default: a colour per body for a part of several, else the part grey.
-        const partGrey = cssColor(el, "--part", "#c4cad3");
-        const surface = (look: Appearance | null, fallback: THREE.ColorRepresentation, visible = true) => {
-          const light = finishLight(look?.finish);
-          return new THREE.MeshStandardMaterial({
-            color: look ? new THREE.Color(look.color) : fallback,
-            metalness: light.metalness,
-            roughness: light.roughness,
-            ...(light.env > 0 ? { envMap: room(), envMapIntensity: light.env } : {}),
-            polygonOffset: true,
-            polygonOffsetFactor: 1,
-            polygonOffsetUnits: 1,
-            visible,
-          });
-        };
+        mesh = new THREE.Mesh(g, paintMesh(v, g));
         const bodies = v.bodies ?? [];
-        const looks = faceLooks && faceLooks.length === v.faces.length && faceLooks.some(Boolean) ? faceLooks : null;
-        matBody = [];
-        matLook = [];
-        if (bodies.length > 1 || looks) {
-          // Triangle groups: runs of faces of one body and one look (each body's faces are contiguous), one material each.
-          const bodyIndex = new Map(bodies.map((b, i) => [b.name, i]));
-          const mats: THREE.Material[] = [];
-          const byKey = new Map<string, number>();
-          let run: { start: number; end: number; mat: number } | null = null;
-          const flush = () => run && g.addGroup(run.start, run.end - run.start, run.mat);
-          faceRanges.forEach((r, i) => {
-            const bi = bodies.length > 1 ? (bodyIndex.get(v.faces[i]?.body ?? "") ?? 0) : 0;
-            const look = looks?.[i] ?? null;
-            const key = `${bi}|${appearanceKey(look)}`;
-            let mat = byKey.get(key);
-            if (mat === undefined) {
-              mat = mats.length;
-              byKey.set(key, mat);
-              const name = bodies[bi]?.name ?? "";
-              mats.push(surface(look, bodies.length > 1 ? BODY_COLORS[bi % BODY_COLORS.length] : partGrey, !hidden.has(name)));
-              matBody.push(name);
-              matLook.push(look);
-            }
-            if (run && run.mat === mat && run.end === r.start) run.end = r.start + r.count;
-            else {
-              flush();
-              run = { start: r.start, end: r.start + r.count, mat };
-            }
-          });
-          flush();
-          mesh = new THREE.Mesh(g, mats);
-        } else {
-          mesh = new THREE.Mesh(g, surface(null, partGrey));
-          matBody = [bodies[0]?.name ?? ""];
-          matLook = [null];
-        }
         model.add(mesh);
         // Which body each vertex is in (−1: hidden), and the visible bodies' box: the rotation centre and Fit use them.
         const bodyIndex = new Map(bodies.map((b, i) => [b.name, i]));
@@ -2212,7 +2234,7 @@ export function Viewport({
         const key = (l: readonly (Appearance | null)[] | null) => (l ? l.map(appearanceKey).join(",") : "");
         if (key(next) === key(faceLooks)) return;
         faceLooks = next;
-        setModel(shownView);
+        repaint();
       },
       setHiddenBodies(next: ReadonlySet<string>) {
         hidden = next;

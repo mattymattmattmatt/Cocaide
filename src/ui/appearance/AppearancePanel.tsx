@@ -8,7 +8,7 @@ import type { RebuildView } from "../../worker/protocol";
 import { Icon } from "../icons";
 import { Section } from "../Section";
 import { AppearanceChip, describeAppearance, sourceWords } from "./AppearancePicker";
-import { colourable, lookInfo, type LookTarget } from "./targets";
+import { colourable, lookInfo, lookInfoAll, type LookTarget } from "./targets";
 
 interface Props {
   doc: Record<string, unknown>;
@@ -17,22 +17,23 @@ interface Props {
   selectedFeature: string | null;
   /** The faces selected in the view. */
   selectedFaces: readonly number[];
-  onOpen(target: LookTarget, x: number, y: number): void;
-  onReset(target: LookTarget): void;
+  /** The edges selected in the view (their bodies and the features that made them count too). */
+  selectedEdges?: readonly number[];
+  onOpen(target: LookTarget | LookTarget[], x: number, y: number): void;
+  onReset(target: LookTarget | LookTarget[]): void;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const key = (t: LookTarget) => (t.kind === "part" ? "part" : t.kind === "body" ? `body:${t.body}` : `feature:${t.feature}`);
 
-export function AppearancePanel({ doc, view, selectedFeature, selectedFaces, onOpen, onReset }: Props) {
+export function AppearancePanel({ doc, view, selectedFeature, selectedFaces, selectedEdges = [], onOpen, onReset }: Props) {
   const features = Array.isArray(doc.features) ? (doc.features as Record<string, unknown>[]) : [];
   const many = (view?.bodies.length ?? 0) > 1;
   // What the selection is about: the selected feature, else the body and the feature of the faces picked.
   const about: LookTarget[] = [];
   const add = (t: LookTarget) => !about.some((x) => key(x) === key(t)) && about.push(t);
   if (selectedFeature && colourable(features.find((f) => f.id === selectedFeature)?.op)) add({ kind: "feature", feature: selectedFeature });
-  for (const i of selectedFaces.slice(0, 50)) {
-    const f = view?.faces[i];
+  for (const f of [...selectedFaces.slice(0, 50).map((i) => view?.faces[i]), ...selectedEdges.slice(0, 50).map((i) => view?.edges[i])]) {
     if (!f) continue;
     if (many && f.body) add({ kind: "body", body: f.body });
     if (f.createdBy && colourable(features.find((g) => g.id === f.createdBy)?.op)) add({ kind: "feature", feature: f.createdBy });
@@ -76,12 +77,56 @@ export function AppearancePanel({ doc, view, selectedFeature, selectedFaces, onO
     );
   };
 
+  // Everything that has a colour of its own (the part too): what Clear all takes back, in one step.
+  const owned: LookTarget[] = [...(asAppearance(doc.appearance) ? [{ kind: "part" } as LookTarget] : []), ...set, ...about.filter((t) => lookInfo(doc, view, t).own)];
+  // Several selected: one line that colours them all at once (the bodies, when two or more are; else the features).
+  const bodiesPicked = about.filter((t) => t.kind === "body");
+  const featuresPicked = about.filter((t) => t.kind === "feature");
+  const group = bodiesPicked.length > 1 ? bodiesPicked : featuresPicked.length > 1 ? featuresPicked : [];
+  const all = () => {
+    const info = lookInfoAll(doc, view, group);
+    return (
+      <div className="look-line look-all" key="all" data-testid="look-line-all">
+        <button
+          type="button"
+          className="look-button"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onOpen(group, r.left, r.bottom + 4);
+          }}
+          aria-label={`Appearance of all ${group.length} selected`}
+          data-testid="look-open-all"
+        >
+          <AppearanceChip look={info.own} fallback={info.fallback} inherited={!info.own} size={18} />
+        </button>
+        <span className="look-name">
+          <span>All {info.title}</span>
+          <span className="muted">{info.own ? describeAppearance(info.own) : "One colour for all of them"}</span>
+        </span>
+        <span />
+      </div>
+    );
+  };
   return (
-    <Section title="Appearance" className="appearance-panel" testId="appearance-panel" aside={part.any ? undefined : <span className="muted small">default colours</span>}>
+    <Section
+      title="Appearance"
+      className="appearance-panel"
+      testId="appearance-panel"
+      aside={
+        owned.length ? (
+          <button type="button" className="small link-button" onClick={() => onReset(owned)} title="Take every colour off: the part, its bodies and its features show their default colours again (one undo step)" data-testid="look-clear-all">
+            Clear all
+          </button>
+        ) : part.any ? undefined : (
+          <span className="muted small">default colours</span>
+        )
+      }
+    >
       {line({ kind: "part" })}
       {about.length > 0 && (
         <>
           <h2>Selected</h2>
+          {group.length > 1 && all()}
           {about.map((t) => line(t))}
         </>
       )}

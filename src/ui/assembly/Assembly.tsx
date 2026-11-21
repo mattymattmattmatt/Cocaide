@@ -426,7 +426,11 @@ function ComponentLook({ a, id }: { a: AssemblyWorkspace; id: string }) {
           {...info}
           inherited={info.inherited}
           onChange={(look) => a.editComponent(id, { appearance: look ?? undefined }, look ? `Colour ${id}` : `${id}: its part's colours`, false)}
-          onClose={() => setAt(null)}
+          onPreview={(look) => a.setLookTry(look === undefined ? null : { id, look })}
+          onClose={() => {
+            setAt(null);
+            a.setLookTry(null);
+          }}
           testId="asm-look-picker"
         />
       )}

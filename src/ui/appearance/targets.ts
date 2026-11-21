@@ -2,7 +2,8 @@
 // feature makes) and what it needs about it: its title, its own look, what it
 // shows without one (and from where) and the viewport's default colour for it.
 
-import { asAppearance, PartAppearances, type Appearance, type ResolvedAppearance } from "../../appearance";
+import { asAppearance, PartAppearances, sameAppearance, type Appearance, type ResolvedAppearance } from "../../appearance";
+import { apply, type RawDocument } from "../../doc/commands";
 import type { Command } from "../../doc/commands";
 import { DATUM_OPS } from "../../features/datum";
 import type { RebuildView } from "../../worker/protocol";
@@ -62,3 +63,26 @@ export function lookCommand(t: LookTarget, a: Appearance | null): Command {
 export function colourable(op: unknown): boolean {
   return typeof op === "string" && op !== "sketch" && !Object.hasOwn(DATUM_OPS, op) && !["joint", "deleteBody"].includes(op);
 }
+
+/** What the picker needs for several targets at once: one look over them all (their own, when they all have the same one). */
+export function lookInfoAll(doc: Record<string, unknown>, view: RebuildView | null, targets: readonly LookTarget[]): LookInfo {
+  if (targets.length === 1) return lookInfo(doc, view, targets[0]);
+  const infos = targets.map((t) => lookInfo(doc, view, t));
+  const first = infos[0]?.own ?? null;
+  const same = infos.every((i) => sameAppearance(i.own, first));
+  const kinds = new Set(targets.map((t) => t.kind));
+  const noun = kinds.size === 1 ? (targets[0].kind === "body" ? "bodies" : targets[0].kind === "feature" ? "features" : "parts") : "items";
+  return { title: `${targets.length} ${noun}`, own: same ? first : null, inherited: null, fallback: infos[0]?.fallback ?? PART_GREY };
+}
+
+/** The document with these targets given this look (what a preview shows); null when it can't be made. */
+export function withLook(doc: RawDocument, targets: readonly LookTarget[], a: Appearance | null): RawDocument | null {
+  let next = doc;
+  for (const t of targets) {
+    const r = apply(next, lookCommand(t, a));
+    if (!r.ok) return null;
+    next = r.doc;
+  }
+  return next;
+}
+

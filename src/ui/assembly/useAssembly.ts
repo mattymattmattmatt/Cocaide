@@ -516,6 +516,8 @@ export function useAssembly(o: AssemblyOptions) {
 
   // The view's see-through components, and what isolate hides (components gone from the assembly drop out).
   const clearBodies = useMemo(() => new Set((asm?.components ?? []).filter((k) => k.transparent).map((k) => k.id)), [asm]);
+  // A colour being tried on a component in the picker (shown, not kept).
+  const [lookTry, setLookTry] = useState<{ id: string; look: Appearance | null } | null>(null);
   // How each face of the scene looks: its component's own appearance, else its part's (null: the default colour).
   const appearances = useMemo((): (Appearance | null)[] | null => {
     if (!asm) return null;
@@ -530,14 +532,14 @@ export function useAssembly(o: AssemblyOptions) {
     const out = scene.faceOwner.map((o) => {
       const k = byId.get(o.component);
       if (!k) return null;
-      const own = asAppearance(k.appearance);
+      const own = lookTry?.id === k.id ? lookTry.look : asAppearance(k.appearance);
       const face = own ? null : views.get(k.part)?.faces[o.local];
       const look = own ?? (face ? (lookOf(k.part).face(face)?.appearance ?? null) : null);
       if (look) any = true;
       return look;
     });
     return any ? out : null;
-  }, [asm, scene, views, docs]);
+  }, [asm, scene, views, docs, lookTry]);
   /** How a component looks: its own colour, what its part shows, and its default colour in the view. */
   const componentLook = (id: string): LookInfo => {
     const i = asm?.components.findIndex((k) => k.id === id) ?? -1;
@@ -590,6 +592,7 @@ export function useAssembly(o: AssemblyOptions) {
     clearBodies,
     appearances,
     componentLook,
+    setLookTry,
     isolateHides,
     suggestions,
     applySuggestion,

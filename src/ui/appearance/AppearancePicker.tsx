@@ -86,6 +86,30 @@ function remember(a: Appearance): void {
   }
 }
 
+// ------------------------------------------------------------------ copy and paste
+
+const COPIED_KEY = "cocaide.copiedAppearance";
+
+/** The appearance copied last (kept in this browser, across parts). */
+export function readCopied(): Appearance | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(COPIED_KEY) ?? "null");
+    return v && typeof v.color === "string" ? (v as Appearance) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Copies an appearance to paste elsewhere; returns it. */
+export function copyAppearance(a: Appearance): Appearance {
+  try {
+    localStorage.setItem(COPIED_KEY, JSON.stringify(a));
+  } catch {
+    // No storage: the copy lasts as long as the picker that holds it.
+  }
+  return a;
+}
+
 // ------------------------------------------------------------------ the picker
 
 const FINISH_LABEL: Record<AppearanceFinish, string> = { matte: "Matte", satin: "Satin", gloss: "Gloss", metallic: "Metallic" };
@@ -104,11 +128,13 @@ export interface AppearancePickerProps {
   fallback: string;
   /** A choice made (null: back to what it inherits). */
   onChange(a: Appearance | null): void;
+  /** A look tried without keeping it (a swatch under the pointer, a drag in progress): the view shows it; undefined stops. */
+  onPreview?(a: Appearance | null | undefined): void;
   onClose(): void;
   testId?: string;
 }
 
-export function AppearancePicker({ x, y, title, own, inherited, fallback, onChange, onClose, testId = "appearance-picker" }: AppearancePickerProps) {
+export function AppearancePicker({ x, y, title, own, inherited, fallback, onChange, onPreview, onClose, testId = "appearance-picker" }: AppearancePickerProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
   // What the popover shows: the stored look, or a drag in progress (opacity, the system picker) not yet kept.
@@ -147,8 +173,20 @@ export function AppearancePicker({ x, y, title, own, inherited, fallback, onChan
     };
   }, [onClose]);
 
+  // A try in the view ends when the picker closes.
+  const previewRef = useRef(onPreview);
+  previewRef.current = onPreview;
+  useEffect(() => () => previewRef.current?.(undefined), []);
+  /** A drag in progress: shown in the popover and in the view, not yet kept. */
+  const tryOut = (a: Appearance) => {
+    setDraft(a);
+    onPreview?.(a);
+  };
+  const [copied, setCopied] = useState(readCopied);
+  const eyedropper = typeof window !== "undefined" && "EyeDropper" in window;
   const commit = (a: Appearance | null) => {
     setDraft(null);
+    onPreview?.(undefined);
     if (sameAppearance(a, own)) return;
     if (a) remember(a);
     onChange(a);
@@ -176,6 +214,8 @@ export function AppearancePicker({ x, y, title, own, inherited, fallback, onChan
         className="look-swatch"
         style={chipStyle(a, a.color)}
         onClick={() => commit(a)}
+        onPointerEnter={() => onPreview?.(a)}
+        onFocus={() => onPreview?.(a)}
         data-testid={`look-swatch-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
       >
         {on && <span className="look-tick" style={{ color: inkOn(a.color) }}><Icon name="check" size={12} /></span>}
@@ -210,12 +250,37 @@ export function AppearancePicker({ x, y, title, own, inherited, fallback, onChan
             {shown ? describeAppearance(shown) : `From ${sourceWords(inherited)}`}
           </span>
         </div>
+        <button
+          type="button"
+          className="icon look-close"
+          aria-label="Copy this appearance"
+          title="Copy this appearance (to paste on another body, feature or part)"
+          disabled={!(shown ?? inherited?.appearance)}
+          onClick={() => {
+            const a = shown ?? inherited?.appearance;
+            if (a) setCopied(copyAppearance(a));
+          }}
+          data-testid="look-copy"
+        >
+          <Icon name="copy" size={14} />
+        </button>
+        <button
+          type="button"
+          className="icon look-close"
+          aria-label="Paste appearance"
+          title={copied ? `Paste ${describeAppearance(copied)}` : "Copy an appearance first"}
+          disabled={!copied || sameAppearance(copied, own)}
+          onClick={() => copied && commit(copied)}
+          data-testid="look-paste"
+        >
+          <Icon name="paste" size={14} />
+        </button>
         <button type="button" className="icon look-close" aria-label="Close" onClick={onClose}>
           <Icon name="x" size={14} />
         </button>
       </header>
 
-      <div className="look-body">
+      <div className="look-body" onPointerLeave={() => !draft && onPreview?.(undefined)}>
         {recent.length > 0 && (
           <section className="look-group">
             <h3>Recent</h3>
@@ -240,7 +305,7 @@ export function AppearancePicker({ x, y, title, own, inherited, fallback, onChan
               <input
                 type="color"
                 value={parseHex(hex) ?? base.color}
-                onInput={(e) => setDraft(withChange({ color: (e.target as HTMLInputElement).value }))}
+                onInput={(e) => tryOut(withChange({ color: (e.target as HTMLInputElement).value }))}
                 onChange={(e) => commit(withChange({ color: e.target.value }))}
                 aria-label="Pick any colour"
                 data-testid="look-system"
@@ -265,6 +330,26 @@ export function AppearancePicker({ x, y, title, own, inherited, fallback, onChan
               }}
               data-testid="look-hex"
             />
+            {eyedropper && (
+              <button
+                type="button"
+                className="look-dropper"
+                title="Pick a colour from anywhere on the screen"
+                aria-label="Pick a colour from the screen"
+                onClick={async () => {
+                  try {
+                    const r = await new (window as unknown as { EyeDropper: new () => { open(): Promise<{ sRGBHex: string }> } }).EyeDropper().open();
+                    const c = parseHex(r.sRGBHex);
+                    if (c) commit(withChange({ color: c }));
+                  } catch {
+                    // Cancelled (Escape): nothing changes.
+                  }
+                }}
+                data-testid="look-dropper"
+              >
+                <Icon name="eyedropper" size={15} />
+              </button>
+            )}
           </div>
         </section>
 
@@ -292,7 +377,7 @@ export function AppearancePicker({ x, y, title, own, inherited, fallback, onChan
             value={opacity}
             aria-label="Opacity, percent"
             style={{ "--look-fill": `${((opacity - 10) / 90) * 100}%` } as CSSProperties}
-            onChange={(e) => setDraft(withChange({ opacity: Number(e.target.value) / 100 }))}
+            onChange={(e) => tryOut(withChange({ opacity: Number(e.target.value) / 100 }))}
             onPointerUp={(e) => commit(withChange({ opacity: Number((e.target as HTMLInputElement).value) / 100 }))}
             onKeyUp={(e) => commit(withChange({ opacity: Number((e.target as HTMLInputElement).value) / 100 }))}
             data-testid="look-opacity"

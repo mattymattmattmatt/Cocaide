@@ -643,6 +643,8 @@ const ICONS = {
     </>
   ),
   filterPlanes: <path d="M3 16 8 7h13l-5 9z" fill="currentColor" fillOpacity={0.2} />,
+  // An eyedropper: take a colour from the screen.
+  eyedropper: <path d="M14.5 5.5l4 4 M13 7l4 4-8.5 8.5H5v-3.5z M16.3 3.7a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8l-1.8 1.8-4-4z" />,
   // A drop of paint: how something looks (its colour, finish and opacity).
   appearance: (
     <>

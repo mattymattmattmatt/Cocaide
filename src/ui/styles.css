@@ -2406,3 +2406,18 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .asm-look { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .feature-look-mark { display: inline-flex; align-items: center; margin-left: 4px; flex: none; }
 .feature-look-mark .look-chip { border-radius: 50%; }
+.look-dropper {
+  width: 30px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); cursor: pointer;
+}
+.look-dropper:hover { color: var(--text); background: var(--panel); }
+.look-dropper:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.look-close:disabled { opacity: 0.35; cursor: default; background: none; }
+.appearance-panel .link-button { border: none; background: none; padding: 2px 4px; color: var(--accent); cursor: pointer; font-size: 12px; border-radius: 5px; }
+.appearance-panel .link-button:hover { background: var(--panel-2); }
+.appearance-panel .look-all { background: var(--panel-2); border-radius: 8px; padding: 4px 6px; margin: 2px -6px 4px; }
+@media (prefers-color-scheme: dark) {
+  /* Dark swatches keep an edge against the dark panel. */
+  .look-swatch, .look-chip, .look-preview, .look-system { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16); }
+  .look-swatch[aria-checked="true"], .look-swatch:focus-visible { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16), 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+}
