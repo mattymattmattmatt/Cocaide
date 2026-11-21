@@ -186,6 +186,11 @@ export function scopeProblem(doc: RawDocument, cmd: Command, scope: WriteScope |
       what = `setBodyMaterial "${cmd.body}"`;
       allowed = has(`body:${cmd.body}`);
       break;
+    case "setAppearance":
+      // A colour changes no geometry: whoever may change the body, the feature or the component may colour it.
+      what = `setAppearance ${cmd.body ? `body "${cmd.body}"` : cmd.feature ? `feature "${cmd.feature}"` : cmd.component ? `component "${cmd.component}"` : "of the part"}`;
+      allowed = cmd.body ? has(`body:${cmd.body}`) : cmd.feature ? has(cmd.feature) : cmd.component ? has("assembly") : has("appearance") || has("properties");
+      break;
     case "setDrawing":
     case "setSheet":
     case "addSheet":

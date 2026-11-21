@@ -3,7 +3,7 @@
 // wrong with it is listed as the assembly's errors. Pure.
 
 import { MATE_TYPES, type Assembly, type AssemblyComponent, type ExplodeStep, type Mate, type MateRef, type Vec3 } from "./types";
-import { Checker, validateEdgeSelector, validateFaceSelector } from "./validate";
+import { Checker, checkAppearance, validateEdgeSelector, validateFaceSelector } from "./validate";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const describe = (v: unknown) => (v === undefined ? "nothing" : JSON.stringify(v));
@@ -35,7 +35,7 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
     raw.components.forEach((x, i) => {
       const at = `assembly.components[${i}]`;
       if (!isObject(x)) return c.fail(at, `must be a component { "id", "part", "at"?, "rotation"? } (got ${describe(x)})`);
-      c.keys(x, at, ["id", "part", "at", "rotation", "fixed", "hidden", "transparent"]);
+      c.keys(x, at, ["id", "part", "at", "rotation", "fixed", "hidden", "transparent", "appearance"]);
       if (typeof x.id !== "string" || !/^[A-Za-z_][\w-]*$/.test(x.id)) return c.fail(`${at}.id`, `must be a name (letters, digits, _ and -; got ${describe(x.id)})`);
       if (components.some((k) => k.id === x.id)) return c.fail(`${at}.id`, `"${x.id}" is another component's id`);
       if (typeof x.part !== "string" || (x.part !== SELF && !(x.part in parts))) {
@@ -51,6 +51,10 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
         if (x[k] === undefined) continue;
         if (typeof x[k] !== "boolean") c.fail(`${at}.${k}`, `must be true or false (got ${describe(x[k])})`);
         else if (x[k]) comp[k] = true;
+      }
+      if (x.appearance !== undefined) {
+        const look = checkAppearance(x.appearance, `${at}.appearance`, c);
+        if (look) comp.appearance = look;
       }
       components.push(comp);
     });

@@ -33,6 +33,7 @@ import {
   type DrawingView,
   type Feature,
   type Material,
+  type Appearance,
   type PhotoUnderlay,
   type ProfileDef,
   type SketchEntity,
@@ -155,6 +156,11 @@ export type Command =
   | { type: "editAnnotation"; id: string; patch: Record<string, unknown> }
   /** Gives a body its own material, or puts it back on the part's (null). */
   | { type: "setBodyMaterial"; body: string; material: Material | Record<string, unknown> | null }
+  /**
+   * How something looks: the part (no target), a body, the faces a feature
+   * makes, or one assembly component. null goes back to what it inherits.
+   */
+  | { type: "setAppearance"; body?: string; feature?: string; component?: string; appearance: Appearance | Record<string, unknown> | null }
   /**
    * Changes the part's properties (partNumber, description, revision, author, finish, custom). Merged in;
    * null or "" removes a field; "custom" replaces the custom properties whole (a name with null or "" goes).
@@ -535,6 +541,35 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       else delete doc.bodyMaterials;
       break;
     }
+    case "setAppearance": {
+      const targets = (["body", "feature", "component"] as const).filter((k) => cmd[k] !== undefined);
+      if (targets.length > 1) return { ok: false, error: `setAppearance: give one of body, feature or component (or none, for the part), not ${targets.join(" and ")}` };
+      const look = cmd.appearance === null ? null : structuredClone(cmd.appearance);
+      if (cmd.body !== undefined) {
+        const made = validateDocument(doc).madeBodies;
+        if (!made.includes(cmd.body)) return { ok: false, error: `setAppearance: no body "${cmd.body}" (bodies: ${made.join(", ") || "none"})` };
+        const all = isObject(doc.bodyAppearances) ? { ...doc.bodyAppearances } : {};
+        if (look === null) delete all[cmd.body];
+        else all[cmd.body] = look;
+        if (Object.keys(all).length) doc.bodyAppearances = all;
+        else delete doc.bodyAppearances;
+      } else if (cmd.feature !== undefined) {
+        const f = doc.features.find((x) => isObject(x) && x.id === cmd.feature) as Record<string, unknown> | undefined;
+        if (!f) return { ok: false, error: `setAppearance: no feature "${cmd.feature}"` };
+        if (f.op === "sketch") return { ok: false, error: `setAppearance: ${cmd.feature} is a sketch, which makes no faces: colour the feature that uses it` };
+        if (look === null) delete f.appearance;
+        else f.appearance = look;
+      } else if (cmd.component !== undefined) {
+        const asm = isObject(doc.assembly) ? doc.assembly : null;
+        const list = asm && Array.isArray(asm.components) ? (asm.components as Record<string, unknown>[]) : [];
+        const k = list.find((x) => isObject(x) && x.id === cmd.component);
+        if (!k) return { ok: false, error: `setAppearance: no component "${cmd.component}" (components: ${list.map((x) => String(x.id)).join(", ") || "none"})` };
+        if (look === null) delete k.appearance;
+        else k.appearance = look;
+      } else if (look === null) delete doc.appearance;
+      else doc.appearance = look;
+      break;
+    }
     case "setProperties": {
       if (!isObject(cmd.patch)) return { ok: false, error: `setProperties: patch must be an object of part properties (got ${JSON.stringify(cmd.patch)})` };
       const next: Record<string, unknown> = { ...(isObject(doc.properties) ? doc.properties : {}), ...structuredClone(cmd.patch) };
@@ -823,14 +858,17 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
   const was = validateDocument(input);
   let now = validateDocument(doc);
   // A body's material goes with the body: a command that removes a body (deleting the feature that makes it) drops it.
-  if (cmd.type !== "setBodyMaterial" && isObject(doc.bodyMaterials)) {
+  // So does its appearance.
+  for (const [field, own] of [["bodyMaterials", "setBodyMaterial"], ["bodyAppearances", "setAppearance"]] as const) {
+    const map = doc[field];
+    if (cmd.type === own || !isObject(map)) continue;
     const had = new Set(was.madeBodies);
     const has = new Set(now.madeBodies);
-    const entries = Object.entries(doc.bodyMaterials);
+    const entries = Object.entries(map);
     const kept = entries.filter(([k]) => has.has(k) || !had.has(k));
     if (kept.length < entries.length) {
-      if (kept.length) doc.bodyMaterials = Object.fromEntries(kept);
-      else delete doc.bodyMaterials;
+      if (kept.length) doc[field] = Object.fromEntries(kept);
+      else delete doc[field];
       now = validateDocument(doc);
     }
   }
@@ -848,6 +886,7 @@ function renameBodyRefs(doc: RawDocument, renamed: Map<string, string>): void {
     doc.welds = doc.welds.map((w) => (isObject(w) && Array.isArray(w.between) ? { ...w, between: w.between.map((b) => renamed.get(String(b)) ?? b) } : w));
   }
   if (isObject(doc.bodyMaterials)) doc.bodyMaterials = Object.fromEntries(Object.entries(doc.bodyMaterials).map(([k, v]) => [renamed.get(k) ?? k, v]));
+  if (isObject(doc.bodyAppearances)) doc.bodyAppearances = Object.fromEntries(Object.entries(doc.bodyAppearances).map(([k, v]) => [renamed.get(k) ?? k, v]));
   // The cut list's kept item numbers and text name bodies (plates, copies of members) too; a member feature's id stays.
   if (isObject(doc.cutList)) {
     const cut = { ...doc.cutList };

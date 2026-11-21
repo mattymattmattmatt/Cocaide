@@ -26,6 +26,10 @@ export interface CocaideDocument {
   material?: Material;
   /** A body's own material, by body name, instead of the part's (Phase M). */
   bodyMaterials?: Record<string, Material>;
+  /** How the part looks: its colour, opacity and finish (over its material's). */
+  appearance?: Appearance;
+  /** A body's own appearance, by body name, over the part's. */
+  bodyAppearances?: Record<string, Appearance>;
   /** Where the part came from, kept as notes (a drawing's title block). Stored, never simulated. */
   source?: DocumentSource;
   /** The part's properties (Phase P): its number, description, revision ... The drawing's title block, the cut list and STEP export read them. */
@@ -84,6 +88,8 @@ export interface AssemblyComponent {
   hidden?: boolean;
   /** Drawn translucent and clicked through, to see and pick what is behind or inside it. */
   transparent?: boolean;
+  /** This copy's own colour, over its part's (a red one among grey ones). */
+  appearance?: Appearance;
 }
 
 export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric"] as const;
@@ -1153,6 +1159,26 @@ export const PROPERTY_KEYS = ["partNumber", "description", "revision", "author",
 export interface Material {
   name?: string;
   densityKgPerM3: number;
+  /** How the material looks (a part or body of it shows this unless it has its own appearance). */
+  appearance?: Appearance;
+}
+
+/** How a surface finish catches the light. */
+export const APPEARANCE_FINISHES = ["matte", "satin", "gloss", "metallic"] as const;
+export type AppearanceFinish = (typeof APPEARANCE_FINISHES)[number];
+
+/**
+ * How something looks in the viewport, in renders and in the STEP file: its
+ * colour, how see-through it is and its finish. Never geometry; never read by
+ * the rebuild, the mass or the drawings' line work.
+ */
+export interface Appearance {
+  /** "#rrggbb" (sRGB). */
+  color: string;
+  /** 0.1 (nearly clear) to 1 (opaque, the default). */
+  opacity?: number;
+  /** Default "satin". */
+  finish?: AppearanceFinish;
 }
 
 export type Feature =
@@ -1213,6 +1239,8 @@ export interface FeatureBase {
   suppressed?: boolean;
   /** A short comment about the feature (shown in the tree's tooltip); never read by the rebuild. */
   note?: string;
+  /** The colour of the faces this feature makes (a hole's walls, a fillet), over its body's. */
+  appearance?: Appearance;
 }
 
 // ---------------------------------------------------------------- sketch

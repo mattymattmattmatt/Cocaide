@@ -43,6 +43,9 @@ import {
   type JointFeature,
   type LinearPatternFeature,
   type Material,
+  type Appearance,
+  type AppearanceFinish,
+  APPEARANCE_FINISHES,
   type MemberFeature,
   type PartProperties,
   PROFILE_KEYS,
@@ -110,6 +113,10 @@ export interface ValidationResult {
   madeBodies: string[];
   /** Each body's own material, where it has one. */
   bodyMaterials: Record<string, Material>;
+  /** How the part looks, when it says. */
+  appearance?: Appearance;
+  /** Each body's own appearance, where it has one. */
+  bodyAppearances?: Record<string, Appearance>;
   /** The weldment profiles that validated, by name. */
   profiles: Record<string, ProfileDef>;
   /** The frame's nodes, with expressions evaluated. */
@@ -175,7 +182,7 @@ export function validateDocument(input: unknown): ValidationResult {
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "appearance", "bodyAppearances", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -190,14 +197,16 @@ export function validateDocument(input: unknown): ValidationResult {
       header.fail("material", `must be an object (got ${describe(input.material)})`);
     } else {
       const m = input.material;
-      header.keys(m, "material", ["name", "densityKgPerM3"]);
+      header.keys(m, "material", ["name", "densityKgPerM3", "appearance"]);
       const density = header.num(m, "densityKgPerM3", "material", { positive: true });
       if (m.name !== undefined && typeof m.name !== "string") {
         header.fail("material.name", `must be a string (got ${describe(m.name)})`);
       }
+      const look = m.appearance === undefined ? undefined : checkAppearance(m.appearance, "material.appearance", header);
       if (density !== undefined) {
         result.material = { densityKgPerM3: density };
         if (typeof m.name === "string") result.material.name = m.name;
+        if (look) result.material.appearance = look;
       }
     }
   }
@@ -319,6 +328,24 @@ export function validateDocument(input: unknown): ValidationResult {
       }
     result.headerErrors.push(...m.errors);
   }
+  if (input.appearance !== undefined) {
+    const look = checkAppearance(input.appearance, "appearance", header);
+    if (look) result.appearance = look;
+  }
+  if (input.bodyAppearances !== undefined) {
+    const m = new Checker("document");
+    if (!isObject(input.bodyAppearances)) m.fail("bodyAppearances", `must be an object of body name: appearance (got ${describe(input.bodyAppearances)})`);
+    else
+      for (const [name, raw] of Object.entries(input.bodyAppearances)) {
+        if (!result.madeBodies.includes(name)) {
+          m.fail(`bodyAppearances.${name}`, `no body "${name}" (bodies: ${result.madeBodies.join(", ") || "none"})`);
+          continue;
+        }
+        const look = checkAppearance(raw, `bodyAppearances.${name}`, m);
+        if (look) (result.bodyAppearances ??= {})[name] = look;
+      }
+    result.headerErrors.push(...m.errors);
+  }
   if (input.rollback !== undefined) {
     // The rollback bar: it sits just above this feature, which and everything after it the view leaves unbuilt.
     const ids = Array.isArray(input.features) ? input.features.map((f) => (isObject(f) ? f.id : undefined)) : [];
@@ -424,13 +451,19 @@ export const NOTE_MAX = 500;
 
 function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): Feature | null {
   // `suppressed` is common to every op; check it here and validate the rest per op.
-  const { suppressed, note, ...raw } = input;
+  const { suppressed, note, appearance, ...raw } = input;
   if (suppressed !== undefined && typeof suppressed !== "boolean") {
     c.fail("suppressed", `must be true or false (got ${describe(suppressed)})`);
   }
   // `note` too: a short comment, kept in the document and shown in the tree, never built.
   if (note !== undefined && (typeof note !== "string" || note.length > NOTE_MAX)) {
     c.fail("note", typeof note === "string" ? `is ${note.length} characters long; keep a note to ${NOTE_MAX}` : `must be text (got ${describe(note)})`);
+  }
+  // `appearance` too: the colour of the faces it makes. A sketch makes none.
+  let look: Appearance | null = null;
+  if (appearance !== undefined) {
+    if (raw.op === "sketch") c.fail("appearance", "a sketch makes no faces to colour: give the feature that uses it the appearance");
+    else look = checkAppearance(appearance, "appearance", c);
   }
   let feature: Feature | null;
   switch (raw.op) {
@@ -492,6 +525,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
   }
   if (feature && typeof suppressed === "boolean") feature.suppressed = suppressed;
   if (feature && typeof note === "string" && note.length <= NOTE_MAX) feature.note = note;
+  if (feature && look) feature.appearance = look;
   return feature;
 }
 
@@ -2579,11 +2613,32 @@ function checkMaterial(v: unknown, path: string, c: Checker): Material | null {
     return null;
   }
   const before = c.errors.length;
-  c.keys(v, path, ["name", "densityKgPerM3"]);
+  c.keys(v, path, ["name", "densityKgPerM3", "appearance"]);
   if (v.name !== undefined && typeof v.name !== "string") c.fail(`${path}.name`, `must be text (got ${describe(v.name)})`);
   const density = c.num(v, "densityKgPerM3", path, { positive: true });
+  const look = v.appearance === undefined ? null : checkAppearance(v.appearance, `${path}.appearance`, c);
   if (c.errors.length > before || density === undefined) return null;
-  return { ...(typeof v.name === "string" ? { name: v.name } : {}), densityKgPerM3: density };
+  return { ...(typeof v.name === "string" ? { name: v.name } : {}), densityKgPerM3: density, ...(look ? { appearance: look } : {}) };
+}
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+/** An appearance as written: { "color": "#rrggbb", "opacity"?: 0.1..1, "finish"?: matte|satin|gloss|metallic }. Colours are kept lower case. */
+export function checkAppearance(v: unknown, path: string, c: Checker): Appearance | null {
+  if (!isObject(v)) {
+    c.fail(path, `must be { "color": "#rrggbb", "opacity"?: 0.1 to 1, "finish"?: ${APPEARANCE_FINISHES.map((f) => `"${f}"`).join(" | ")} } (got ${describe(v)})`);
+    return null;
+  }
+  const before = c.errors.length;
+  c.keys(v, path, ["color", "opacity", "finish"]);
+  if (typeof v.color !== "string" || !HEX.test(v.color)) c.fail(`${path}.color`, `must be a colour "#rrggbb", like "#3a7bd5" (got ${describe(v.color)})`);
+  if (v.opacity !== undefined && (typeof v.opacity !== "number" || !Number.isFinite(v.opacity) || v.opacity < 0.1 || v.opacity > 1)) c.fail(`${path}.opacity`, `must be a number from 0.1 (nearly clear) to 1 (opaque) (got ${describe(v.opacity)})`);
+  if (v.finish !== undefined && !APPEARANCE_FINISHES.includes(v.finish as AppearanceFinish)) c.fail(`${path}.finish`, `must be ${APPEARANCE_FINISHES.map((f) => `"${f}"`).join(", ")} (got ${describe(v.finish)})`);
+  if (c.errors.length > before) return null;
+  const out: Appearance = { color: (v.color as string).toLowerCase() };
+  if (typeof v.opacity === "number" && v.opacity < 1) out.opacity = v.opacity;
+  if (v.finish !== undefined && v.finish !== "satin") out.finish = v.finish as AppearanceFinish;
+  return out;
 }
 
 // ---------------------------------------------------------------- combine

@@ -7,7 +7,7 @@ import { add3, dot3, roundTo, scale3, sub3 } from "../geom/vec";
 import { type OC, type Scope } from "./oc";
 import { countSubShapes, describeFaces, type CylinderInfo } from "./topology";
 
-export const DEFAULT_MATERIAL: Required<Material> = { name: "steel (default)", densityKgPerM3: 7850 };
+export const DEFAULT_MATERIAL: Required<Omit<Material, "appearance">> = { name: "steel (default)", densityKgPerM3: 7850 };
 
 export interface HoleMeasurement {
   /** Smallest wall diameter: the drill size. */

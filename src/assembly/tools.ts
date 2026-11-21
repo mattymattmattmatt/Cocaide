@@ -188,12 +188,12 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
     case "setComponent": {
       const k = need(a.id);
       if (typeof k === "string") return fail(k);
-      if (!isObject(a.patch)) return fail('patch must be an object: { "at"?: [x, y, z], "rotation"?: [rx, ry, rz] degrees, "fixed"?: true | false, "hidden"?: true | false, "transparent"?: true | false }');
-      const extra = Object.keys(a.patch).filter((x) => !["at", "rotation", "fixed", "hidden", "transparent"].includes(x));
-      if (extra.length) return fail(`patch takes at, rotation, fixed, hidden, transparent (got ${extra.join(", ")})`);
+      if (!isObject(a.patch)) return fail('patch must be an object: { "at"?: [x, y, z], "rotation"?: [rx, ry, rz] degrees, "fixed"?: true | false, "hidden"?: true | false, "transparent"?: true | false, "appearance"?: { "color": "#rrggbb", "opacity"?, "finish"? } | null }');
+      const extra = Object.keys(a.patch).filter((x) => !["at", "rotation", "fixed", "hidden", "transparent", "appearance"].includes(x));
+      if (extra.length) return fail(`patch takes at, rotation, fixed, hidden, transparent, appearance (got ${extra.join(", ")})`);
       const nk = { ...k, ...(a.patch as Partial<AssemblyComponent>) } as AssemblyComponent;
       for (const key of ["fixed", "hidden", "transparent"] as const) if (!nk[key]) delete nk[key];
-      for (const key of ["at", "rotation"] as const) if (nk[key] === null) delete nk[key];
+      for (const key of ["at", "rotation", "appearance"] as const) if (nk[key] === null) delete nk[key];
       return commit(env, { ...base, components: base.components.map((x) => (x.id === k.id ? nk : x)) }, `Edit ${k.id}`);
     }
 
