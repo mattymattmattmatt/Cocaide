@@ -2553,3 +2553,30 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .mc-size-button svg { transform: rotate(90deg); color: var(--muted); }
 .mc-summary-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .mc-summary-line span::before { content: "·"; margin-right: 6px; color: var(--muted); }
+
+/* A frame's corner: its type, its arrangement order, the gap. */
+.corner-panel { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.corner-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.corner-title { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; }
+.corner-cycle { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 12.5px; }
+.corner-cycle:hover { border-color: var(--accent-2); color: var(--accent-2); }
+.corner-panel .seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+.corner-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.corner-list-head h3 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.corner-list-head .small { font-size: 11.5px; }
+.corner-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.corner-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.corner-list li:hover { border-color: var(--hover, #2f7bff); }
+.corner-list li.through { border-color: color-mix(in srgb, var(--accent-2) 50%, var(--border)); background: color-mix(in srgb, var(--accent-2) 7%, var(--panel)); }
+.corner-list:not(.ordered) li { grid-template-columns: minmax(0, 1fr) auto; }
+.corner-rank { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--panel-2); font-size: 11px; font-weight: 700; }
+.corner-list li.through .corner-rank { background: var(--accent-2); color: #fff; }
+.corner-member { display: flex; flex-direction: column; min-width: 0; }
+.corner-member .mono { font-family: var(--mono); font-size: 12.5px; }
+.corner-member .small { font-size: 11.5px; }
+.corner-moves { display: inline-flex; gap: 2px; }
+.corner-moves button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.corner-moves button:hover:not(:disabled) { border-color: var(--border); color: var(--text); }
+.corner-moves button:disabled { opacity: 0.3; cursor: default; }
+.corner-gap { display: grid; grid-template-columns: 36px 90px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12.5px; }
+.corner-gap input { height: 28px; width: 100%; }

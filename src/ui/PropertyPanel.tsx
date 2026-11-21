@@ -285,11 +285,15 @@ function FeaturePanel({ doc, featureId, view, status: statusIn, session, selecti
   const bodiesBefore = validateDocument({ ...doc, features: doc.features.slice(0, at) }).bodies;
   const rename = (from: string, to: string) => run({ type: "renameBody", from, to });
   /** Frame actions whose rejection shows here, like any other edit's. */
-  const batched = (a: FrameActions): FrameActions => ({ onCreate: a.onCreate, onBatch: (cmds) => {
-    const problem = a.onBatch(cmds);
-    setError(problem);
-    return problem;
-  } });
+  const batched = (a: FrameActions): FrameActions => ({
+    ...a,
+    onBatch: (cmds) => {
+      const problem = a.onBatch(cmds);
+      setError(problem);
+      return problem;
+    },
+    onError: (t) => setError(t),
+  });
   /** An op with a UI of its own (src/features/<op>/ui.tsx): its editor, or its fields in a FeatureForm. */
   const ui = UI_OPS[op];
   const editorProps: EditorProps = { f, resolved, before, bodies: bodiesBefore, doc, view, selection, update, rename, setError };

@@ -2,6 +2,7 @@
 // and gussets. Each field commits one command; a change that touches several
 // features (every member of a size) is one undo step.
 
+import { CornerPanel, framesCorners } from "./weldment/CornerPanel";
 import type { Command, RawDocument } from "../doc/commands";
 import { nextId } from "../doc/commands";
 import type { MemberFeature, ProfileDef, Vec3 } from "../doc/types";
@@ -18,6 +19,10 @@ export interface FrameActions {
   onCreate(feature: Raw): void;
   /** Several commands as one undo step; the problem, or null. */
   onBatch(cmds: Command[]): string | null;
+  /** Tells the user what went wrong. */
+  onError?(text: string): void;
+  /** A member under the pointer in a panel: lit up in the view (null: none). */
+  onHoverMember?(id: string | null): void;
 }
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
@@ -241,13 +246,13 @@ export function AlignGrid({ value, anchor, onChange, testId = "prop-align" }: { 
 
 // ------------------------------------------------------------------- joint
 
-export function JointProps({ f, doc, view, update, actions }: { f: Raw; doc: RawDocument; view: RebuildView | null; update(p: Raw): unknown; actions?: FrameActions }) {
+export function JointProps({ f, doc, view, update: _update, actions }: { f: Raw; doc: RawDocument; view: RebuildView | null; update(p: Raw): unknown; actions?: FrameActions }) {
   const node = String(f.node);
+  const corner = framesCorners(doc, view).find((c) => c.node === node);
   const { ending, passing } = membersAt(doc, node, view);
   const ids = ending.map((m) => m.id);
   const own = f.type === "mitre" ? ((f.members as string[] | undefined) ?? ids.slice(0, 2)) : [String(f.through)];
   const butting = ending.filter((m) => !own.includes(m.id));
-  const options = (list: MemberFeature[]): [string, string][] => list.map((m) => [m.id, m.id]);
   const measured = view?.measurements?.members ?? [];
   /** The length round a member's end at this node, as measured. */
   const perimeterAt = (m: MemberFeature) => {
@@ -258,82 +263,34 @@ export function JointProps({ f, doc, view, update, actions }: { f: Raw; doc: Raw
     const mitred = f.type === "mitre" ? ending.filter((m) => own.includes(m.id)).slice(0, 1) : [];
     return r1([...mitred, ...butting].reduce((t, m) => t + perimeterAt(m), 0));
   };
-  return (
-    <>
-      <Field label="Node">
-        <span className="readout" data-testid="prop-joint-node">
-          {node}
-        </span>
-      </Field>
-      <Field label="Joint">
-        <Select
-          value={f.type as "mitre" | "butt"}
-          testId="prop-joint-type"
-          options={[
-            ["mitre", "Mitre"],
-            ["butt", "Butt"],
-          ]}
-          onChange={(v) =>
-            update(v === "mitre" ? { type: v, members: ids.length === 2 ? null : ids.slice(0, 2), through: null } : { type: v, members: null, through: (passing[0] ?? ending[0])?.id ?? null })
-          }
-        />
-      </Field>
-      {f.type === "mitre" ? (
-        [0, 1].map((i) => (
-          <Field key={i} label={i === 0 ? "Mitres" : "with"}>
-            <Select
-              value={own[i] ?? ""}
-              options={options(ending)}
-              testId={`prop-joint-member-${i}`}
-              onChange={(v) => {
-                const next = [...own];
-                next[i] = v;
-                if (next[0] !== next[1]) update({ members: next });
-              }}
-            />
-          </Field>
-        ))
-      ) : (
-        <Field label="Runs through">
-          <Select value={String(f.through)} options={options([...ending, ...passing])} testId="prop-joint-through" onChange={(v) => update({ through: v })} />
-        </Field>
-      )}
-      <Field label="Gap" unit="mm" hint="Left between the cut faces">
-        <NumberInput value={(f.gap as NumberValue) ?? 0} min={0} onCommit={(v) => update({ gap: v === 0 ? null : v })} testId="prop-joint-gap" />
-      </Field>
-      <Field label="Butting">
-        <span className="readout" data-testid="prop-joint-butting">
-          {butting.length ? butting.map((m) => m.id).join(", ") : "nothing else ends here"}
-        </span>
-      </Field>
-      {actions && (
-        <div className="row-buttons">
-          <button
-            data-testid="prop-joint-gusset"
-            title="A triangular plate in the inside corner"
-            onClick={() => {
-              const pair = butting.length ? [butting[0].id, own[0]] : own.slice(0, 2);
-              actions.onCreate({ id: nextId(doc, "gusset"), op: "gusset", node, members: pair, size: 100, thickness: 6, chamfer: 10 });
-            }}
-          >
-            Add a gusset
-          </button>
-          <button
-            data-testid="prop-joint-weld"
-            title="A fillet weld all round the joint, in the weld table"
-            onClick={() => {
-              const id = nextWeldId(doc);
-              const between = [...new Set([...ending, ...passing].filter((m) => own.includes(m.id) || butting.includes(m)).map(bodyOf))];
-              const length = weldLength();
-              actions.onBatch([{ type: "setWeld", id, weld: { id, between, type: "fillet", size: 3, length: length > 0 ? length : 1, allRound: true, note: `joint ${String(f.id)} at ${node}` } }]);
-            }}
-          >
-            Add a weld
-          </button>
-        </div>
-      )}
-    </>
+  const extras = actions && (
+    <div className="row-buttons">
+      <button
+        data-testid="prop-joint-gusset"
+        title="A triangular plate in the inside corner"
+        onClick={() => {
+          const pair = butting.length ? [butting[0].id, own[0]] : own.slice(0, 2);
+          actions.onCreate({ id: nextId(doc, "gusset"), op: "gusset", node, members: pair, size: 100, thickness: 6, chamfer: 10 });
+        }}
+      >
+        Add a gusset
+      </button>
+      <button
+        data-testid="prop-joint-weld"
+        title="A fillet weld all round the joint, in the weld table"
+        onClick={() => {
+          const id = nextWeldId(doc);
+          const between = [...new Set([...ending, ...passing].filter((m) => own.includes(m.id) || butting.includes(m)).map(bodyOf))];
+          const length = weldLength();
+          actions.onBatch([{ type: "setWeld", id, weld: { id, between, type: "fillet", size: 3, length: length > 0 ? length : 1, allRound: true, note: `joint ${String(f.id)} at ${node}` } }]);
+        }}
+      >
+        Add a weld
+      </button>
+    </div>
   );
+  if (!corner || !actions) return <span className="muted small">{node}: no members meet here.</span>;
+  return <CornerPanel doc={doc} corner={corner} onBatch={actions.onBatch} onError={(t) => actions.onError?.(t)} onHoverMember={actions.onHoverMember} extras={extras} />;
 }
 
 // ----------------------------------------------------------------- end cap

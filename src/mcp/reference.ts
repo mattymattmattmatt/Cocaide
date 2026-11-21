@@ -347,6 +347,8 @@ a member per line, shared nodes that follow the sketch, and the corners mitred o
 x across, y up): a frame whose nodes are its outside corners has its members aligned to the outside.
 { "id": "corner_A", "op": "joint", "node": "A", "type": "mitre", "members": ["DA", "AB"], "gap": 0 }
 { "id": "foot_A", "op": "joint", "node": "E", "type": "butt", "through": "EA" }
+{ "id": "corner_C", "op": "joint", "node": "C", "type": "butt", "through": "rail_x", "order": ["rail_x", "rail_y", "post_3"] }
+  "order" (butt): the arrangement order, "through" first; each member after it is trimmed to every member before it.
   mitre: cuts the two members on the plane halving their angle. butt: "through" runs through (extended, square,
   to cover the others if it ends there). Every other member that ends at the node stops at the joint's members'
   faces. One joint a node; it comes after its members. It fails if its members still overlap.

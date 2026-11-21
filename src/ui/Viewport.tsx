@@ -202,6 +202,12 @@ interface Props {
   sketchMarks?: readonly { sketch: string; entity: string }[] | null;
   /** A 3D sketch being drawn: clicks land on its work plane (Tab cycles), snapped to a grid or to its points. */
   draw3d?: Draw3d | null;
+  /** A frame's corners (where members meet): drawn as markers, coloured by how they are joined, picked before the part. */
+  corners?: readonly CornerMark[] | null;
+  /** The corner selected (its node). */
+  selectedCorner?: string | null;
+  /** A corner clicked (null: none). */
+  onCorner?(node: string | null): void;
   /** Phase P wave 2A: a sketch open in the view (see SketchStage). */
   sketch?: SketchStage | null;
 }
@@ -257,6 +263,15 @@ function cssColor(el: Element, name: string, fallback: string): THREE.Color {
   return new THREE.Color(v || fallback);
 }
 
+/** A frame's corner in the view. */
+export interface CornerMark {
+  node: string;
+  at: Vec3;
+  kind: "mitre" | "butt" | "none";
+  /** What the tip says ("butt · post_1 runs through"). */
+  text: string;
+}
+
 /** Drawing a 3D sketch in the view (src/ui/sketch3d). */
 export interface Draw3d {
   plane: WorkPlane;
@@ -288,6 +303,8 @@ interface ViewportApi {
   setSketchMarks(marks: readonly { sketch: string; entity: string }[]): void;
   /** The 3D sketch being drawn changed: draw it again. */
   redrawDraw3d(): void;
+  /** The frame's corners, and the one selected. */
+  setCorners(list: readonly CornerMark[], selected: string | null): void;
   setUnderlay(u: Underlay | null): void;
   /** See the photo through the part (while picking points on it). */
   setGhost(ghost: boolean): void;
@@ -389,6 +406,9 @@ export function Viewport({
   sketchLines = false,
   sketchMarks = null,
   draw3d = null,
+  corners = null,
+  selectedCorner = null,
+  onCorner,
   sketchHint = null,
   sketch = null,
 }: Props) {
@@ -407,6 +427,7 @@ export function Viewport({
   /** Another sketch's entity under the pointer, when a session's reference field takes one (its tip, in the view's pixels). */
   const [sketchHover, setSketchHover] = useState<{ x: number; y: number; hit: SketchEntityHit } | null>(null);
   const [drawTip, setDrawTip] = useState<{ x: number; y: number; text: string; snap: string | null } | null>(null);
+  const [cornerTip, setCornerTip] = useState<{ x: number; y: number; mark: CornerMark } | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
   /** Zoom to area is waiting for its box. */
@@ -476,6 +497,46 @@ export function Viewport({
     /** A 3D sketch being drawn: its lines and points, the work plane's grid, the line under way. */
     const drawGroup = new THREE.Group();
     scene.add(drawGroup);
+    /** The frame's corners: a marker each, the selected one ringed, the one under the pointer lit. */
+    const cornerGroup = new THREE.Group();
+    scene.add(cornerGroup);
+    let cornerList: readonly CornerMark[] = [];
+    let cornerSel: string | null = null;
+    let cornerHot: string | null = null;
+    const CORNER_COLOR = { mitre: 0x2e9e5b, butt: 0xf28c28, none: 0x8a94a6 } as const;
+    const redrawCorners = () => {
+      disposeGroup(cornerGroup);
+      for (const kind of ["mitre", "butt", "none"] as const) {
+        const list = cornerList.filter((c) => c.kind === kind);
+        if (!list.length) continue;
+        const g = new THREE.BufferGeometry().setFromPoints(list.map((c) => new THREE.Vector3(...c.at)));
+        const dots = new THREE.Points(g, new THREE.PointsMaterial({ color: CORNER_COLOR[kind], size: 9, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.9 }));
+        dots.renderOrder = 9;
+        cornerGroup.add(dots);
+      }
+      for (const [node, size, color] of [
+        [cornerSel, 17, SELECT_COLOR],
+        [cornerHot, 14, HOVER_COLOR],
+      ] as const) {
+        const c = node ? cornerList.find((x) => x.node === node) : undefined;
+        if (!c) continue;
+        const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...c.at)]);
+        const ring = new THREE.Points(g, new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.45 }));
+        ring.renderOrder = 8;
+        cornerGroup.add(ring);
+      }
+      render();
+    };
+    /** The corner within 9 px of a client point, nearest first. */
+    const cornerAt = (x: number, y: number): CornerMark | null => {
+      let best: { c: CornerMark; d: number } | null = null;
+      for (const c of cornerList) {
+        const q = projectPx(c.at);
+        const d = q ? Math.hypot(q[0] - x, q[1] - y) : Infinity;
+        if (d <= 9 && (!best || d < best.d)) best = { c, d };
+      }
+      return best?.c ?? null;
+    };
     // Phase P wave 3B: cosmetic threads (thread features, tapped holes) drawn as bands on their faces.
     const threads = new ThreadLayer();
     scene.add(threads.group);
@@ -2066,6 +2127,26 @@ export function Viewport({
       if (boxing) return moveBox(e);
       if (e.buttons !== 0 || photoPointRef.current || areaOn) return;
       if (draw3dRef.current) return drawMove(e);
+      // A frame's corner under the pointer: lit, with what it is.
+      if (cornerList.length && cornerPickRef.current) {
+        const c = cornerAt(e.clientX, e.clientY);
+        if ((c?.node ?? null) !== cornerHot) {
+          cornerHot = c?.node ?? null;
+          redrawCorners();
+        }
+        if (c) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          setCornerTip({ x: e.clientX - rect.left, y: e.clientY - rect.top, mark: c });
+          renderer.domElement.style.cursor = "pointer";
+          if (hovered) {
+            hovered = null;
+            setHover(null);
+            redrawMarks();
+          }
+          return;
+        }
+        setCornerTip(null);
+      }
       // A handle under the pointer lights up, and the pointer says it can be dragged.
       const hot = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
       if (evalLayer.setHot(hot?.id ?? null)) render();
@@ -2089,6 +2170,11 @@ export function Viewport({
     const onLeave = () => {
       hovered = null;
       sketchHot = null;
+      setCornerTip(null);
+      if (cornerHot) {
+        cornerHot = null;
+        redrawCorners();
+      }
       setHover(null);
       setSketchHover(null);
       // A handle lit up under the pointer goes back to its own colour when the pointer leaves.
@@ -2150,6 +2236,14 @@ export function Viewport({
         return;
       }
       if (moved > 4) return;
+      // A frame's corner: selected (its panel opens), before the part under it.
+      if (e.button === 0 && !draw3dRef.current && cornerList.length && cornerPickRef.current) {
+        const c = cornerAt(e.clientX, e.clientY);
+        if (c) {
+          cornerPickRef.current(c.node);
+          return;
+        }
+      }
       // Drawing a 3D sketch: a click places the next point.
       if (e.button === 0 && draw3dRef.current) {
         const h = drawAt(e.clientX, e.clientY);
@@ -2497,6 +2591,12 @@ export function Viewport({
         hidden = next;
         setModel(shownView);
       },
+      setCorners(list, selected) {
+        cornerList = list;
+        cornerSel = selected;
+        if (cornerHot && !list.some((c) => c.node === cornerHot)) cornerHot = null;
+        redrawCorners();
+      },
       redrawDraw3d() {
         if (!draw3dRef.current) {
           drawHover = null;
@@ -2809,6 +2909,12 @@ export function Viewport({
   useEffect(() => {
     api.current?.setSketchMarks(sketchMarks ?? []);
   }, [sketchMarks]);
+  const cornerPickRef = useRef(onCorner);
+  cornerPickRef.current = onCorner;
+  useEffect(() => {
+    api.current?.setCorners(corners ?? [], selectedCorner);
+    if (!corners?.length) setCornerTip(null);
+  }, [corners, selectedCorner]);
   const draw3dRef = useRef(draw3d);
   draw3dRef.current = draw3d;
   useEffect(() => {
@@ -3370,6 +3476,14 @@ export function Viewport({
       )}
       <SelectionChip selection={selection} faces={faces} edges={edges} datums={view?.datums ?? {}} />
       {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} hint={pickHintRef.current?.(hover.target) ?? null} />}
+      {cornerTip && !hover && (
+        <TipBox x={cornerTip.x} y={cornerTip.y} testId="corner-tip">
+          <div>
+            Corner {cornerTip.mark.node} · {cornerTip.mark.text}
+          </div>
+          <div className="pick-hint">Click to change how it is joined</div>
+        </TipBox>
+      )}
       {drawTip && draw3d && (
         <TipBox x={drawTip.x} y={drawTip.y} testId="draw3d-tip">
           <div>{drawTip.snap ? `On ${drawTip.snap}` : drawTip.text}</div>

@@ -55,6 +55,7 @@ import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { MemberCommand, type MemberCommandState, type MemberSummary } from "./weldment/MemberCommand";
 import { FrameLayoutDialog } from "./weldment/FrameLayoutDialog";
+import { CornerPanel, cornerCommands, cycleCorner, framesCorners } from "./weldment/CornerPanel";
 import { frameTemplate, type TemplateSpec } from "../weldment/frameTemplates";
 import { ensureCopy, placeMember, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
@@ -142,7 +143,7 @@ import type { Appearance } from "../doc/types";
 import { resolveExpressions } from "../doc/parameters";
 import { nextSketch3dId, sketch3dPositions, sketch3dSegments } from "../geom/sketch3d";
 import { setDraw, useDraw } from "./sketch3d/drawState";
-import type { Draw3d } from "./Viewport";
+import type { CornerMark, Draw3d } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -223,6 +224,8 @@ export function App() {
   const memberLast = useRef<RawDocument | null>(null);
   /** Sketch → Frame layout… open. */
   const [layoutOpen, setLayoutOpen] = useState(false);
+  /** A frame's corner selected in the view (its node): its panel shows. */
+  const [selectedCorner, setSelectedCorner] = useState<string | null>(null);
   const [fitToken, setFitToken] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -1206,7 +1209,7 @@ export function App() {
     d.replaceDoc(next);
     return null;
   };
-  const frameActions: FrameActions = { onCreate: create, onBatch: batch };
+  const frameActions: FrameActions = { onCreate: create, onBatch: batch, onError: (text) => setNotice({ kind: "error", text }), onHoverMember: (id) => setHoverFeature(id) };
 
   /** Sizes for a path of members: the part's own profiles first, then the library's. */
   const sizeChoices = useMemo<SizeChoice[]>(() => {
@@ -2797,6 +2800,58 @@ export function App() {
       },
     };
   }, [drawFeature, draw, params, sketchFrames]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A frame's corners: markers in the view; a click selects one (its joint, when it has one) and its panel opens.
+  const corners = useMemo(() => (shown && !sketch && mode === "model" ? framesCorners(shown as RawDocument, view) : []), [shown, view, sketch, mode]);
+  const cornerMarks = useMemo<CornerMark[]>(
+    () =>
+      corners.map((c) => ({
+        node: c.node,
+        at: (view && validateDocument(shown, { sketchFrames }).nodes[c.node]) || [0, 0, 0],
+        kind: c.kind,
+        text: c.kind === "none" ? "not joined" : c.kind === "mitre" ? `mitre · ${c.ending.map((m) => m.id).join(" and ")}` : `butt · ${c.order[0]} runs through`,
+      })),
+    [corners], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const corner = selectedCorner ? corners.find((c) => c.node === selectedCorner) : undefined;
+  const pickCorner = (node: string | null) => {
+    if (!node) return setSelectedCorner(null);
+    const c = corners.find((x) => x.node === node);
+    setSelectedCorner(node);
+    setSelectedFeature(c?.joint ? String(c.joint.id) : null);
+    setRightTab("properties");
+  };
+  // Another feature selected (not this corner's joint): the corner isn't selected any more.
+  useEffect(() => {
+    if (!selectedCorner || !selectedFeature) return;
+    const c = corners.find((x) => x.node === selectedCorner);
+    if (!c?.joint || String(c.joint.id) !== selectedFeature) {
+      const f = doc?.features.find((x) => x.id === selectedFeature);
+      setSelectedCorner(f?.op === "joint" && typeof f.node === "string" ? f.node : null);
+    }
+  }, [selectedFeature]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The corner selected: C steps through its usual arrangements (not while typing).
+  useEffect(() => {
+    if (!corner || memberCmd || session) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key.toLowerCase() !== "c" || e.ctrlKey || e.metaKey || e.altKey || (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT"))) return;
+      if (!doc) return;
+      const next = cycleCorner(corner);
+      const cmds = cornerCommands(doc, corner, next.kind, next.order);
+      if (typeof cmds === "string") return setNotice({ kind: "error", text: cmds });
+      const problem = batch(cmds);
+      if (problem) setNotice({ kind: "error", text: problem });
+      else {
+        // The joint it made (or took away) is what is selected now.
+        const add = cmds.find((x) => x.type === "addFeature") as { feature: { id: string } } | undefined;
+        setSelectedFeature(add ? add.feature.id : next.kind === "none" ? null : corner.joint ? String(corner.joint.id) : null);
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
   // The Member command picking sketch lines in the view (not while a sketch is open or a feature is being edited).
   const linePicking = !!memberCmd && memberCmd.source === "lines" && !sketch && !session;
   const pickMemberLine = (hit: SketchEntityHit): boolean => {
@@ -3093,6 +3148,9 @@ export function App() {
                   sketchLines={!session && linePicking}
                   sketchMarks={!session && memberCmd ? memberCmd.lines : null}
                   draw3d={draw3d}
+                  corners={cornerMarks}
+                  selectedCorner={selectedCorner}
+                  onCorner={memberCmd || session || draw3d ? undefined : pickCorner}
                   peek={peek ?? hoverPeek}
                   onPick={onPick}
                   onContext={onContext}
@@ -3349,6 +3407,19 @@ export function App() {
                         onOk={okMembers}
                         onCancel={cancelMembers}
                         onBrowse={() => setRightTab("sections")}
+                      />
+                    ) : doc && corner && !corner.joint && !selectedFeature ? (
+                      <CornerPanel
+                        doc={doc}
+                        corner={corner}
+                        onBatch={(cmds) => {
+                          const problem = batch(cmds);
+                          const add = cmds.find((x) => x.type === "addFeature") as { feature: { id: string } } | undefined;
+                          if (!problem && add) setSelectedFeature(add.feature.id);
+                          return problem;
+                        }}
+                        onError={(text) => setNotice({ kind: "error", text })}
+                        onHoverMember={setHoverFeature}
                       />
                     ) : doc && selectedFeature ? (
                       <PropertyPanel
