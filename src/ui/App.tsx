@@ -565,21 +565,58 @@ export function App() {
   const specs = useMemo(() => (shownDrawing ? viewSpecs(shownDrawing) : []), [shownDrawing]);
   const viewsKey = JSON.stringify(specs);
   const projectionKey = shown && shownDrawing && view ? `${geometryKey(shown)}|${viewsKey}` : null;
+  // The sheet on screen first (its views and the views they come from), then the rest: on a big assembly or a slow device
+  // the sheet you look at comes in seconds, and the others follow. The worker keeps each view, so the second ask only
+  // projects what the first didn't.
+  const [projecting, setProjecting] = useState<{ done: number; total: number } | null>(null);
   useEffect(() => {
     if (mode !== "drawing" || !projectionKey || !shown || !shownDrawing || geometry?.key === projectionKey) return;
     let live = true;
-    kernel.port.project(shown, specs).then(
-      (g) => live && setGeometry({ key: projectionKey, g }),
-      (e: Error) => live && setNotice({ kind: "error", text: `Could not project the views: ${e.message}` }),
-    );
+    const onSheet = new Set((shownDrawing.sheets.find((x) => x.id === activeSheet) ?? shownDrawing.sheets[0])?.views.map((v) => v.id) ?? []);
+    const byId = new Map(specs.map((x) => [x.id, x]));
+    const first = new Set<string>();
+    const add = (id: string) => {
+      const sp = byId.get(id);
+      if (!sp || first.has(id)) return;
+      first.add(id);
+      if (sp.frame && "parent" in sp.frame) add(sp.frame.parent);
+    };
+    for (const id of onSheet) add(id);
+    const firstSpecs = specs.filter((x) => first.has(x.id));
+    setProjecting({ done: 0, total: specs.length });
+    const fail = (e: Error) => {
+      if (!live) return;
+      setProjecting(null);
+      setNotice({ kind: "error", text: `Could not project the views: ${e.message}` });
+    };
+    const all = () =>
+      kernel.port.project(shown, specs).then((g) => {
+        if (!live) return;
+        setGeometry({ key: projectionKey, g });
+        setProjecting(null);
+      }, fail);
+    if (firstSpecs.length && firstSpecs.length < specs.length) {
+      kernel.port.project(shown, firstSpecs).then((g) => {
+        if (!live) return;
+        setGeometry({ key: `${projectionKey}#first`, g });
+        setProjecting({ done: firstSpecs.length, total: specs.length });
+        void all();
+      }, fail);
+    } else void all();
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, projectionKey]);
+  /** The views not projected yet: drawn as "Projecting…", with no problems, until they come. */
+  const pendingViews = useMemo(() => {
+    if (!projecting) return undefined;
+    const have = new Set((geometry?.g?.views ?? []).map((v) => v.id));
+    return new Set(specs.filter((x) => !have.has(x.id)).map((x) => x.id));
+  }, [projecting, geometry, specs]);
   const composed = useMemo(
-    () => (shown && shownDrawing ? composeDrawing(shown, { measurements: view?.measurements ?? null, geometry: geometry?.g ?? null }) : null),
-    [shown, shownDrawing, view, geometry],
+    () => (shown && shownDrawing ? composeDrawing(shown, { measurements: view?.measurements ?? null, geometry: geometry?.g ?? null, ...(pendingViews ? { pending: pendingViews } : {}) }) : null),
+    [shown, shownDrawing, view, geometry, pendingViews],
   );
   const sheet = useMemo(() => composed?.sheets.find((x) => x.id === activeSheet) ?? composed?.sheets[0] ?? null, [composed, activeSheet]);
   const drawingChecksNow = useMemo(() => (composed && shown ? drawingChecks(composed.sheets, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [composed, shown, view, geometry]);
@@ -1367,6 +1404,7 @@ export function App() {
 
   // The drawing workspace (Phase Q wave Q2B): its toolbar, tree, sheet and panel share one state.
   const drawingWs = useDrawingWorkspace({
+    projecting,
     doc,
     drawing: docDrawing,
     sheets: composed?.sheets ?? [],

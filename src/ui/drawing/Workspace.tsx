@@ -46,6 +46,8 @@ const pinAnnotation: PinAnnotation = (a, said, composed) => {
 };
 
 export interface WorkspaceProps {
+  /** The views still being projected (a big assembly on a slow device takes a while): how many of how many are in. */
+  projecting?: { done: number; total: number } | null;
   doc: RawDocument | null;
   /** The drawing as stored. */
   drawing: Drawing | null;
@@ -674,6 +676,12 @@ export function DrawingMain({ ws, empty, help }: { ws: Workspace; empty: ReactNo
         )}
       </aside>
       <section className="center sheet-center">
+        {p.projecting && (
+          <div className="sheet-progress" role="status" data-testid="sheet-projecting">
+            <span className="sheet-spinner" aria-hidden />
+            Projecting views… {p.projecting.done} of {p.projecting.total}
+          </div>
+        )}
         {sheet && p.drawing && ws.sheetDoc ? (
           <>
             <SheetCanvas

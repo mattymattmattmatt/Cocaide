@@ -34,10 +34,21 @@ export function DrawingPanel({ ws }: { ws: Workspace }) {
         <button className="fold" onClick={() => setChecksOpen((o) => !o)} aria-expanded={checksOpen} data-testid="drawing-checks-fold">
           <Icon name="chevronRight" size={11} className={checksOpen ? "open" : ""} />
           <h2>Checks</h2>
-          <span className={failing ? "check-badge bad" : "check-badge ok"}>{failing ? `${failing} to fix` : "all pass"}</span>
+          {p.projecting ? (
+            <span className="check-badge" data-testid="checks-waiting">
+              waiting
+            </span>
+          ) : (
+            <span className={failing ? "check-badge bad" : "check-badge ok"}>{failing ? `${failing} to fix` : "all pass"}</span>
+          )}
         </button>
       </div>
-      <ul className="checks" data-testid="drawing-checks" hidden={!checksOpen}>
+      {p.projecting && (
+        <p className="muted small checks-waiting" hidden={!checksOpen}>
+          The checks run when every view is projected ({p.projecting.done} of {p.projecting.total} so far).
+        </p>
+      )}
+      <ul className="checks" data-testid="drawing-checks" hidden={!checksOpen || !!p.projecting}>
         {p.checks.map((c) => (
           <li key={c.label} className={c.ok ? "ok" : "bad"} title={`Expected: ${c.expected}`}>
             <span className="check-mark">{c.ok ? "✓" : "✗"}</span> {c.label}

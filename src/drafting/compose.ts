@@ -62,6 +62,8 @@ export interface ComposeContext {
   arrange?: boolean;
   /** A drawing pack (an assembly's drawing and its parts' after it): this drawing's first sheet's number in the pack, and the pack's sheet count, for the title blocks. */
   pack?: { first: number; total: number };
+  /** Views still being projected: drawn as "Projecting…" with no problem, and what hangs on them waits (no problem either). */
+  pending?: ReadonlySet<string>;
 }
 
 /** A break as composed: along x (0) or y (1), view mm, with the paper it leaves as view mm. */
@@ -131,6 +133,8 @@ export interface ComposedAnnotation {
   /** Why it isn't on the sheet (a dangling one is drawn at its last place, in the warning colour). */
   problem?: string;
   dangling?: boolean;
+  /** Its view is still being projected: it is laid out when the view comes. */
+  pending?: boolean;
   /** Where its text is, on the sheet. */
   textBox?: Box;
   /** The handles a drag moves (src/drafting/annotate/picks dragGrip). */
@@ -1207,6 +1211,11 @@ class Composer {
   private drawView(cv: ComposedView): void {
     const view = this.here.get(cv.id)!;
     const pv = this.pv(view);
+    if ((!cv.outline || !pv) && this.ctx.pending?.has(cv.id)) {
+      // Still on its way from the kernel: a quiet placeholder where it will be, not a problem.
+      this.prims.push({ k: "text", at: cv.centre, text: "Projecting…", size: 3.5, anchor: "middle", owner: cv.id, layer: "TEXT" });
+      return;
+    }
     if (!cv.outline || !pv) {
       const why = pv?.problems?.length ? `: ${pv.problems.join("; ")}` : this.ctx.geometry ? "" : " yet (the part hasn't been projected)";
       this.problems.push(`${cv.id}: shows nothing${why}`);
@@ -1746,6 +1755,11 @@ class Composer {
         }
         const text = a.table === "cutList" ? `cut list, ${t.rows.length - 2} item${t.rows.length - 2 === 1 ? "" : "s"}` : `weld table, ${t.rows.length - 2} weld${t.rows.length - 2 === 1 ? "" : "s"}`;
         this.annotations.set(a.id, { id: a.id, type: a.type, text, at: [t.box.min[0], t.box.max[1]], box: t.box });
+        continue;
+      }
+      // On a view still being projected: it waits, with no problem.
+      if ("view" in a && a.view && this.ctx.pending?.has(a.view) && !this.cv(a.view)?.outline) {
+        this.annotations.set(a.id, { id: a.id, type: a.type, view: a.view, text: "", box: null, pending: true });
         continue;
       }
       const l = layouts.get(a.id)!;

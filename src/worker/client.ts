@@ -40,7 +40,13 @@ export class KernelClient {
       if (msg.type === "error") p.reject(new Error(msg.message));
       else p.resolve(msg);
     };
-    this.worker.onerror = (e) => fail(new Error(e.message || "kernel worker failed to start"));
+    this.worker.onerror = (e) => {
+      fail(new Error(e.message || "kernel worker failed to start"));
+      // Once running, a worker that dies (out of memory on a phone, say) answers nothing more: what waits on it fails, saying so.
+      const why = new Error(`the geometry kernel stopped${e.message ? ` (${e.message})` : ""}; it may have run out of memory on this device`);
+      for (const p of this.pending.values()) p.reject(why);
+      this.pending.clear();
+    };
   }
 
   private request(req: DistributiveOmit<KernelRequest, "id">): Promise<KernelResponse> {
