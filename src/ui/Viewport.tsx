@@ -264,8 +264,12 @@ export interface Draw3d {
   anchor: Vec3 | null;
   points: { id: string; at: Vec3 }[];
   segments: { a: Vec3; b: Vec3 }[];
+  /** The sketch being drawn (its own overlay isn't snapped to as another sketch's). */
+  sketch: string;
   /** A click: where (snapped), and the existing point it is on, if any. */
   onPlace(p: { at: Vec3; snap: string | null }): void;
+  /** One of its points dragged to a new place (on the work plane through where it was). */
+  onMovePoint(id: string, at: Vec3): void;
   onPlane(plane: WorkPlane): void;
   /** Escape or a double-click: the line ends here. */
   onEnd(): void;
@@ -1879,24 +1883,56 @@ export function Viewport({
       live.current.onArea(on);
     };
     // ------------------------------------------------------------ drawing a 3D sketch
-    let drawHover: { at: Vec3; snap: string | null } | null = null;
-    /** Where a click at (x, y) would put a point: on one of the sketch's points (within 10 px), else on the work plane, snapped. */
-    const drawAt = (x: number, y: number): { at: Vec3; snap: string | null } | null => {
+    let drawHover: { at: Vec3; snap: string | null; on?: string } | null = null;
+    /** A point of the sketch being dragged: from where, and where it is now. */
+    let pointDrag: { id: string; from: Vec3; at: Vec3; x: number; y: number; pointer: number } | null = null;
+    /** Points elsewhere a click snaps onto: the part's corners, and other sketches' ends, centres and points. */
+    const outsideSnaps = (d: Draw3d): { at: Vec3; on: string }[] => {
+      const out: { at: Vec3; on: string }[] = vertices.filter((v) => !isHidden(shownView?.edges[v.edge]?.body)).map((v) => ({ at: v.p, on: "a corner of the part" }));
+      for (const sk of drawnSketches()) {
+        if (sk.id === d.sketch) continue;
+        for (const p of sk.points3d ?? []) out.push({ at: p.at, on: `${sk.id}'s ${p.id}` });
+        for (const pl of sk.polylines) {
+          if (pl.construction) continue;
+          const pts = pl.points;
+          if (pts.length) out.push({ at: pts[0], on: `a point of ${sk.id}` }, { at: pts[pts.length - 1], on: `a point of ${sk.id}` });
+        }
+        for (const p of sk.points) out.push({ at: p.at, on: `a point of ${sk.id}` });
+      }
+      return out;
+    };
+    /**
+     * Where a press at (x, y) puts a point: on one of the sketch's points
+     * (within 10 px; not `skip`, the one being dragged), else on a corner of
+     * the part or another sketch's point, else on the work plane through
+     * `base`, snapped to the grid from it.
+     */
+    const drawAt = (x: number, y: number, base?: Vec3, skip?: string): { at: Vec3; snap: string | null; on?: string } | null => {
       const d = draw3dRef.current;
       if (!d) return null;
+      const near = (at: Vec3) => {
+        const q = projectPx(at);
+        return q ? Math.hypot(q[0] - x, q[1] - y) : Infinity;
+      };
       let best: { id: string; at: Vec3; px: number } | null = null;
       for (const p of d.points) {
-        const q = projectPx(p.at);
-        const px = q ? Math.hypot(q[0] - x, q[1] - y) : Infinity;
+        if (p.id === skip) continue;
+        const px = near(p.at);
         if (px <= 10 && (!best || px < best.px)) best = { ...p, px };
       }
       if (best) return { at: best.at, snap: best.id };
+      let outside: { at: Vec3; on: string; px: number } | null = null;
+      for (const p of outsideSnaps(d)) {
+        const px = near(p.at);
+        if (px <= 9 && (!outside || px < outside.px)) outside = { ...p, px };
+      }
+      if (outside) return { at: outside.at.map((v) => Math.round(v * 1e6) / 1e6 + 0) as Vec3, snap: null, on: outside.on };
       aim(x, y);
       const o = raycaster.ray.origin;
       const dir = raycaster.ray.direction;
-      const base = d.anchor ?? [0, 0, 0];
-      const hit = rayPlane([o.x, o.y, o.z], [dir.x, dir.y, dir.z], base, d.plane);
-      return hit ? { at: snapToGrid(hit, base, d.plane, niceStep(controls.worldPerPixel())), snap: null } : null;
+      const from = base ?? d.anchor ?? [0, 0, 0];
+      const hit = rayPlane([o.x, o.y, o.z], [dir.x, dir.y, dir.z], from, d.plane);
+      return hit ? { at: snapToGrid(hit, from, d.plane, niceStep(controls.worldPerPixel())), snap: null } : null;
     };
     const redrawDraw3d = () => {
       disposeGroup(drawGroup);
@@ -1934,8 +1970,14 @@ export function Viewport({
         const a = vertexDots([d.anchor], HOVER_COLOR, 12);
         if (a) drawGroup.add(a);
       }
+      // A point being dragged: where it goes, and a dashed line from where it was.
+      if (pointDrag) {
+        line([pointDrag.from, pointDrag.at], new THREE.LineDashedMaterial({ color: HOVER_COLOR, dashSize: step / 2, gapSize: step / 3, depthTest: false }), 8);
+        const h = vertexDots([pointDrag.at], HOVER_COLOR, 13);
+        if (h) drawGroup.add(h);
+      }
       // The line under way, and where it would end.
-      if (drawHover) {
+      if (drawHover && !pointDrag) {
         if (d.anchor) line([d.anchor, drawHover.at], new THREE.LineDashedMaterial({ color: HOVER_COLOR, dashSize: step / 2, gapSize: step / 3, depthTest: false }), 8);
         const h = vertexDots([drawHover.at], HOVER_COLOR, drawHover.snap ? 13 : 9);
         if (h) drawGroup.add(h);
@@ -1948,7 +1990,40 @@ export function Viewport({
       renderer.domElement.style.cursor = "crosshair";
       const rect = renderer.domElement.getBoundingClientRect();
       const d = draw3dRef.current!;
-      setDrawTip(drawHover ? { x: e.clientX - rect.left, y: e.clientY - rect.top, text: deltaText(d.anchor, drawHover.at), snap: drawHover.snap } : null);
+      setDrawTip(drawHover ? { x: e.clientX - rect.left, y: e.clientY - rect.top, text: drawHover.on ? `On ${drawHover.on} · ${deltaText(d.anchor, drawHover.at)}` : deltaText(d.anchor, drawHover.at), snap: drawHover.snap } : null);
+    };
+    // A press on one of the sketch's points drags it (before the controls see it); a press and release in place is a click on it.
+    const drawPointDown = (e: PointerEvent) => {
+      const d = draw3dRef.current;
+      if (!d || e.button !== 0) return;
+      const h = drawAt(e.clientX, e.clientY);
+      if (!h?.snap) return;
+      e.stopPropagation();
+      e.preventDefault();
+      pointDrag = { id: h.snap, from: h.at, at: h.at, x: e.clientX, y: e.clientY, pointer: e.pointerId };
+      el.setPointerCapture?.(e.pointerId);
+    };
+    const drawPointMove = (e: PointerEvent) => {
+      if (!pointDrag || e.pointerId !== pointDrag.pointer) return;
+      e.stopPropagation();
+      if (Math.hypot(e.clientX - pointDrag.x, e.clientY - pointDrag.y) < 4) return;
+      const h = drawAt(e.clientX, e.clientY, pointDrag.from, pointDrag.id);
+      if (h) pointDrag.at = h.at;
+      redrawDraw3d();
+      const rect = renderer.domElement.getBoundingClientRect();
+      setDrawTip({ x: e.clientX - rect.left, y: e.clientY - rect.top, text: `${pointDrag.id}: ${h?.on ? `on ${h.on} · ` : ""}${deltaText(pointDrag.from, pointDrag.at)}`, snap: null });
+    };
+    const drawPointUp = (e: PointerEvent) => {
+      if (!pointDrag || e.pointerId !== pointDrag.pointer) return;
+      e.stopPropagation();
+      const g = pointDrag;
+      pointDrag = null;
+      if (el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      const d = draw3dRef.current;
+      const moved = Math.hypot(e.clientX - g.x, e.clientY - g.y) >= 4;
+      if (d && !moved) d.onPlace({ at: g.from, snap: g.id });
+      else if (d && (g.at[0] !== g.from[0] || g.at[1] !== g.from[1] || g.at[2] !== g.from[2])) d.onMovePoint(g.id, g.at);
+      redrawDraw3d();
     };
 
     const onMove = (e: PointerEvent) => {
@@ -2197,6 +2272,9 @@ export function Viewport({
     el.addEventListener("pointerdown", handleDown, true);
     el.addEventListener("pointermove", handleMove, true);
     el.addEventListener("pointerup", handleUp, true);
+    el.addEventListener("pointerdown", drawPointDown, true);
+    el.addEventListener("pointermove", drawPointMove, true);
+    el.addEventListener("pointerup", drawPointUp, true);
     window.addEventListener("keydown", handleKey, true);
     window.addEventListener("keydown", escape);
 
@@ -2538,6 +2616,9 @@ export function Viewport({
         el.removeEventListener("pointerdown", handleDown, true);
         el.removeEventListener("pointermove", handleMove, true);
         el.removeEventListener("pointerup", handleUp, true);
+        el.removeEventListener("pointerdown", drawPointDown, true);
+        el.removeEventListener("pointermove", drawPointMove, true);
+        el.removeEventListener("pointerup", drawPointUp, true);
         window.removeEventListener("keydown", handleKey, true);
         window.removeEventListener("keydown", escape);
         controls.dispose();

@@ -99,4 +99,49 @@ test("members on a 3D sketch's lines: a pitched portal frame, mitred at the knee
   expect(d.features.filter((f: any) => f.op === "joint").map((j: any) => j.type)).toEqual(["mitre", "mitre", "mitre"]);
   expect(Object.values(d.nodes).map((n: any) => n.point)).toEqual(["p1.at", "p2.at", "p3.at", "p4.at", "p5.at"]);
   await expect(page.getByTestId("bodies")).toContainText("4");
+  // The view frames the new frame: its feet and ridge are on screen.
+  const box = (await page.locator("canvas").first().boundingBox())!;
+  const inView = async (p: number[]) => {
+    const [x, y] = await page.evaluate((p) => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project(p), p);
+    return x > box.x && x < box.x + box.width && y > box.y && y < box.y + box.height;
+  };
+  await expect.poll(async () => (await inView([0, 0, 0])) && (await inView([2000, 0, 0])) && (await inView([1000, 0, 1820]))).toBe(true);
+});
+
+async function screenOf(page: Page, p: number[]): Promise<[number, number]> {
+  return page.evaluate((p) => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project(p), p);
+}
+
+test("snap onto a corner of the part, drag a point, and click a point to go on from it", async ({ page }) => {
+  await page.getByText("Weldments", { exact: true }).click();
+  await page.getByTestId("tool-sketch3d").click();
+  // The bracket's top corner at (40, 20, 6): the tip says what it snaps to, and the point lands exactly there.
+  const [cx, cy] = await screenOf(page, [40, 20, 6]);
+  await page.mouse.move(cx + 3, cy + 2);
+  await expect(page.getByTestId("draw3d-tip")).toContainText("On a corner of the part");
+  await page.mouse.click(cx + 3, cy + 2);
+  await expect.poll(async () => (await sketch3d(page))?.points?.[0]).toEqual({ id: "p1", at: [40, 20, 6] });
+  // A second point on the plane through it (z stays 6).
+  await clickAt(page, 0.35, 0.55);
+  await expect.poll(async () => (await sketch3d(page))?.points?.length).toBe(2);
+  const before = (await sketch3d(page)).points[1].by;
+  expect(before[2]).toBe(0);
+  // Drag p2 somewhere else: its offset from p1 changes, still on the plane.
+  const p2 = [40 + before[0], 20 + before[1], 6];
+  const [x2, y2] = await screenOf(page, p2);
+  await page.mouse.move(x2, y2);
+  await page.mouse.down();
+  await page.mouse.move(x2 - 40, y2 + 30, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => JSON.stringify((await sketch3d(page)).points[1].by)).not.toBe(JSON.stringify(before));
+  expect((await sketch3d(page)).points[1].by[2]).toBe(0);
+  expect((await sketch3d(page)).points[1].from).toBe("p1");
+  // Esc ends the line; a click on p1 starts from it again, and the next click draws l2 from p1.
+  await page.keyboard.press("Escape");
+  const [x1, y1] = await screenOf(page, [40, 20, 6]);
+  await page.mouse.move(x1, y1);
+  await page.mouse.click(x1, y1);
+  await clickAt(page, 0.6, 0.3);
+  await expect.poll(async () => (await sketch3d(page))?.lines?.length).toBe(2);
+  expect((await sketch3d(page)).lines[1]).toMatchObject({ start: "p1", end: "p3" });
 });

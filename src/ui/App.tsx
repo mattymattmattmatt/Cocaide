@@ -387,6 +387,8 @@ export function App() {
   // A part this browser remembers a view of opens at that view, not fitted.
   const [remembered] = useState(() => typeof d.doc?.name === "string" && !!loadView(d.doc.name).camera);
   const needsFit = useRef(!remembered);
+  /** A frame was just added (members from a path or a sketch): once its rebuild is shown, the view frames it from where it looks. */
+  const fitAfter = useRef(false);
 
   const { parsed, doc } = d;
   const params = useMemo(() => documentParameters(doc), [doc]);
@@ -567,6 +569,10 @@ export function App() {
         // planes, axes and points are ids, and stay picked while they exist.
         // The same solid again (a session closed, an OK that changed nothing): the selection stays as it is.
         if (!sameSolid(before, v)) setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
+        if (fitAfter.current && v.mesh) {
+          fitAfter.current = false;
+          requestAnimationFrame(() => requestAnimationFrame(() => viewCommands.current?.("view.fit")));
+        }
         if (needsFit.current && (v.mesh || v.sketches?.some((k) => k.entities.length || k.lines3d?.length))) {
           needsFit.current = false;
           setFitToken((t) => t + 1);
@@ -1230,6 +1236,7 @@ export function App() {
     d.replaceDoc(r.doc);
     const joints = r.joints.length ? ` and ${r.joints.length} mitre${r.joints.length === 1 ? "" : "s"}` : "";
     setNotice({ kind: "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${sz.size}${joints}.${sz.note ? ` ${sz.note}` : ""}` });
+    fitAfter.current = true;
     countUses(sz.entry, r.members.length);
     return true;
   };
@@ -1245,6 +1252,7 @@ export function App() {
     const joints = r.joints.length ? ` and ${r.joints.length} joint${r.joints.length === 1 ? "" : "s"}` : "";
     const skipped = r.skipped.length ? ` Skipped ${r.skipped.length === 1 ? `${r.skipped[0]}, which has` : `${r.skipped.length} lines that have`} a member already.` : "";
     setNotice({ kind: "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${sz.size}${joints}, following the sketch.${skipped}${sz.note ? ` ${sz.note}` : ""}` });
+    fitAfter.current = true;
     countUses(sz.entry, r.members.length);
     return true;
   };
@@ -2578,8 +2586,19 @@ export function App() {
     const anchor = draw.anchor && at.has(draw.anchor) ? draw.anchor : null;
     const raw = drawFeature as { id: string; points?: Record<string, unknown>[]; lines?: { id: string; start: string; end: string }[] };
     return {
+      sketch: raw.id,
       plane: draw.plane,
       anchor: anchor ? at.get(anchor)! : null,
+      onMovePoint: (id, p) => {
+        // Dragged: its numbers change (an offset stays an offset from its point); the points measured from it go with it.
+        const points = (raw.points ?? []).map((q) => {
+          if (q.id !== id) return q;
+          const base = typeof q.from === "string" ? at.get(q.from) : undefined;
+          return base ? { ...q, by: p.map((x, k) => Math.round((x - base[k]) * 1e6) / 1e6 + 0) } : { ...q, at: p };
+        });
+        const problem = d.dispatch({ type: "updateFeature", id: raw.id, patch: { points } });
+        if (problem) setNotice({ kind: "error", text: problem });
+      },
       points: [...at].map(([id, p]) => ({ id, at: p })),
       segments: sketch3dSegments(resolved),
       onPlane: (plane) => setDraw({ plane }),
