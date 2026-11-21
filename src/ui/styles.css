@@ -2580,3 +2580,6 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .corner-moves button:disabled { opacity: 0.3; cursor: default; }
 .corner-gap { display: grid; grid-template-columns: 36px 90px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12.5px; }
 .corner-gap input { height: 28px; width: 100%; }
+.mc-keep .seg { flex: 1; }
+.mc-keep .seg button .muted { font-size: 11px; margin-left: 3px; }
+.mc-keep .seg button:disabled { opacity: 0.4; cursor: default; }

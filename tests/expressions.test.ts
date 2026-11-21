@@ -136,3 +136,14 @@ describe("names", () => {
     expect(renameIn("=2e3 + 1in + tt", r)).toBe("=2e3 + 1in + tt");
   });
 });
+
+describe("the power operator", () => {
+  it("raises, right to left, tighter than unary minus, its exponent signed", () => {
+    expect(evaluate("=2 ^ 3", {})).toEqual({ ok: true, value: 8 });
+    expect(evaluate("=2 ^ 3 ^ 2", {})).toEqual({ ok: true, value: 512 });
+    expect(evaluate("=-2 ^ 2", {})).toEqual({ ok: true, value: -4 });
+    expect(evaluate("=10 ^ -2", {})).toEqual({ ok: true, value: 0.01 });
+    expect(evaluate("=sqrt(1 + f ^ 2)", { f: 0.75 })).toEqual({ ok: true, value: 1.25 });
+    expect(evaluate("=(-8) ^ 0.5", {})).toMatchObject({ ok: false });
+  });
+});

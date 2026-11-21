@@ -60,6 +60,8 @@ interface Props {
   sketches: { sketch: string; lines: string[] }[];
   /** The part's nodes, for the path. */
   nodes: string[];
+  /** How a picked line runs (for Keep: upright, level, sloped); undefined when not known yet. */
+  lineKind?(l: SketchLine): "upright" | "level" | "sloped" | undefined;
   /** The profile's anchor ("centroid" or "origin"), for the grid's anchor button. */
   anchor: string;
   summary: MemberSummary | null;
@@ -78,7 +80,7 @@ const ROTATIONS = [0, 90, 180, 270];
 /** "12.45 m". */
 const metres = (mm: number) => `${(Math.round(mm / 10) / 100).toFixed(2)} m`;
 
-export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketches, nodes, anchor, summary, busy, pinned, onPin, onOk, onCancel, onBrowse }: Props) {
+export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketches, nodes, lineKind, anchor, summary, busy, pinned, onPin, onOk, onCancel, onBrowse }: Props) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement | null>(null);
@@ -196,7 +198,7 @@ export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketch
           <>
             <div className={`mc-picked${picked.length ? "" : " empty"}`} data-testid="member-cmd-picked">
               {picked.length === 0 ? (
-                <span className="muted">Click sketch lines in the view. Click one again to take it out.</span>
+                <span className="muted">Click sketch lines in the view, or drag a box across them (right to left takes any it touches). Click one again to take it out.</span>
               ) : (
                 [...bySketch].map(([sk, ids]) => (
                   <div key={sk} className="mc-chips">
@@ -235,6 +237,27 @@ export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketch
                 Clear
               </button>
             </div>
+            {picked.length > 1 && lineKind && (
+              <div className="mc-row mc-keep">
+                <span className="muted small">Keep only</span>
+                <div className="seg small">
+                  {(
+                    [
+                      ["upright", "Upright"],
+                      ["level", "Level"],
+                      ["sloped", "Sloped"],
+                    ] as const
+                  ).map(([k, label]) => {
+                    const n = picked.filter((p) => lineKind(p) === k).length;
+                    return (
+                      <button type="button" key={k} disabled={!n || n === picked.length} onClick={() => onChange({ lines: picked.filter((p) => lineKind(p) === k) })} title={`Keep the ${n} ${label.toLowerCase()} line${n === 1 ? "" : "s"}, drop the rest`} data-testid={`member-cmd-keep-${k}`}>
+                        {label} <span className="muted">{n}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </>
         ) : state.source === "points" ? (
           <div className="mc-points">

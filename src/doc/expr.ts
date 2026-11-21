@@ -4,7 +4,7 @@
 //   numbers        12, 2.5, .5, 1e3
 //   units          25.4mm, 2.5cm, 0.1m, 1in, 2ft (lengths, to mm); 30deg, 30°, 1.2rad (angles, to degrees)
 //   names          plate_t (a parameter), sketch_1.width (a sketch's dimension, by its name)
-//   arithmetic     + - * / and parentheses, unary minus
+//   arithmetic     + - * / ^ (power, right to left, before unary minus: -2^2 is -4) and parentheses, unary minus
 //   comparisons    < <= > >= == != (1 when true, 0 when false), && and ||
 //   functions      sqrt abs sin cos tan (degrees) asin acos atan atan2 (to degrees) min max round floor ceil
 //                  pow hypot pi, if(condition, then, else)
@@ -164,7 +164,15 @@ function parse(src: string): Node {
       i++;
       return unary();
     }
-    return primary();
+    return power();
+  };
+  /** a ^ b: tighter than unary minus, right to left (2^3^2 is 2^9), its exponent may be signed (10^-3). */
+  const power = (): Node => {
+    const a = primary();
+    ws();
+    if (src[i] !== "^") return a;
+    i++;
+    return { k: "bin", op: "^", a, b: unary() };
   };
   const primary = (): Node => {
     ws();
@@ -264,6 +272,11 @@ function run(n: Node, lookup: Lookup): number {
         case "/":
           if (b === 0) throw new ExpressionError("division by zero");
           return a / b;
+        case "^": {
+          const v = a ** b;
+          if (!Number.isFinite(v)) throw new ExpressionError(`${fmt(a)} ^ ${fmt(b)} is not a number`);
+          return v;
+        }
         case "<":
           return a < b && !near(a, b) ? 1 : 0;
         case ">":

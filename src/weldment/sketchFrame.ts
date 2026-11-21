@@ -195,7 +195,16 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     if (typeof a !== "string") return { ok: false, error: a.error };
     const b = nodeFor({ sketch: line.sketch, point: refs[1] }, ends[1]);
     if (typeof b !== "string") return { ok: false, error: b.error };
-    const dup = existing.find((m) => (m.fromNode === a && m.toNode === b) || (m.fromNode === b && m.toNode === a));
+    // A member like this one on the line already (same size, place and turn): left out. A different one (the second
+    // of a doubled lintel, side by side on one centre line) goes on beside it.
+    const align0 = spec.align ?? (spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined);
+    const dup = existing.find(
+      (m) =>
+        ((m.fromNode === a && m.toNode === b) || (m.fromNode === b && m.toNode === a)) &&
+        m.size === spec.size &&
+        JSON.stringify(m.align ?? null) === JSON.stringify(align0 ?? null) &&
+        (m.rotation ?? 0) === (spec.rotation ?? 0),
+    );
     if (dup) {
       skipped.push(line.entity);
       continue;
@@ -204,7 +213,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       return { ok: false, error: `${line.entity}: "${line.id}" ${next.features.some((f) => f.id === line.id) ? "is taken by another feature" : "is not an id (letters, digits, _ and -)"}` };
     }
     const id = line.id ?? freeId(next, `${memberKind(ends[0], ends[1])}_1`, true);
-    const align = spec.align ?? (spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined);
+    const align = align0;
     const problem = run({
       type: "addFeature",
       feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}), ...(spec.rotation ? { rotation: spec.rotation } : {}), along: { sketch: line.sketch, entity: line.entity } },
@@ -235,6 +244,13 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       const l = Math.hypot(...d);
       return [d[0] / l, d[1] / l, d[2] / l];
     };
+    // Also the ends of members already there that a new one passes (studs up to a lintel added after them).
+    const fresh = all.filter((m) => members.includes(m.id));
+    for (const [node, at] of Object.entries(after.nodes)) {
+      if (touched.has(node) || jointed.has(node)) continue;
+      if (!all.some((m) => !members.includes(m.id) && memberAtNode(m, node, at) === "ends")) continue;
+      if (fresh.some((m) => memberAtNode(m, node, at) !== "ends" && offLine(m, at).d <= Math.max(0.01, reachOf(next, m)) && offLine(m, at).t > 0 && offLine(m, at).t < 1)) touched.add(node);
+    }
     for (const node of touched) {
       if (jointed.has(node)) continue;
       const at = after.nodes[node];
@@ -244,13 +260,11 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       const passing = all
         .filter((m) => !ending.includes(m))
         .map((m) => ({ m, ...offLine(m, at) }))
-        // On its line anywhere along it; near it (inside its section) only partway along, clear of its ends by its reach,
-        // so a post's foot under a rail's end, or a corner post's top by a rafter's end, isn't taken for one.
+        // On its line anywhere along it; near it (inside its section) only partway along and only when the two don't
+        // meet somewhere else already (a post's foot under the end of a rail that ends on the post is no joint of theirs).
         .filter((x) => {
           if (x.d <= 0.01) return x.t >= -1e-9 && x.t <= 1 + 1e-9;
-          const len = Math.hypot(...sub3(x.m.to, x.m.from));
-          const r = reachOf(next, x.m);
-          return x.d <= r && x.t * len > r && (1 - x.t) * len > r;
+          return x.d <= reachOf(next, x.m) && x.t > 0 && x.t < 1 && !ending.some((q) => meet(x.m, q));
         })
         .sort((p, q) => p.d - q.d)
         .map((x) => x.m);

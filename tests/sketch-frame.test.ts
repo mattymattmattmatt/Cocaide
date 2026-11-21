@@ -287,3 +287,33 @@ describe("ends near another member's end", () => {
     expect(feet).toEqual([]);
   });
 });
+
+describe("a frame made in groups, as a person would", () => {
+  /** A door opening on Front: two trimmers up to a lintel line, a cripple from it to the top plate. */
+  const opening = (): RawDocument =>
+    ({
+      version: 1,
+      units: "mm",
+      name: "opening",
+      profiles: structuredClone(table.profiles),
+      features: [
+        { id: "wall", op: "sketch", plane: { type: "ref", ref: { datum: "Front" } }, entities: [line("top", [0, 1200], [1000, 1200]), line("t0", [200, 0], [200, 800]), line("t1", [800, 0], [800, 800]), line("lintel", [150, 800], [850, 800]), line("c0", [500, 800], [500, 1200])] },
+      ],
+    }) as RawDocument;
+  const add = (doc: RawDocument, lines: string[], extra: Record<string, unknown> = {}) =>
+    must(addSketchMembers(doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", runThrough: "rails", lines: lines.map((entity) => ({ sketch: "wall", entity })), ...extra }));
+
+  it("joins studs to a lintel added after them, and puts a second lintel beside the first", () => {
+    let doc = add(opening(), ["top"]).doc;
+    doc = add(doc, ["t0", "t1", "c0"]).doc;
+    // The lintel last: the trimmers' tops and the cripple's foot on its line are joined to it now.
+    const lintel = add(doc, ["lintel"], { align: [1, 0] });
+    const v = validateDocument(lintel.doc);
+    const throughLintel = lintel.doc.features.filter((f) => f.op === "joint" && f.through === lintel.members[0]);
+    expect(throughLintel.map((j) => v.nodes[String(j.node)])).toEqual(expect.arrayContaining([[200, 0, 800], [800, 0, 800], [500, 0, 800]]));
+    // A second lintel on the same line, on the other side of it: it goes in; the same one again doesn't.
+    const second = add(lintel.doc, ["lintel"], { align: [-1, 0] });
+    expect(second.members).toHaveLength(1);
+    expect(addSketchMembers(second.doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", align: [-1, 0], lines: [{ sketch: "wall", entity: "lintel" }] })).toMatchObject({ ok: false, error: expect.stringContaining("already") });
+  });
+});

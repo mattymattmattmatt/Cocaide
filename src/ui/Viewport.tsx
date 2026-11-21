@@ -26,7 +26,7 @@ import {
   type NamedView,
 } from "./evaluate/display";
 import type { Dimension3D } from "./evaluate/dimensions3d";
-import { allows, boxOf, boxSelect, FILTER_KINDS, NO_FILTER, type Projected, type SelectFilter } from "./evaluate/filter";
+import { allows, boxOf, boxSelect, FILTER_KINDS, NO_FILTER, segmentTouches, type Projected, type SelectFilter } from "./evaluate/filter";
 import { beginDrag, moveDrag, type HandleDrag, type HandleSpec, type HandleValue } from "./evaluate/handles";
 import { loadSpin } from "./sketcher/modify";
 import { pointWins } from "./sketcher/scenePick";
@@ -198,6 +198,8 @@ interface Props {
   sketchHint?: ((hit: SketchEntityHit) => string | null) | null;
   /** Sketch picking takes whole lines (the members-from-sketch tool): other entities and lines' end points aren't hit. */
   sketchLines?: boolean;
+  /** A box dragged while picking whole lines: the sketch lines in it (all of each inside; a right-to-left box: any part). */
+  sketchBox?: ((hits: { sketch: string; entity: string }[], additive: boolean) => void) | null;
   /** Sketch entities lit up as picked (the lines the members-from-sketch tool has). */
   sketchMarks?: readonly { sketch: string; entity: string }[] | null;
   /** A 3D sketch being drawn: clicks land on its work plane (Tab cycles), snapped to a grid or to its points. */
@@ -404,6 +406,7 @@ export function Viewport({
   pickReach = null,
   sketchPick = null,
   sketchLines = false,
+  sketchBox = null,
   sketchMarks = null,
   draw3d = null,
   corners = null,
@@ -2232,6 +2235,29 @@ export function Viewport({
           return;
         }
         const b = boxOf([start.x, start.y], [e.clientX, e.clientY]);
+        // Picking sketch lines: the box takes the lines in it, not the part's faces and edges.
+        if (sketchBoxRef.current && sketchLinesRef.current) {
+          const r = b.rect; // client pixels, as the projection gives
+          const inside = (q: [number, number] | null) => !!q && q[0] >= r.x0 && q[0] <= r.x1 && q[1] >= r.y0 && q[1] <= r.y1;
+          const hits: { sketch: string; entity: string }[] = [];
+          for (const sk of drawnSketches()) {
+            const segs = [
+              ...(sk.lines3d ?? []).filter((l) => !l.construction).map((l) => ({ id: l.id, a: l.a, b: l.b })),
+              ...sk.entities.filter((en) => en.type === "line" && !en.construction && !en.ref).map((en) => ({ id: en.id, a: to3D(sk.frame, (en as { start: [number, number] }).start), b: to3D(sk.frame, (en as { end: [number, number] }).end) })),
+            ];
+            for (const sg of segs) {
+              const pa = projectPx(sg.a);
+              const pb = projectPx(sg.b);
+              const inA = inside(pa);
+              const inB = inside(pb);
+              // A window takes lines wholly inside; a crossing box (dragged right to left) any line it touches.
+              const crossing = b.crossing && !!pa && !!pb && segmentTouches(r, pa, pb);
+              if ((inA && inB) || crossing) hits.push({ sketch: sk.id, entity: sg.id });
+            }
+          }
+          sketchBoxRef.current(hits, start.shift);
+          return;
+        }
         live.current.onBox?.(boxSelect(b.rect, b.crossing, projected(), pickFilter), start.shift);
         return;
       }
@@ -2906,6 +2932,8 @@ export function Viewport({
   sketchHintRef.current = sketchHint;
   const sketchLinesRef = useRef(sketchLines);
   sketchLinesRef.current = sketchLines;
+  const sketchBoxRef = useRef(sketchBox);
+  sketchBoxRef.current = sketchBox;
   useEffect(() => {
     api.current?.setSketchMarks(sketchMarks ?? []);
   }, [sketchMarks]);

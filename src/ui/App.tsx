@@ -49,7 +49,8 @@ import { useFollow } from "./ask/useFollow";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
-import { addSketchMembers, sketchLines } from "../weldment/sketchFrame";
+import { addSketchMembers, memberKind, sketchLines } from "../weldment/sketchFrame";
+import { to3D as to3DFrame } from "../geom/frame";
 import { framesOf, isNodeLink, resolveNodeLink } from "../weldment/sketchNodes";
 import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
@@ -2863,6 +2864,24 @@ export function App() {
     });
     return true;
   };
+  /** A box over sketch lines while picking: they all go in (Shift: they all come out). */
+  const pickMemberBox = (hits: { sketch: string; entity: string }[], additive: boolean) =>
+    setMemberCmd((st) => {
+      if (!st || !hits.length) return st;
+      const has = (h: { sketch: string; entity: string }) => st.lines.some((x) => x.sketch === h.sketch && x.entity === h.entity);
+      return additive ? { ...st, lines: st.lines.filter((x) => !hits.some((h) => h.sketch === x.sketch && h.entity === x.entity)) } : { ...st, lines: [...st.lines, ...hits.filter((h) => !has(h)).map((h) => ({ sketch: h.sketch, entity: h.entity }))] };
+    });
+  /** How a sketch line runs in space, as the last rebuild drew it. */
+  const lineKind = (l: { sketch: string; entity: string }): "upright" | "level" | "sloped" | undefined => {
+    const sk = view?.sketches.find((k) => k.id === l.sketch);
+    if (!sk) return undefined;
+    const l3 = sk.lines3d?.find((x) => x.id === l.entity);
+    const e = sk.entities.find((x) => x.id === l.entity) as { type: string; start: [number, number]; end: [number, number] } | undefined;
+    const ab = l3 ? [l3.a, l3.b] : e?.type === "line" ? [to3DFrame(sk.frame, e.start), to3DFrame(sk.frame, e.end)] : null;
+    if (!ab) return undefined;
+    const k = memberKind(ab[0] as Vec3, ab[1] as Vec3);
+    return k === "post" ? "upright" : k === "rail" ? "level" : "sloped";
+  };
   const memberLineHint = (hit: SketchEntityHit): string | null =>
     memberCmd?.lines.some((x) => x.sketch === hit.sketch && x.entity === hit.entity) ? "Click to take it out" : "Click to put a member on it";
 
@@ -3146,6 +3165,7 @@ export function App() {
                   sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : linePicking ? pickMemberLine : null}
                   sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : linePicking ? memberLineHint : null}
                   sketchLines={!session && linePicking}
+                  sketchBox={linePicking ? pickMemberBox : null}
                   sketchMarks={!session && memberCmd ? memberCmd.lines : null}
                   draw3d={draw3d}
                   corners={cornerMarks}
@@ -3399,6 +3419,7 @@ export function App() {
                         familyOf={(v) => library.find((e) => e.id === v.split("|")[1])?.name}
                         sketches={sketchLines(memberBase.current)}
                         nodes={memberBase.current ? Object.keys(validateDocument(memberBase.current, { sketchFrames }).nodes) : []}
+                        lineKind={lineKind}
                         anchor={memberAnchor(memberCmd.size)}
                         summary={memberSummary}
                         busy={memberBusy}
