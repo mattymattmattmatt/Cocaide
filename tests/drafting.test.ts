@@ -323,6 +323,20 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     expect([...bodiesOf].filter(([, b]) => b.size > 1).map(([k]) => k)).toEqual([]);
   });
 
+  it("numbers a balloon as the sheet's cut list does: a leg in another material is an item of its own", async () => {
+    // One leg in treated pine: the cut list splits the legs into two items, and the balloons follow it.
+    let doc = await withDrawing({ ...structuredClone(table), bodyMaterials: { leg_a: { name: "H3 treated pine", densityKgPerM3: 550 } } } as RawDocument);
+    doc = run(doc, { type: "setAnnotation", id: "bt1", annotation: { type: "balloon", view: "front", member: "leg_a" } }, { type: "setAnnotation", id: "bt2", annotation: { type: "balloon", view: "front", member: "leg_b" } });
+    const { sheet, checks } = await sheetOf(doc);
+    const rows = sheet.prims.filter((p) => p.k === "text").map((p) => (p as { text: string }).text);
+    expect(rows).toContain("H3 treated pine");
+    const a = said(sheet, "bt1");
+    const b = said(sheet, "bt2");
+    expect(a.problem).toBeUndefined();
+    expect(a.item).not.toBe(b.item);
+    expect(failed(checks)).not.toContain("Every cut list item has a balloon");
+  });
+
   it("a deleted member's balloon is a problem on the sheet, not a refused edit", async () => {
     let doc = await withDrawing(table);
     doc = run(doc, { type: "setAnnotation", id: "b9", annotation: { type: "balloon", view: "front", member: "rail_back" } });

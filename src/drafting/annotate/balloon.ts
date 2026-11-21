@@ -55,7 +55,9 @@ export function layoutBalloon(a: BalloonAnnotation, ctx: AnnotationContext, cv: 
   const body = m?.body ?? a.body;
   let item: number | null = a.item ?? null;
   if (item === null && name) {
-    item = (m && ctx.data.cutList.find((i) => i.members.includes(m.id))?.item) ?? ctx.data.itemOf?.(m?.id ?? name) ?? (body ? ctx.data.itemOf?.(body) : null) ?? null;
+    // Numbered as the sheet's list is (the parts list, or the cut list with its plates and material splits), else
+    // by the members' list.
+    item = ctx.data.itemOf?.(m?.id ?? name) ?? (body ? ctx.data.itemOf?.(body) : null) ?? (m && ctx.data.cutList.find((i) => i.members.includes(m.id))?.item) ?? null;
     if (item === null) return failed(`${name} is not in the cut list`);
   }
   if (item === null) return failed("a balloon numbers a member (member), a body (body) or an item (item)");
@@ -75,7 +77,7 @@ export function layoutBalloon(a: BalloonAnnotation, ctx: AnnotationContext, cv: 
   const text = String(item);
   const size = style.classic ? 5 : style.font;
   const r = (a.size ?? (text.length > 2 ? 12 : style.classic ? 9 : 10)) / 2 + (style.classic && text.length > 1 ? 0.7 : 0);
-  const stack = (a.stack ?? []).map((s) => (typeof s === "number" ? s : (ctx.data.cutList.find((i) => i.members.includes(s))?.item ?? ctx.data.itemOf?.(s) ?? null)));
+  const stack = (a.stack ?? []).map((s) => (typeof s === "number" ? s : (ctx.data.itemOf?.(s) ?? ctx.data.cutList.find((i) => i.members.includes(s))?.item ?? null)));
   const qty = a.quantity === true ? (ctx.data.quantityOf?.(item) ?? ctx.data.cutList.find((i) => i.item === item)?.quantity) : typeof a.quantity === "number" ? a.quantity : undefined;
   const shape = a.shape ?? "circle";
   const height = 2 * r * (1 + stack.length);
