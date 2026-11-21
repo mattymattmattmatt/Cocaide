@@ -50,6 +50,7 @@ import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
 import { addSketchMembers, type SketchLine } from "../weldment/sketchFrame";
+import { framesOf } from "../weldment/sketchNodes";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { SketchMembersPanel, type SketchMembersRequest } from "./SketchMembersPanel";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
@@ -454,7 +455,10 @@ export function App() {
   }, [sectionReveal]);
   const section = sectionCtl.section;
   /** The frame's nodes, where the viewport draws them. */
-  const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown).nodes).map(([name, at]) => ({ name, at })) : []), [shown]);
+  /** Where the last rebuild put each sketch: nodes that follow a sketch on a face are placed from these. */
+  const sketchFrames = useMemo(() => framesOf(view?.sketches), [view]);
+  d.setSketchFrames(sketchFrames);
+  const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown, { sketchFrames }).nodes).map(([name, at]) => ({ name, at })) : []), [shown, sketchFrames]);
   /** The drawing as shown (an open proposal's, while it is previewed), and as it is in the document. */
   const shownDrawing = useMemo(() => (shown ? validateDocument(shown).drawing : null), [shown]);
   const docDrawing = useMemo(() => (doc ? validateDocument(doc).drawing : null), [doc]);
@@ -1235,7 +1239,7 @@ export function App() {
     if (!doc) return false;
     const sz = sizeIn(doc, req.size);
     if (!sz) return false;
-    const r = addSketchMembers(sz.next, { profile: sz.profile, size: sz.size, lines: req.lines, line: req.line, corners: req.corners });
+    const r = addSketchMembers(sz.next, { profile: sz.profile, size: sz.size, lines: req.lines, line: req.line, corners: req.corners, frames: sketchFrames });
     if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
     d.replaceDoc(r.doc);
     const joints = r.joints.length ? ` and ${r.joints.length} joint${r.joints.length === 1 ? "" : "s"}` : "";
@@ -2842,7 +2846,7 @@ export function App() {
             {!sketch && (
               <SketchMembersPanel doc={doc} sizes={sizeChoices} picking={memberPick} onPicking={setMemberPick} onCreate={addFromSketch} onError={(text) => setNotice({ kind: "error", text })} />
             )}
-            <NodesPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
+            <NodesPanel doc={doc} frames={sketchFrames} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
             <BodiesPanel
               measurements={view?.measurements ?? null}
               bodies={view?.bodies ?? []}

@@ -11,6 +11,7 @@
 // through them), and commit() makes it one undo step named for it, or
 // rollback() puts the document back exactly as it was.
 
+import type { SketchFrames } from "../weldment/sketchNodes";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { apply, type Command, type RawDocument } from "../doc/commands";
 import { formatDocument, parseDocumentText, type ParseResult } from "../doc/format";
@@ -62,6 +63,8 @@ export interface DocumentState {
   redoLabel: string;
   /** Apply a command. Returns the error text when it was rejected. */
   dispatch(cmd: Command): string | null;
+  /** Where the last rebuild put each sketch: edits check nodes on face sketches against these. */
+  setSketchFrames(frames: SketchFrames | undefined): void;
   /** Replace the document with one already checked (an accepted proposal): one undo step. */
   replaceDoc(doc: RawDocument): void;
   /** Replace the whole text (typing in the JSON editor). */
@@ -178,12 +181,14 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     [commitTyping],
   );
 
+  /** The last rebuild's sketch frames (see setSketchFrames). */
+  const framesRef = useRef<SketchFrames | undefined>(undefined);
   const dispatch = useCallback(
     (cmd: Command): string | null => {
       const current = parseDocumentText(textRef.current);
       if (!current.ok) return `fix the JSON first: ${current.error}`;
       // Everything dispatched here is the person at the app.
-      const result = apply(current.value, cmd, { user: true });
+      const result = apply(current.value, cmd, { user: true, sketchFrames: framesRef.current });
       if (!result.ok) return result.error;
       commitTyping();
       const next = formatDocument(result.doc);
@@ -245,7 +250,7 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
       if (opening) {
         const current = parseDocumentText(textRef.current);
         if (!current.ok) return `fix the JSON first: ${current.error}`;
-        const result = apply(current.value, opening, { user: true });
+        const result = apply(current.value, opening, { user: true, sketchFrames: framesRef.current });
         if (!result.ok) return result.error;
         open = formatDocument(result.doc);
       }
@@ -312,6 +317,7 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     undoLabel: undoLabel(h),
     redoLabel: redoLabel(h),
     dispatch,
+    setSketchFrames: (frames: SketchFrames | undefined) => void (framesRef.current = frames),
     replaceDoc,
     setText,
     load,

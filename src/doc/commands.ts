@@ -9,7 +9,7 @@
 import { expandShorthands } from "./shorthand";
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
-import { isNodeLink, resolveNodeLink, type NodeLink } from "../weldment/sketchNodes";
+import { isNodeLink, resolveNodeLink, type NodeLink, type SketchFrames } from "../weldment/sketchNodes";
 import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, rawParameters, resolveExpressions, type Parameters } from "./parameters";
 import { dependentNames, DIMENSION_NAME, dimensionNames, documentSymbols, isDimension, namedDimensions, pinReferencedNames, readersOf, referencedNames, renameInDocument, symbolEntries } from "./dimensions";
 import { measureConstraint } from "../geom/constraints";
@@ -187,6 +187,8 @@ export interface ApplyOptions {
   writeScope?: WriteScope;
   /** The person at the app made this edit, not an agent. Only they can confirm a photo's scale. */
   user?: boolean;
+  /** Where sketches on faces are (the last rebuild's frames): nodes that follow them are checked from these. */
+  sketchFrames?: SketchFrames;
 }
 
 export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): ApplyResult {
@@ -348,14 +350,15 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const i = need(cmd.id);
       if (typeof i === "string") return { ok: false, error: i };
       const users = dependants(features, cmd.id);
-      // Nodes that follow the sketch's points (and so the members on them).
+      // Nodes that follow the sketch's points stay where they are, as coordinates: the frame on them is kept.
       const following = Object.entries(isObject(doc.nodes) ? doc.nodes : {}).filter(([, v]) => isNodeLink(v) && v.sketch === cmd.id).map(([n]) => n);
       if (following.length) {
-        const members = [...new Set(following.flatMap((n) => nodeUsers(features, n)))];
-        return {
-          ok: false,
-          error: `deleteFeature: nodes ${following.join(", ")} follow ${cmd.id}${members.length ? ` (members ${members.join(", ")} run on them)` : ""}; delete them, or give them coordinates, first`,
-        };
+        const placed = validateDocument(input, { sketchFrames: opts.sketchFrames }).nodes;
+        const lost = following.filter((n) => !placed[n]);
+        if (lost.length) {
+          return { ok: false, error: `deleteFeature: nodes ${lost.join(", ")} follow ${cmd.id}, and where they are isn't known yet (rebuild first), so they can't be kept in place; give them coordinates first` };
+        }
+        doc.nodes = Object.fromEntries(Object.entries(doc.nodes as Record<string, unknown>).map(([n, v]) => [n, following.includes(n) ? [...placed[n]] : v]));
       }
       if (users.length) {
         return {
@@ -504,7 +507,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         delete nodes[cmd.name];
       } else if (isNodeLink(cmd.at)) {
         const r = resolveNodeLink(features, cmd.at, documentParameters(doc));
-        if (!r.ok) return { ok: false, error: `setNode: ${cmd.name} ${r.error}` };
+        // A sketch on a face is placed by the rebuild: the link is kept, and the rebuild says if it can't be found.
+        if (!r.ok && !r.needsFrame) return { ok: false, error: `setNode: ${cmd.name} ${r.error}` };
         nodes[cmd.name] = { sketch: cmd.at.sketch, point: cmd.at.point };
       } else {
         if (!Array.isArray(cmd.at) || cmd.at.length !== 3 || !cmd.at.every((x) => (typeof x === "number" && Number.isFinite(x)) || isExpression(x))) {
@@ -878,8 +882,8 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
   }
   // A reference this command wrote to a default dimension name pins it too.
   pinReferencedNames(doc);
-  const was = validateDocument(input);
-  let now = validateDocument(doc);
+  const was = validateDocument(input, { sketchFrames: opts.sketchFrames });
+  let now = validateDocument(doc, { sketchFrames: opts.sketchFrames });
   // A body's material goes with the body: a command that removes a body (deleting the feature that makes it) drops it.
   // So does its appearance.
   for (const [field, own] of [["bodyMaterials", "setBodyMaterial"], ["bodyAppearances", "setAppearance"]] as const) {
@@ -892,7 +896,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
     if (kept.length < entries.length) {
       if (kept.length) doc[field] = Object.fromEntries(kept);
       else delete doc[field];
-      now = validateDocument(doc);
+      now = validateDocument(doc, { sketchFrames: opts.sketchFrames });
     }
   }
   const before = new Set(allErrors(was));

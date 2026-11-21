@@ -7,7 +7,7 @@ import type { Command, RawDocument } from "../doc/commands";
 import { NODE_NAME } from "../doc/types";
 import { nodeUsers } from "../doc/commands";
 import { validateDocument } from "../doc/validate";
-import { isNodeLink, linkText } from "../weldment/sketchNodes";
+import { isNodeLink, linkText, type SketchFrames } from "../weldment/sketchNodes";
 import { NumberInput, TextInput, Vec3Input, type NumberValue } from "./fields";
 import { Section } from "./Section";
 import { Icon } from "./icons";
@@ -31,6 +31,8 @@ interface Props {
   onError(text: string): void;
   sizes: SizeChoice[];
   onPath(req: PathRequest): boolean;
+  /** Where the last rebuild put each sketch (nodes on a face sketch are placed from these). */
+  frames?: SketchFrames;
 }
 
 /** The next free node name: A, B, ... Z, then N1, N2, ... */
@@ -42,7 +44,7 @@ export function nextNodeName(taken: string[]): string {
   for (let k = 1; ; k++) if (!taken.includes(`N${k}`)) return `N${k}`;
 }
 
-export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
+export function NodesPanel({ doc, dispatch, onError, sizes, onPath, frames }: Props) {
   const [at, setAt] = useState<NumberValue[]>([0, 0, 0]);
   const [name, setName] = useState("");
   const [size, setSize] = useState("");
@@ -51,7 +53,7 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
   const [mitre, setMitre] = useState(true);
   if (!doc) return null;
   const nodes = (doc.nodes ?? {}) as Record<string, NumberValue[]>;
-  const v = Object.values(nodes).some(isNodeLink) ? validateDocument(doc) : null;
+  const v = Object.values(nodes).some(isNodeLink) ? validateDocument(doc, { sketchFrames: frames }) : null;
   const names = Object.keys(nodes);
   const run = (cmd: Command) => {
     const problem = dispatch(cmd);

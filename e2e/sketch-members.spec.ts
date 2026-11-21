@@ -78,3 +78,34 @@ test("pick lines in the view, add them: members on nodes that follow the sketch,
   // The frame builds: five bodies.
   await expect(page.getByTestId("bodies")).toContainText("5");
 });
+
+test("a frame on a sketch on a plate's top face: it stands on the plate", async ({ page }) => {
+  const onPlate = {
+    version: 1,
+    units: "mm",
+    name: "base",
+    profiles: table.profiles,
+    features: [
+      { id: "plate_sk", op: "sketch", plane: { type: "ref", ref: { datum: "Top" } }, entities: [{ id: "r1", type: "rect", center: [0, 0], w: 1200, h: 800 }] },
+      { id: "plate", op: "extrude", sketch: "plate_sk", distance: 10, direction: [0, 0, 1] },
+      {
+        id: "top_layout",
+        op: "sketch",
+        plane: { type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest" } } },
+        entities: [line("t1", [-500, -300], [500, -300]), line("t2", [500, -300], [500, 300]), line("t3", [500, 300], [-500, 300]), line("t4", [-500, 300], [-500, -300])],
+      },
+    ],
+  };
+  const text = JSON.stringify(onPlate, null, 2);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+  const panel = page.getByTestId("sketch-members");
+  await panel.getByTestId("sketch-members-all").selectOption("top_layout");
+  await panel.getByTestId("sketch-members-add").click();
+  await expect.poll(async () => (await saved(page)).features.filter((f: any) => f.op === "member").length).toBe(4);
+  // Plate and four members, and nothing wrong.
+  await expect(page.getByTestId("bodies")).toContainText("5");
+  await expect(page.getByTestId("node-link-A")).toContainText("t1.start");
+  await expect(page.getByTestId("node-link-A")).not.toHaveClass(/broken/);
+});

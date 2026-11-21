@@ -9,7 +9,7 @@
 
 import type { NodeLink, Vec2, Vec3 } from "../doc/types";
 import { defaultDatum, flipPlane, offsetPlane, refPlaneFrame, datumPlaneDatum, xDirProblem, type PlaneDatum } from "../features/datum";
-import { to3D } from "../geom/frame";
+import { to3D, type Frame } from "../geom/frame";
 import { sketch3dPoint } from "../geom/sketch3d";
 import { resolveExpressions, type Parameters } from "../doc/parameters";
 
@@ -37,13 +37,29 @@ export const LINK_POINTS: Readonly<Record<string, readonly string[]>> = {
   slot: ["center1", "center2"],
 };
 
-export type Resolved = { ok: true; at: Vec3 } | { ok: false; error: string };
+/**
+ * `needsFrame`: the sketch's plane comes from the solid (a face, a plane made
+ * from edges or faces): the rebuild works out where the sketch is and passes
+ * its frame in `frames`, so the node is known then.
+ */
+export type Resolved = { ok: true; at: Vec3 } | { ok: false; error: string; needsFrame?: true };
+
+/** Where sketches are, as the kernel resolved them (their frames, by sketch id): for sketches on faces. */
+export type SketchFrames = Readonly<Record<string, Frame>>;
+
+/** A rebuild's sketches as frames by id (what the UI passes validation). */
+export function framesOf(sketches: readonly { id: string; frame: Frame }[] | undefined): SketchFrames | undefined {
+  return sketches?.length ? Object.fromEntries(sketches.map((k) => [k.id, k.frame])) : undefined;
+}
+
+/** A plane that only the solid can say where it is, and why. */
+type FromSolid = { solid: string };
 
 /**
  * Where a linked node is: the sketch point in 3D. `features` is the document's
  * feature list as written (expressions are evaluated with `params`).
  */
-export function resolveNodeLink(features: readonly unknown[], link: unknown, params: Parameters = {}): Resolved {
+export function resolveNodeLink(features: readonly unknown[], link: unknown, params: Parameters = {}, frames?: SketchFrames): Resolved {
   if (!isObject(link)) return { ok: false, error: `must be [x, y, z] or { "sketch": <sketch id>, "point": "<entity>.<point>" }` };
   const extra = Object.keys(link).filter((k) => k !== "sketch" && k !== "point");
   if (extra.length) return { ok: false, error: `a node that follows a sketch has only "sketch" and "point" (not ${extra.map((k) => `"${k}"`).join(", ")})` };
@@ -65,7 +81,13 @@ export function resolveNodeLink(features: readonly unknown[], link: unknown, par
   const e = resolveExpressions(rawEntity, params, []) as Record<string, unknown>;
   const p = entityPoint(e, at);
   if (typeof p === "string") return { ok: false, error: `follows ${linkText(l)}: ${p}` };
-  const frame = sketchFrame(features, raw, params);
+  let frame = sketchFrame(features, raw, params);
+  if (typeof frame === "object" && "solid" in frame) {
+    // On a face (or a plane made from the part): where the rebuild found it.
+    const known = frames?.[l.sketch];
+    if (!known) return { ok: false, error: `follows ${linkText(l)}, but ${l.sketch} is ${frame.solid}, and it didn't build, so where its points are isn't known`, needsFrame: true };
+    frame = known;
+  }
   if (typeof frame === "string") return { ok: false, error: `follows ${linkText(l)}, but ${frame}` };
   return { ok: true, at: to3D(frame, p).map((x) => Math.round(x * 1e9) / 1e9 + 0) as Vec3 };
 }
@@ -92,7 +114,7 @@ function entityPoint(e: Record<string, unknown>, at: string): Vec2 | string {
 }
 
 /** The frame a sketch is drawn on, or why it can't be worked out without the solid. */
-function sketchFrame(features: readonly unknown[], raw: Record<string, unknown>, params: Parameters) {
+function sketchFrame(features: readonly unknown[], raw: Record<string, unknown>, params: Parameters): Frame | FromSolid | string {
   const plane = resolveExpressions(raw.plane, params, []);
   if (!isObject(plane)) return `${String(raw.id)} has no plane`;
   if (plane.type === "datum") {
@@ -102,16 +124,16 @@ function sketchFrame(features: readonly unknown[], raw: Record<string, unknown>,
   }
   if (plane.type !== "ref" || !isObject(plane.ref)) return `${String(raw.id)}'s plane is not written right`;
   const base = planeOfRef(features, plane.ref, params, new Set([String(raw.id)]));
-  if (typeof base === "string") return base;
+  if (typeof base === "string" || "solid" in base) return base;
   const xDir = isVec(plane.xDir, 3) ? (plane.xDir as Vec3) : undefined;
   if (xDir && xDirProblem(base.normal, xDir)) return `${String(raw.id)}'s xDir ${xDirProblem(base.normal, xDir)}`;
   return refPlaneFrame(base, { offset: typeof plane.offset === "number" ? plane.offset : undefined, flip: plane.flip === true, xDir });
 }
 
 /** A referenced plane: a default plane, or a plane feature offset (or flipped) from one, as far back as it goes. */
-function planeOfRef(features: readonly unknown[], ref: Record<string, unknown>, params: Parameters, seen: Set<string>): PlaneDatum | string {
-  if ("face" in ref) return "that sketch is on a face, and a node can follow only a sketch on a plane (Top, Front, Right or a plane feature): sketch the layout on a plane";
-  if (typeof ref.datum !== "string") return "that sketch's plane is not one a node can follow (sketch the layout on Top, Front, Right or a plane feature)";
+function planeOfRef(features: readonly unknown[], ref: Record<string, unknown>, params: Parameters, seen: Set<string>): PlaneDatum | FromSolid | string {
+  if ("face" in ref) return { solid: "on a face" };
+  if (typeof ref.datum !== "string") return { solid: "on a plane made from the part" };
   const d = defaultDatum(ref.datum);
   if (d) return d.kind === "plane" ? d : `${ref.datum} is not a plane`;
   if (seen.has(ref.datum)) return `${ref.datum} refers back to itself`;
@@ -120,11 +142,9 @@ function planeOfRef(features: readonly unknown[], ref: Record<string, unknown>, 
   if (!isObject(f)) return `there is no plane "${ref.datum}"`;
   const r = resolveExpressions(f, params, []) as Record<string, unknown>;
   const mode = r.mode ?? "offset";
-  if (r.op !== "plane" || mode !== "offset" || !Array.isArray(r.refs) || !isObject(r.refs[0])) {
-    return `the sketch is on ${ref.datum}, and a node can follow a sketch on a default plane or a plane offset from one (not ${r.op === "plane" ? `a plane made by "${String(mode)}"` : `a ${String(r.op)}`})`;
-  }
+  if (r.op !== "plane" || mode !== "offset" || !Array.isArray(r.refs) || !isObject(r.refs[0])) return { solid: `on ${ref.datum}, a plane made from the part` };
   const base = planeOfRef(features, r.refs[0] as Record<string, unknown>, params, seen);
-  if (typeof base === "string") return base;
+  if (typeof base === "string" || "solid" in base) return base;
   const p = offsetPlane(base, typeof r.distance === "number" ? r.distance : 0);
   return r.flip === true ? flipPlane(p) : p;
 }

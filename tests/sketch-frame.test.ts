@@ -116,9 +116,12 @@ describe("members from picked sketch lines", () => {
     expect(size(moved.doc)).toEqual([[1200, 40, 600], 5]);
   });
 
-  it("keeps the links when the sketch is renamed, and won't delete a sketch nodes follow", () => {
+  it("keeps the links when the sketch is renamed, and the frame when it is deleted", () => {
     const r = must(addSketchMembers(layout(), { ...spec, lines }));
-    expect(apply(r.doc, { type: "deleteFeature", id: "layout" })).toMatchObject({ ok: false, error: expect.stringContaining("follow layout") });
+    // Deleted, the frame stays: its nodes keep their places as coordinates.
+    const gone = must(apply(r.doc, { type: "deleteFeature", id: "layout" }));
+    expect(gone.doc.nodes).toMatchObject({ A: [0, 0, 0], B: [1000, 0, 0], C: [1000, 0, 600] });
+    expect(allErrors(validateDocument(gone.doc))).toEqual([]);
     const renamed = must(apply(r.doc, { type: "updateFeature", id: "layout", patch: { id: "frame_layout" } }));
     expect(Object.values(renamed.doc.nodes as Record<string, { sketch: string }>).every((n) => n.sketch === "frame_layout")).toBe(true);
     expect(allErrors(validateDocument(renamed.doc))).toEqual([]);
@@ -135,5 +138,61 @@ describe("the agent's membersFromSketch", () => {
     expect(r.doc.features.filter((f) => f.op === "member").every((m) => m.profile === "SHS" && m.size === "SHS 50x50x3")).toBe(true);
     expect(membersFromSketch(layout(), { size: "SHS 99x99x9", sketch: "layout" })).toMatchObject({ ok: false, error: expect.stringContaining("addLibraryProfile") });
     expect(membersFromSketch(layout(), { size: "SHS 40x40x3" })).toMatchObject({ ok: false, error: expect.stringContaining('name a "sketch"') });
+  });
+});
+
+describe("members on a sketch on a face", () => {
+  /** A 1200 × 800 × =t plate, and the frame's layout sketched on its top face. */
+  function onPlate(t = 10): RawDocument {
+    return {
+      version: 1,
+      units: "mm",
+      name: "base",
+      parameters: { t },
+      profiles: structuredClone(table.profiles),
+      features: [
+        { id: "plate_sk", op: "sketch", plane: { type: "ref", ref: { datum: "Top" } }, entities: [{ id: "r1", type: "rect", center: [0, 0], w: 1200, h: 800 }] },
+        { id: "plate", op: "extrude", sketch: "plate_sk", distance: "=t", direction: [0, 0, 1] },
+        {
+          id: "layout",
+          op: "sketch",
+          plane: { type: "ref", ref: { face: { type: "planar", normal: [0, 0, 1], pick: "largest" } } },
+          entities: [line("l1", [-500, -300], [500, -300]), line("l2", [500, -300], [500, 300]), line("l3", [500, 300], [-500, 300]), line("l4", [-500, 300], [-500, -300])],
+        },
+      ],
+    } as RawDocument;
+  }
+  const framesAfter = (doc: RawDocument) => {
+    const b = rebuild(doc, oc);
+    try {
+      return Object.fromEntries(b.sketches.map((k) => [k.id, k.frame]));
+    } finally {
+      b.dispose();
+    }
+  };
+  const lowest = (doc: unknown) => {
+    const b = rebuild(doc, oc);
+    try {
+      expect(b.errors).toEqual([]);
+      const members = b.measurements!.bodies.filter((x) => x.name !== "main");
+      expect(members).toHaveLength(4);
+      return Math.round(Math.min(...members.map((x) => x.boundingBox!.min[2])) * 1000) / 1000;
+    } finally {
+      b.dispose();
+    }
+  };
+
+  it("is placed from where the rebuild found the sketch, and follows the face when the plate gets thicker", () => {
+    const doc = onPlate();
+    // Without the sketch's frame, validation says it needs the rebuild (and doesn't guess).
+    const linked = { ...doc, nodes: { A: { sketch: "layout", point: "l1.start" } } } as RawDocument;
+    expect(validateDocument(linked).needsFrames).toEqual(["layout"]);
+    const r = must(addSketchMembers(doc, { profile: "SHS", size: "SHS 40x40x3", line: "outside", corners: "mitre", lines: ["l1", "l2", "l3", "l4"].map((entity) => ({ sketch: "layout", entity })), frames: framesAfter(doc) }));
+    expect(r.members).toHaveLength(4);
+    // The members stand on the plate: their lines are on its top face.
+    const sitting = lowest(r.doc);
+    const thicker = apply(r.doc, { type: "setParameter", name: "t", value: 25 });
+    if (!thicker.ok) throw new Error(thicker.error);
+    expect(lowest(thicker.doc)).toBe(sitting + 15);
   });
 });

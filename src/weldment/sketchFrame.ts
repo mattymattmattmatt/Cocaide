@@ -12,7 +12,7 @@ import { memberAtNode, validateDocument } from "../doc/validate";
 import { documentParameters } from "../doc/parameters";
 import { dot3, sub3 } from "../geom/vec";
 import { outsideAlign } from "./frame";
-import { isNodeLink, resolveNodeLink } from "./sketchNodes";
+import { isNodeLink, resolveNodeLink, type SketchFrames } from "./sketchNodes";
 
 /** A line of a sketch, picked. */
 export interface SketchLine {
@@ -29,6 +29,8 @@ export interface SketchMembersSpec {
   line: "centre" | "outside";
   /** What each corner gets: two members meeting at an angle mitred or butted; "none" leaves the corners to be joined by hand. */
   corners: "mitre" | "butt" | "none";
+  /** Where sketches on faces are (the last rebuild's frames, by sketch id). */
+  frames?: SketchFrames;
 }
 
 export type SketchMembersResult =
@@ -66,7 +68,7 @@ function freeId(doc: RawDocument, id: string): string {
 export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): SketchMembersResult {
   if (!spec.lines.length) return { ok: false, error: "pick one or more sketch lines" };
   const params = documentParameters(doc);
-  const v = validateDocument(doc);
+  const v = validateDocument(doc, { sketchFrames: spec.frames });
   // Each line's two ends, in 3D.
   const lines: { line: SketchLine; ends: [Vec3, Vec3]; refs: [string, string] }[] = [];
   const seen = new Set<string>();
@@ -83,8 +85,8 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     if (e.construction === true) return { ok: false, error: `${l.sketch}'s ${l.entity} is a construction line; pick the frame's own lines` };
     // A 3D sketch's line ends are its points: the nodes follow those (p2.at), shared by every line on them.
     const refs: [string, string] = sketch.op === "sketch3d" ? [`${String(e.start)}.at`, `${String(e.end)}.at`] : [`${l.entity}.start`, `${l.entity}.end`];
-    const a = resolveNodeLink(doc.features, { sketch: l.sketch, point: refs[0] }, params);
-    const b = resolveNodeLink(doc.features, { sketch: l.sketch, point: refs[1] }, params);
+    const a = resolveNodeLink(doc.features, { sketch: l.sketch, point: refs[0] }, params, spec.frames);
+    const b = resolveNodeLink(doc.features, { sketch: l.sketch, point: refs[1] }, params, spec.frames);
     if (!a.ok) return { ok: false, error: `${l.entity} ${a.error}` };
     if (!b.ok) return { ok: false, error: `${l.entity} ${b.error}` };
     if (near(a.at, b.at)) return { ok: false, error: `${l.sketch}'s ${l.entity} has no length` };
@@ -101,7 +103,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
   let next = doc;
   const commands: Command[] = [];
   const run = (cmd: Command): string | null => {
-    const r = apply(next, cmd);
+    const r = apply(next, cmd, { sketchFrames: spec.frames });
     if (!r.ok) return r.error;
     next = r.doc;
     commands.push(cmd);
@@ -150,7 +152,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
   // The corners: each node a new member ends at that has no joint yet.
   const joints: string[] = [];
   if (spec.corners !== "none" && members.length) {
-    const after = validateDocument(next);
+    const after = validateDocument(next, { sketchFrames: spec.frames });
     const all = after.features.flatMap((vf) => (vf.feature?.op === "member" ? [vf.feature as MemberFeature] : []));
     const jointed = new Set(next.features.filter((f) => f.op === "joint").map((f) => String(f.node)));
     const length = (m: MemberFeature) => Math.hypot(...sub3(m.to, m.from));
@@ -199,7 +201,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
  * lines?: [{ sketch, entity }], line?, corners? }. The profile may be left out
  * when one profile of the part has the size; "sketch" takes all its own lines.
  */
-export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>): SketchMembersResult {
+export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>, frames?: SketchFrames): SketchMembersResult {
   const profiles = isObject(doc.profiles) ? (doc.profiles as Record<string, { sizes?: { designation: string }[] }>) : {};
   const size = typeof a.size === "string" ? a.size : "";
   if (!size) return { ok: false, error: "size: name one of the part's profile sizes (addLibraryProfile adds a catalogue section)" };
@@ -221,5 +223,5 @@ export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>):
   } else return { ok: false, error: 'name a "sketch" (all its lines) or "lines": [{ "sketch", "entity" }]' };
   const line = a.line === "centre" || a.line === "center" ? "centre" : "outside";
   const corners = a.corners === "butt" || a.corners === "none" ? a.corners : "mitre";
-  return addSketchMembers(doc, { profile, size, lines, line, corners });
+  return addSketchMembers(doc, { profile, size, lines, line, corners, frames });
 }

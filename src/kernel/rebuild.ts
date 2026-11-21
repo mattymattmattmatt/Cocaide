@@ -170,16 +170,45 @@ export interface HoleRecord {
 export interface RebuildOptions {
   /** Also list, in `faceOrigins`, the feature that made each face (provenance is always recorded; this only writes the list). */
   provenance?: boolean;
+  /** Where sketches on faces are (set by rebuild itself: see sketchFramesFor). */
+  sketchFrames?: Record<string, Frame>;
 }
 
 export function rebuild(input: unknown, oc: OC = getOC(), opts: RebuildOptions = {}): RebuildResult {
+  const sketchFrames = opts.sketchFrames ?? sketchFramesFor(input, oc);
   // Who made each face and edge, recorded as the features commit; the part's descriptions carry it while the rebuild runs.
   const trace = new Provenance();
-  return withProvenance(trace, () => rebuildTraced(input, oc, opts, trace));
+  return withProvenance(trace, () => rebuildTraced(input, oc, { ...opts, ...(sketchFrames ? { sketchFrames } : {}) }, trace));
+}
+
+/**
+ * Nodes that follow a sketch on a face (or on a plane made from the part):
+ * where that sketch is comes from the solid, which validation can't see. So
+ * the part is built first as far as the last such sketch, and the frames the
+ * sketches resolved to are kept; the real rebuild then validates with them.
+ * Undefined when no node needs it (the usual case: one rebuild).
+ */
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function sketchFramesFor(input: unknown, oc: OC): Record<string, Frame> | undefined {
+  const needed = validateDocument(input).needsFrames;
+  if (!needed?.length || !isRecord(input) || !Array.isArray(input.features)) return undefined;
+  const features = input.features as unknown[];
+  const last = Math.max(...needed.map((id) => features.findIndex((f) => isRecord(f) && f.id === id)));
+  if (last < 0) return undefined;
+  const { drawing: _drawing, rollback: _rollback, ...rest } = input;
+  const first = { ...rest, features: features.slice(0, last + 1) };
+  const trace = new Provenance();
+  const r = withProvenance(trace, () => rebuildTraced(first, oc, { sketchFrames: {} }, trace));
+  try {
+    return Object.fromEntries(r.sketches.filter((k) => k.ok && needed.includes(k.id)).map((k) => [k.id, k.frame]));
+  } finally {
+    r.dispose();
+  }
 }
 
 function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Provenance): RebuildResult {
-  const v = validateDocument(input);
+  const v = validateDocument(input, { sketchFrames: opts.sketchFrames });
   const errors = [...v.headerErrors];
   const features: FeatureStatus[] = [];
   const sketches: SketchOverlay[] = [];

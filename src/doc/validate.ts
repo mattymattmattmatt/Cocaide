@@ -87,7 +87,7 @@ import { MAX_TEXT, missingGlyphs, TEXT_ALIGNS, TEXT_FONTS, type TextAlign, type 
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition, type CsysPart } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 import { folderGap } from "./tree";
-import { isNodeLink, resolveNodeLink, type NodeLink } from "../weldment/sketchNodes";
+import { isNodeLink, resolveNodeLink, type NodeLink, type SketchFrames } from "../weldment/sketchNodes";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
 
 export interface ValidatedFeature {
@@ -126,6 +126,8 @@ export interface ValidationResult {
   nodeLinks: Record<string, NodeLink>;
   /** Nodes that follow a sketch point that can't be found, and why: not in `nodes`; what names them fails with this. */
   nodeProblems: Record<string, string>;
+  /** Sketches nodes follow whose planes come from the solid, with no frame given: the rebuild finds where they are first. */
+  needsFrames?: string[];
   /** The weld table. */
   welds: Weld[];
   /** The drawing, when the document has one and it is valid. */
@@ -181,7 +183,12 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
   return doc;
 }
 
-export function validateDocument(input: unknown): ValidationResult {
+export interface ValidateOptions {
+  /** Where sketches on faces are (their frames, by id), as a rebuild found them: nodes that follow them are placed from these. */
+  sketchFrames?: SketchFrames;
+}
+
+export function validateDocument(input: unknown, opts: ValidateOptions = {}): ValidationResult {
   const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], madeBodies: [], bodyMaterials: {}, profiles: {}, nodes: {}, nodeLinks: {}, nodeProblems: {}, welds: [], drawing: null, drawingErrors: [], properties: {} };
   const header = new Checker("document");
   if (!isObject(input)) {
@@ -265,9 +272,12 @@ export function validateDocument(input: unknown): ValidationResult {
         }
         // A node that follows a sketch point: where the sketch puts it. A broken link fails what uses the node, not the part.
         if (isNodeLink(at)) {
-          const r = resolveNodeLink(Array.isArray(input.features) ? input.features : [], at, symbols);
+          const r = resolveNodeLink(Array.isArray(input.features) ? input.features : [], at, symbols, opts.sketchFrames);
           if (r.ok) result.nodes[name] = r.at;
-          else result.nodeProblems[name] = r.error;
+          else {
+            result.nodeProblems[name] = r.error;
+            if (r.needsFrame) result.needsFrames = [...new Set([...(result.needsFrames ?? []), String(at.sketch)])];
+          }
           result.nodeLinks[name] = { sketch: String(at.sketch), point: String(at.point) };
           continue;
         }

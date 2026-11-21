@@ -6,6 +6,7 @@
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
 import { membersFromSketch } from "../weldment/sketchFrame";
+import { framesOf } from "../weldment/sketchNodes";
 import { assemblyBom } from "../assembly/bom";
 import { composePack, packParts } from "../drafting/pack";
 import type { ComposeContext } from "../drafting/compose";
@@ -458,7 +459,7 @@ export class AgentSession {
       case "setNode":
         return this.edit({ type: "setNode", name: String(a.name), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : isObject(a.at) ? { sketch: String(a.at.sketch), point: String(a.at.point) } : null });
       case "membersFromSketch": {
-        const r = membersFromSketch(this.doc, a);
+        const r = membersFromSketch(this.doc, a, framesOf(this.built.sketches));
         if (!r.ok) return this.fail(`membersFromSketch: ${r.error}`);
         return this.editMany(r.commands, { extra: { members: r.members, joints: r.joints, nodes: r.nodes, ...(r.skipped.length ? { skipped: r.skipped } : {}) } });
       }
@@ -517,7 +518,7 @@ export class AgentSession {
         return this.edit({ type: "moveView", id: String(a.id), ...(a.at === null || Array.isArray(a.at) ? { at: a.at as Vec2 | null } : {}), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) });
       case "fitViews": {
         // Fit views to sheet (Phase Q wave Q4): the views laid out afresh at the largest standard scale that fits, stored.
-        const v = validateDocument(this.doc);
+        const v = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) });
         const sheet = v.drawing?.sheets.find((x) => (typeof a.sheet === "string" ? x.id === a.sheet : true));
         if (!v.drawing || !sheet) return this.fail(v.drawing ? `fitViews: no sheet "${String(a.sheet)}"` : "fitViews: the part has no drawing (newDrawing makes one)");
         const geometry = this.built.solid ? this.geometry(viewSpecs(v.drawing)) : null;
@@ -690,7 +691,8 @@ export class AgentSession {
     let doc = this.doc;
     let made: Record<string, unknown> = {};
     for (const cmd of cmds) {
-      const applied = apply(doc, cmd, kept.includes(cmd) ? {} : { writeScope: scope });
+      const sketchFrames = framesOf(this.built.sketches);
+      const applied = apply(doc, cmd, kept.includes(cmd) ? { sketchFrames } : { writeScope: scope, sketchFrames });
       if (!applied.ok) return this.fail(applied.error);
       // A single edit says what it made: an entity's id and solved geometry, a constraint's index.
       if (own.length === 1 && cmd === own[0] && cmd.type !== "addFeature") made = commandMade(doc, applied.doc, cmd);
@@ -766,7 +768,7 @@ export class AgentSession {
     // What each command made (an id, an entity), as the result reports it.
     let doc = this.doc;
     for (const cmd of x.commands) {
-      const r = apply(doc, cmd);
+      const r = apply(doc, cmd, { sketchFrames: framesOf(this.built.sketches) });
       if (!r.ok) break;
       Object.assign(x.info, commandMade(doc, r.doc, cmd));
       doc = r.doc;
@@ -880,7 +882,7 @@ export class AgentSession {
   }
 
   private validate(): CallResult {
-    const schema = allErrors(validateDocument(this.doc));
+    const schema = allErrors(validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) }));
     const health = selectorHealth(this.doc, this.oc);
     const rebuildErrors = this.built.errors.filter((e) => !schema.includes(e));
     const selectors = health.filter((h) => !h.ok || h.note);
@@ -938,7 +940,7 @@ export class AgentSession {
     const m = this.built.measurements;
     if (!m) return this.fail("cutList: there is no solid yet");
     const list = cutListOf(this.doc, m);
-    const nesting = nestCutList(list, validateDocument(this.doc).parameters.stock_length);
+    const nesting = nestCutList(list, validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) }).parameters.stock_length);
     return {
       result: {
         ok: true,
@@ -974,7 +976,7 @@ export class AgentSession {
     if (!m) return this.fail("exportCutList: there is no solid yet");
     const format = a.format === "xlsx" || a.format === "plan" ? a.format : "csv";
     const list = cutListOf(this.doc, m);
-    const v = validateDocument(this.doc);
+    const v = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) });
     const nesting = nestCutList(list, v.parameters.stock_length);
     const columns = Array.isArray(a.columns) && a.columns.every((c) => typeof c === "string") ? (a.columns as string[]) : DEFAULT_CUT_COLUMNS;
     const header = csvHeaderRows(this.doc, this.built.name);
@@ -1061,7 +1063,7 @@ export class AgentSession {
   }
 
   private composed() {
-    const v = validateDocument(this.doc);
+    const v = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) });
     if (!v.drawing) return null;
     const geometry = this.built.solid ? this.geometry(viewSpecs(v.drawing)) : null;
     const c = composeDrawing(this.doc, { measurements: this.built.measurements, geometry });
@@ -1195,10 +1197,10 @@ export class AgentSession {
    * sheet, to look over.
    */
   private async exportDrawingPack(a: Record<string, unknown>): Promise<CallResult> {
-    if (!validateDocument(this.doc).drawing) return this.fail("exportDrawingPack: the document has no drawing (newDrawing, then the assembly's sheets)");
+    if (!validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) }).drawing) return this.fail("exportDrawingPack: the document has no drawing (newDrawing, then the assembly's sheets)");
     const parts = packParts(this.doc as Record<string, unknown>);
     const ctx = new Map<unknown, ComposeContext>();
-    const main = validateDocument(this.doc).drawing!;
+    const main = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) }).drawing!;
     ctx.set(this.doc, { measurements: this.built.measurements, geometry: this.geometry(viewSpecs(main)) });
     for (const p of parts) {
       const check = await this.inspector.check(p.doc);
@@ -1227,7 +1229,7 @@ export class AgentSession {
 
   /** The drawing's title for a PDF: the first sheet's title, else the part's name. */
   private drawingTitle(): string {
-    const d = validateDocument(this.doc).drawing;
+    const d = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) }).drawing;
     return d?.sheets[0]?.format.title ?? this.built.name;
   }
 
@@ -1284,7 +1286,7 @@ export class AgentSession {
         const r = flatQuery(this.oc, this.built, { kind: "plates" });
         if (r.kind !== "plates") return this.fail(`exportDxf: ${r.kind === "error" ? r.error : "no plates"}`);
         if (!r.plates.length) return this.fail(`exportDxf: no flat plates in the part${r.others.length ? ` (${r.others.map((o) => `${o.body}: ${o.why}`).join("; ")})` : ""}`);
-        const density = validateDocument(this.doc).material?.densityKgPerM3 ?? 7850;
+        const density = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) }).material?.densityKgPerM3 ?? 7850;
         const files = plateFiles(r.plates, base, { version, density });
         return out(`${base}-plates.zip`, zipFiles(files), { plates: platesSummary(r.plates), files: files.map((f) => f.name), notPlates: r.others });
       }

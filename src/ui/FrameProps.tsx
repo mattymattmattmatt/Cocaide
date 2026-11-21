@@ -6,6 +6,7 @@ import type { Command, RawDocument } from "../doc/commands";
 import { nextId } from "../doc/commands";
 import type { MemberFeature, ProfileDef, Vec3 } from "../doc/types";
 import { memberAtNode, validateDocument } from "../doc/validate";
+import { framesOf } from "../weldment/sketchNodes";
 import type { RebuildView } from "../worker/protocol";
 import { anglesText } from "../weldment/cutlist";
 import { Field, NumberInput, Select, TextInput, Vec3Input, type NumberValue } from "./fields";
@@ -23,8 +24,8 @@ const r1 = (x: number) => Math.round(x * 10) / 10;
 const r2 = (x: number) => Math.round(x * 100) / 100;
 
 /** The members at a node, from the validated document: those that end there, and those that pass through. */
-function membersAt(doc: RawDocument, node: string): { ending: MemberFeature[]; passing: MemberFeature[] } {
-  const v = validateDocument(doc);
+function membersAt(doc: RawDocument, node: string, view?: RebuildView | null): { ending: MemberFeature[]; passing: MemberFeature[] } {
+  const v = validateDocument(doc, { sketchFrames: framesOf(view?.sketches) });
   const at = v.nodes[node];
   const members = v.features.flatMap((x) => (x.feature?.op === "member" ? [x.feature] : []));
   if (!at) return { ending: [], passing: [] };
@@ -64,7 +65,7 @@ export function MemberProps({
   const profiles = (doc.profiles ?? {}) as Record<string, ProfileDef>;
   const profile = profiles[String(f.profile)];
   const sizes = profile?.sizes.map((s) => s.designation) ?? [];
-  const nodes = validateDocument(doc).nodes;
+  const nodes = validateDocument(doc, { sketchFrames: framesOf(view?.sketches) }).nodes;
   const point = (end: unknown): Vec3 | null => (typeof end === "string" ? (nodes[end] ?? null) : (end as Vec3));
   const from = point(resolved.from);
   const to = point(resolved.to);
@@ -242,7 +243,7 @@ function AlignGrid({ value, anchor, onChange }: { value: [number, number] | unde
 
 export function JointProps({ f, doc, view, update, actions }: { f: Raw; doc: RawDocument; view: RebuildView | null; update(p: Raw): unknown; actions?: FrameActions }) {
   const node = String(f.node);
-  const { ending, passing } = membersAt(doc, node);
+  const { ending, passing } = membersAt(doc, node, view);
   const ids = ending.map((m) => m.id);
   const own = f.type === "mitre" ? ((f.members as string[] | undefined) ?? ids.slice(0, 2)) : [String(f.through)];
   const butting = ending.filter((m) => !own.includes(m.id));
