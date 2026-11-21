@@ -175,6 +175,10 @@ export const TOOLS: Record<string, ToolSpec> = {
     description: 'Give a body its own material ({ "name": "aluminium 6061", "densityKgPerM3": 2700 }), or put it back on the part\'s (material: null). Its mass, the part\'s and the cut list\'s follow.',
     input: { body: z.string(), material: obj.nullable() },
   },
+  setAppearance: {
+    description: "How something looks (never geometry): the part (no target), a body (\"body\"), the faces a feature makes (\"feature\"), or an assembly component (\"component\"). appearance: { \"color\": \"#rrggbb\", \"opacity\"?: 0.1 to 1, \"finish\"?: \"matte\" | \"satin\" | \"gloss\" | \"metallic\" }, or null to go back to what it inherits (feature, then body, then body material, then part, then part material). The viewport shows it; STEP files carry it.",
+    input: { body: z.string().optional(), feature: z.string().optional(), component: z.string().optional(), appearance: obj.nullable() },
+  },
   setProperties: {
     description: 'Change the part\'s properties: { "partNumber", "description", "revision", "author", "finish", "custom": { name: text } }. Merged in; null removes a field. The drawing\'s title block, the cut list CSV, STEP export and export file names read them.',
     input: { patch: obj },

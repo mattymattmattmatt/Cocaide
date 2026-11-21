@@ -380,6 +380,15 @@ under its body's name.
 "bodyMaterials": { "upright": { "name": "aluminium 6061", "densityKgPerM3": 2700 } } at the top of the document
 gives a body its own material (setBodyMaterial); its mass and the part's follow.
 
+## appearance (how it looks: never geometry)
+An appearance is { "color": "#rrggbb", "opacity"?: 0.1-1 (1, opaque, by default), "finish"?: "matte" | "satin"
+(the default) | "gloss" | "metallic" }. It goes on the part ("appearance" at the top), a body ("bodyAppearances":
+{ "lug": {...} }), the faces a feature makes (its "appearance": a hole's walls, a fillet; a member's on its own body),
+a material ("material": { ..., "appearance": {...} }) and an assembly component (its "appearance"). A face shows the
+most particular one: its feature's, its body's, its body's material's, the part's, the part's material's, else the
+viewport's default (a colour per body). setAppearance sets or clears any of them; the viewport shows them and STEP
+files carry them (each body's colour, coloured faces, opacity). The rebuild, the mass and drawings never read them.
+
 ## assembly (parts put together and mated: the Assembly tab)
 The document can hold an assembly beside the part: components (this part, "self", or parts the file carries — from
 an example, a .cocaide.json, or a STEP file, whose faces are mateable like any), each placed by "at" [x, y, z] mm and
@@ -702,7 +711,7 @@ renameBody(from, to) - every feature and selector that names the body follows.
 addEntity(sketch, entity), updateEntity(sketch, id, patch), deleteEntity(sketch, id), addConstraint(sketch, constraint), deleteConstraint(sketch, index) - edit inside a sketch; it re-solves after each.
 rebuild, validate (schema + rebuild + selector health), measure(selector?) - whole part, or what a selector picks.
 exportSTEP(file?), exportSTL(file?) - written to the output folder (refused for a photo part until the user confirms its scale). screenshot(view | direction, highlight?) - one PNG.
-setBodyMaterial(body, material | null) - a body's own material. saveBody(body, file?) - one body as a part of its own, written to the output folder.
+setBodyMaterial(body, material | null) - a body's own material. setAppearance(body? | feature? | component?, appearance | null) - how the part, a body, the faces a feature makes or an assembly component look: { "color": "#rrggbb", "opacity"?: 0.1-1, "finish"?: "matte" | "satin" | "gloss" | "metallic" }; null goes back to what it inherits. saveBody(body, file?) - one body as a part of its own, written to the output folder.
 setProperties(patch) - the part's properties (partNumber, description, revision, author, finish, custom); null removes one.
 setCutList(patch) - the cut list's text (itemText, members), stock bars, kerf and tolerance (reference: cutList). cutList - the items, totals and nesting. exportCutList(format: "csv" | "xlsx" | "plan", columns?, file?) - written to the output folder.
 importStep(path, newBody?, at?, rotate?) - a STEP file read from disk into the part as an import feature (its solids become bodies).

@@ -37,6 +37,8 @@ import { DEFAULT_DATUM_LABEL } from "./model/selection";
 import { childrenOf, parentsOf } from "./evaluate/relations";
 import { OP_LABEL } from "./PropertyPanel";
 import { dropIndex, featureState, keyValues, matchesFilter, treeRows, type FeatureState } from "./treeModel";
+import { asAppearance } from "../appearance";
+import { AppearanceChip, describeAppearance } from "./appearance/AppearancePicker";
 
 /** The picture of each kind of feature: the same one its tool has. */
 export const OP_ICON: Record<string, IconName> = {
@@ -568,6 +570,11 @@ export function FeatureTree({
               </span>
               <span className="feature-op">{OP_LABEL[String(f.op)] ?? String(f.op)}</span>
               <span className="feature-id">{id}</span>
+              {asAppearance(f.appearance) && (
+                <span className="feature-look-mark" title={`Its faces: ${describeAppearance(asAppearance(f.appearance))}`} data-testid={`feature-look-${id}`}>
+                  <AppearanceChip look={asAppearance(f.appearance)} fallback="#c4cad3" size={10} />
+                </span>
+              )}
               {typeof f.note === "string" && f.note && (
                 <span className="feature-note-mark" aria-label="Has a note" data-testid={`feature-note-${id}`}>
                   <Icon name="note" size={12} />

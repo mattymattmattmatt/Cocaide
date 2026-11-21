@@ -6,6 +6,10 @@ import { loadOC, rebuild, type OC } from "../src/kernel";
 import { scoped } from "../src/kernel/oc";
 import { exportPartSTEP } from "../src/kernel/stepPart";
 import { assemblySTEP } from "../src/kernel/assembly";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentSession } from "../src/agent/session";
 
 const XY = { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] };
 const plate = (extra: Record<string, unknown> = {}, bore: Record<string, unknown> = {}) => ({
@@ -77,3 +81,22 @@ describe("an assembly's colours in its STEP file", () => {
     expect([...new Set(colours(text))]).toEqual(["#8a919c", "#f2c230"]);
   });
 });
+
+describe("over the agent session (MCP)", () => {
+  it("colours a body and a feature's faces, refuses a bad colour, and the STEP file carries them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cocaide-look-"));
+    const s = await AgentSession.open({ doc: twoBodies(), docPath: join(dir, "plate.cocaide.json"), outDir: dir });
+    const call = async (tool: string, a: Record<string, unknown>) => (await s.call(tool, a)).result as Record<string, any>;
+    expect(await call("setAppearance", { body: "lug", appearance: { color: "#4F9D5D", finish: "matte" } })).toMatchObject({ ok: true });
+    expect(await call("setAppearance", { feature: "bore", appearance: { color: "#d64545" } })).toMatchObject({ ok: true });
+    const bad = await call("setAppearance", { body: "lug", appearance: { color: "green" } });
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toMatch(/must be a colour "#rrggbb"/);
+    const doc = (s as unknown as { doc: Record<string, any> }).doc;
+    expect(doc.bodyAppearances).toEqual({ lug: { color: "#4f9d5d", finish: "matte" } });
+    const r = await call("exportSTEP", { file: "plate.step" });
+    expect(r.ok).toBe(true);
+    expect([...new Set(colours(readFileSync(join(dir, "plate.step"), "utf8")))]).toEqual(["#4f9d5d", "#d64545"]);
+  }, 120_000);
+});
+

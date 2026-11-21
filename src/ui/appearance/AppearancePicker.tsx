@@ -34,7 +34,7 @@ export function chipStyle(look: Appearance | null, fallback: string): CSSPropert
 
 /** A look as a small chip: its colour, finish and clearness at a glance. Dashed when it is inherited. */
 export function AppearanceChip({ look, fallback, inherited = false, size = 14, title }: { look: Appearance | null; fallback: string; inherited?: boolean; size?: number; title?: string }) {
-  return <span className={`look-chip${inherited ? " inherited" : ""}`} style={{ width: size, height: size, ...chipStyle(look, fallback) }} title={title} aria-hidden={title ? undefined : true} />;
+  return <span className={`look-chip${inherited ? " inherited" : ""}`} style={{ width: size, height: size, ...chipStyle(look, fallback) }} title={title} aria-hidden={title ? undefined : true} data-look={look?.color ?? fallback} />;
 }
 
 /** "Steel, metallic", "#3a7bd5, gloss, 60%": what a look is, in words. */

@@ -544,7 +544,11 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
     case "setAppearance": {
       const targets = (["body", "feature", "component"] as const).filter((k) => cmd[k] !== undefined);
       if (targets.length > 1) return { ok: false, error: `setAppearance: give one of body, feature or component (or none, for the part), not ${targets.join(" and ")}` };
-      const look = cmd.appearance === null ? null : structuredClone(cmd.appearance);
+      // Kept tidy (a colour in lower case; no opacity of 1 or "satin" finish, the defaults); anything wrong is left for the checks to name.
+      const look = cmd.appearance === null ? null : (structuredClone(cmd.appearance) as Record<string, unknown>);
+      if (look && typeof look.color === "string") look.color = look.color.toLowerCase();
+      if (look && look.opacity === 1) delete look.opacity;
+      if (look && look.finish === "satin") delete look.finish;
       if (cmd.body !== undefined) {
         const made = validateDocument(doc).madeBodies;
         if (!made.includes(cmd.body)) return { ok: false, error: `setAppearance: no body "${cmd.body}" (bodies: ${made.join(", ") || "none"})` };

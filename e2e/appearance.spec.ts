@@ -82,5 +82,12 @@ test("an assembly component's own colour, over its part's", async ({ page }) => 
   await picker.getByTestId("look-swatch-safety-yellow").click();
   await expect.poll(async () => (await saved(page)).assembly.components.find((k: any) => k.id === "bracket-2").appearance).toEqual({ color: "#f2c230" });
   await picker.getByTestId("look-done").click();
-  if (SHOTS) await page.screenshot({ path: `${SHOTS}/look-assembly.png` });
+  await expect(page.getByTestId("asm-component-bracket-2").locator(".look-chip")).toHaveAttribute("data-look", "#f2c230");
+  if (SHOTS) {
+    const box = (await page.locator("canvas").first().boundingBox())!;
+    await page.mouse.click(box.x + 40, box.y + box.height - 40);
+    await page.mouse.move(box.x + 5, box.y + 5);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/look-assembly.png` });
+  }
 });

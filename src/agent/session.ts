@@ -114,6 +114,7 @@ export const EDIT_TOOLS = [
   "renameNode",
   "setWeld",
   "setBodyMaterial",
+  "setAppearance",
   "newDrawing",
   "setSheet",
   "addSheet",
@@ -460,6 +461,14 @@ export class AgentSession {
         return this.edit({ type: "setWeld", id: String(a.id), weld: isObject(a.weld) ? a.weld : null });
       case "setBodyMaterial":
         return this.edit({ type: "setBodyMaterial", body: String(a.body), material: isObject(a.material) ? a.material : null });
+      case "setAppearance":
+        return this.edit({
+          type: "setAppearance",
+          ...(typeof a.body === "string" ? { body: a.body } : {}),
+          ...(typeof a.feature === "string" ? { feature: a.feature } : {}),
+          ...(typeof a.component === "string" ? { component: a.component } : {}),
+          appearance: isObject(a.appearance) ? a.appearance : null,
+        });
       case "saveBody":
         return this.saveBody(String(a.body), a.file);
       case "setProperties":

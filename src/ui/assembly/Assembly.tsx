@@ -127,7 +127,11 @@ export function AssemblyMain({ a, display, onDisplay }: { a: AssemblyWorkspace; 
               {comps.map((k) => (
                 <li key={k.id} className={a.item?.kind === "component" && a.item.id === k.id ? "selected" : ""} data-testid={`asm-component-${k.id}`}>
                   <button className="asm-row" onClick={() => a.setItem({ kind: "component", id: k.id })}>
-                    <Icon name="model" size={14} />
+                    {(() => {
+                      // Its colour as the view shows it: a glance ties the row to the part on screen.
+                      const info = a.componentLook(k.id);
+                      return <AppearanceChip look={info.own ?? info.inherited?.appearance ?? null} fallback={info.fallback} size={12} title={info.own ? describeAppearance(info.own) : undefined} />;
+                    })()}
                     <span className="asm-name">{k.id}</span>
                     <span className="muted small">{a.partName(k.part)}</span>
                     {k.fixed && <span className="asm-badge" title="Fixed">(f)</span>}

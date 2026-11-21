@@ -31,6 +31,7 @@ export const COMMAND_TOOLS = [
   "renameNode",
   "setWeld",
   "setBodyMaterial",
+  "setAppearance",
   "setProperties",
   "setCutList",
   "addLibraryProfile",
@@ -97,6 +98,8 @@ export function toolCommand(name: string, a: Raw): Command | string {
       return { type: "setWeld", id: str("id"), weld: obj("weld") };
     case "setBodyMaterial":
       return { type: "setBodyMaterial", body: str("body"), material: obj("material") };
+    case "setAppearance":
+      return { type: "setAppearance", ...(typeof a.body === "string" ? { body: a.body } : {}), ...(typeof a.feature === "string" ? { feature: a.feature } : {}), ...(typeof a.component === "string" ? { component: a.component } : {}), appearance: obj("appearance") };
     case "setAnnotation":
       return { type: "setAnnotation", id: str("id"), annotation: obj("annotation"), ...(typeof a.sheet === "string" ? { sheet: a.sheet } : {}) };
     case "editAnnotation":

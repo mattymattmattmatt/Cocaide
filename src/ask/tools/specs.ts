@@ -52,7 +52,7 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
   },
   {
     name: "setComponent",
-    description: 'Move, turn, fix or float, hide or show, make transparent a component: { "id", "patch": { "at"?, "rotation"?, "fixed"?, "hidden"?, "transparent"? } } (transparent: drawn see-through and clicked through, to reach what is inside or behind it). The mates are solved after (a mated component goes where they hold it).',
+    description: 'Move, turn, fix or float, hide or show, make transparent or colour a component: { "id", "patch": { "at"?, "rotation"?, "fixed"?, "hidden"?, "transparent"?, "appearance"? } } (transparent: drawn see-through and clicked through, to reach what is inside or behind it; appearance: { "color": "#rrggbb", "opacity"?, "finish"? } or null for the colours of its part). The mates are solved after (a mated component goes where they hold it).',
     input: { id: z.string(), patch: obj },
     readOnly: false,
   },

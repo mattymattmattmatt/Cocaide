@@ -392,6 +392,11 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
     input_schema: obj({ body: { type: "string" }, material: { type: ["object", "null"] } }, ["body", "material"]),
   },
   {
+    name: "setAppearance",
+    description: "How something looks (never geometry): the part (no target), a body (\"body\"), the faces a feature makes (\"feature\"), or an assembly component (\"component\"). appearance: { \"color\": \"#rrggbb\", \"opacity\"?: 0.1 to 1, \"finish\"?: \"matte\" | \"satin\" | \"gloss\" | \"metallic\" }, or null to go back to what it inherits (feature, then body, then body material, then part, then part material). The viewport shows it; STEP files carry it.",
+    input_schema: obj({ body: { type: "string" }, feature: { type: "string" }, component: { type: "string" }, appearance: { type: ["object", "null"] } }, ["appearance"]),
+  },
+  {
     name: "setWeld",
     description: "Add or replace a weld note in the weld table by id, or remove it (weld: null). Welds are notes, never modelled.",
     input_schema: obj({ id: { type: "string" }, weld: { type: ["object", "null"] } }, ["id", "weld"]),
@@ -576,7 +581,7 @@ export function toolsFor(mode: AskMode, kind?: string, wide?: { part: boolean; d
  * The tools a small-context model is offered directly: everything but the rarely used edits, which stay available
  * as batch steps (BATCH_STEP_TOOLS) with the same commands and checks. A weldment target keeps its node and weld tools.
  */
-const RARE_TOOLS = new Set(["reorderFeature", "setFolder", "suppressFolder", "renameParameter", "setBodyMaterial", "setProperties", "setCutList", "renameDimension", "setDriven", "fullyDefine"]);
+const RARE_TOOLS = new Set(["reorderFeature", "setFolder", "suppressFolder", "renameParameter", "setBodyMaterial", "setAppearance", "setProperties", "setCutList", "renameDimension", "setDriven", "fullyDefine"]);
 
 export function leanTools(tools: Anthropic.Tool[], packet?: unknown): Anthropic.Tool[] {
   const welding = /"(member|node|joint)"/.test(JSON.stringify((packet as { target?: unknown } | undefined)?.target ?? ""));
