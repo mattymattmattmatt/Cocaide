@@ -2879,7 +2879,7 @@ export function App() {
     const e = sk.entities.find((x) => x.id === l.entity) as { type: string; start: [number, number]; end: [number, number] } | undefined;
     const ab = l3 ? [l3.a, l3.b] : e?.type === "line" ? [to3DFrame(sk.frame, e.start), to3DFrame(sk.frame, e.end)] : null;
     if (!ab) return undefined;
-    const k = memberKind(ab[0] as Vec3, ab[1] as Vec3);
+    const k = memberKind(ab[0] as Vec3, ab[1] as Vec3, 1);
     return k === "post" ? "upright" : k === "rail" ? "level" : "sloped";
   };
   const memberLineHint = (hit: SketchEntityHit): string | null =>

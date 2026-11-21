@@ -172,3 +172,27 @@ test("from an empty part: Sketch → Frame layout…, a box, its lines picked in
   expect(d.features.filter((f: any) => f.op === "joint").every((j: any) => String(j.through).startsWith("post"))).toBe(true);
   await expect(page.getByTestId("bodies")).toContainText("12");
 });
+
+test("a long pick folds to a row per sketch: opened, a line comes out; the row's × takes the sketch's lines out", async ({ page }) => {
+  await open(page, { version: 1, units: "mm", name: "wall", profiles: table.profiles, features: [] });
+  await page.getByTestId("tool-sketch").click();
+  await page.getByTestId("sketch-frame-layout").click();
+  const dlg = page.getByTestId("frame-layout");
+  await dlg.getByTestId("layout-posts").fill("10");
+  await dlg.getByTestId("layout-add").click();
+  const cmd = page.getByTestId("member-cmd");
+  await expect(cmd.getByTestId("member-cmd-summary")).toContainText("14 members");
+  // 14 lines: one row, the sketch and its count, no chips.
+  const folded = cmd.locator(".mc-chips-folded");
+  await expect(folded).toHaveCount(1);
+  await expect(folded).toContainText("14 lines");
+  await expect(cmd.locator(".mc-chip")).toHaveCount(0);
+  await folded.locator(".mc-fold").click();
+  await expect(cmd.locator(".mc-chip")).toHaveCount(14);
+  await cmd.locator(".mc-chip").first().getByRole("button").click();
+  await expect(cmd.getByTestId("member-cmd-summary")).toContainText("13 members");
+  // Folded again, its × clears it.
+  await cmd.locator(".mc-chips .mc-fold").click();
+  await cmd.locator(".mc-fold-x").click();
+  await expect(cmd.getByTestId("member-cmd-picked")).toContainText("Click sketch lines");
+});

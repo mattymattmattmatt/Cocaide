@@ -39,7 +39,7 @@ describe("expressions", () => {
     expect(evaluate("=1 / 0", {})).toEqual({ ok: false, error: 'division by zero in "=1 / 0"' });
     expect(evaluate("=(1 + 2", {})).toEqual({ ok: false, error: 'missing ) in "=(1 + 2"' });
     expect(evaluate("=2 +", {})).toEqual({ ok: false, error: 'unexpected end in "=2 +"' });
-    expect(evaluate("=2 ^ 3", {})).toEqual({ ok: false, error: 'unexpected "^" in "=2 ^ 3"' });
+    expect(evaluate("=2 & 3", {})).toEqual({ ok: false, error: 'unexpected "&" in "=2 & 3"' });
     expect(evaluate("=Math.PI", {}).ok).toBe(false);
   });
 

@@ -109,6 +109,14 @@ function meet(a: MemberFeature, b: MemberFeature): boolean {
   return [a.from, a.to].some((p) => offLine(b, p).d <= 0.01) || [b.from, b.to].some((p) => offLine(a, p).d <= 0.01);
 }
 
+/** Whether two members run the same way (within half a degree): a trimmer beside its king stud, not across it. */
+function parallel(a: MemberFeature, b: MemberFeature): boolean {
+  const u = sub3(a.to, a.from);
+  const v = sub3(b.to, b.from);
+  const c = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  return Math.hypot(c[0], c[1], c[2]) <= Math.sin((0.5 * Math.PI) / 180) * Math.hypot(...u) * Math.hypot(...v);
+}
+
 /** How far a member's section reaches from its line: half its two largest sizes' diagonal (as validation's butt check). */
 function reachOf(doc: RawDocument, m: MemberFeature): number {
   const def = (isObject(doc.profiles) ? (doc.profiles as Record<string, { sizes?: { designation: string; values: Record<string, unknown> }[]; parameters?: Record<string, unknown> }>) : {})[m.profile];
@@ -117,11 +125,13 @@ function reachOf(doc: RawDocument, m: MemberFeature): number {
   return 0.5 * Math.hypot(sizes[0] ?? 0, sizes[1] ?? 0);
 }
 
-/** What a member is, by how it runs: within 10° of upright a post, of level a rail, else a brace. */
-export function memberKind(a: Vec3, b: Vec3): "post" | "rail" | "brace" {
+/** What a member is, by how it runs: within `degrees` (10°) of upright a post, of level a rail, else a brace. A name
+ * takes the loose 10° (a skillion's raked plate is still a rail); a filter of lines passes a tight one, so a plate
+ * falling 5° across an end wall is sloped, not level. */
+export function memberKind(a: Vec3, b: Vec3, degrees = 10): "post" | "rail" | "brace" {
   const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const up = Math.abs(d[2]) / Math.hypot(d[0], d[1], d[2]);
-  return up >= Math.cos((10 * Math.PI) / 180) ? "post" : up <= Math.sin((10 * Math.PI) / 180) ? "rail" : "brace";
+  return up >= Math.cos((degrees * Math.PI) / 180) ? "post" : up <= Math.sin((degrees * Math.PI) / 180) ? "rail" : "brace";
 }
 
 export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): SketchMembersResult {
@@ -249,13 +259,38 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     for (const [node, at] of Object.entries(after.nodes)) {
       if (touched.has(node) || jointed.has(node)) continue;
       if (!all.some((m) => !members.includes(m.id) && memberAtNode(m, node, at) === "ends")) continue;
-      if (fresh.some((m) => memberAtNode(m, node, at) !== "ends" && offLine(m, at).d <= Math.max(0.01, reachOf(next, m)) && offLine(m, at).t > 0 && offLine(m, at).t < 1)) touched.add(node);
+      const ends = all.filter((m) => !members.includes(m.id) && memberAtNode(m, node, at) === "ends");
+      if (fresh.some((m) => memberAtNode(m, node, at) !== "ends" && offLine(m, at).d <= Math.max(0.01, reachOf(next, m)) && offLine(m, at).t > 0 && offLine(m, at).t < 1 && (offLine(m, at).d <= 0.01 || !ends.some((q) => parallel(m, q))))) touched.add(node);
     }
+    // An end on another line of its own sketch that has no member yet: the joint comes when that line gets one (a
+    // nogging picked before the studs it runs between), so a near miss there is no slip of the sketch.
+    const lineEnds = new Map<string, [Vec3, Vec3][]>();
+    const onOpenLine = (m: MemberFeature, p: Vec3): boolean => {
+      const along = m.along as { sketch?: string; entity?: string } | undefined;
+      const sk = along?.sketch;
+      if (!sk) return false;
+      if (!lineEnds.has(sk)) {
+        const f = doc.features.find((x) => x.id === sk);
+        const list = f?.op === "sketch" ? f.entities : f?.op === "sketch3d" ? f.lines : [];
+        const used = new Set(all.filter((q) => (q.along as { sketch?: string } | undefined)?.sketch === sk).map((q) => (q.along as { entity: string }).entity));
+        const out: [Vec3, Vec3][] = [];
+        for (const e of Array.isArray(list) ? list : []) {
+          if (!isObject(e) || used.has(String(e.id)) || e.construction === true || (f?.op === "sketch" && e.type !== "line")) continue;
+          const refs = f?.op === "sketch3d" ? [`${String(e.start)}.at`, `${String(e.end)}.at`] : [`${String(e.id)}.start`, `${String(e.id)}.end`];
+          const a = resolveNodeLink(doc.features, { sketch: sk, point: refs[0] }, params, spec.frames);
+          const b = resolveNodeLink(doc.features, { sketch: sk, point: refs[1] }, params, spec.frames);
+          if (a.ok && b.ok) out.push([a.at, b.at]);
+        }
+        lineEnds.set(sk, out);
+      }
+      return lineEnds.get(sk)!.some(([a, b]) => { const x = offLine({ from: a, to: b } as MemberFeature, p); return x.d <= 0.01; });
+    };
     for (const node of touched) {
       if (jointed.has(node)) continue;
       const at = after.nodes[node];
       if (!at) continue;
       const ending = all.filter((m) => memberAtNode(m, node, at) === "ends");
+      let lCorner = false; // an offset L whose joint is at the other member's end
       // Through the node, or near enough that the node is inside its section (a post stopped at a rail's underside).
       const passing = all
         .filter((m) => !ending.includes(m))
@@ -264,16 +299,34 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
         // meet somewhere else already (a post's foot under the end of a rail that ends on the post is no joint of theirs).
         .filter((x) => {
           if (x.d <= 0.01) return x.t >= -1e-9 && x.t <= 1 + 1e-9;
-          return x.d <= reachOf(next, x.m) && x.t > 0 && x.t < 1 && !ending.some((q) => meet(x.m, q));
+          if (!(x.d <= reachOf(next, x.m) && x.t > 0 && x.t < 1 && !ending.some((q) => meet(x.m, q) || parallel(x.m, q)))) return false;
+          // An offset L, not a T: it ends here too, its end within the other's section (an end wall's raked plate
+          // over the front wall's top plate end). Each end is near the other member, so only the one the spec runs
+          // through is passed; at the other end the same choice trims the other way, never both.
+          const len = length(x.m);
+          const fromEnd = Math.min(x.t, 1 - x.t) * len;
+          const end = x.t < 0.5 ? x.m.from : x.m.to;
+          const offsetL = ending.find((q) => {
+            if (fromEnd > reachOf(next, q) + 1) return false;
+            const back = offLine(q, end); // and its end near this one's line: both ways, an L
+            return back.d <= reachOf(next, q) && back.t >= -1e-9 && back.t <= 1 + 1e-9;
+          });
+          if (offsetL && pickThrough([x.m, offsetL]) !== x.m) {
+            lCorner = true;
+            return false;
+          }
+          return true;
         })
         .sort((p, q) => p.d - q.d)
         .map((x) => x.m);
-      if (ending.length === 1 && !passing.length) {
+      if (ending.length === 1 && !passing.length && !lCorner && !onOpenLine(ending[0], at)) {
         // A lone end: if it nearly meets a member, say so (it gets no joint as it is).
         const near = all
-          .filter((m) => m !== ending[0] && !meet(m, ending[0]))
+          .filter((m) => m !== ending[0] && !meet(m, ending[0]) && !parallel(m, ending[0]))
           .map((m) => ({ m, ...offLine(m, at) }))
-          .filter((x) => x.t >= -0.05 && x.t <= 1.05 && x.d <= 4 * reachOf(next, x.m) + 5)
+          // Beside it (its foot on the member, within a millimetre), not past its end: two members whose ends sit
+          // corner to corner (wall panels side by side) are laid out that way, not a slip of the sketch.
+          .filter((x) => { const len = Math.hypot(...sub3(x.m.to, x.m.from)); return x.t * len >= -1 && (x.t - 1) * len <= 1 && x.d <= 4 * reachOf(next, x.m) + 5; })
           .sort((p, q) => p.d - q.d)[0];
         if (near) warnings.push(`${ending[0].id} ends ${Math.round(near.d * 10) / 10} mm from ${near.m.id}, so it isn't joined to it: take its sketch line onto ${near.m.id}'s`);
         // Or nearly meets another end.

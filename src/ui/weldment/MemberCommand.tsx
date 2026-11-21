@@ -83,6 +83,7 @@ const metres = (mm: number) => `${(Math.round(mm / 10) / 100).toFixed(2)} m`;
 export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketches, nodes, lineKind, anchor, summary, busy, pinned, onPin, onOk, onCancel, onBrowse }: Props) {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState(false);
+  const [openSketches, setOpenSketches] = useState<string[]>([]);
   const box = useRef<HTMLDivElement | null>(null);
   // The size picker closes on a click elsewhere.
   useEffect(() => {
@@ -200,8 +201,28 @@ export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketch
               {picked.length === 0 ? (
                 <span className="muted">Click sketch lines in the view, or drag a box across them (right to left takes any it touches). Click one again to take it out.</span>
               ) : (
-                [...bySketch].map(([sk, ids]) => (
+                [...bySketch].map(([sk, ids]) =>
+                  // A long pick (every line of a wall) folds to one row per sketch; open it to take single lines out.
+                  picked.length > 12 && !openSketches.includes(sk) ? (
+                    <div key={sk} className="mc-chips mc-chips-folded" data-testid={`member-cmd-picked-${sk}`}>
+                      <button type="button" className="mc-fold" aria-expanded={false} onClick={() => setOpenSketches([...openSketches, sk])} title="Show the lines">
+                        <Icon name="chevron" size={11} />
+                        <span className="mc-chip-sketch">{sk}</span>
+                        <span className="muted">
+                          {ids.length} {ids.length === 1 ? "line" : "lines"}
+                        </span>
+                      </button>
+                      <button type="button" className="mc-fold-x" aria-label={`Take ${sk}'s lines out`} onClick={() => onChange({ lines: picked.filter((p) => p.sketch !== sk) })}>
+                        <Icon name="x" size={10} />
+                      </button>
+                    </div>
+                  ) : (
                   <div key={sk} className="mc-chips">
+                    {picked.length > 12 && (
+                      <button type="button" className="mc-fold" aria-expanded={true} onClick={() => setOpenSketches(openSketches.filter((x) => x !== sk))} title="Fold the lines">
+                        <Icon name="down" size={11} />
+                      </button>
+                    )}
                     <span className="mc-chip-sketch">{sk}</span>
                     {ids.map((id) => (
                       <span key={id} className="mc-chip">
@@ -212,7 +233,8 @@ export function MemberCommand({ state, onChange, sizes, recent, familyOf, sketch
                       </span>
                     ))}
                   </div>
-                ))
+                  ),
+                )
               )}
             </div>
             <div className="mc-row">

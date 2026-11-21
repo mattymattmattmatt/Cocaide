@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { apply, type RawDocument } from "../src/doc/commands";
 import { allErrors, validateDocument } from "../src/doc/validate";
 import { loadOC, rebuild, type OC } from "../src/kernel";
-import { addSketchMembers } from "../src/weldment/sketchFrame";
+import { addSketchMembers, memberKind } from "../src/weldment/sketchFrame";
 import { resolveNodeLink } from "../src/weldment/sketchNodes";
 
 const table: RawDocument = JSON.parse(readFileSync(new URL("../examples/table-frame.cocaide.json", import.meta.url), "utf8"));
@@ -315,5 +315,74 @@ describe("a frame made in groups, as a person would", () => {
     const second = add(lintel.doc, ["lintel"], { align: [-1, 0] });
     expect(second.members).toHaveLength(1);
     expect(addSketchMembers(second.doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", align: [-1, 0], lines: [{ sketch: "wall", entity: "lintel" }] })).toMatchObject({ ok: false, error: expect.stringContaining("already") });
+  });
+
+  it("doesn't butt a trimmer against the king stud beside it", () => {
+    // A king stud full height 20 mm beside the left trimmer: the trimmer's top is inside the stud's section reach.
+    const doc = opening();
+    (doc.features[0].entities as Record<string, unknown>[]).push(line("bottom", [0, 0], [1000, 0]), line("king", [180, 0], [180, 1200]));
+    const studs = add(add(doc, ["top", "bottom"]).doc, ["t0", "t1", "king"]);
+    const v = validateDocument(studs.doc);
+    const king = studs.doc.features.find((f) => f.op === "member" && (f.along as { entity: string }).entity === "king")!;
+    expect(studs.doc.features.filter((f) => f.op === "joint" && f.through === king.id)).toEqual([]);
+    // The lintel after: the trimmers' tops butt against it.
+    const lintel = add(studs.doc, ["lintel"]);
+    const tops = lintel.doc.features.filter((f) => f.op === "joint" && f.through === lintel.members[0]).map((j) => v.nodes[String(j.node)] ?? validateDocument(lintel.doc).nodes[String(j.node)]);
+    expect(tops).toEqual(expect.arrayContaining([[200, 0, 800], [800, 0, 800]]));
+    const b = rebuild(lintel.doc, oc);
+    try {
+      expect(b.errors).toEqual([]);
+    } finally {
+      b.dispose();
+    }
+  });
+
+  it("says nothing of a nogging picked before the studs it runs between, and joins it when they come", () => {
+    // A nogging between the trimmers, 40 mm short of the lintel line above it: its ends are on the trimmers' lines.
+    const doc = opening();
+    (doc.features[0].entities as Record<string, unknown>[]).push(line("nog", [200, 760], [800, 760]));
+    const nogs = add(add(doc, ["lintel"]).doc, ["nog"]);
+    expect(nogs.warnings).toEqual([]);
+    const studs = add(nogs.doc, ["t0", "t1"]);
+    const v = validateDocument(studs.doc);
+    const atNogEnds = studs.doc.features.filter((f) => f.op === "joint" && [[200, 0, 760], [800, 0, 760]].some((p) => JSON.stringify(v.nodes[String(f.node)]) === JSON.stringify(p)));
+    expect(atNogEnds).toHaveLength(2);
+  });
+});
+
+describe("an offset L: an end wall's raked plate over the front wall's top plate end", () => {
+  it("trims only the one the spec doesn't run through, never both", () => {
+    const doc = layout();
+    (doc.features[0].entities as Record<string, unknown>[]).splice(0, 5, line("plate", [0, 0], [1000, 0]));
+    // On Right, 15 mm in from the plate's end, falling away from it: its start 4 mm above the plate's line.
+    doc.features.push({ id: "end", op: "sketch", plane: { type: "ref", ref: { datum: "Right" }, offset: 15 }, entities: [line("rake", [0, 4], [800, -76])] } as never);
+    const r = must(addSketchMembers(doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", runThrough: "longer", lines: [{ sketch: "layout", entity: "plate" }, { sketch: "end", entity: "rake" }] }));
+    const plate = r.doc.features.find((f) => f.op === "member" && (f.along as { entity: string }).entity === "plate")!;
+    const rake = r.doc.features.find((f) => f.op === "member" && (f.along as { entity: string }).entity === "rake")!;
+    const joints = r.doc.features.filter((f) => f.op === "joint");
+    expect(joints.filter((j) => j.through === rake.id)).toEqual([]);
+    expect(joints.filter((j) => j.through === plate.id)).toHaveLength(1);
+    // The plate's end, left free by that choice, is no near miss.
+    expect(r.warnings).toEqual([]);
+  });
+
+  it("is still a T when only one end is near the other: an end wall's bottom plate against the front plate's side", () => {
+    const doc = layout();
+    (doc.features[0].entities as Record<string, unknown>[]).splice(0, 5, line("plate", [0, 0], [600, 0]));
+    // Starting 15 mm off the plate's line, 15 mm in from its end, and running away from it: longer than the plate.
+    doc.features.push({ id: "end", op: "sketch", plane: { type: "ref", ref: { datum: "Right" }, offset: 15 }, entities: [line("side", [15, 0], [800, 0])] } as never);
+    const r = must(addSketchMembers(doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", runThrough: "longer", lines: [{ sketch: "layout", entity: "plate" }, { sketch: "end", entity: "side" }] }));
+    const plate = r.doc.features.find((f) => f.op === "member" && (f.along as { entity: string }).entity === "plate")!;
+    expect(r.doc.features.filter((f) => f.op === "joint")).toEqual([expect.objectContaining({ type: "butt", through: plate.id })]);
+  });
+});
+
+describe("how a line runs", () => {
+  it("names by a loose 10°, and filters by a tight one: a skillion's raked plate is a rail, but not level", () => {
+    // 191 mm of fall across a 2000 mm end wall: 5.5°.
+    expect(memberKind([0, 0, 2391], [0, 2000, 2200])).toBe("rail");
+    expect(memberKind([0, 0, 2391], [0, 2000, 2200], 1)).toBe("brace");
+    expect(memberKind([0, 0, 0], [0, 0, 2000], 1)).toBe("post");
+    expect(memberKind([0, 0, 0], [5000, 0, 0], 1)).toBe("rail");
   });
 });
