@@ -1843,7 +1843,7 @@ class Composer {
       const materials = v2 ? new Set(v2.items.map((i) => i.material ?? "")) : new Set<string>();
       if (v2 && materials.size > 1) {
         const withMaterial = rows.map((r, k) => [...r.slice(0, 4), v2.items[k].material ?? "", ...r.slice(4)]);
-        return { widths: [12, 34, 21, 28, 51, 12, 22], rows: [["CUT LIST"], ["ITEM", "SIZE", "LENGTH", "ENDS", "MATERIAL", "QTY", "KG"], ...withMaterial] };
+        return { widths: [14, 33, 21, 27, 51, 12, 22], rows: [["CUT LIST"], ["ITEM", "SIZE", "LENGTH", "ENDS", "MATERIAL", "QTY", "KG"], ...withMaterial] };
       }
       return { widths: [14, 52, 24, 40, 16, 34], rows: [["CUT LIST"], ["ITEM", "SIZE", "LENGTH", "ENDS", "QTY", "KG"], ...rows] };
     }
@@ -1858,15 +1858,16 @@ class Composer {
    * along the bottom border to its left, so the column above the title block
    * stays short and the views keep their room.
    */
-  private placeTables(corners: Record<string, TableCorner> = {}): { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] {
+  private placeTables(corners: Record<string, TableCorner> = {}): { a: TableAnnotation; box: Box; rows: string[][]; widths: number[]; row?: number }[] {
     let left = this.titleBlock.min[0];
     let first = true;
-    const out: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }[] = [];
+    const out: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[]; row?: number }[] = [];
     for (const a of this.s.annotations) {
       if (a.type !== "table") continue;
       const { rows, widths } = this.tableRows(a);
       const w = widths.reduce((x, y) => x + y, 0);
-      const h = rows.length * ROW;
+      let row = ROW;
+      let h = rows.length * row;
       let box: Box;
       if (a.at) box = { min: [a.at[0], a.at[1] - h], max: [a.at[0] + w, a.at[1]] };
       else if (corners[a.id] === "topRight") {
@@ -1878,35 +1879,43 @@ class Composer {
       } else if (first) {
         // Above the title block, and above the revision block that grows on it.
         const base = Math.max(this.titleBlock.max[1], this.format?.revisionBlock && this.format.revisionBlock.max[0] > this.frame.max[0] - w ? this.format.revisionBlock.max[1] : -Infinity);
+        // A long list closes up its rows (to 60%) to stay inside the frame.
+        const room = this.frame.max[1] - base;
+        if (h > room) {
+          row = Math.max(ROW * 0.6, room / rows.length);
+          h = rows.length * row;
+        }
         box = { min: [this.frame.max[0] - w, base], max: [this.frame.max[0], base + h] };
         first = false;
       } else {
         box = { min: [left - w, this.frame.min[1]], max: [left, this.frame.min[1] + h] };
         left -= w;
       }
-      out.push({ a, box, rows, widths });
+      out.push({ a, box, rows, widths, ...(row !== ROW ? { row } : {}) });
     }
     return out;
   }
 
-  private drawTable(t: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[] }): void {
+  private drawTable(t: { a: TableAnnotation; box: Box; rows: string[][]; widths: number[]; row?: number }): void {
     const { box, rows, widths } = t;
+    const ROW_H = t.row ?? ROW;
+    const size = TEXT.cell * Math.min(1, ROW_H / ROW + 0.1);
     const x0 = box.min[0];
     const x1 = box.max[0];
     const line = (pts: Vec2[], w: number = LINE.thin) => this.prims.push({ k: "line", pts, w });
     line([box.min, [x1, box.min[1]], box.max, [x0, box.max[1]], box.min], LINE.visible);
     rows.forEach((row, r) => {
-      const top = box.max[1] - r * ROW;
+      const top = box.max[1] - r * ROW_H;
       if (r > 0) line([[x0, top], [x1, top]], r === 1 || r === 2 ? LINE.visible : LINE.thin);
-      const base = top - ROW + 2.2;
+      const base = top - ROW_H + (ROW_H - size * CAP) / 2;
       if (row.length === 1) {
-        this.prims.push({ k: "text", at: [x0 + 1.5, base], text: row[0], size: TEXT.cell, anchor: "start", bold: true });
+        this.prims.push({ k: "text", at: [x0 + 1.5, base], text: row[0], size, anchor: "start", bold: true });
         return;
       }
       let x = x0;
       row.forEach((cell, c) => {
-        if (c > 0) line([[x, top], [x, top - ROW]]);
-        this.prims.push({ k: "text", at: [x + 1.5, base], text: clip(cell, widths[c] - 3, TEXT.cell, r === 1), size: TEXT.cell, anchor: "start", ...(r === 1 ? { bold: true } : {}) });
+        if (c > 0) line([[x, top], [x, top - ROW_H]]);
+        this.prims.push({ k: "text", at: [x + 1.5, base], text: clip(cell, widths[c] - 3, size, r === 1), size, anchor: "start", ...(r === 1 ? { bold: true } : {}) });
         x += widths[c];
       });
     });

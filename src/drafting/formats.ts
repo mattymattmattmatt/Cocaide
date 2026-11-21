@@ -314,7 +314,10 @@ function iso(ctx: FormatContext, width: number, height: number): FormatLayout {
   // The title, large, and its second line.
   const tsize = fitSize(title, 106, 7.6, 4.8, true);
   text(prims, [x0 + 2, y0 + (subtitle ? 9.4 : 6.2)], fit(title, 106, tsize, true), tsize, "start", true);
-  if (subtitle) text(prims, [x0 + 2, y0 + 3], fit(subtitle, 106, TEXT.cell), TEXT.cell);
+  if (subtitle) {
+    const ss = fitSize(subtitle, 106, TEXT.cell, TEXT.cell * 0.78);
+    text(prims, [x0 + 2, y0 + 3], fit(subtitle, 106, ss), ss);
+  }
   projectionSymbol(prims, [x0 + 158 + 2.2, y2 + 5], ctx.projection, 0.95);
   const titleBlock: Box = { min: [x0, y0], max: [frame.max[0], y2 + 10] };
   rect(prims, titleBlock, LINE.visible);

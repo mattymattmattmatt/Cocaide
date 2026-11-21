@@ -108,5 +108,14 @@ describe("an assembly drawing", () => {
     expect(await call("setComponent", { id: "bolt-m8-2", patch: { hidden: true } })).toMatchObject({ ok: true });
     const g3 = (await inspector.project(now(), specs()))!;
     expect(new Set(iso(g3).edges.map((e) => e.body)).has("bolt-m8-2")).toBe(false);
+
+    // A part's own drawing: titled by its name, how many the assembly needs in its notes, the pack's company on it.
+    expect(await call("setDrawingOptions", { patch: { properties: { company: "ACME WORKS" } } })).toMatchObject({ ok: true });
+    expect(await call("drawPart", { part: "bolt-m8", date: "2026-11-21" })).toMatchObject({ ok: true });
+    const pd = (s as unknown as { doc: R }).doc.assembly.parts["bolt-m8"].drawing;
+    expect(pd.properties.company).toBe("ACME WORKS");
+    expect(pd.sheets[0].format.title).toBe("BOLT M8");
+    const notes = pd.sheets[0].annotations.find((x: R) => x.id === "general_notes");
+    expect(notes.text.split("\n")[0]).toMatch(/^REQUIRED: 2 PER ASSEMBLY \(ITEM \d OF THE PARTS LIST\)\.$/);
   }, 600_000);
 });

@@ -1146,7 +1146,12 @@ export class AgentSession {
       drawing = planDrawing(part, check.measurements, g, typeof a.date === "string" ? { date: a.date } : {});
       // The part's own name (as a title: "BACK PANEL"), number and description in its title block; how many the
       // assembly needs, and its item in the parts list, in its notes.
-      const d = drawing as { sheets: { format: Record<string, unknown>; annotations: { id: string; type: string; text?: string }[] }[] };
+      const d = drawing as { sheets: { format: Record<string, unknown>; annotations: { id: string; type: string; text?: string }[] }[]; properties?: Record<string, unknown>; font?: unknown; lettering?: unknown };
+      // The pack's own drawing sets the company, who drew and checked it, and the lettering: every part's sheet says the same.
+      const host = isObject(this.doc.drawing) ? (this.doc.drawing as Record<string, unknown>) : null;
+      if (host && isObject(host.properties)) d.properties = { ...(host.properties as Record<string, unknown>), ...(d.properties ?? {}) };
+      if (host?.font !== undefined && d.font === undefined) d.font = host.font;
+      if (host?.lettering !== undefined && d.lettering === undefined) d.lettering = host.lettering;
       const props = (isObject(part.properties) ? part.properties : {}) as Record<string, unknown>;
       const item = assemblyBom(this.doc as Record<string, unknown>)?.items.find((i) => (asm?.components ?? []).some((k) => k.part === key && i.bodies.includes(k.id)));
       for (const sh of d.sheets) {
