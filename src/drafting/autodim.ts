@@ -39,6 +39,8 @@ export interface AutoDimInput {
   id: (prefix: string) => string;
   /** The general tolerance written in the notes. */
   generalTolerance?: string;
+  /** A timber part (plywood, a door, a board): no machining datums, edges arrised rather than broken. */
+  timber?: boolean;
 }
 
 export interface AutoDimResult {
@@ -442,7 +444,7 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
 
   // ---- datums A (the face it stands on, in the elevation), B and C (the plan's left and bottom), when anything is located from them
   const located = out.some((a) => a.type === "dimension" && typeof a.from === "string" && a.from.startsWith("@") && a.to?.includes(":"));
-  if (located && !round) {
+  if (located && !round && !input.timber) {
     if (elevation) out.push({ id: "datum_A", type: "datum", view: elevation.id, label: "A", on: `${elevation.id}:@bottom` });
     out.push({ id: "datum_B", type: "datum", view: plan.id, label: "B", on: `${plan.id}:@left` });
     out.push({ id: "datum_C", type: "datum", view: plan.id, label: "C", on: `${plan.id}:@bottom` });
@@ -451,8 +453,8 @@ export function autoDimension(input: AutoDimInput): AutoDimResult {
   // ---- the general notes
   const tol = input.generalTolerance;
   const lines = [
-    "BREAK ALL SHARP EDGES 0.5 × 45° MAX.",
-    ...(tol ? [`GENERAL TOLERANCES ${tol.startsWith("ISO") || tol.startsWith("EN") ? tol : `ISO ${tol}`}.`] : []),
+    input.timber ? "ARRIS ALL EXPOSED EDGES; SEAL CUT EDGES." : "BREAK ALL SHARP EDGES 0.5 × 45° MAX.",
+    ...(tol ? [`GENERAL TOLERANCES ${tol.startsWith("ISO") || tol.startsWith("EN") || tol.includes("±") ? tol : `ISO ${tol}`}.`] : []),
     ...notes.filter(Boolean),
     "DIMENSIONS IN MILLIMETRES. DO NOT SCALE.",
   ];

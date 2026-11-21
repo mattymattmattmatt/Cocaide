@@ -57,7 +57,9 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   // in the notes — no edge views of a line, no section through it, no detail.
   const size = m?.boundingBox?.size;
   const thin = size ? Math.min(...size) : Infinity;
-  const plate = !weldment && !!size && thin <= 6 && thin * 15 <= [...size].sort((a, b) => a - b)[1];
+  // Timber sheet goods (plywood, a door, a board) are plates too, up to 40 thick.
+  const timberPart = !weldment && TIMBER.test(v.material?.name ?? "");
+  const plate = !weldment && !!size && (thin <= 6 || (timberPart && thin <= 40)) && thin * 15 <= [...size].sort((a, b) => a - b)[1];
   if (plate) {
     const axis = size!.indexOf(thin);
     const face: ViewLook = axis === 2 ? "top" : axis === 1 ? "front" : "right";
@@ -103,11 +105,11 @@ export function planDrawing(doc: unknown, m: Measurements | null, geometry: Draw
   }
   // A timber frame (its sections tagged timber, or the part's material a timber) is screwed or nailed, not welded.
   const timber = weldment && isTimberFrame(v, members);
-  const generalTolerance = timber ? TIMBER_TOLERANCE : weldment ? "ISO 13920-BF" : "ISO 2768-mK";
+  const generalTolerance = timber || timberPart ? TIMBER_TOLERANCE : weldment ? "ISO 13920-BF" : "ISO 2768-mK";
   let planned = views;
   if (!weldment) {
     // The auto-dimension engine v2 (src/drafting/autodim.ts): sizes and places from the features' intent.
-    const r = autoDimension({ v, m, geometry, views, looks: look, id, generalTolerance });
+    const r = autoDimension({ v, m, geometry, views, looks: look, id, generalTolerance, timber: timberPart });
     planned = views.filter((x) => !r.unneeded.includes(x.id));
     annotations.push(...r.annotations);
     if (plate) {

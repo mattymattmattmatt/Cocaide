@@ -323,6 +323,26 @@ describe("Phase L acceptance: the table frame's drawing", () => {
     expect([...bodiesOf].filter(([, b]) => b.size > 1).map(([k]) => k)).toEqual([]);
   });
 
+  it("draws a plywood panel as a timber sheet: face on, no section or datums, a carpentry tolerance", async () => {
+    const XY = { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] };
+    const panel = { version: 1, units: "mm", name: "ply-panel", material: { name: "Exterior plywood", densityKgPerM3: 600 }, features: [
+      { id: "sk", op: "sketch", plane: XY, entities: [{ id: "r", type: "rect", center: [500, 300], w: 1000, h: 600 }] },
+      { id: "panel", op: "extrude", sketch: "sk", distance: 12 },
+      { id: "sk2", op: "sketch", plane: XY, entities: [{ id: "o", type: "rect", center: [300, 300], w: 200, h: 200 }] },
+      { id: "opening", op: "cut", sketch: "sk2", extent: "throughAllBoth" },
+    ] } as unknown as RawDocument;
+    const doc = await withDrawing(panel);
+    const d = validateDocument(doc).drawing!;
+    expect(d.generalTolerance).toBe("X ±2, ANG ±1°");
+    const sheet = d.sheets[0];
+    expect(sheet.views.map((v) => v.id).sort()).toEqual(["iso", "top"]);
+    expect(sheet.annotations.some((a) => a.type === "datum")).toBe(false);
+    const notes = sheet.annotations.find((a) => a.id === "general_notes") as { text: string };
+    expect(notes.text).toContain("ARRIS ALL EXPOSED EDGES");
+    expect(notes.text).toContain("GENERAL TOLERANCES X ±2, ANG ±1°.");
+    expect(notes.text).toContain("MATERIAL THICKNESS 12 mm.");
+  });
+
   it("numbers a balloon as the sheet's cut list does: a leg in another material is an item of its own", async () => {
     // One leg in treated pine: the cut list splits the legs into two items, and the balloons follow it.
     let doc = await withDrawing({ ...structuredClone(table), bodyMaterials: { leg_a: { name: "H3 treated pine", densityKgPerM3: 550 } } } as RawDocument);
