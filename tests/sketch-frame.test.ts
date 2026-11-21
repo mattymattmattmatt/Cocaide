@@ -274,3 +274,16 @@ describe("sketches that disagree at a shared corner", () => {
     expect(warningsOf(moved.doc)).toEqual([`${side.id}: ${side.id} is 100 mm off its sketch line (side's s1): its end follows a corner another sketch moved; move the line to match, or put the member on it again`]);
   });
 });
+
+describe("ends near another member's end", () => {
+  it("a post's foot under a rail's end is not trimmed to the rail", () => {
+    // The rectangle on Front, posts down past the bottom rail to a foot 20 mm under it (as a frame's posts stand on plates).
+    const doc = layout();
+    (doc.features[0].entities as Record<string, unknown>[]).splice(0, 5, line("bottom", [0, 20], [1000, 20]), line("right", [1000, 0], [1000, 600]), line("top", [1000, 600], [0, 600]), line("left", [0, 600], [0, 0]));
+    const r = must(addSketchMembers(doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", runThrough: "posts", lines: ["bottom", "right", "top", "left"].map((entity) => ({ sketch: "layout", entity })) }));
+    const nodes = validateDocument(r.doc).nodes;
+    // No joint at the posts' feet: nothing meets them there.
+    const feet = r.doc.features.filter((f) => f.op === "joint" && nodes[String(f.node)]?.[2] === 0);
+    expect(feet).toEqual([]);
+  });
+});

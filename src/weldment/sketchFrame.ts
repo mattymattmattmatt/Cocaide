@@ -100,6 +100,11 @@ function offLine(m: MemberFeature, p: Vec3): { d: number; t: number } {
   return { d: Math.hypot(p[0] - (m.from[0] + c * d[0]), p[1] - (m.from[1] + c * d[1]), p[2] - (m.from[2] + c * d[2])), t };
 }
 
+/** Whether two members already meet somewhere: an end of one on the other's line. */
+function meet(a: MemberFeature, b: MemberFeature): boolean {
+  return [a.from, a.to].some((p) => offLine(b, p).d <= 0.01) || [b.from, b.to].some((p) => offLine(a, p).d <= 0.01);
+}
+
 /** How far a member's section reaches from its line: half its two largest sizes' diagonal (as validation's butt check). */
 function reachOf(doc: RawDocument, m: MemberFeature): number {
   const def = (isObject(doc.profiles) ? (doc.profiles as Record<string, { sizes?: { designation: string; values: Record<string, unknown> }[]; parameters?: Record<string, unknown> }>) : {})[m.profile];
@@ -232,13 +237,20 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       const passing = all
         .filter((m) => !ending.includes(m))
         .map((m) => ({ m, ...offLine(m, at) }))
-        .filter((x) => x.t >= -1e-9 && x.t <= 1 + 1e-9 && x.d <= Math.max(0.01, reachOf(next, x.m)))
+        // On its line anywhere along it; near it (inside its section) only partway along, clear of its ends by its reach,
+        // so a post's foot under a rail's end, or a corner post's top by a rafter's end, isn't taken for one.
+        .filter((x) => {
+          if (x.d <= 0.01) return x.t >= -1e-9 && x.t <= 1 + 1e-9;
+          const len = Math.hypot(...sub3(x.m.to, x.m.from));
+          const r = reachOf(next, x.m);
+          return x.d <= r && x.t * len > r && (1 - x.t) * len > r;
+        })
         .sort((p, q) => p.d - q.d)
         .map((x) => x.m);
       if (ending.length === 1 && !passing.length) {
         // A lone end: if it nearly meets a member, say so (it gets no joint as it is).
         const near = all
-          .filter((m) => m !== ending[0])
+          .filter((m) => m !== ending[0] && !meet(m, ending[0]))
           .map((m) => ({ m, ...offLine(m, at) }))
           .filter((x) => x.t >= -0.05 && x.t <= 1.05 && x.d <= 4 * reachOf(next, x.m) + 5)
           .sort((p, q) => p.d - q.d)[0];
@@ -279,7 +291,9 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     let k = 1;
     while (taken.has(`frame_${k}`)) k++;
     const sketches = [...new Set(lines.map((l) => l.line.sketch))];
-    const problem = run({ type: "setFolder", id: `frame_${k}`, folder: { name: `Frame on ${sketches.join(", ")}`, features: [...members, ...joints] } });
+    const long = `Frame on ${sketches.join(", ")}`;
+    const name = long.length <= 60 ? long : `Frame on ${sketches.length} sketches`;
+    const problem = run({ type: "setFolder", id: `frame_${k}`, folder: { name, features: [...members, ...joints] } });
     if (problem) return { ok: false, error: problem };
   }
   return { ok: true, doc: next, members, joints, nodes: made, skipped, commands, warnings };
