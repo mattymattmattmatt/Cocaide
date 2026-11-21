@@ -29,8 +29,10 @@ export interface CornerInfo {
   kind: "mitre" | "butt" | "none";
   /** The arrangement order now (butt): the member that runs through first. */
   order: string[];
-  /** Two members ending at an angle: it can be mitred. */
+  /** Two or more members ending at an angle: it can be mitred (two of them; the rest butt against the mitre). */
   canMitre: boolean;
+  /** The two a mitre cuts: the joint's, or the best pair (level ones first, then the most square). */
+  mitrePair: [string, string] | null;
 }
 
 /** Every corner of the frame: a node where two or more members meet. */
@@ -56,14 +58,27 @@ function cornerOf(node: string, ending: MemberFeature[], passing: MemberFeature[
     const l = Math.hypot(...d);
     return d.map((x) => x / l) as [number, number, number];
   };
-  const canMitre = ending.length === 2 && !passing.length && Math.abs(dot3(dir(ending[0]), dir(ending[1]))) < 0.996;
+  // The pair a mitre would cut: not in line; level members (rails) before upright ones, then the most nearly square.
+  let pair: [string, string] | null = null;
+  let best = -Infinity;
+  for (let i = 0; i < ending.length; i++)
+    for (let k = i + 1; k < ending.length; k++) {
+      const [a, b] = [dir(ending[i]), dir(ending[k])];
+      const c = Math.abs(dot3(a, b));
+      if (c >= 0.996) continue;
+      const score = -(Math.abs(a[2]) + Math.abs(b[2])) * 2 - c;
+      if (score > best) [best, pair] = [score, [ending[i].id, ending[k].id]];
+    }
+  if (joint?.type === "mitre" && Array.isArray(joint.members) && joint.members.length === 2) pair = [String(joint.members[0]), String(joint.members[1])];
+  const canMitre = !!pair && !passing.length;
   const kind = !joint ? "none" : joint.type === "mitre" ? "mitre" : "butt";
   let order: string[] = [];
   if (joint?.type === "butt") {
     const listed = Array.isArray(joint.order) ? (joint.order as string[]) : [String(joint.through)];
     order = [...listed, ...ending.map((m) => m.id).filter((id) => !listed.includes(id))];
   } else order = [...passing, ...ending].map((m) => m.id);
-  return { node, ending, passing, joint, kind, order, canMitre };
+  if (kind === "mitre" && pair) order = [...pair, ...ending.map((m) => m.id).filter((id) => !pair!.includes(id))];
+  return { node, ending, passing, joint, kind, order, canMitre, mitrePair: pair };
 }
 
 /** The commands that make a corner this kind (and order): one change. */
@@ -71,8 +86,8 @@ export function cornerCommands(doc: RawDocument, c: CornerInfo, kind: "mitre" | 
   const id = c.joint ? String(c.joint.id) : nextId(doc, `corner_${c.node}`.replace(/[^A-Za-z0-9_]/g, "_"));
   if (kind === "none") return c.joint ? [{ type: "deleteFeature", id }] : [];
   if (kind === "mitre") {
-    if (!c.canMitre) return "a mitre joins two members that end at an angle";
-    const members = c.ending.map((m) => m.id);
+    if (!c.canMitre || !c.mitrePair) return "a mitre joins two members that end at an angle (and none passing through)";
+    const members = c.mitrePair;
     return c.joint ? [{ type: "updateFeature", id, patch: { type: "mitre", members, through: null, order: null } }] : [{ type: "addFeature", feature: { id, op: "joint", node: c.node, type: "mitre", members } }];
   }
   const o = order ?? c.order;
@@ -127,6 +142,7 @@ export function CornerPanel({ doc, corner: c, onBatch, onError, onHoverMember, e
     set("butt", o);
   };
   const role = (id: string, i: number) => {
+    if (c.kind === "mitre") return c.mitrePair?.includes(id) ? "mitred" : "butted to the mitre";
     if (c.kind !== "butt") return c.passing.some((m) => m.id === id) ? "passes through" : "ends here";
     if (i === 0) return "runs through";
     return i === 1 ? `trimmed to ${c.order[0]}` : `trimmed to the ${i} above`;
@@ -159,7 +175,7 @@ export function CornerPanel({ doc, corner: c, onBatch, onError, onHoverMember, e
             aria-checked={c.kind === k}
             className={c.kind === k ? "on" : ""}
             disabled={k === "mitre" && !c.canMitre}
-            title={k === "mitre" && !c.canMitre ? "A mitre joins two members that end at an angle" : k === "none" ? "No joint: the members are left as they are (they may overlap)" : undefined}
+            title={k === "mitre" && !c.canMitre ? "A mitre joins two members that end at an angle (and none passing through)" : k === "mitre" && c.mitrePair && c.ending.length > 2 ? `Mitres ${c.mitrePair.join(" and ")}; the others butt against them` : k === "none" ? "No joint: the members are left as they are (they may overlap)" : undefined}
             onClick={() => c.kind !== k && set(k)}
             data-testid={`corner-type-${k}`}
           >

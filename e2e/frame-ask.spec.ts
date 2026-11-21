@@ -113,9 +113,12 @@ test("right-click a butt joint and mitre it: a proposal that, accepted, cuts 45Â
   await expectVolume(page, "3,054,720");
   // Make corner A a butt, the leg running through.
   await page.getByTestId("feature-corner_a").locator(".feature-row").click();
-  await page.getByTestId("prop-joint-type").selectOption("butt");
-  await page.getByTestId("prop-joint-through").selectOption("leg_a");
-  await expect(page.getByTestId("prop-joint-butting")).toHaveText("rail_front, rail_left");
+  await page.getByTestId("corner-type-butt").click();
+  const leg = page.getByTestId("corner-member-leg_a");
+  if (!(await leg.textContent())?.includes("runs through")) await page.getByTestId("corner-first-leg_a").click();
+  await expect(leg).toContainText("runs through");
+  await expect(page.getByTestId("corner-member-rail_front")).toContainText("trimmed");
+  await expect(page.getByTestId("corner-member-rail_left")).toContainText("trimmed");
 
   const sent = await scriptModel(page, [
     [tool("updateFeature", { id: "corner_a", patch: { type: "mitre", through: null, members: ["rail_left", "rail_front"] } })],

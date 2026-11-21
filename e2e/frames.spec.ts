@@ -119,7 +119,10 @@ test("a weld at a joint, an end cap and a gusset: notes in the weld table, plate
 
   // The weld at corner A: all round the mitre face, and round the leg under it.
   await page.getByTestId("feature-corner_a").locator(".feature-row").click();
-  await expect(page.getByTestId("prop-joint-butting")).toHaveText("leg_a");
+  // Its corner panel: the rails mitred, the leg butted to the mitre.
+  await expect(page.getByTestId("corner-type-mitre")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("corner-member-rail_front")).toContainText("mitred");
+  await expect(page.getByTestId("corner-member-leg_a")).toContainText("butted to the mitre");
   await page.getByTestId("prop-joint-weld").click();
   await page.getByTestId("tab-cutlist").click();
   await expect(page.getByTestId("weld-w1")).toContainText("rail_front + rail_left + leg_a");
