@@ -73,7 +73,7 @@ test("pick lines in the view, add them: members on nodes that follow the sketch,
   await panel.getByTestId("sketch-members-add").click();
   await expect.poll(async () => (await saved(page)).features.filter((f: any) => f.op === "member").length).toBe(5);
   const after = await saved(page);
-  expect(after.features.filter((f: any) => f.op === "joint" && f.type === "butt").map((j: any) => j.through).sort()).toEqual(["BC", "DA"]); // the bottom (l1) and top (l3) rails
+  expect(after.features.filter((f: any) => f.op === "joint" && f.type === "butt").map((j: any) => j.through).sort()).toEqual(["rail_1", "rail_2"]); // the bottom (l1) and top (l3) rails
   await expect(page.getByTestId("notice")).toContainText("Skipped");
   // The frame builds: five bodies.
   await expect(page.getByTestId("bodies")).toContainText("5");

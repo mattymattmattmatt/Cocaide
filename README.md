@@ -454,6 +454,8 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
   - ends that meet share a node, and each node follows the sketch point it is on (**Nodes** shows `l1.end` with a link; **Unlink** keeps it where it is);
   - two members meeting at an angle are mitred (or butted: the longer runs through); a member ending on another's side butts against it; where three or more meet, one of a pair in line runs through;
   - lines that already have a member are skipped, so picking a sketch's lines again adds only the new ones.
+  - members are named by how they run: `post_1` (within 10° of upright), `rail_1` (within 10° of level), `brace_1` (anything else). Rename one in Properties and the joints, end caps and gussets that name it follow;
+  - a member that stops inside another's section (a post at a rail's underside) is butted against it; one that stops short of a member or of another end gets no joint, and the message says which and by how much, so the sketch can be fixed.
   Edit the sketch (drag a corner, change a dimension) and the members and their joints follow it. A sketch-only part is framed by Fit and when it opens, and the view frames the members once they are added.
 - **3D sketches.** For a frame that isn't flat (a pitched roof, splayed legs), **3D Sketch** (Weldments tab, or the Sketch menu) draws points and lines in space:
   - each click in the view places a point on the work plane through the last point, snapped to a grid whose step suits the zoom, and draws a line to it from the last point. The grid is drawn around that point, and the tip shows the offset and length;

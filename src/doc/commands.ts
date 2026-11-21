@@ -303,6 +303,18 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (next.id !== cmd.id) {
         const renamed = String(next.id);
         if (indexOf(renamed) >= 0) return { ok: false, error: `${cmd.type}: a feature "${renamed}" already exists` };
+        // A renamed member: the joints, end caps and gussets that name it follow (a frame's members are renamed often).
+        if (features[i].op === "member") {
+          const to = (v: unknown) => (v === cmd.id ? renamed : v);
+          for (let k = 0; k < features.length; k++) {
+            const f = features[k];
+            if (!isObject(f)) continue;
+            if (f.op === "joint" && (f.through === cmd.id || (Array.isArray(f.members) && f.members.includes(cmd.id)))) {
+              features[k] = { ...f, ...(f.through !== undefined ? { through: to(f.through) } : {}), ...(Array.isArray(f.members) ? { members: f.members.map(to) } : {}) };
+            } else if (f.op === "endCap" && f.member === cmd.id) features[k] = { ...f, member: renamed };
+            else if (f.op === "gusset" && Array.isArray(f.members) && f.members.includes(cmd.id)) features[k] = { ...f, members: f.members.map(to) };
+          }
+        }
         // A reference to one of a renamed sketch's entities ({ sketch, entity }) follows it; any other use keeps the id.
         const users = features.filter((f) => isObject(f) && references(f, { sketchRefs: false }).includes(cmd.id)).map((f) => String((f as { id: unknown }).id));
         if (users.length) {

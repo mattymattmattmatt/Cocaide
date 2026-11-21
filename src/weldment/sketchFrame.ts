@@ -18,7 +18,7 @@ import { isNodeLink, resolveNodeLink, type SketchFrames } from "./sketchNodes";
 export interface SketchLine {
   sketch: string;
   entity: string;
-  /** The member's id (its body's name too); default the two nodes' names, "AB". */
+  /** The member's id (its body's name too); default by how it runs: post_1, rail_1, brace_1 ... */
   id?: string;
 }
 
@@ -36,7 +36,17 @@ export interface SketchMembersSpec {
 }
 
 export type SketchMembersResult =
-  | { ok: true; doc: RawDocument; members: string[]; joints: string[]; nodes: string[]; skipped: string[]; commands: Command[] }
+  | {
+      ok: true;
+      doc: RawDocument;
+      members: string[];
+      joints: string[];
+      nodes: string[];
+      skipped: string[];
+      commands: Command[];
+      /** Ends that nearly meet a member or another end but don't, so get no joint: what to fix in the sketch. */
+      warnings: string[];
+    }
   | { ok: false; error: string };
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -60,11 +70,42 @@ export function freeNodeName(taken: ReadonlySet<string>): string {
   for (let k = 1; ; k++) if (!taken.has(`N${k}`)) return `N${k}`;
 }
 
-/** The id itself if it is free, else id_2, id_3, ... */
-function freeId(doc: RawDocument, id: string): string {
+/**
+ * The id itself if it is free, else id_2, id_3, ... `numbered`: the id ends
+ * in _1 and the next free number replaces it (post_1, post_2, ...).
+ */
+function freeId(doc: RawDocument, id: string, numbered = false): string {
   const taken = new Set(doc.features.map((f) => f.id));
+  if (numbered) {
+    const stem = id.replace(/_1$/, "");
+    for (let k = 1; ; k++) if (!taken.has(`${stem}_${k}`)) return `${stem}_${k}`;
+  }
   if (!taken.has(id)) return id;
   for (let k = 2; ; k++) if (!taken.has(`${id}_${k}`)) return `${id}_${k}`;
+}
+
+/** How far a point is from a member's line, and where along it (0 its from end, 1 its to end). */
+function offLine(m: MemberFeature, p: Vec3): { d: number; t: number } {
+  const d = sub3(m.to, m.from);
+  const l2 = dot3(d, d);
+  const t = l2 ? dot3(sub3(p, m.from), d) / l2 : 0;
+  const c = Math.max(0, Math.min(1, t));
+  return { d: Math.hypot(p[0] - (m.from[0] + c * d[0]), p[1] - (m.from[1] + c * d[1]), p[2] - (m.from[2] + c * d[2])), t };
+}
+
+/** How far a member's section reaches from its line: half its two largest sizes' diagonal (as validation's butt check). */
+function reachOf(doc: RawDocument, m: MemberFeature): number {
+  const def = (isObject(doc.profiles) ? (doc.profiles as Record<string, { sizes?: { designation: string; values: Record<string, unknown> }[]; parameters?: Record<string, unknown> }>) : {})[m.profile];
+  const values = def?.sizes?.find((x) => x.designation === m.size)?.values ?? def?.parameters ?? {};
+  const sizes = Object.values(values).filter((x): x is number => typeof x === "number").sort((a, b) => b - a);
+  return 0.5 * Math.hypot(sizes[0] ?? 0, sizes[1] ?? 0);
+}
+
+/** What a member is, by how it runs: within 10° of upright a post, of level a rail, else a brace. */
+export function memberKind(a: Vec3, b: Vec3): "post" | "rail" | "brace" {
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const up = Math.abs(d[2]) / Math.hypot(d[0], d[1], d[2]);
+  return up >= Math.cos((10 * Math.PI) / 180) ? "post" : up <= Math.sin((10 * Math.PI) / 180) ? "rail" : "brace";
 }
 
 export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): SketchMembersResult {
@@ -146,7 +187,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     if (line.id !== undefined && (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(line.id) || next.features.some((f) => f.id === line.id))) {
       return { ok: false, error: `${line.entity}: "${line.id}" ${next.features.some((f) => f.id === line.id) ? "is taken by another feature" : "is not an id (letters, digits, _ and -)"}` };
     }
-    const id = line.id ?? freeId(next, `${a}${b}`);
+    const id = line.id ?? freeId(next, `${memberKind(ends[0], ends[1])}_1`, true);
     const align = spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined;
     const problem = run({ type: "addFeature", feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}) } });
     if (problem) return { ok: false, error: problem };
@@ -156,6 +197,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
 
   // The corners: each node a new member ends at that has no joint yet.
   const joints: string[] = [];
+  const warnings: string[] = [];
   if (spec.corners !== "none" && members.length) {
     const after = validateDocument(next, { sketchFrames: spec.frames });
     const all = after.features.flatMap((vf) => (vf.feature?.op === "member" ? [vf.feature as MemberFeature] : []));
@@ -171,7 +213,25 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       const at = after.nodes[node];
       if (!at) continue;
       const ending = all.filter((m) => memberAtNode(m, node, at) === "ends");
-      const passing = all.filter((m) => memberAtNode(m, node, at) === "passes");
+      // Through the node, or near enough that the node is inside its section (a post stopped at a rail's underside).
+      const passing = all
+        .filter((m) => !ending.includes(m))
+        .map((m) => ({ m, ...offLine(m, at) }))
+        .filter((x) => x.t >= -1e-9 && x.t <= 1 + 1e-9 && x.d <= Math.max(0.01, reachOf(next, x.m)))
+        .sort((p, q) => p.d - q.d)
+        .map((x) => x.m);
+      if (ending.length === 1 && !passing.length) {
+        // A lone end: if it nearly meets a member, say so (it gets no joint as it is).
+        const near = all
+          .filter((m) => m !== ending[0])
+          .map((m) => ({ m, ...offLine(m, at) }))
+          .filter((x) => x.t >= -0.05 && x.t <= 1.05 && x.d <= 4 * reachOf(next, x.m) + 5)
+          .sort((p, q) => p.d - q.d)[0];
+        if (near) warnings.push(`${ending[0].id} ends ${Math.round(near.d * 10) / 10} mm from ${near.m.id}, so it isn't joined to it: take its sketch line onto ${near.m.id}'s`);
+        // Or nearly meets another end.
+        const other = Object.entries(after.nodes).find(([n, p]) => n !== node && Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2]) <= 2 && all.some((m) => memberAtNode(m, n, p) === "ends"));
+        if (!near && other) warnings.push(`${ending[0].id}'s end is ${Math.round(Math.hypot(...sub3(other[1], at)) * 100) / 100} mm from another end, so they aren't joined: make the two ends one point in the sketch`);
+      }
       let feature: Record<string, unknown> | null = null;
       if (passing.length && ending.length) {
         // A member ending on another's side: it butts against it.
@@ -198,7 +258,7 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     }
   }
   if (!members.length) return { ok: false, error: skipped.length ? `every line picked has a member on it already` : "no members to add" };
-  return { ok: true, doc: next, members, joints, nodes: made, skipped, commands };
+  return { ok: true, doc: next, members, joints, nodes: made, skipped, commands, warnings };
 }
 
 /**

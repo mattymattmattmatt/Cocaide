@@ -1261,7 +1261,8 @@ export function App() {
     d.replaceDoc(r.doc);
     const joints = r.joints.length ? ` and ${r.joints.length} joint${r.joints.length === 1 ? "" : "s"}` : "";
     const skipped = r.skipped.length ? ` Skipped ${r.skipped.length === 1 ? `${r.skipped[0]}, which has` : `${r.skipped.length} lines that have`} a member already.` : "";
-    setNotice({ kind: "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${sz.size}${joints}, following the sketch.${skipped}${sz.note ? ` ${sz.note}` : ""}` });
+    const warned = r.warnings.length ? ` Check: ${r.warnings.join("; ")}.` : "";
+    setNotice({ kind: r.warnings.length ? "error" : "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${sz.size}${joints}, following the sketch.${skipped}${warned}${sz.note ? ` ${sz.note}` : ""}` });
     fitAfter.current = true;
     countUses(sz.entry, r.members.length);
     return true;

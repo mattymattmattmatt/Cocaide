@@ -81,8 +81,9 @@ describe("members from picked sketch lines", () => {
     const joints = r.doc.features.filter((f) => f.op === "joint");
     expect(joints.filter((j) => j.type === "mitre")).toHaveLength(4);
     const butts = joints.filter((j) => j.type === "butt");
-    expect(r.members).toEqual(["AB", "BC", "CD", "DA", "EF"]);
-    expect(butts.map((j) => j.through).sort()).toEqual(["AB", "CD"]);
+    // Named by how they run: the rails level, the sides and the middle post upright.
+    expect(r.members).toEqual(["rail_1", "post_1", "rail_2", "post_2", "post_3"]);
+    expect(butts.map((j) => j.through).sort()).toEqual(["rail_1", "rail_2"]);
     expect(butts).toHaveLength(2);
     expect(allErrors(validateDocument(r.doc))).toEqual([]);
     // Picked again: nothing new, and it says so.
@@ -205,5 +206,49 @@ describe("members named as they are picked", () => {
     expect(r.members).toEqual(["rail_bottom", "post_right", "rail_top", "post_left"]);
     expect(r.doc.features.filter((f) => f.op === "joint").every((j) => typeof j.through === "string" && r.members.includes(j.through as string))).toBe(true);
     expect(addSketchMembers(r.doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "none", lines: [{ sketch: "layout", entity: "l5", id: "rail_top" }] })).toMatchObject({ ok: false, error: expect.stringContaining("taken") });
+  });
+});
+
+describe("renaming a member of a frame", () => {
+  it("carries the joints that name it", () => {
+    const r = addSketchMembers(layout(), { profile: "SHS", size: "SHS 40x40x3", line: "outside", corners: "mitre", lines: ["l1", "l2", "l3", "l4", "l5"].map((entity) => ({ sketch: "layout", entity })) });
+    if (!r.ok) throw new Error(r.error);
+    const renamed = apply(r.doc, { type: "updateFeature", id: "rail_1", patch: { id: "bottom_rail" } });
+    if (!renamed.ok) throw new Error(renamed.error);
+    const joints = renamed.doc.features.filter((f) => f.op === "joint");
+    expect(joints.some((j) => j.through === "bottom_rail")).toBe(true);
+    expect(joints.some((j) => Array.isArray(j.members) && j.members.includes("bottom_rail"))).toBe(true);
+    expect(JSON.stringify(joints)).not.toContain('"rail_1"');
+    expect(allErrors(validateDocument(renamed.doc))).toEqual([]);
+  });
+});
+
+describe("ends that nearly meet", () => {
+  const spec = { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt" } as const;
+  /** The rectangle, with the middle post stopping `short` mm below the top rail's line. */
+  const withPost = (short: number) => {
+    const doc = layout();
+    (doc.features[0].entities as Record<string, unknown>[])[4] = line("l5", [500, 0], [500, 600 - short]);
+    return addSketchMembers(doc, { ...spec, lines: ["l1", "l2", "l3", "l4", "l5"].map((entity) => ({ sketch: "layout", entity })) });
+  };
+
+  it("joins a post that stops inside the rail's section, and builds", () => {
+    const r = must(withPost(15));
+    expect(r.warnings).toEqual([]);
+    // The post's top, 15 mm under the rail's line: butted against the rail.
+    const nodes = validateDocument(r.doc).nodes;
+    const top = r.doc.features.find((f) => f.op === "joint" && JSON.stringify(nodes[String(f.node)]) === JSON.stringify([500, 0, 585]));
+    expect(top).toMatchObject({ type: "butt", through: "rail_2" });
+    const b = rebuild(r.doc, oc);
+    try {
+      expect(b.errors).toEqual([]);
+    } finally {
+      b.dispose();
+    }
+  });
+
+  it("says when a post stops short of the rail, rather than leaving it unjoined without a word", () => {
+    const r = must(withPost(60));
+    expect(r.warnings).toEqual(["post_3 ends 60 mm from rail_2, so it isn't joined to it: take its sketch line onto rail_2's"]);
   });
 });

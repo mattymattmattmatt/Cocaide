@@ -463,7 +463,7 @@ export class AgentSession {
       case "membersFromSketch": {
         const r = membersFromSketch(this.doc, a, framesOf(this.built.sketches));
         if (!r.ok) return this.fail(`membersFromSketch: ${r.error}`);
-        return this.editMany(r.commands, { extra: { members: r.members, joints: r.joints, nodes: r.nodes, ...(r.skipped.length ? { skipped: r.skipped } : {}) } });
+        return this.editMany(r.commands, { extra: { members: r.members, joints: r.joints, nodes: r.nodes, ...(r.skipped.length ? { skipped: r.skipped } : {}), ...(r.warnings.length ? { warnings: r.warnings } : {}) } });
       }
       case "renameNode":
         return this.edit({ type: "renameNode", from: String(a.from), to: String(a.to) });
