@@ -113,6 +113,9 @@ export interface SketchOverlay {
   frame: Frame;
   /** Why its curves are no closed profile, when they are not (it still builds; what needs a profile says so). */
   open?: string;
+  /** A 3D sketch's lines and points, in space (its entities are empty): drawn and picked like a sketch's. */
+  lines3d?: { id: string; a: Vec3; b: Vec3; construction: boolean }[];
+  points3d?: { id: string; at: Vec3 }[];
 }
 
 export interface RebuildResult {
@@ -422,6 +425,7 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
       drop: (body) => void memberBodies.delete(body),
     },
     datums,
+    showSketch: (o) => void sketches.push(o),
   };
   /** The sketch whose points place holes: as the rebuild solved it, on its frame. */
   const pointSketch = (id: string): PointSketch => {

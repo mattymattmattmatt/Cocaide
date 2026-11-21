@@ -15,7 +15,7 @@ import type { ValidationResult } from "../doc/validate";
 import type { DescribedPart } from "../kernel/bodies";
 import type { OC, Scope } from "../kernel/oc";
 import { OpError, type SketchProfile } from "../kernel/ops";
-import type { HoleRecord, MemberLine, RebuildOptions, Seed } from "../kernel/rebuild";
+import type { HoleRecord, MemberLine, RebuildOptions, Seed, SketchOverlay } from "../kernel/rebuild";
 import type { Datum } from "./datum";
 import { KERNEL_DEFS } from "./kernelIndex";
 
@@ -113,6 +113,8 @@ export interface RebuildCtx {
    * { "datum": id } references.
    */
   datums: Map<string, Datum>;
+  /** Draws a sketch-like overlay in the view (a 3D sketch's lines). */
+  showSketch(o: SketchOverlay): void;
 }
 
 /** The registry entry of one op, kernel side. */

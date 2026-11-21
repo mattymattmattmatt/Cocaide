@@ -36,6 +36,7 @@ const ICONS = {
   mate: <path d="M4 7h7v10H4z M13 7h7v10h-7z M11 12h2 M8 4v3 M16 4v3" />,
   // sketch and features
   sketch: <path d="M15.5 4.5l4 4L9 19H5v-4z M13.5 6.5l4 4" />,
+  sketch3d: <path d="M4 19l6-4V6l9 4.5 M10 15l9-4.5 M4 19h2.5 M4 19v-2.5 M2.6 20.4l2.8-2.8" />,
   extrude: <path d="M6 13h12v7H6z M12 10V3 M9 6l3-3 3 3" />,
   cut: <path d="M4 12h5v3h6v-3h5v8H4z M12 3v7 M9 7l3 3 3-3" />,
   hole: (

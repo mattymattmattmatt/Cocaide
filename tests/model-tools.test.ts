@@ -32,7 +32,7 @@ describe("the registry", () => {
       expect(cmd, t.id).toMatchObject({ group: "Model tools" });
       expect(cmd!.planned, `${t.id} has landed: drop planned from its command`).toBeUndefined();
       expect(ICON_NAMES, t.id).toContain(t.icon);
-      expect(t.testId).toMatch(/^tool-[a-z-]+$/);
+      expect(t.testId).toMatch(/^tool-[a-z0-9-]+$/);
       if (t.menu) expect(ICON_NAMES).toContain(t.menu.icon);
     }
     expect(new Set(MODEL_TOOLS.map((t) => t.id)).size).toBe(MODEL_TOOLS.length);
@@ -42,6 +42,7 @@ describe("the registry", () => {
   it("keeps the toolbar's test ids as they were", () => {
     expect(MODEL_TOOLS.map((t) => t.testId)).toEqual([
       "tool-sketch",
+      "tool-sketch3d",
       "tool-extrude",
       "tool-cut",
       "tool-hole",
@@ -97,7 +98,7 @@ describe("the registry", () => {
       ["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"],
       ["tool.importStep", "tool.exportPlates", "tool.exportFaceDxf", "tool.exportBody"],
     ]);
-    expect(ids(toolbarGroups("weldments"))).toEqual([["tool.member"]]);
+    expect(ids(toolbarGroups("weldments"))).toEqual([["tool.sketch3d", "tool.member"]]);
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point", "tool.coordinateSystem"]]);
     expect(ids(toolbarGroups("evaluate"))).toEqual([["tool.measure", "tool.massProperties"], ["tool.section"]]);
   });
@@ -162,6 +163,7 @@ describe("Sketch", () => {
       ["Front (XZ)", "plane-front", false],
       ["Right (YZ)", "plane-right", false],
       ["On the selected face", "plane-selected-face", true],
+      ["3D Sketch", "sketch-3d", false],
     ]);
     items[1].run(ctx);
     expect(out.sketches).toEqual([{ type: "ref", ref: { datum: "Front" } }]);

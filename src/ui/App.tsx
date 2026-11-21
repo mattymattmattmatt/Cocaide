@@ -135,6 +135,10 @@ import { AppearancePicker } from "./appearance/AppearancePicker";
 import { AppearancePanel } from "./appearance/AppearancePanel";
 import { colourable, lookCommand, lookInfo, lookInfoAll, withLook, type LookTarget } from "./appearance/targets";
 import type { Appearance } from "../doc/types";
+import { resolveExpressions } from "../doc/parameters";
+import { nextSketch3dId, sketch3dPositions, sketch3dSegments } from "../geom/sketch3d";
+import { setDraw, useDraw } from "./sketch3d/drawState";
+import type { Draw3d } from "./Viewport";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -559,7 +563,7 @@ export function App() {
         // planes, axes and points are ids, and stay picked while they exist.
         // The same solid again (a session closed, an OK that changed nothing): the selection stays as it is.
         if (!sameSolid(before, v)) setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
-        if (needsFit.current && (v.mesh || v.sketches?.some((k) => k.entities.length))) {
+        if (needsFit.current && (v.mesh || v.sketches?.some((k) => k.entities.length || k.lines3d?.length))) {
           needsFit.current = false;
           setFitToken((t) => t + 1);
         }
@@ -2555,6 +2559,50 @@ export function App() {
     ];
   };
 
+  // Drawing a 3D sketch: the view places points on the work plane; each click is one edit (one undo step).
+  const draw = useDraw();
+  const drawFeature = draw.feature && !sketch && (!session || session.id === draw.feature) ? doc?.features.find((f) => f.id === draw.feature && f.op === "sketch3d") : undefined;
+  useEffect(() => {
+    // Its feature gone (deleted, undone): drawing stops.
+    if (draw.feature && doc && !doc.features.some((f) => f.id === draw.feature && f.op === "sketch3d")) setDraw({ feature: null, anchor: null });
+  }, [doc, draw.feature]);
+  const draw3d = useMemo<Draw3d | null>(() => {
+    if (!drawFeature) return null;
+    const resolved = resolveExpressions(drawFeature, params, []) as Record<string, unknown>;
+    const placed = sketch3dPositions(Array.isArray(resolved.points) ? resolved.points : []);
+    const at = placed.ok ? placed.at : new Map<string, Vec3>();
+    const anchor = draw.anchor && at.has(draw.anchor) ? draw.anchor : null;
+    const raw = drawFeature as { id: string; points?: Record<string, unknown>[]; lines?: { id: string; start: string; end: string }[] };
+    return {
+      plane: draw.plane,
+      anchor: anchor ? at.get(anchor)! : null,
+      points: [...at].map(([id, p]) => ({ id, at: p })),
+      segments: sketch3dSegments(resolved),
+      onPlane: (plane) => setDraw({ plane }),
+      onEnd: () => setDraw(anchor ? { anchor: null } : { feature: null }),
+      onPlace: ({ at: p, snap }) => {
+        const points = [...(raw.points ?? [])];
+        const lines = [...(raw.lines ?? [])];
+        const ids = [...points.map((q) => String(q.id)), ...lines.map((l) => l.id)];
+        const joined = (a: string, b: string) => lines.some((l) => (l.start === a && l.end === b) || (l.start === b && l.end === a));
+        if (snap) {
+          // On an existing point: a line to it (unless there is one), and the next line starts there.
+          if (anchor && snap !== anchor && !joined(anchor, snap)) {
+            const problem = d.dispatch({ type: "updateFeature", id: raw.id, patch: { lines: [...lines, { id: nextSketch3dId(ids, "l"), start: anchor, end: snap }] } });
+            if (problem) return setNotice({ kind: "error", text: problem });
+          }
+          return setDraw({ anchor: snap });
+        }
+        const id = nextSketch3dId(ids, "p");
+        const base = anchor ? at.get(anchor)! : null;
+        points.push(base ? { id, from: anchor, by: p.map((x, k) => Math.round((x - base[k]) * 1e6) / 1e6 + 0) } : { id, at: p });
+        if (anchor) lines.push({ id: nextSketch3dId([...ids, id], "l"), start: anchor, end: id });
+        const problem = d.dispatch({ type: "updateFeature", id: raw.id, patch: { points, lines } });
+        if (problem) return setNotice({ kind: "error", text: problem });
+        setDraw({ anchor: id });
+      },
+    };
+  }, [drawFeature, draw, params]); // eslint-disable-line react-hooks/exhaustive-deps
   // The members-from-sketch tool picking lines in the view (not while a sketch is open or a feature is being edited).
   const linePicking = memberPick !== null && !sketch && !session;
   const pickMemberLine = (hit: SketchEntityHit): boolean => {
@@ -2852,6 +2900,7 @@ export function App() {
                   sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : linePicking ? memberLineHint : null}
                   sketchLines={!session && linePicking}
                   sketchMarks={!session ? memberPick : null}
+                  draw3d={draw3d}
                   peek={peek ?? hoverPeek}
                   onPick={onPick}
                   onContext={onContext}

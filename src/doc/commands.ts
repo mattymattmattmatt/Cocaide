@@ -334,7 +334,7 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         if (problem) return { ok: false, error: `${cmd.type}: ${problem}` };
       }
       // Nodes that follow the sketch's points follow it to its new id.
-      if (next.id !== cmd.id && prev.op === "sketch" && isObject(doc.nodes)) {
+      if (next.id !== cmd.id && (prev.op === "sketch" || prev.op === "sketch3d") && isObject(doc.nodes)) {
         doc.nodes = Object.fromEntries(Object.entries(doc.nodes).map(([n, v]) => [n, isNodeLink(v) && v.sketch === cmd.id ? { ...v, sketch: String(next.id) } : v]));
       }
       // The drawing names features by id (balloons, member dimensions, hole callouts): it follows.

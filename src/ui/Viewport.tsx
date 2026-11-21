@@ -40,7 +40,8 @@ import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
 import { threadBands, ThreadLayer } from "./viewport/threadLayer";
 import { PreviewLayer, type PreviewLook } from "./viewport/preview";
-import { sketchAt, sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
+import { entityPolylines3d, sketchAt, sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
+import { deltaText, nextPlane, niceStep, PLANE_AXES, rayPlane, snapToGrid, type WorkPlane } from "./sketch3d/place";
 import { entityPolylines } from "../geom/profile";
 import { sketchRefText } from "../features/datum";
 import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
@@ -199,6 +200,8 @@ interface Props {
   sketchLines?: boolean;
   /** Sketch entities lit up as picked (the lines the members-from-sketch tool has). */
   sketchMarks?: readonly { sketch: string; entity: string }[] | null;
+  /** A 3D sketch being drawn: clicks land on its work plane (Tab cycles), snapped to a grid or to its points. */
+  draw3d?: Draw3d | null;
   /** Phase P wave 2A: a sketch open in the view (see SketchStage). */
   sketch?: SketchStage | null;
 }
@@ -254,6 +257,20 @@ function cssColor(el: Element, name: string, fallback: string): THREE.Color {
   return new THREE.Color(v || fallback);
 }
 
+/** Drawing a 3D sketch in the view (src/ui/sketch3d). */
+export interface Draw3d {
+  plane: WorkPlane;
+  /** The point the next line starts from, or null (the next click starts a chain). */
+  anchor: Vec3 | null;
+  points: { id: string; at: Vec3 }[];
+  segments: { a: Vec3; b: Vec3 }[];
+  /** A click: where (snapped), and the existing point it is on, if any. */
+  onPlace(p: { at: Vec3; snap: string | null }): void;
+  onPlane(plane: WorkPlane): void;
+  /** Escape or a double-click: the line ends here. */
+  onEnd(): void;
+}
+
 interface ViewportApi {
   setModel(view: RebuildView | null): void;
   /** The reference geometry shown (already filtered), and the origin triad's arm length (null: hidden). */
@@ -265,6 +282,8 @@ interface ViewportApi {
   setNodes(nodes: FrameNode[]): void;
   /** Sketch entities lit up as picked. */
   setSketchMarks(marks: readonly { sketch: string; entity: string }[]): void;
+  /** The 3D sketch being drawn changed: draw it again. */
+  redrawDraw3d(): void;
   setUnderlay(u: Underlay | null): void;
   /** See the photo through the part (while picking points on it). */
   setGhost(ghost: boolean): void;
@@ -365,6 +384,7 @@ export function Viewport({
   sketchPick = null,
   sketchLines = false,
   sketchMarks = null,
+  draw3d = null,
   sketchHint = null,
   sketch = null,
 }: Props) {
@@ -382,6 +402,7 @@ export function Viewport({
   const [hover, setHover] = useState<Hover | null>(null);
   /** Another sketch's entity under the pointer, when a session's reference field takes one (its tip, in the view's pixels). */
   const [sketchHover, setSketchHover] = useState<{ x: number; y: number; hit: SketchEntityHit } | null>(null);
+  const [drawTip, setDrawTip] = useState<{ x: number; y: number; text: string; snap: string | null } | null>(null);
   const [showSketches, setShowSketches] = useState(true);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number; crossing: boolean; area?: boolean } | null>(null);
   /** Zoom to area is waiting for its box. */
@@ -448,6 +469,9 @@ export function Viewport({
     const previewLayer = new PreviewLayer(el, { add: cssColor(el, "--preview-add", "#1f6feb"), remove: cssColor(el, "--preview-remove", "#e5484d") });
     let previewLook: PreviewLook | null = null;
     scene.add(helpers, photoGroup, model, datums.group, caps.group, sectionPlanes.group, overlays, marks, nodeGroup, evalLayer.group, previewLayer.group);
+    /** A 3D sketch being drawn: its lines and points, the work plane's grid, the line under way. */
+    const drawGroup = new THREE.Group();
+    scene.add(drawGroup);
     // Phase P wave 3B: cosmetic threads (thread features, tapped holes) drawn as bands on their faces.
     const threads = new ThreadLayer();
     scene.add(threads.group);
@@ -1019,6 +1043,8 @@ export function Viewport({
       if (!on && !visibleBox) {
         const pts: number[] = [];
         for (const sk of drawnSketches()) for (const e of sk.entities) for (const line of entityPolylines(e)) for (const q of line) pts.push(...to3D(sk.frame, q));
+        for (const sk of drawnSketches()) for (const l of sk.lines3d ?? []) pts.push(...l.a, ...l.b);
+        for (const sk of drawnSketches()) for (const p of sk.points3d ?? []) pts.push(...p.at);
         if (pts.length >= 6) on = { points: pts };
       }
       const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
@@ -1147,13 +1173,12 @@ export function Viewport({
       const hot = sketchHot;
       if (!hot) return null;
       const sk = shownView?.sketches.find((x) => x.id === hot.sketch);
-      const e = sk?.entities.find((x) => x.id === hot.entity);
-      if (!sk || !e) return null;
+      const outline = sk ? entityPolylines3d(sk, hot.entity) : [];
+      const isPoint = hot.type === "point";
+      if (!sk || (!outline.length && !isPoint)) return null;
       const group = new THREE.Group();
       const pts: number[] = [];
-      for (const line of entityPolylines(e)) {
-        for (let i = 0; i + 1 < line.length; i++) pts.push(...to3D(sk.frame, line[i]), ...to3D(sk.frame, line[i + 1]));
-      }
+      for (const line of outline) for (let i = 0; i + 1 < line.length; i++) pts.push(...line[i], ...line[i + 1]);
       if (pts.length && !hot.at) {
         const g = new LineSegmentsGeometry();
         g.setPositions(pts);
@@ -1161,7 +1186,7 @@ export function Viewport({
         l.renderOrder = 5;
         group.add(l);
       }
-      const dot = hot.at || e.type === "point" ? vertexDots([hot.point], HOVER_COLOR, 11) : null;
+      const dot = hot.at || isPoint ? vertexDots([hot.point], HOVER_COLOR, 11) : null;
       if (dot) group.add(dot);
       return group.children.length ? group : null;
     };
@@ -1171,9 +1196,8 @@ export function Viewport({
       const pts: number[] = [];
       for (const m of sketchPicked) {
         const sk = drawnSketches().find((x) => x.id === m.sketch);
-        const e = sk?.entities.find((x) => x.id === m.entity);
-        if (!sk || !e) continue;
-        for (const line of entityPolylines(e)) for (let i = 0; i + 1 < line.length; i++) pts.push(...to3D(sk.frame, line[i]), ...to3D(sk.frame, line[i + 1]));
+        if (!sk) continue;
+        for (const line of entityPolylines3d(sk, m.entity)) for (let i = 0; i + 1 < line.length; i++) pts.push(...line[i], ...line[i + 1]);
       }
       if (!pts.length) return null;
       const g = new LineSegmentsGeometry();
@@ -1854,10 +1878,84 @@ export function Viewport({
       renderer.domElement.style.cursor = on ? "zoom-in" : "";
       live.current.onArea(on);
     };
+    // ------------------------------------------------------------ drawing a 3D sketch
+    let drawHover: { at: Vec3; snap: string | null } | null = null;
+    /** Where a click at (x, y) would put a point: on one of the sketch's points (within 10 px), else on the work plane, snapped. */
+    const drawAt = (x: number, y: number): { at: Vec3; snap: string | null } | null => {
+      const d = draw3dRef.current;
+      if (!d) return null;
+      let best: { id: string; at: Vec3; px: number } | null = null;
+      for (const p of d.points) {
+        const q = projectPx(p.at);
+        const px = q ? Math.hypot(q[0] - x, q[1] - y) : Infinity;
+        if (px <= 10 && (!best || px < best.px)) best = { ...p, px };
+      }
+      if (best) return { at: best.at, snap: best.id };
+      aim(x, y);
+      const o = raycaster.ray.origin;
+      const dir = raycaster.ray.direction;
+      const base = d.anchor ?? [0, 0, 0];
+      const hit = rayPlane([o.x, o.y, o.z], [dir.x, dir.y, dir.z], base, d.plane);
+      return hit ? { at: snapToGrid(hit, base, d.plane, niceStep(controls.worldPerPixel())), snap: null } : null;
+    };
+    const redrawDraw3d = () => {
+      disposeGroup(drawGroup);
+      const d = draw3dRef.current;
+      if (!d) return render();
+      const line = (pts: Vec3[], mat: THREE.LineBasicMaterial, order = 7) => {
+        if (pts.length < 2) return;
+        const g = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p)));
+        const l = new THREE.LineSegments(g, mat);
+        if (mat instanceof THREE.LineDashedMaterial) l.computeLineDistances();
+        l.renderOrder = order;
+        drawGroup.add(l);
+      };
+      // The work plane's grid, around the point drawn from (or the origin).
+      const base = d.anchor ?? [0, 0, 0];
+      const step = niceStep(controls.worldPerPixel());
+      const [i, j] = PLANE_AXES[d.plane];
+      const n = 10;
+      const grid: Vec3[] = [];
+      for (let k = -n; k <= n; k++) {
+        const a: Vec3 = [...base];
+        const b: Vec3 = [...base];
+        a[i] += k * step; a[j] -= n * step; b[i] += k * step; b[j] += n * step;
+        const c: Vec3 = [...base];
+        const e2: Vec3 = [...base];
+        c[j] += k * step; c[i] -= n * step; e2[j] += k * step; e2[i] += n * step;
+        grid.push(a, b, c, e2);
+      }
+      line(grid, new THREE.LineBasicMaterial({ color: 0x8a9bb0, transparent: true, opacity: 0.28, depthTest: false }), 6);
+      // The sketch so far.
+      line(d.segments.flatMap((sg) => [sg.a, sg.b]), new THREE.LineBasicMaterial({ color: SELECT_COLOR, depthTest: false }));
+      const dots = vertexDots(d.points.map((p) => p.at), SELECT_COLOR, 8);
+      if (dots) drawGroup.add(dots);
+      if (d.anchor) {
+        const a = vertexDots([d.anchor], HOVER_COLOR, 12);
+        if (a) drawGroup.add(a);
+      }
+      // The line under way, and where it would end.
+      if (drawHover) {
+        if (d.anchor) line([d.anchor, drawHover.at], new THREE.LineDashedMaterial({ color: HOVER_COLOR, dashSize: step / 2, gapSize: step / 3, depthTest: false }), 8);
+        const h = vertexDots([drawHover.at], HOVER_COLOR, drawHover.snap ? 13 : 9);
+        if (h) drawGroup.add(h);
+      }
+      render();
+    };
+    const drawMove = (e: PointerEvent) => {
+      drawHover = drawAt(e.clientX, e.clientY);
+      redrawDraw3d();
+      renderer.domElement.style.cursor = "crosshair";
+      const rect = renderer.domElement.getBoundingClientRect();
+      const d = draw3dRef.current!;
+      setDrawTip(drawHover ? { x: e.clientX - rect.left, y: e.clientY - rect.top, text: deltaText(d.anchor, drawHover.at), snap: drawHover.snap } : null);
+    };
+
     const onMove = (e: PointerEvent) => {
       if (drag) return;
       if (boxing) return moveBox(e);
       if (e.buttons !== 0 || photoPointRef.current || areaOn) return;
+      if (draw3dRef.current) return drawMove(e);
       // A handle under the pointer lights up, and the pointer says it can be dragged.
       const hot = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
       if (evalLayer.setHot(hot?.id ?? null)) render();
@@ -1942,6 +2040,12 @@ export function Viewport({
         return;
       }
       if (moved > 4) return;
+      // Drawing a 3D sketch: a click places the next point.
+      if (e.button === 0 && draw3dRef.current) {
+        const h = drawAt(e.clientX, e.clientY);
+        if (h) draw3dRef.current.onPlace(h);
+        return;
+      }
       // Waiting for an area: a click is not a pick.
       if (areaOn && e.button === 0) return;
       if (e.button === 0 && photoPointRef.current) {
@@ -1968,7 +2072,7 @@ export function Viewport({
     };
     // A left press that travels starts a box (the standard mouse: the trackpad scheme's left drag turns the view, unless an area is wanted).
     const onBoxMove = (e: PointerEvent) => {
-      if (!down || down.button !== 0 || boxing || drag || photoPointRef.current) return;
+      if (!down || down.button !== 0 || boxing || drag || photoPointRef.current || draw3dRef.current) return;
       if (!areaOn && (inputPrefs().mouse !== "standard" || e.pointerType === "touch" || !live.current.onBox)) return;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < BOX_SLOP) return;
       boxing = true;
@@ -1977,6 +2081,7 @@ export function Viewport({
       moveBox(e);
     };
     const onDblClick = (e: MouseEvent) => {
+      if (draw3dRef.current) return draw3dRef.current.onEnd();
       if (photoPointRef.current || areaOn) return;
       live.current.onDoubleClick?.(pickAt(e.clientX, e.clientY));
     };
@@ -2278,6 +2383,13 @@ export function Viewport({
       setHiddenBodies(next: ReadonlySet<string>) {
         hidden = next;
         setModel(shownView);
+      },
+      redrawDraw3d() {
+        if (!draw3dRef.current) {
+          drawHover = null;
+          setDrawTip(null);
+        }
+        redrawDraw3d();
       },
       setSketchMarks(next) {
         sketchPicked = next;
@@ -2581,6 +2693,28 @@ export function Viewport({
   useEffect(() => {
     api.current?.setSketchMarks(sketchMarks ?? []);
   }, [sketchMarks]);
+  const draw3dRef = useRef(draw3d);
+  draw3dRef.current = draw3d;
+  useEffect(() => {
+    api.current?.redrawDraw3d();
+  }, [draw3d]);
+  // Drawing a 3D sketch: Tab turns the work plane, Escape ends the line (not while typing in a field).
+  const drawing = !!draw3d;
+  useEffect(() => {
+    if (!drawing) return;
+    const onKey = (e: KeyboardEvent) => {
+      const d = draw3dRef.current;
+      const t = e.target as HTMLElement | null;
+      if (!d || (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable))) return;
+      if (e.key === "Tab") d.onPlane(nextPlane(d.plane));
+      else if (e.key === "Escape") d.onEnd();
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [drawing]);
   // No field takes sketch entities any more: no tip for one.
   useEffect(() => {
     if (!sketchPick) setSketchHover(null);
@@ -3120,6 +3254,14 @@ export function Viewport({
       )}
       <SelectionChip selection={selection} faces={faces} edges={edges} datums={view?.datums ?? {}} />
       {hover && !box && !areaMode && <PickTip hover={hover} info={infoRef.current} hint={pickHintRef.current?.(hover.target) ?? null} />}
+      {drawTip && draw3d && (
+        <TipBox x={drawTip.x} y={drawTip.y} testId="draw3d-tip">
+          <div>{drawTip.snap ? `On ${drawTip.snap}` : drawTip.text}</div>
+          <div className="pick-hint">
+            {draw3d.plane} plane · Tab turns it · {draw3d.anchor ? "Esc or double-click ends the line" : "click to start a line"}
+          </div>
+        </TipBox>
+      )}
       {sketchHover && !hover && !box && !areaMode && (
         <TipBox x={sketchHover.x} y={sketchHover.y} testId="sketch-pick-tip">
           <div>

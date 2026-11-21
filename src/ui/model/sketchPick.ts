@@ -17,6 +17,17 @@ export interface PickableSketch {
   ok: boolean;
   entities: SketchEntity[];
   frame: Frame;
+  /** A 3D sketch's lines and points, in space. */
+  lines3d?: { id: string; a: Vec3; b: Vec3; construction?: boolean }[];
+  points3d?: { id: string; at: Vec3 }[];
+}
+
+/** An entity's outline in 3D (a sketch's on its frame, a 3D sketch's line or point as it is). */
+export function entityPolylines3d(s: PickableSketch, entity: string): Vec3[][] {
+  const l = s.lines3d?.find((x) => x.id === entity);
+  if (l) return [[l.a, l.b]];
+  const e = s.entities.find((x) => x.id === entity);
+  return e ? entityPolylines(e).map((line) => line.map((p) => to3D(s.frame, p))) : [];
 }
 
 /** An entity of a sketch under the pointer. */
@@ -84,8 +95,31 @@ export function sketchEntityAt(sketches: readonly PickableSketch[], project: (p:
     if (isPoint) point = hit;
     else curve = hit;
   };
+  const near = (p3: Vec3) => {
+    const q = project(p3);
+    return q ? Math.hypot(q[0] - x, q[1] - y) : Infinity;
+  };
   for (const s of sketches) {
     if (!s.ok) continue;
+    // A 3D sketch: its points (as points), its lines' ends and middles, and the lines.
+    for (const p of s.points3d ?? []) {
+      const d = near(p.at);
+      if (d <= SKETCH_POINT_PX) consider({ sketch: s.id, entity: p.id, type: "point", point: p.at, px: d });
+    }
+    for (const l of s.lines3d ?? []) {
+      const base = { sketch: s.id, entity: l.id, type: "line" };
+      const mid: Vec3 = [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2, (l.a[2] + l.b[2]) / 2];
+      for (const [name, p3] of [["start", l.a], ["end", l.b], ["mid", mid]] as [EdgePoint, Vec3][]) {
+        const d = near(p3);
+        if (d <= SKETCH_POINT_PX) consider({ ...base, at: name, point: p3, px: d });
+      }
+      const a = project(l.a);
+      const b = project(l.b);
+      if (a && b) {
+        const d = toSegment(at, a, b);
+        if (d <= SKETCH_PICK_PX) consider({ ...base, point: l.a, px: d });
+      }
+    }
     for (const e of s.entities) {
       if (!TYPES.has(e.type)) continue;
       const base = { sketch: s.id, entity: e.id, type: e.type };

@@ -22,6 +22,7 @@ import { kernel as fillPattern } from "./fillPattern/kernel";
 import { kernel as thread } from "./thread/kernel";
 import { kernel as dome } from "./dome/kernel";
 import { kernel as exportBody } from "./exportBody/kernel";
+import { kernel as sketch3d } from "./sketch3d/kernel";
 
 export const KERNEL_DEFS = [
   scale,
@@ -43,4 +44,5 @@ export const KERNEL_DEFS = [
   thread,
   dome,
   exportBody,
+  sketch3d,
 ];

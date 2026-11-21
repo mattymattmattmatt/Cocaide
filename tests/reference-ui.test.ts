@@ -316,7 +316,7 @@ describe("Sketch on a reference", () => {
     const v = viewOf(oc, withPlane);
     const { ctx, out } = harness(withPlane, v);
     const items = toolById("tool.sketch")!.items!(ctx);
-    expect(items.map((i) => i.label)).toEqual(["Top (XY)", "Front (XZ)", "Right (YZ)", "plane_1", "On the selected face"]);
+    expect(items.map((i) => i.label)).toEqual(["Top (XY)", "Front (XZ)", "Right (YZ)", "plane_1", "On the selected face", "3D Sketch"]);
     items[3].run(ctx);
     expect(out.sketches).toEqual([{ type: "ref", ref: { datum: "plane_1" } }]);
   });

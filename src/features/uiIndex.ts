@@ -28,6 +28,7 @@ import { ui as fillPattern } from "./fillPattern/ui";
 import { ui as thread } from "./thread/ui";
 import { ui as dome } from "./dome/ui";
 import { ui as exportBody } from "./exportBody/ui";
+import { ui as sketch3d } from "./sketch3d/ui";
 
 export const UI_OP_LIST: UiOp[] = [
   fillet,
@@ -54,4 +55,5 @@ export const UI_OP_LIST: UiOp[] = [
   thread,
   dome,
   exportBody,
+  sketch3d,
 ];

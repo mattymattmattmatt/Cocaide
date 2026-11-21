@@ -22,6 +22,7 @@ import { def as fillPattern } from "./fillPattern/doc";
 import { def as thread } from "./thread/doc";
 import { def as dome } from "./dome/doc";
 import { def as exportBody } from "./exportBody/doc";
+import { def as sketch3d } from "./sketch3d/doc";
 
 export const DOC_DEFS = [
   scale,
@@ -43,4 +44,5 @@ export const DOC_DEFS = [
   thread,
   dome,
   exportBody,
+  sketch3d,
 ];

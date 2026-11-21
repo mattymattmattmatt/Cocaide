@@ -10,6 +10,7 @@
 import type { NodeLink, Vec2, Vec3 } from "../doc/types";
 import { defaultDatum, flipPlane, offsetPlane, refPlaneFrame, datumPlaneDatum, xDirProblem, type PlaneDatum } from "../features/datum";
 import { to3D } from "../geom/frame";
+import { sketch3dPoint } from "../geom/sketch3d";
 import { resolveExpressions, type Parameters } from "../doc/parameters";
 
 export type { NodeLink };
@@ -51,6 +52,11 @@ export function resolveNodeLink(features: readonly unknown[], link: unknown, par
   const l = link as unknown as NodeLink;
   const raw = features.find((f) => isObject(f) && f.id === l.sketch);
   if (!isObject(raw)) return { ok: false, error: `follows ${linkText(l)}, but there is no sketch "${l.sketch}"` };
+  if (raw.op === "sketch3d") {
+    // A 3D sketch: its points are in space already.
+    const p = sketch3dPoint(resolveExpressions(raw, params, []) as Record<string, unknown>, l.point);
+    return typeof p === "string" ? { ok: false, error: `follows ${linkText(l)}, but ${p}` } : { ok: true, at: p };
+  }
   if (raw.op !== "sketch") return { ok: false, error: `follows ${linkText(l)}, but ${l.sketch} is a ${String(raw.op)}, not a sketch` };
   const [entityId, at] = l.point.split(".");
   const entities = Array.isArray(raw.entities) ? raw.entities : [];

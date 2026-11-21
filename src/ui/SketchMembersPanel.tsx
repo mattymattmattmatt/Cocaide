@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import type { RawDocument } from "../doc/commands";
-import type { SketchLine } from "../weldment/sketchFrame";
+import { ownLines, type SketchLine } from "../weldment/sketchFrame";
 import type { SizeChoice } from "./NodesPanel";
 import { Section } from "./Section";
 import { Icon } from "./icons";
@@ -27,14 +27,13 @@ interface Props {
   onError(text: string): void;
 }
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Each sketch's own lines (not construction), in the order they are listed. */
 export function sketchLines(doc: RawDocument | null): { sketch: string; lines: string[] }[] {
   if (!doc) return [];
   return doc.features.flatMap((f) => {
-    if (f.op !== "sketch" || f.suppressed === true) return [];
-    const lines = (Array.isArray(f.entities) ? f.entities : []).filter((e) => isObject(e) && e.type === "line" && e.construction !== true && !e.ref).map((e) => String((e as { id: unknown }).id));
+    if ((f.op !== "sketch" && f.op !== "sketch3d") || f.suppressed === true) return [];
+    const lines = ownLines(f);
     return lines.length ? [{ sketch: String(f.id), lines }] : [];
   });
 }

@@ -94,6 +94,7 @@ const sketch: ToolDef = {
       disabled: !(ctx.selection.faces.length === 1 && ctx.view?.faces[ctx.selection.faces[0]]?.type === "plane"),
       run: (c: ToolCtx) => c.sketchOnFace(),
     },
+    { label: "3D Sketch", icon: "sketch3d", hint: "Points and lines in space: a frame that isn't flat", testId: "sketch-3d", run: newSketch3d },
   ],
   contextOn: "face",
   contextLabel: "Sketch on this face",
@@ -105,4 +106,21 @@ const sketch: ToolDef = {
       : [],
 };
 
-export const tools: ToolDef[] = [sketch];
+/** A new, empty 3D sketch: selected, its properties open, drawing. */
+export function newSketch3d(ctx: ToolCtx): void {
+  if (!ctx.doc) return ctx.notice("Fix the document JSON first.");
+  ctx.create({ id: ctx.nextId("sketch3d"), op: "sketch3d", points: [], lines: [] });
+}
+
+const sketch3d: ToolDef = {
+  id: "tool.sketch3d",
+  label: "3D Sketch",
+  icon: "sketch3d",
+  tab: "weldments",
+  group: "members",
+  title: "A 3D sketch: click points in space on a work plane (Tab turns it), a line from each to the next; then put members on its lines (Members from sketch)",
+  testId: "tool-sketch3d",
+  run: newSketch3d,
+};
+
+export const tools: ToolDef[] = [sketch, sketch3d];

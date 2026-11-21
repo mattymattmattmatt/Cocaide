@@ -39,6 +39,14 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const near = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-6;
 const linkKey = (l: NodeLink) => `${l.sketch}:${l.point}`;
 
+/** A sketch's (or 3D sketch's) own lines: not construction, not references to the model. */
+export function ownLines(f: Record<string, unknown>): string[] {
+  const list = f.op === "sketch3d" ? f.lines : f.entities;
+  return (Array.isArray(list) ? list : [])
+    .filter((e) => isObject(e) && (f.op === "sketch3d" || e.type === "line") && e.construction !== true && !e.ref)
+    .map((e) => String((e as { id: unknown }).id));
+}
+
 /** The next free node name: A, B, ... Z, then N1, N2, ... */
 export function freeNodeName(taken: ReadonlySet<string>): string {
   for (let i = 0; i < 26; i++) {
@@ -60,24 +68,27 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
   const params = documentParameters(doc);
   const v = validateDocument(doc);
   // Each line's two ends, in 3D.
-  const lines: { line: SketchLine; ends: [Vec3, Vec3] }[] = [];
+  const lines: { line: SketchLine; ends: [Vec3, Vec3]; refs: [string, string] }[] = [];
   const seen = new Set<string>();
   for (const l of spec.lines) {
     const key = `${l.sketch}:${l.entity}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const sketch = doc.features.find((f) => f.id === l.sketch);
-    if (!sketch || sketch.op !== "sketch") return { ok: false, error: `there is no sketch "${l.sketch}"` };
-    const e = (Array.isArray(sketch.entities) ? sketch.entities : []).find((x) => isObject(x) && x.id === l.entity) as Record<string, unknown> | undefined;
-    if (!e) return { ok: false, error: `${l.sketch} has no ${l.entity}` };
-    if (e.type !== "line") return { ok: false, error: `${l.sketch}'s ${l.entity} is a ${String(e.type)}: a member runs along a straight line` };
+    if (!sketch || (sketch.op !== "sketch" && sketch.op !== "sketch3d")) return { ok: false, error: `there is no sketch "${l.sketch}"` };
+    const list = sketch.op === "sketch3d" ? sketch.lines : sketch.entities;
+    const e = (Array.isArray(list) ? list : []).find((x) => isObject(x) && x.id === l.entity) as Record<string, unknown> | undefined;
+    if (!e) return { ok: false, error: `${l.sketch} has no ${sketch.op === "sketch3d" ? "line " : ""}${l.entity}` };
+    if (sketch.op === "sketch" && e.type !== "line") return { ok: false, error: `${l.sketch}'s ${l.entity} is a ${String(e.type)}: a member runs along a straight line` };
     if (e.construction === true) return { ok: false, error: `${l.sketch}'s ${l.entity} is a construction line; pick the frame's own lines` };
-    const a = resolveNodeLink(doc.features, { sketch: l.sketch, point: `${l.entity}.start` }, params);
-    const b = resolveNodeLink(doc.features, { sketch: l.sketch, point: `${l.entity}.end` }, params);
+    // A 3D sketch's line ends are its points: the nodes follow those (p2.at), shared by every line on them.
+    const refs: [string, string] = sketch.op === "sketch3d" ? [`${String(e.start)}.at`, `${String(e.end)}.at`] : [`${l.entity}.start`, `${l.entity}.end`];
+    const a = resolveNodeLink(doc.features, { sketch: l.sketch, point: refs[0] }, params);
+    const b = resolveNodeLink(doc.features, { sketch: l.sketch, point: refs[1] }, params);
     if (!a.ok) return { ok: false, error: `${l.entity} ${a.error}` };
     if (!b.ok) return { ok: false, error: `${l.entity} ${b.error}` };
     if (near(a.at, b.at)) return { ok: false, error: `${l.sketch}'s ${l.entity} has no length` };
-    lines.push({ line: l, ends: [a.at, b.at] });
+    lines.push({ line: l, ends: [a.at, b.at], refs });
   }
 
   // A node for each end: one already following that point, else one already there, else a new one following it.
@@ -118,10 +129,10 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
   const skipped: string[] = [];
   const existing = v.features.flatMap((vf) => (vf.feature?.op === "member" ? [vf.feature as MemberFeature] : []));
   const touched = new Set<string>();
-  for (const { line, ends } of lines) {
-    const a = nodeFor({ sketch: line.sketch, point: `${line.entity}.start` }, ends[0]);
+  for (const { line, ends, refs } of lines) {
+    const a = nodeFor({ sketch: line.sketch, point: refs[0] }, ends[0]);
     if (typeof a !== "string") return { ok: false, error: a.error };
-    const b = nodeFor({ sketch: line.sketch, point: `${line.entity}.end` }, ends[1]);
+    const b = nodeFor({ sketch: line.sketch, point: refs[1] }, ends[1]);
     if (typeof b !== "string") return { ok: false, error: b.error };
     const dup = existing.find((m) => (m.fromNode === a && m.toNode === b) || (m.fromNode === b && m.toNode === a));
     if (dup) {
@@ -204,8 +215,8 @@ export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>):
     if (lines.length !== a.lines.length) return { ok: false, error: 'lines: each is { "sketch": <sketch id>, "entity": <line id> }' };
   } else if (typeof a.sketch === "string") {
     const f = doc.features.find((x) => x.id === a.sketch);
-    if (!f || f.op !== "sketch") return { ok: false, error: `there is no sketch "${String(a.sketch)}"` };
-    lines = (Array.isArray(f.entities) ? f.entities : []).filter((e) => isObject(e) && e.type === "line" && e.construction !== true && !e.ref).map((e) => ({ sketch: String(a.sketch), entity: String((e as { id: unknown }).id) }));
+    if (!f || (f.op !== "sketch" && f.op !== "sketch3d")) return { ok: false, error: `there is no sketch "${String(a.sketch)}"` };
+    lines = ownLines(f).map((entity) => ({ sketch: String(a.sketch), entity }));
     if (!lines.length) return { ok: false, error: `${String(a.sketch)} has no lines of its own (construction and reference lines aren't taken)` };
   } else return { ok: false, error: 'name a "sketch" (all its lines) or "lines": [{ "sketch", "entity" }]' };
   const line = a.line === "centre" || a.line === "center" ? "centre" : "outside";
