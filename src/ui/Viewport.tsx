@@ -3,7 +3,9 @@ import * as THREE from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
-import type { Vec2, Vec3 } from "../doc/types";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { appearanceKey, finishLight } from "../appearance";
+import type { Appearance, Vec2, Vec3 } from "../doc/types";
 import { DEFAULT_DATUMS, type Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo } from "../kernel";
 import type { RebuildView } from "../worker/protocol";
@@ -137,6 +139,8 @@ interface Props {
   hiddenBodies?: ReadonlySet<string>;
   /** Bodies drawn translucent and picked through (an assembly's transparent components). */
   clearBodies?: ReadonlySet<string>;
+  /** How each face of the view looks (src/appearance), by face index; null (or none at all): the default colours. */
+  appearances?: readonly (Appearance | null)[] | null;
   /** Sketches not drawn (and not picked): hidden in the tree, or used by a feature and not shown. */
   hiddenSketches?: ReadonlySet<string>;
   /** A frame's nodes (Phase J), drawn as labelled points with the sketches. */
@@ -260,6 +264,8 @@ interface ViewportApi {
   setGhost(ghost: boolean): void;
   /** Bodies drawn translucent and picked through (an assembly's transparent components). */
   setClearBodies(names: ReadonlySet<string>): void;
+  /** How each face looks, by face index (null: the default): recolours the part, its shape untouched. */
+  setFaceAppearances(looks: readonly (Appearance | null)[] | null): void;
   /** Frame the whole photo from above. */
   fitPhoto(): void;
   fit(dir?: Vec3, up?: Vec3): void;
@@ -322,6 +328,7 @@ export function Viewport({
   onPhotoPoint = null,
   hiddenBodies = NO_BODIES,
   clearBodies = NO_BODIES,
+  appearances = null,
   hiddenSketches = NO_BODIES,
   nodes = NO_NODES,
   onMessage,
@@ -474,6 +481,20 @@ export function Viewport({
     let snaps: (VertexPick & { p: Vec3 })[] = [];
     let shownView: RebuildView | null = null;
     let hidden: ReadonlySet<string> = NO_BODIES;
+    /** How each face looks (null: the default colour), and per mesh material the body and the look it draws. */
+    let faceLooks: readonly (Appearance | null)[] | null = null;
+    let matBody: string[] = [];
+    let matLook: (Appearance | null)[] = [];
+    /** A soft room reflected in glossy and metallic finishes (made the first time one is shown). */
+    let roomEnv: THREE.Texture | null = null;
+    const room = () => {
+      if (!roomEnv) {
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        pmrem.dispose();
+      }
+      return roomEnv;
+    };
     let hiddenSketchIds: ReadonlySet<string> = NO_BODIES;
     /** The sketches drawn: the view's, less the hidden ones. */
     const drawnSketches = () => (shownView?.sketches ?? []).filter((k) => !hiddenSketchIds.has(k.id));
@@ -1193,14 +1214,15 @@ export function Viewport({
         mesh.visible = style !== "wireframe";
         // Lines only: the surfaces still hide what is behind them, but draw nothing themselves (and go first).
         mesh.renderOrder = lines ? -1 : 0;
-        const names = (shownView?.bodies ?? []).map((b) => b.name);
         ([mesh.material].flat() as THREE.MeshStandardMaterial[]).forEach((m, i) => {
           m.colorWrite = !lines;
-          // Translucent: everything (see-through, the photo's picking), or this body (a transparent component).
-          const see = ghost || xray || isClear(names[i]);
-          m.transparent = see;
-          m.opacity = see ? (ghost ? 0.25 : 0.3) : 1;
-          m.depthWrite = !see;
+          // Translucent: everything (see-through, the photo's picking), or this body (a transparent component); else
+          // as clear as its appearance says (glass).
+          const see = ghost || xray || isClear(matBody[i]);
+          const own = matLook[i]?.opacity ?? 1;
+          m.transparent = see || own < 1;
+          m.opacity = see ? (ghost ? 0.25 : 0.3) * Math.min(1, own + 0.4) : own;
+          m.depthWrite = !m.transparent;
           m.needsUpdate = true;
         });
       }
@@ -1242,7 +1264,9 @@ export function Viewport({
         (shownView?.bodies ?? []).forEach((b, i) => {
           if (hidden.has(b.name) || !cutsBody(sectionState, b.name)) return;
           const g = faceGeometry(Array.from({ length: b.faces[1] - b.faces[0] }, (_, k) => b.faces[0] + k));
-          const color = new THREE.Color(BODY_COLORS[i % BODY_COLORS.length]);
+          // Its own look where it has one (the colour of its first face), else its default colour.
+          const look = faceLooks?.[b.faces[0]] ?? null;
+          const color = new THREE.Color(look ? look.color : BODY_COLORS[i % BODY_COLORS.length]);
           if (g) sources.push({ geometry: g, color, hatch: color.clone().multiplyScalar(0.62) });
         });
       } else {
@@ -1282,8 +1306,7 @@ export function Viewport({
     const clipModel = () => {
       if (mesh) {
         const mats = [mesh.material].flat() as THREE.Material[];
-        const bodies = shownView?.bodies ?? [];
-        mats.forEach((m, i) => clipMaterial(m, clipFor(mats.length > 1 ? bodies[i]?.name : bodies[0]?.name)));
+        mats.forEach((m, i) => clipMaterial(m, clipFor(matBody[i] || (shownView?.bodies ?? [])[0]?.name)));
       }
       for (const obj of [edgeLines, hiddenLines]) edgeMaterials(obj).forEach((m, k) => clipMaterial(m, clipFor(edgeGroupBodies[k])));
       for (const o of outlines) for (const m of [o.seen.material, o.hidden.material] as THREE.Material[]) clipMaterial(m, o.cut ? clipPlanes : NO_PLANES);
@@ -1370,19 +1393,57 @@ export function Viewport({
         g.setAttribute("normal", new THREE.BufferAttribute(v.mesh.normals, 3));
         g.setIndex(new THREE.BufferAttribute(v.mesh.indices, 1));
         g.computeBoundingSphere();
-        const surface = (color: THREE.ColorRepresentation, visible = true) =>
-          new THREE.MeshStandardMaterial({ color, metalness: 0.15, roughness: 0.55, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, visible });
-        // A part of several bodies: one colour each, as triangle groups (each body's faces are contiguous).
-        const bodies = v.bodies ?? [];
-        if (bodies.length > 1) {
-          bodies.forEach((b, i) => {
-            const first = faceRanges[b.faces[0]];
-            const last = faceRanges[b.faces[1] - 1];
-            if (first && last) g.addGroup(first.start, last.start + last.count - first.start, i);
+        // A face's look, or the default: a colour per body for a part of several, else the part grey.
+        const partGrey = cssColor(el, "--part", "#c4cad3");
+        const surface = (look: Appearance | null, fallback: THREE.ColorRepresentation, visible = true) => {
+          const light = finishLight(look?.finish);
+          return new THREE.MeshStandardMaterial({
+            color: look ? new THREE.Color(look.color) : fallback,
+            metalness: light.metalness,
+            roughness: light.roughness,
+            ...(light.env > 0 ? { envMap: room(), envMapIntensity: light.env } : {}),
+            polygonOffset: true,
+            polygonOffsetFactor: 1,
+            polygonOffsetUnits: 1,
+            visible,
           });
-          mesh = new THREE.Mesh(g, bodies.map((b, i) => surface(BODY_COLORS[i % BODY_COLORS.length], !hidden.has(b.name))));
+        };
+        const bodies = v.bodies ?? [];
+        const looks = faceLooks && faceLooks.length === v.faces.length && faceLooks.some(Boolean) ? faceLooks : null;
+        matBody = [];
+        matLook = [];
+        if (bodies.length > 1 || looks) {
+          // Triangle groups: runs of faces of one body and one look (each body's faces are contiguous), one material each.
+          const bodyIndex = new Map(bodies.map((b, i) => [b.name, i]));
+          const mats: THREE.Material[] = [];
+          const byKey = new Map<string, number>();
+          let run: { start: number; end: number; mat: number } | null = null;
+          const flush = () => run && g.addGroup(run.start, run.end - run.start, run.mat);
+          faceRanges.forEach((r, i) => {
+            const bi = bodies.length > 1 ? (bodyIndex.get(v.faces[i]?.body ?? "") ?? 0) : 0;
+            const look = looks?.[i] ?? null;
+            const key = `${bi}|${appearanceKey(look)}`;
+            let mat = byKey.get(key);
+            if (mat === undefined) {
+              mat = mats.length;
+              byKey.set(key, mat);
+              const name = bodies[bi]?.name ?? "";
+              mats.push(surface(look, bodies.length > 1 ? BODY_COLORS[bi % BODY_COLORS.length] : partGrey, !hidden.has(name)));
+              matBody.push(name);
+              matLook.push(look);
+            }
+            if (run && run.mat === mat && run.end === r.start) run.end = r.start + r.count;
+            else {
+              flush();
+              run = { start: r.start, end: r.start + r.count, mat };
+            }
+          });
+          flush();
+          mesh = new THREE.Mesh(g, mats);
         } else {
-          mesh = new THREE.Mesh(g, surface(cssColor(el, "--part", "#c4cad3")));
+          mesh = new THREE.Mesh(g, surface(null, partGrey));
+          matBody = [bodies[0]?.name ?? ""];
+          matLook = [null];
         }
         model.add(mesh);
         // Which body each vertex is in (−1: hidden), and the visible bodies' box: the rotation centre and Fit use them.
@@ -2147,6 +2208,12 @@ export function Viewport({
         clear = next;
         applyDisplay();
       },
+      setFaceAppearances(next: readonly (Appearance | null)[] | null) {
+        const key = (l: readonly (Appearance | null)[] | null) => (l ? l.map(appearanceKey).join(",") : "");
+        if (key(next) === key(faceLooks)) return;
+        faceLooks = next;
+        setModel(shownView);
+      },
       setHiddenBodies(next: ReadonlySet<string>) {
         hidden = next;
         setModel(shownView);
@@ -2319,6 +2386,7 @@ export function Viewport({
         datumTags.remove();
         photoTexture?.texture.dispose();
         fatMaterials.forEach((m) => m.dispose());
+        roomEnv?.dispose();
         renderer.dispose();
         renderer.domElement.remove();
       },
@@ -2373,6 +2441,9 @@ export function Viewport({
   useEffect(() => {
     api.current?.setClearBodies(clearBodies);
   }, [clearBodies]);
+  useEffect(() => {
+    api.current?.setFaceAppearances(appearances);
+  }, [appearances]);
   useEffect(() => {
     api.current?.setHiddenSketches(hiddenSketches);
   }, [hiddenSketches]);

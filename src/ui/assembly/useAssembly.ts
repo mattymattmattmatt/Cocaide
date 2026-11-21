@@ -17,6 +17,10 @@ import { componentStates, facesAlign, floatingGroups, motionWords, partSize, par
 import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, type Clash, type MateSuggestion } from "../../assembly/features";
 import { stepPart } from "../files/plan";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
+import { asAppearance, PartAppearances } from "../../appearance";
+import { BODY_COLORS } from "../Viewport";
+import { PART_GREY, type LookInfo } from "../appearance/targets";
+import type { Appearance } from "../../doc/types";
 import { placementOf, pointTo, apply as rotate } from "../../assembly/transform";
 import { pickInto, EMPTY_SELECTION, type PickTarget, type Selection } from "../model/selection";
 import { pickFile, saveFile } from "../files/pick";
@@ -396,7 +400,7 @@ export function useAssembly(o: AssemblyOptions) {
   };
 
   /** The assembly's components as the kernel places them. */
-  const placedForKernel = () => (asm?.components ?? []).map((k) => ({ id: k.id, part: k.part, ...placementOf(k) }));
+  const placedForKernel = () => (asm?.components ?? []).map((k) => ({ id: k.id, part: k.part, ...placementOf(k), ...(k.appearance ? { appearance: k.appearance } : {}) }));
 
   const interference = async () => {
     if (!asm || !doc) return;
@@ -512,6 +516,41 @@ export function useAssembly(o: AssemblyOptions) {
 
   // The view's see-through components, and what isolate hides (components gone from the assembly drop out).
   const clearBodies = useMemo(() => new Set((asm?.components ?? []).filter((k) => k.transparent).map((k) => k.id)), [asm]);
+  // How each face of the scene looks: its component's own appearance, else its part's (null: the default colour).
+  const appearances = useMemo((): (Appearance | null)[] | null => {
+    if (!asm) return null;
+    const looks = new Map<string, PartAppearances>();
+    const lookOf = (part: string) => {
+      let p = looks.get(part);
+      if (!p) looks.set(part, (p = new PartAppearances(docs[part])));
+      return p;
+    };
+    const byId = new Map(asm.components.map((k) => [k.id, k]));
+    let any = false;
+    const out = scene.faceOwner.map((o) => {
+      const k = byId.get(o.component);
+      if (!k) return null;
+      const own = asAppearance(k.appearance);
+      const face = own ? null : views.get(k.part)?.faces[o.local];
+      const look = own ?? (face ? (lookOf(k.part).face(face)?.appearance ?? null) : null);
+      if (look) any = true;
+      return look;
+    });
+    return any ? out : null;
+  }, [asm, scene, views, docs]);
+  /** How a component looks: its own colour, what its part shows, and its default colour in the view. */
+  const componentLook = (id: string): LookInfo => {
+    const i = asm?.components.findIndex((k) => k.id === id) ?? -1;
+    const k = i >= 0 ? asm!.components[i] : undefined;
+    const shown = (asm?.components ?? []).filter((x) => !x.hidden);
+    const at = shown.findIndex((x) => x.id === id);
+    return {
+      title: `Component ${id}`,
+      own: asAppearance(k?.appearance),
+      inherited: k ? new PartAppearances(docs[k.part]).partLook() : null,
+      fallback: shown.length > 1 && at >= 0 ? BODY_COLORS[at % BODY_COLORS.length] : PART_GREY,
+    };
+  };
   const isolateHides = useMemo(() => (isolated ? new Set((asm?.components ?? []).filter((k) => !isolated.includes(k.id)).map((k) => k.id)) : new Set<string>()), [asm, isolated]);
 
   // The selected component copied into the other holes of its size (when it sits in a hole): what the button offers.
@@ -549,6 +588,8 @@ export function useAssembly(o: AssemblyOptions) {
     isolated,
     setIsolated,
     clearBodies,
+    appearances,
+    componentLook,
     isolateHides,
     suggestions,
     applySuggestion,

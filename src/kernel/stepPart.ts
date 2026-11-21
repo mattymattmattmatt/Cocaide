@@ -17,6 +17,7 @@ import { compound } from "./bodies";
 import { scoped, type OC } from "./oc";
 import type { RebuildResult } from "./rebuild";
 import { exportSTEP } from "./step";
+import { partLooks } from "./stepColours";
 
 export type { ExportFrame };
 
@@ -48,7 +49,9 @@ export function exportPartSTEP(oc: OC, built: RebuildResult, doc: unknown, opts:
   const name = opts.name?.trim() || product.name;
   const description = photoNote(doc) ?? product.description;
   const extra = { author: p.author, productDescription: product.description };
-  if (!opts.bodies && !opts.frame) return exportSTEP(oc, built.solid, name, description, built.bodies, extra);
+  // The part's colours (its bodies', its features' faces'), when it has any.
+  const looks = scoped((s) => partLooks(oc, s, built, doc));
+  if (!opts.bodies && !opts.frame) return exportSTEP(oc, built.solid, name, description, built.bodies, extra, looks);
 
   const chosen = opts.bodies ? built.bodies.filter((b) => opts.bodies!.includes(b.name)) : built.bodies;
   if (opts.bodies) {
@@ -72,7 +75,7 @@ export function exportPartSTEP(oc: OC, built: RebuildResult, doc: unknown, opts:
       return s.track(s.track(new oc.BRepBuilderAPI_Transform(shape, t, true, false)).Shape());
     };
     const bodies = chosen.map((b) => ({ name: b.name, shape: place(b.shape) }));
-    if (bodies.length === 1) return exportSTEP(oc, bodies[0].shape, name, description, undefined, extra);
-    return exportSTEP(oc, compound(oc, s, bodies.map((b) => b.shape)), name, description, bodies, extra);
+    if (bodies.length === 1) return exportSTEP(oc, bodies[0].shape, name, description, bodies, extra, looks);
+    return exportSTEP(oc, compound(oc, s, bodies.map((b) => b.shape)), name, description, bodies, extra, looks);
   });
 }

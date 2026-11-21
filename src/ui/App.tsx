@@ -127,6 +127,10 @@ import { edgeSelectorFor, faceSelectorFor } from "../kernel/synthesize";
 import type { EdgeSelector, FaceSelector } from "../doc/types";
 import { rawParameters } from "../doc/parameters";
 import { clickedCentre } from "../features/hole/wizard";
+import { faceAppearances } from "../appearance";
+import { AppearancePicker } from "./appearance/AppearancePicker";
+import { AppearancePanel } from "./appearance/AppearancePanel";
+import { colourable, lookCommand, lookInfo, type LookTarget } from "./appearance/targets";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -380,6 +384,13 @@ export function App() {
   const sketchApply = useRef<((f: SketchFeature) => void) | null>(null);
   /** What the viewport shows: the document, or an open proposal while it is previewed. */
   const shown = useMemo(() => previewDoc ?? (parsed.ok ? parsed.value : null), [previewDoc, parsed]);
+  // How each face of the part in the view looks (null: the default colours), from the document's appearances.
+  const viewShown = (!previewDoc && pickView) || view;
+  const appearances = useMemo(() => {
+    if (!viewShown) return null;
+    const looks = faceAppearances(shown ?? d.doc, viewShown.faces);
+    return looks.some(Boolean) ? looks : null;
+  }, [shown, d.doc, viewShown]);
   /**
    * What the 3D view rebuilds: in the model, the part as far as the rollback bar; with a handle's drag shown
    * live. The drawing, export and the assistant work on the whole part.
@@ -1651,6 +1662,9 @@ export function App() {
   // ------------------------------------------------------------ right-click menus
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  /** The appearance picker, open on the part, a body or a feature, where it was asked for. */
+  const [look, setLook] = useState<{ target: LookTarget; x: number; y: number } | null>(null);
+  const openLook = (target: LookTarget, x: number, y: number) => setLook({ target, x, y });
   // Read at the click, not when the menu opened: the right-click's own selection has landed by then.
   const runToolRef = useRef(runTool);
   runToolRef.current = runTool;
@@ -1776,6 +1790,7 @@ export function App() {
         { label: suppressed ? "Unsuppress" : "Suppress", icon: suppressed ? "eye" : "suppress", onClick: () => run({ type: "suppressFeature", id, suppressed: !suppressed }), testId: "ctx-suppress" },
         { label: "Rename…", icon: "note", onClick: () => renameFeature(id), testId: "ctx-rename" },
         { label: f.note ? "Edit note…" : "Add note…", icon: "note", hint: "A short comment, kept in the document and shown in the tree's tooltip", onClick: () => requestTree("note", id), testId: "ctx-note" },
+        ...(colourable(op) ? [{ label: "Appearance…", icon: "appearance", hint: "The colour, finish and opacity of the faces it makes", onClick: () => openLook({ kind: "feature", feature: id }, x, y), testId: "ctx-appearance" } as MenuEntry] : []),
         "sep",
         ...treeItems(id),
         ...(op !== "sketch" ? [{ label: "Show dimensions", icon: "dimension", onClick: () => showDimensions(id), testId: "ctx-show-dimensions" } as MenuEntry] : []),
@@ -1837,6 +1852,11 @@ export function App() {
           ...(flat ? [viewCmd("view.normal", "Normal to", "front")] : []),
           viewCmd("view.fit", "Zoom to fit", "fit"),
           ...(f?.body && (view?.bodies.length ?? 0) > 1 ? [{ label: `Hide ${f.body}`, icon: "eyeOff", onClick: () => toggleBody(f.body!), testId: "ctx-hide-body" } as MenuEntry] : []),
+          "sep",
+          { heading: "Appearance" },
+          ...(f?.createdBy && colourable(features.find((g) => g.id === f.createdBy)?.op) ? [{ label: `Faces of ${f.createdBy}…`, icon: "appearance", hint: "The faces this feature makes", onClick: () => openLook({ kind: "feature", feature: f.createdBy! }, x, y), testId: "ctx-look-feature" } as MenuEntry] : []),
+          ...(f?.body && (view?.bodies.length ?? 0) > 1 ? [{ label: `Body ${f.body}…`, icon: "appearance", onClick: () => openLook({ kind: "body", body: f.body! }, x, y), testId: "ctx-look-body" } as MenuEntry] : []),
+          { label: "Whole part…", icon: "appearance", onClick: () => openLook({ kind: "part" }, x, y), testId: "ctx-look-part" },
         ];
         break;
       }
@@ -1862,6 +1882,7 @@ export function App() {
           viewCmd("view.front", "Front", "front"),
           viewCmd("view.right", "Right", "right"),
           ...(hiddenBodies.size ? [{ label: "Show all bodies", icon: "eye", onClick: () => setHiddenBodies(new Set()), testId: "ctx-show-bodies" } as MenuEntry] : []),
+          { label: "Part appearance…", icon: "appearance", hint: "The part's colour, finish and opacity", onClick: () => openLook({ kind: "part" }, x, y), testId: "ctx-look-part" },
           ...(rolledCount > 0 ? ["sep" as const, { label: "Roll to end", icon: "rollback", onClick: rollEnd, testId: "ctx-rollback-end" } as MenuEntry] : []),
           "sep",
           { label: "Undo", icon: "undo", shortcut: keyFor("undo", prefs) ?? undefined, disabled: !d.canUndo, onClick: d.undo },
@@ -1876,6 +1897,7 @@ export function App() {
         items = [
           { label: hidden ? "Show" : "Hide", icon: hidden ? "eye" : "eyeOff", onClick: () => toggleBody(target.name), testId: "ctx-toggle-body" },
           ...(b ? [{ label: "Select its faces", icon: "select", onClick: () => setSelection({ faces: Array.from({ length: b.faces[1] - b.faces[0] }, (_, i) => b.faces[0] + i), edges: [] }) } as MenuEntry] : []),
+          { label: "Appearance…", icon: "appearance", hint: "Its colour, finish and opacity", onClick: () => openLook({ kind: "body", body: target.name }, x, y), testId: "ctx-look-body" },
           { label: "Export as STEP…", icon: "export", onClick: () => openExportBodies([target.name]), testId: "ctx-export-body" },
           { label: "Save as a part…", icon: "save", onClick: () => saveBody(target.name), testId: "ctx-save-body" },
           { label: "Delete body", icon: "deleteBody", disabled: (view?.bodies.length ?? 0) < 2, onClick: () => deleteBody(toolCtx, target.name), testId: "ctx-delete-body" },
@@ -2682,7 +2704,19 @@ export function App() {
               onDelete={(name) => deleteBody(toolCtx, name)}
               onSave={saveBody}
               onExport={openExportBodies}
+              lookOf={doc ? (name) => lookInfo(doc as Record<string, unknown>, view, { kind: "body", body: name }) : undefined}
+              onLook={sketch ? undefined : (name, x, y) => openLook({ kind: "body", body: name }, x, y)}
             />
+            {doc && !sketch && (
+              <AppearancePanel
+                doc={doc as Record<string, unknown>}
+                view={view}
+                selectedFeature={selectedFeature}
+                selectedFaces={selection.faces}
+                onOpen={openLook}
+                onReset={(t) => run(lookCommand(t, null))}
+              />
+            )}
             <MeasurementsPanel measurements={view?.measurements ?? null} />
           </aside>
           {/* Phase P wave 2A: a sketch is drawn in the 3D view, so the centre (and the view in it) stays as it opens and closes; its toolbar goes above the view and its panel takes the right side's place. */}
@@ -2707,6 +2741,7 @@ export function App() {
                   underlay={underlay}
                   onPhotoPoint={photoPick ? onPhotoPoint : null}
                   hiddenBodies={hiddenBodies}
+                  appearances={appearances}
                   hiddenSketches={hiddenSketchIds}
                   nodes={shownNodes}
                   onMessage={(text) => setNotice({ kind: "info", text })}
@@ -3006,6 +3041,16 @@ export function App() {
           />
         )}
         {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+        {look && doc && (
+          <AppearancePicker
+            key={JSON.stringify(look.target)}
+            x={look.x}
+            y={look.y}
+            {...lookInfo(doc as Record<string, unknown>, view, look.target)}
+            onChange={(a) => run(lookCommand(look.target, a))}
+            onClose={() => setLook(null)}
+          />
+        )}
         {whatsWrongOpen && !sketch && mode === "model" && (
           <WhatsWrong
             problems={problems}

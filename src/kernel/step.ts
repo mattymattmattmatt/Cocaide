@@ -9,6 +9,7 @@ import type { STEPControl_Reader, TopoDS_Shape } from "replicad-opencascadejs";
 import { type OC, type Scope, scoped } from "./oc";
 import { isValidShape, volumeOf } from "./measure";
 import { copyOut } from "./ops";
+import { colourLabel, type ItemLook } from "./stepColours";
 
 let counter = 0;
 
@@ -22,6 +23,8 @@ export interface StepExtra {
  * Returns the STEP file text. Lengths are written in millimetres. `description`
  * goes in the header. With more than one body, each is its own named solid.
  * `extra`: the author (FILE_NAME) and the product's description (PRODUCT).
+ * `looks`: each body's colours, by body name (src/kernel/stepColours): a part
+ * that has any goes out through XCAF, so its colours go with it.
  */
 export function exportSTEP(
   oc: OC,
@@ -30,8 +33,10 @@ export function exportSTEP(
   description?: string | null,
   bodies?: { name: string; shape: TopoDS_Shape }[],
   extra: StepExtra = {},
+  looks?: Map<string, ItemLook> | null,
 ): string {
-  if (bodies && bodies.length > 1) return finish(exportNamed(oc, name, bodies, description), name, extra);
+  if (bodies && bodies.length > 1) return finish(exportNamed(oc, name, bodies, description, looks), name, extra);
+  if (looks?.size) return finish(exportNamed(oc, name, [{ name: bodies?.[0]?.name ?? name, shape }], description, looks), name, extra);
   const path = `/cocaide-export-${++counter}.step`;
   const productName = stepSafe(name);
   return finish(
@@ -69,25 +74,37 @@ function finish(text: string, name: string, extra: StepExtra): string {
   return out;
 }
 
-/** An assembly named after the part, with one named component per body. */
-function exportNamed(oc: OC, name: string, bodies: { name: string; shape: TopoDS_Shape }[], description?: string | null): string {
+/** An assembly named after the part, with one named component per body (a single body: the part itself), coloured as `looks` says. */
+function exportNamed(oc: OC, name: string, bodies: { name: string; shape: TopoDS_Shape }[], description?: string | null, looks?: Map<string, ItemLook> | null): string {
   const path = `/cocaide-export-${++counter}.step`;
   return scoped((s) => {
     const text = (v: string) => s.track(new oc.TCollection_ExtendedString(stepSafe(v), false));
     // The document is not tracked: OCCT owns it through its handle, and deleting it here would crash.
     const doc = new oc.TDocStd_Document(text("XmlXCAF"));
     const shapes = oc.XCAFDoc_DocumentTool.ShapeTool(s.track(doc.Main()));
-    const assembly = s.track(shapes.NewShape());
-    oc.TDataStd_Name.Set(assembly, text(name));
-    for (const b of bodies) {
-      const label = s.track(shapes.AddShape(b.shape, false, false));
-      oc.TDataStd_Name.Set(label, text(b.name));
-      oc.TDataStd_Name.Set(s.track(shapes.AddComponent(assembly, label, s.track(new oc.TopLoc_Location()))), text(b.name));
+    const colours = oc.XCAFDoc_DocumentTool.ColorTool(s.track(doc.Main()));
+    if (bodies.length === 1) {
+      // One body: the part itself (no assembly around it), named after the part.
+      const label = s.track(shapes.AddShape(bodies[0].shape, false, false));
+      oc.TDataStd_Name.Set(label, text(name));
+      const look = looks?.get(bodies[0].name);
+      if (look) colourLabel(oc, s, shapes as never, colours as never, label, bodies[0].shape, look);
+    } else {
+      const assembly = s.track(shapes.NewShape());
+      oc.TDataStd_Name.Set(assembly, text(name));
+      for (const b of bodies) {
+        const label = s.track(shapes.AddShape(b.shape, false, false));
+        oc.TDataStd_Name.Set(label, text(b.name));
+        const look = looks?.get(b.name);
+        if (look) colourLabel(oc, s, shapes as never, colours as never, label, b.shape, look);
+        oc.TDataStd_Name.Set(s.track(shapes.AddComponent(assembly, label, s.track(new oc.TopLoc_Location()))), text(b.name));
+      }
     }
     shapes.UpdateAssemblies();
     oc.Interface_Static.SetCVal("write.step.unit", "MM");
     const writer = s.track(new oc.STEPCAFControl_Writer());
     writer.SetNameMode(true);
+    writer.SetColorMode(true);
     if (!writer.Perform(doc, path, s.track(new oc.Message_ProgressRange()))) throw new Error("STEP write failed");
     const bytes = oc.FS.readFile(path) as Uint8Array;
     oc.FS.unlink(path);

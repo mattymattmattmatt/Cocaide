@@ -12,6 +12,9 @@ import type { BodyRange } from "../kernel/bodies";
 import { BODY_COLORS } from "./Viewport";
 import { Section } from "./Section";
 import { Icon } from "./icons";
+import { AppearanceChip, describeAppearance, sourceWords } from "./appearance/AppearancePicker";
+import type { LookInfo } from "./appearance/targets";
+import { MATERIAL_APPEARANCES } from "../appearance";
 
 interface Props {
   measurements: Measurements | null;
@@ -30,9 +33,13 @@ interface Props {
   onSave?(body: string): void;
   /** Opens Export bodies (STEP) with these bodies ticked (none: what is selected, else all). */
   onExport?(bodies?: string[]): void;
+  /** How a body looks (its own, what it inherits, its default colour). */
+  lookOf?(name: string): LookInfo;
+  /** Opens the appearance picker on a body, at these client pixels. */
+  onLook?(name: string, x: number, y: number): void;
 }
 
-/** Materials to pick from; anything else is typed as a density. */
+/** Materials to pick from, each with how it looks (a body of it shows that unless it has its own colour); anything else is typed as a density. */
 export const MATERIALS: Material[] = [
   { name: "steel", densityKgPerM3: 7850 },
   { name: "stainless steel", densityKgPerM3: 8000 },
@@ -42,11 +49,11 @@ export const MATERIALS: Material[] = [
   { name: "titanium", densityKgPerM3: 4430 },
   { name: "nylon", densityKgPerM3: 1150 },
   ...TIMBER_MATERIALS,
-];
+].map((m) => (MATERIAL_APPEARANCES[m.name] ? { ...m, appearance: MATERIAL_APPEARANCES[m.name] } : m));
 
 const n = (x: number, digits = 3) => x.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: digits });
 
-export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelect, onAsk, onSelectMember, materials = {}, onMaterial, onDelete, onSave, onExport }: Props) {
+export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelect, onAsk, onSelectMember, materials = {}, onMaterial, onDelete, onSave, onExport, lookOf, onLook }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   if (!m || (bodies.length < 2 && !m.members.length)) return null;
   return (
@@ -77,7 +84,30 @@ export function BodiesPanel({ measurements: m, bodies, hidden, onToggle, onSelec
                 onAsk(b.name, e.clientX, e.clientY);
               }}
             >
-              <span className="swatch" style={{ background: BODY_COLORS[i % BODY_COLORS.length] }} />
+              {(() => {
+                // Its colour as it shows: its own, else what it inherits, else its default; a click opens the picker.
+                const info = lookOf?.(b.name);
+                const showing = info ? (info.own ?? info.inherited?.appearance ?? null) : null;
+                const fallback = info?.fallback ?? BODY_COLORS[i % BODY_COLORS.length];
+                const words = info ? (info.own ? describeAppearance(info.own) : `From ${sourceWords(info.inherited)}`) : "";
+                return onLook ? (
+                  <button
+                    type="button"
+                    className="look-button"
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      onLook(b.name, r.left, r.bottom + 4);
+                    }}
+                    title={`Appearance: ${words}`}
+                    aria-label={`Appearance of body ${b.name}`}
+                    data-testid={`body-look-${b.name}`}
+                  >
+                    <AppearanceChip look={showing} fallback={fallback} size={13} />
+                  </button>
+                ) : (
+                  <AppearanceChip look={showing} fallback={fallback} size={12} />
+                );
+              })()}
               <button className="body-name" onClick={() => onSelect(b)} title="Select its faces; right-click for its menu">
                 {b.name}
               </button>

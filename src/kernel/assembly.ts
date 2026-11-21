@@ -8,12 +8,16 @@ import type { OC, Scope } from "./oc";
 import { compoundOf } from "./ops";
 import { rebuild, type RebuildResult } from "./rebuild";
 import { exportSTEP } from "./step";
+import { componentLook, partLooks, type ItemLook } from "./stepColours";
+import type { Appearance } from "../doc/types";
 
 export interface PlacedComponent {
   id: string;
   part: string;
   R: number[][];
   t: number[];
+  /** Its own colour, over its part's (the STEP file carries it). */
+  appearance?: Appearance;
 }
 
 /** Runs `use` with each component's placed solid (components whose part didn't build are left out, and named). */
@@ -44,12 +48,21 @@ export function withAssemblyShapes<T>(oc: OC, s: Scope, parts: Record<string, un
   }
 }
 
-/** The assembly as a STEP file: one named solid per component. */
+/** The assembly as a STEP file: one named solid per component, each coloured as it looks (its own colour, else its part's). */
 export function assemblySTEP(oc: OC, s: Scope, name: string, parts: Record<string, unknown>, components: PlacedComponent[]): string {
-  return withAssemblyShapes(oc, s, parts, components, (shapes, missing) => {
+  return withAssemblyShapes(oc, s, parts, components, (shapes, missing, built) => {
     if (missing.length) throw new Error(`${missing.join(", ")}: ${missing.length === 1 ? "its part doesn't" : "their parts don't"} build`);
     if (!shapes.length) throw new Error("the assembly has no components to export");
-    return exportSTEP(oc, compoundOf(oc, s, shapes.map((x) => x.shape)), name, null, shapes);
+    const partLook = new Map<string, Map<string, ItemLook> | null>();
+    const looks = new Map<string, ItemLook>();
+    for (const k of components) {
+      const r = built.get(k.part);
+      if (!r) continue;
+      if (!partLook.has(k.part)) partLook.set(k.part, partLooks(oc, s, r, parts[k.part]));
+      const look = componentLook(k.appearance ?? null, partLook.get(k.part)!, r.bodies);
+      if (look) looks.set(k.id, look);
+    }
+    return exportSTEP(oc, compoundOf(oc, s, shapes.map((x) => x.shape)), name, null, shapes, {}, looks.size ? looks : null);
   });
 }
 

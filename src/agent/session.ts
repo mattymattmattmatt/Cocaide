@@ -407,7 +407,7 @@ export class AgentSession {
     const name = typeof a.name === "string" && a.name.trim() ? a.name.trim() : `${typeof this.doc.name === "string" ? this.doc.name : "part"}-assembly`;
     let text: string;
     try {
-      text = scoped((s) => assemblySTEP(this.oc, s, name, partDocuments(this.doc as Record<string, unknown>, asm), asm.components.map((k) => ({ id: k.id, part: k.part, ...placementOf(k) }))));
+      text = scoped((s) => assemblySTEP(this.oc, s, name, partDocuments(this.doc as Record<string, unknown>, asm), asm.components.map((k) => ({ id: k.id, part: k.part, ...placementOf(k), ...(k.appearance ? { appearance: k.appearance } : {}) }))));
     } catch (e) {
       return this.fail(`exportAssemblySTEP: ${(e as Error).message}`);
     }

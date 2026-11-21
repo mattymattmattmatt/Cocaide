@@ -643,6 +643,13 @@ const ICONS = {
     </>
   ),
   filterPlanes: <path d="M3 16 8 7h13l-5 9z" fill="currentColor" fillOpacity={0.2} />,
+  // A drop of paint: how something looks (its colour, finish and opacity).
+  appearance: (
+    <>
+      <path d="M12 3.5s-5.8 6.3-5.8 10.6a5.8 5.8 0 0 0 11.6 0C17.8 9.8 12 3.5 12 3.5z" />
+      <path d="M9.4 14.6a2.7 2.7 0 0 0 2.4 2.6" strokeOpacity={0.6} />
+    </>
+  ),
   palette: (
     <>
       <path d="M4 5h16v14H4z" />

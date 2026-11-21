@@ -3,7 +3,7 @@
 // component's place, a mate's type and value, the mates the selection can
 // make, interference, the parts list).
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { SELF } from "../../doc/assembly";
 import { MATE_TYPES } from "../../doc/types";
 import type { MateType, Vec3 } from "../../doc/types";
@@ -14,6 +14,7 @@ import { MenuItem, ToolButton, ToolMenu } from "../tools";
 import { Viewport } from "../Viewport";
 import type { PickTarget } from "../model/selection";
 import type { AssemblyWorkspace } from "./useAssembly";
+import { AppearanceChip, AppearancePicker, describeAppearance, sourceWords } from "../appearance/AppearancePicker";
 
 const MATE_WORDS: Record<MateType, { label: string; icon: IconName; hint: string }> = {
   coincident: { label: "Coincident", icon: "coincident", hint: "Two faces flat against each other (or an edge on a face, two axes in line)" },
@@ -163,7 +164,7 @@ export function AssemblyMain({ a, display, onDisplay }: { a: AssemblyWorkspace; 
         )}
       </aside>
       <section className="center">
-        <Viewport view={a.scene.view} fitToken={a.fitToken} selection={a.selection} onPick={a.pick} peek={peek} handles={a.handles} onHandle={a.onHandle} memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`} display={display} onDisplay={onDisplay} clearBodies={a.clearBodies} hiddenBodies={a.isolateHides} />
+        <Viewport view={a.scene.view} fitToken={a.fitToken} selection={a.selection} onPick={a.pick} peek={peek} handles={a.handles} onHandle={a.onHandle} memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`} display={display} onDisplay={onDisplay} clearBodies={a.clearBodies} hiddenBodies={a.isolateHides} appearances={a.appearances} />
         {a.isolated && (
           <div className="view-hint asm-isolate-hint" role="status" data-testid="asm-isolate-hint">
             <Icon name="isolate" />
@@ -223,6 +224,7 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
         <Field label="Rotation" unit="°">
           <Vec3Input value={rot} onCommit={(v) => a.editComponent(k.id, { rotation: v.map(Number) as Vec3 }, `Turn ${k.id}`)} testId="asm-prop-rotation" />
         </Field>
+        <ComponentLook a={a} id={k.id} />
         <p className="muted small">Turned about X, then Y, then Z, then moved. A mated component goes back where its mates hold it.</p>
         {a.holeCopyPlan && (
           <div className="asm-copy-holes">
@@ -390,3 +392,41 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
   if (!sections.length) return <section className="asm-section"><p className="muted small">Insert a part to start. Select a component in the tree or the view to place it; select a face of one and Ctrl-click one of another to mate them.</p></section>;
   return <>{sections}</>;
 }
+
+/** A component's colour: its own over its part's, picked from the appearance picker. */
+function ComponentLook({ a, id }: { a: AssemblyWorkspace; id: string }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const info = a.componentLook(id);
+  const showing = info.own ?? info.inherited?.appearance ?? null;
+  return (
+    <Field label="Appearance">
+      <span className="asm-look">
+        <button
+          type="button"
+          className="look-button"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setAt({ x: r.left, y: r.bottom + 4 });
+          }}
+          aria-label={`Appearance of component ${id}`}
+          data-testid="asm-prop-look"
+        >
+          <AppearanceChip look={showing} fallback={info.fallback} inherited={!info.own} size={18} />
+        </button>
+        <span className="muted small">{info.own ? describeAppearance(info.own) : info.inherited ? `From ${sourceWords(info.inherited)}` : "Its part's colours"}</span>
+      </span>
+      {at && (
+        <AppearancePicker
+          x={at.x}
+          y={at.y}
+          {...info}
+          inherited={info.inherited}
+          onChange={(look) => a.editComponent(id, { appearance: look ?? undefined }, look ? `Colour ${id}` : `${id}: its part's colours`, false)}
+          onClose={() => setAt(null)}
+          testId="asm-look-picker"
+        />
+      )}
+    </Field>
+  );
+}
+
