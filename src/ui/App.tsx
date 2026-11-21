@@ -698,6 +698,17 @@ export function App() {
   const openFile = useCallback(
     async (file: File) => {
       if (await filesRef.current.open(file)) return;
+      // A drawing (a PDF or a picture) is not a part file: say where a part's drawings are, and how to read a part off one.
+      const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+      const pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name) || String.fromCharCode(...head.slice(0, 5)) === "%PDF-";
+      const picture = !pdf && (DRAWING_TYPES.includes(file.type) || /\.(png|jpe?g|webp|gif)$/i.test(file.name));
+      if (pdf || picture) {
+        setNotice({
+          kind: "info",
+          text: `${file.name} is a ${pdf ? "PDF" : "picture"}, not a part. Open opens .cocaide.json parts (a part's drawings are on its Drawing tab, where Export PDF prints them again), STEP and DXF files. To start a part from a drawing, drop the ${pdf ? "PDF" : "picture"} on the window instead.`,
+        });
+        return;
+      }
       replaceDocument(await file.text(), `Opened ${file.name}`);
     },
     [], // eslint-disable-line react-hooks/exhaustive-deps

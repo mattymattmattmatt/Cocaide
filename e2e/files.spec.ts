@@ -213,3 +213,13 @@ test("DXF in: inserted into a sketch on Top (ends joined) and extruded to the ri
   // The slot's sides run on into its ends: tangent there, as well as joined.
   expect(doc.features[0].constraints.filter((k) => k.type === "tangent")).toHaveLength(4);
 });
+
+test("Open with a PDF or a picture says where a part's drawings are, and keeps the part open", async ({ page }) => {
+  await page.locator('input[type="file"][accept^=".json"]').setInputFiles({ name: "shed-drawing-pack.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n%âã\n1 0 obj\n<<>>\nendobj\n") });
+  await expect(page.getByText("shed-drawing-pack.pdf is a PDF, not a part.")).toBeVisible();
+  await expect(page.getByText(/Drawing tab/).first()).toBeVisible();
+  // The part that was open stays open.
+  await expectVolume(page, "18,994.728");
+  await page.locator('input[type="file"][accept^=".json"]').setInputFiles({ name: "sketch.png", mimeType: "image/png", buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) });
+  await expect(page.getByText("sketch.png is a picture, not a part.")).toBeVisible();
+});
