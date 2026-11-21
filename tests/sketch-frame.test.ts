@@ -196,3 +196,14 @@ describe("members on a sketch on a face", () => {
     expect(lowest(thicker.doc)).toBe(sitting + 15);
   });
 });
+
+describe("members named as they are picked", () => {
+  it("takes each line's own member id, and refuses one already taken", () => {
+    const named = ["l1", "l2", "l3", "l4"].map((entity, i) => ({ sketch: "layout", entity, id: ["rail_bottom", "post_right", "rail_top", "post_left"][i] }));
+    const r = addSketchMembers(layout(), { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", lines: named });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.members).toEqual(["rail_bottom", "post_right", "rail_top", "post_left"]);
+    expect(r.doc.features.filter((f) => f.op === "joint").every((j) => typeof j.through === "string" && r.members.includes(j.through as string))).toBe(true);
+    expect(addSketchMembers(r.doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "none", lines: [{ sketch: "layout", entity: "l5", id: "rail_top" }] })).toMatchObject({ ok: false, error: expect.stringContaining("taken") });
+  });
+});

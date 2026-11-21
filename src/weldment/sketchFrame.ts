@@ -18,6 +18,8 @@ import { isNodeLink, resolveNodeLink, type SketchFrames } from "./sketchNodes";
 export interface SketchLine {
   sketch: string;
   entity: string;
+  /** The member's id (its body's name too); default the two nodes' names, "AB". */
+  id?: string;
 }
 
 export interface SketchMembersSpec {
@@ -141,7 +143,10 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       skipped.push(line.entity);
       continue;
     }
-    const id = freeId(next, `${a}${b}`);
+    if (line.id !== undefined && (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(line.id) || next.features.some((f) => f.id === line.id))) {
+      return { ok: false, error: `${line.entity}: "${line.id}" ${next.features.some((f) => f.id === line.id) ? "is taken by another feature" : "is not an id (letters, digits, _ and -)"}` };
+    }
+    const id = line.id ?? freeId(next, `${a}${b}`);
     const align = spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined;
     const problem = run({ type: "addFeature", feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}) } });
     if (problem) return { ok: false, error: problem };
@@ -213,8 +218,8 @@ export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>, 
   }
   let lines: SketchLine[] = [];
   if (Array.isArray(a.lines)) {
-    lines = a.lines.flatMap((l) => (isObject(l) && typeof l.sketch === "string" && typeof l.entity === "string" ? [{ sketch: l.sketch, entity: l.entity }] : []));
-    if (lines.length !== a.lines.length) return { ok: false, error: 'lines: each is { "sketch": <sketch id>, "entity": <line id> }' };
+    lines = a.lines.flatMap((l) => (isObject(l) && typeof l.sketch === "string" && typeof l.entity === "string" && (l.id === undefined || typeof l.id === "string") ? [{ sketch: l.sketch, entity: l.entity, ...(typeof l.id === "string" ? { id: l.id } : {}) }] : []));
+    if (lines.length !== a.lines.length) return { ok: false, error: 'lines: each is { "sketch": <sketch id>, "entity": <line id>, "id"?: <member id> }' };
   } else if (typeof a.sketch === "string") {
     const f = doc.features.find((x) => x.id === a.sketch);
     if (!f || (f.op !== "sketch" && f.op !== "sketch3d")) return { ok: false, error: `there is no sketch "${String(a.sketch)}"` };
