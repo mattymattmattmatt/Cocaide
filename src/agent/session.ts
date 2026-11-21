@@ -35,6 +35,8 @@ import { geometryKey } from "../doc/drawing";
 import type { Constraint, SketchEntity, Vec2, Vec3 } from "../doc/types";
 import { drawingChecks } from "../drafting/checks";
 import { composeDrawing, type ComposedSheet } from "../drafting/compose";
+import { withRefHints } from "../drafting/refHints";
+import type { Drawing } from "../doc/types";
 import { keepScales } from "../drafting/fit";
 import { fitViews } from "../drafting/fit";
 import { sheetDXF } from "../drafting/dxf";
@@ -536,10 +538,12 @@ export class AgentSession {
       case "geoRefs":
         return this.geoRefs(String(a.view ?? ""));
       case "exportDrawing":
+        this.composed();
         return this.exportDrawing(a.format, a.file, a.sheet);
       case "drawPart":
         return await this.drawPart(a);
       case "exportDrawingPack":
+        this.composed();
         return await this.exportDrawingPack(a);
       case "setDimension":
         return this.edit({ type: "setDimension", sketch: String(a.sketch), ...(typeof a.index === "number" ? { index: a.index } : {}), ...(typeof a.name === "string" ? { name: a.name } : {}), value: a.value as number | string });
@@ -647,10 +651,13 @@ export class AgentSession {
           return done;
         }
         case "checkDrawing": {
+          // Composing keeps where the annotations point (and re-attaches any whose edge keys moved) before checking.
+          this.composed();
           const findings = findingsOf(await detailState(this.doc, this.inspector), this.detailing ?? undefined);
           return { result: { ok: true, passes: !findings.some((f) => f.severity === "error"), findings: findings.map((f) => `${f.severity} (${f.rule}): ${f.message}`) } };
         }
         case "renderSheet": {
+          this.composed();
           const st = await detailState(this.doc, this.inspector, typeof a.sheet === "string" ? { sheet: a.sheet } : {});
           if (!st.sheet) return this.fail("renderSheet: the part has no drawing (newDrawing makes one)");
           const shot = await sheetRaster(st.sheet, { side: 1800 });
@@ -708,7 +715,8 @@ export class AgentSession {
       if (text === this.history.present) return { result: { ok: true, changed: false, ...this.status(), ...extra } };
       this.history = record(this.history, text);
       this.commit(doc, text, null);
-      return { result: { ok: true, changed: true, ...this.status(), ...this.drawingStatus(cmds[cmds.length - 1]), ...extra } };
+      const status = this.drawingStatus(cmds[cmds.length - 1]);
+      return { result: { ok: true, changed: true, ...this.status(), ...status, ...extra } };
     }
     const next = rebuild(doc, this.oc);
     const broke = newFailures(this.built, next);
@@ -1067,7 +1075,25 @@ export class AgentSession {
     if (!v.drawing) return null;
     const geometry = this.built.solid ? this.geometry(viewSpecs(v.drawing)) : null;
     const c = composeDrawing(this.doc, { measurements: this.built.measurements, geometry });
+    if (c && geometry) this.keepRefs(c.drawing, c.sheets);
     return { sheets: c?.sheets ?? [], sheet: c?.sheets[0] ?? null, geometry, drawingErrors: v.drawingErrors };
+  }
+
+  /**
+   * Remembers where the annotations' GeoRefs are (and writes back any found
+   * again after their keys changed): kept in the document as it stands, not
+   * a revision of its own, so a later model edit can't detach them.
+   */
+  private keepRefs(drawing: Drawing, sheets: ComposedSheet[]) {
+    if (!isObject(this.doc.drawing)) return;
+    const next = withRefHints(this.doc.drawing as Record<string, unknown>, drawing, sheets);
+    if (!next) return;
+    const doc = { ...this.doc, drawing: next };
+    const text = formatDocument(doc);
+    this.doc = doc as RawDocument;
+    this.history = { ...this.history, present: text };
+    this.hash = sha256(text);
+    if (this.opts.docPath) writeFileSync(this.opts.docPath, text);
   }
 
   /** After a drawing edit: what the annotation it set reads, and the checks that fail. */

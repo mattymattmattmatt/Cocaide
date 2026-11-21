@@ -14,6 +14,7 @@
 // a reference survives a rebuild that leaves that feature's edges alone. The
 // Phase L points (nodes, member ends, holes, @sides) resolve too.
 
+import { geoRefText, healRef, movedFrom } from "./refHints";
 import { parseGeoRef, type GeoRefParts, type PointRef } from "../doc/drawing";
 import type { GeoRef, Vec2, Vec3 } from "../doc/types";
 import type { ProjectedEdge } from "../kernel/drawingViews";
@@ -138,6 +139,16 @@ function piecesOf(edges: ProjectedEdge[], key: string): ProjectedEdge[] {
 /** A GeoRef in a view, view mm. `points` resolves the Phase L forms. */
 export function geoInView(cv: Pick<ComposedView, "edges" | "frame" | "outline">, parts: GeoRefParts, points?: ComposedSheet["points"]): InView | null {
   if (parts.form === "point") return phaseL(cv, parts.point, points);
+  const found = edgeRefInView(cv, parts);
+  const hint = points?.hints?.[geoRefText(parts)];
+  if (!hint) return found;
+  // The drawing remembers where it was: a key that is gone, or that now names something elsewhere while the same
+  // thing is still where it was (the faces split differently and renumbered), is found again there.
+  if (found && !movedFrom(found, hint)) return found;
+  return healRef(cv, parts, hint)?.found ?? found;
+}
+
+function edgeRefInView(cv: Pick<ComposedView, "edges" | "frame" | "outline">, parts: Exclude<GeoRefParts, { form: "point" }>): InView | null {
   const pieces = piecesOf(cv.edges, parts.key);
   if (!pieces.length) return null;
   const e = pieces.find((x) => x.visible) ?? pieces[0];

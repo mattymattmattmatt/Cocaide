@@ -992,6 +992,13 @@ A weldment profile is a sketch with size parameters. In a part it lives under `p
 - **The sketch it came from** is marked with `"profile": { "name": "SHS", "library": { "id", "version" } }`, so editing it opens the card again and saves the next version.
 - **The section library** is IndexedDB in this browser (`src/weldment/store.ts`). It is not part of any document. Export writes `{ "cocaide": "sections", "version": 1, "profiles": [...] }`, and import keeps a profile already here unless the file has a later version of it.
 
+### Annotations that keep hold of their geometry
+
+A GeoRef names an edge by its key ("post_b0/l23": the 23rd line post_b0 made, by position). A key can change when the model's faces split differently though the shape is the same: joints rearranged, a feature reordered. So the drawing keeps `refHints`: where each GeoRef its annotations use was in its view (view mm), its body, and whether its line was hidden (`src/drafting/refHints.ts`).
+- A GeoRef whose key is gone, or now names something elsewhere while the same thing is still where it was, is found again there: the same kind of thing (an end, a centre, a line) on the same body, a seen line's end before a hidden one's. Composing does this, and the re-found GeoRef is written back with its new key.
+- When nothing is left where it was, the model really moved it, and the annotation follows its key as before.
+- The app records the places once every view of the document as it is has projected (no undo step; a saved document stays saved). The agent does it after every drawing edit, check and export. A drawing made before this has no places to go by until it is next composed.
+
 ### Frames
 
 - **Nodes** are named points at the top of the document. A coordinate can be an expression. A member whose `from` or `to` names a node moves with it, and so do its joints.

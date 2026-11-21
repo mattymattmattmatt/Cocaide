@@ -67,6 +67,12 @@ export interface DocumentState {
   setSketchFrames(frames: SketchFrames | undefined): void;
   /** Replace the document with one already checked (an accepted proposal): one undo step. */
   replaceDoc(doc: RawDocument): void;
+  /**
+   * Bookkeeping the app keeps in the document (where a drawing's annotations
+   * point): the document as it is now, no undo step, and a saved document
+   * stays saved.
+   */
+  amend(doc: RawDocument): void;
   /** Replace the whole text (typing in the JSON editor). */
   setText(text: string): void;
   /** Load a new document: resets history (and ends any session). */
@@ -209,6 +215,19 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     [commitTyping],
   );
 
+  const amend = useCallback(
+    (next: RawDocument) => {
+      if (pending.current) return; // typing: never under the person's hands
+      const text = formatDocument(next);
+      if (text === textRef.current) return;
+      const clean = textRef.current === savedText;
+      history.current = { ...history.current, present: text };
+      if (clean) setSavedText(text);
+      show(text);
+    },
+    [savedText],
+  );
+
   const undo = useCallback((): UndoResult => {
     commitTyping();
     const h = history.current;
@@ -317,6 +336,7 @@ export function useDocument(initial: { text: string; savedText: string }): Docum
     undoLabel: undoLabel(h),
     redoLabel: redoLabel(h),
     dispatch,
+    amend,
     setSketchFrames: (frames: SketchFrames | undefined) => void (framesRef.current = frames),
     replaceDoc,
     setText,

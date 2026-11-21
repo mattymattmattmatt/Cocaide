@@ -51,6 +51,7 @@ import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
 import { addSketchMembers, type SketchLine } from "../weldment/sketchFrame";
 import { framesOf } from "../weldment/sketchNodes";
+import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { SketchMembersPanel, type SketchMembersRequest } from "./SketchMembersPanel";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
@@ -645,6 +646,15 @@ export function App() {
     [shown, shownDrawing, view, geometry, pendingViews],
   );
   const sheet = useMemo(() => composed?.sheets.find((x) => x.id === activeSheet) ?? composed?.sheets[0] ?? null, [composed, activeSheet]);
+  // Where the annotations' GeoRefs are, kept in the document once every view is projected for the document as it is
+  // (not a preview, a feature being edited or a half-projected drawing): a model edit that renumbers edges can't detach them.
+  useEffect(() => {
+    if (!composed || !doc || shown !== doc || session || d.transaction || pendingViews?.size || !geometry || geometry.key !== projectionKey) return;
+    const raw = doc.drawing;
+    if (!raw || typeof raw !== "object") return;
+    const next = withRefHints(raw as Record<string, unknown>, composed.drawing, composed.sheets);
+    if (next) d.amend({ ...doc, drawing: next });
+  }, [composed]); // eslint-disable-line react-hooks/exhaustive-deps
   const drawingChecksNow = useMemo(() => (composed && shown ? drawingChecks(composed.sheets, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [composed, shown, view, geometry]);
 
   // Keep the working document across reloads.

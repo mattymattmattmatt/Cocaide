@@ -135,6 +135,12 @@ export interface Mate {
 export interface Drawing {
   /** One or more; views and annotations have ids unique across all of them. */
   sheets: DrawingSheet[];
+  /**
+   * Where each GeoRef the annotations use was in its view (view mm, and its
+   * body), kept by the app and the agent (src/drafting/refHints.ts): a GeoRef
+   * whose edge key changes with the model is found again there.
+   */
+  refHints?: Record<string, { body?: string; p: number[]; hidden?: true }>;
   /** The drafting standard: arrowheads, lettering, symbols and the default projection. Default ISO. */
   standard?: DraftingStandard;
   /** The units the drawing shows (the model is mm). Default mm. */
@@ -154,7 +160,7 @@ export interface Drawing {
   /** "upright" (default) or "slanted" (ISO 3098 type B slanted: every letter leaning 15° right). */
   lettering?: "upright" | "slanted";
 }
-export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions", "precision", "dualUnits", "font", "lettering"] as const;
+export const DRAWING_KEYS = ["sheets", "standard", "units", "generalTolerance", "properties", "revisions", "precision", "dualUnits", "font", "lettering", "refHints"] as const;
 export const DRAFTING_STANDARDS = ["ISO", "ASME"] as const;
 export type DraftingStandard = (typeof DRAFTING_STANDARDS)[number];
 

@@ -8,6 +8,7 @@
 // title block. An annotation that points at something the part no longer
 // has, or that its view can't show, is not drawn: it is listed in `problems`.
 
+import type { RefHint } from "./refHints";
 import type { CutListResult } from "../weldment/items";
 import { assemblyBom } from "../assembly/bom";
 import type { DrawingGeometry } from "../ask/kernel";
@@ -153,6 +154,8 @@ export interface PointContext {
   members: { id: string; body: string; ends: [Vec3, Vec3]; length: number }[];
   /** Each hole feature's first hole. */
   holes: Map<string, HoleRecord>;
+  /** Where the annotations' GeoRefs were (the drawing's refHints): one whose key is gone is found again there. */
+  hints?: Readonly<Record<string, RefHint>>;
 }
 
 export interface ComposedSheet {
@@ -361,6 +364,7 @@ class Composer {
       nodes: v.nodes,
       members: (m?.members ?? []).map((x) => ({ id: x.id, body: x.body, ends: x.ends, length: x.length })),
       holes: this.holes,
+      ...(d.refHints ? { hints: d.refHints } : {}),
     };
     if (this.template === "classic") {
       [this.width, this.height] = paperSize(s.format);

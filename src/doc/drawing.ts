@@ -205,6 +205,10 @@ export function validateDrawing(raw: unknown, c: Checker): Drawing | null {
   if (input.units !== undefined && input.units !== "mm" && input.units !== "in") c.fail("drawing.units", `must be "mm" or "in" (got ${describe(input.units)})`);
   if (input.generalTolerance !== undefined) text(input.generalTolerance, "drawing.generalTolerance", c, 200);
   if (input.precision !== undefined && (!Number.isInteger(input.precision) || (input.precision as number) < 0 || (input.precision as number) > 6)) c.fail("drawing.precision", `is the decimal places dimensions are written to, 0 to 6 (got ${describe(input.precision)})`);
+  if (input.refHints !== undefined) {
+    const ok = isObject(input.refHints) && Object.values(input.refHints).every((h) => isObject(h) && Array.isArray(h.p) && h.p.every((x) => typeof x === "number" && Number.isFinite(x)) && (h.body === undefined || typeof h.body === "string"));
+    if (!ok) c.fail("drawing.refHints", 'must be an object of GeoRef: { "body"?, "p": [numbers] } (where each was; the app keeps it)');
+  }
   if (input.dualUnits !== undefined && typeof input.dualUnits !== "boolean") c.fail("drawing.dualUnits", `must be true or false (got ${describe(input.dualUnits)})`);
   if (input.font !== undefined && !["sans", "serif", "mono"].includes(input.font as string)) c.fail("drawing.font", `must be "sans", "serif" or "mono" (got ${describe(input.font)})`);
   if (input.lettering !== undefined && input.lettering !== "upright" && input.lettering !== "slanted") c.fail("drawing.lettering", `must be "upright" or "slanted" (got ${describe(input.lettering)})`);
