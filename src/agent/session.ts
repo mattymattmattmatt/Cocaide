@@ -6,6 +6,7 @@
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
 import { membersFromSketch } from "../weldment/sketchFrame";
+import { frameTemplate, type FrameTemplate } from "../weldment/frameTemplates";
 import { framesOf } from "../weldment/sketchNodes";
 import { assemblyBom } from "../assembly/bom";
 import { composePack, packParts } from "../drafting/pack";
@@ -116,6 +117,7 @@ export const EDIT_TOOLS = [
   "renameBody",
   "setNode",
   "membersFromSketch",
+  "frameLayout",
   "renameNode",
   "setWeld",
   "setBodyMaterial",
@@ -460,6 +462,11 @@ export class AgentSession {
         return this.edit({ type: "renameBody", from: String(a.from), to: String(a.to) });
       case "setNode":
         return this.edit({ type: "setNode", name: String(a.name), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : isObject(a.at) ? { sketch: String(a.at.sketch), point: String(a.at.point) } : null });
+      case "frameLayout": {
+        const t = frameTemplate(this.doc, { kind: a.kind as FrameTemplate, width: Number(a.width), height: Number(a.height), ...(a.depth !== undefined ? { depth: Number(a.depth) } : {}), ...(a.posts !== undefined ? { posts: Number(a.posts) } : {}), ...(a.rise !== undefined ? { rise: Number(a.rise) } : {}), ...(a.bays !== undefined ? { bays: Number(a.bays) } : {}), ...(a.bay !== undefined ? { bay: Number(a.bay) } : {}) });
+        if ("error" in t) return this.fail(`frameLayout: ${t.error}`);
+        return this.editMany(t.commands, { extra: { sketch: t.sketch } });
+      }
       case "membersFromSketch": {
         const r = membersFromSketch(this.doc, a, framesOf(this.built.sketches));
         if (!r.ok) return this.fail(`membersFromSketch: ${r.error}`);

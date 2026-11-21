@@ -31,8 +31,15 @@ export interface SketchMembersSpec {
   line: "centre" | "outside";
   /** What each corner gets: two members meeting at an angle mitred or butted; "none" leaves the corners to be joined by hand. */
   corners: "mitre" | "butt" | "none";
+  /**
+   * At a butted corner, which member runs through: the longer (default), the
+   * one nearest upright ("posts"), or the one nearest level ("rails").
+   */
+  runThrough?: "longer" | "posts" | "rails";
   /** Where sketches on faces are (the last rebuild's frames, by sketch id). */
   frames?: SketchFrames;
+  /** Put the members and joints in a folder named for their sketches (default true). */
+  folder?: boolean;
 }
 
 export type SketchMembersResult =
@@ -203,6 +210,14 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     const all = after.features.flatMap((vf) => (vf.feature?.op === "member" ? [vf.feature as MemberFeature] : []));
     const jointed = new Set(next.features.filter((f) => f.op === "joint").map((f) => String(f.node)));
     const length = (m: MemberFeature) => Math.hypot(...sub3(m.to, m.from));
+    /** How upright a member is: 1 straight up, 0 level. */
+    const upright = (m: MemberFeature) => Math.abs(m.to[2] - m.from[2]) / length(m);
+    /** The member that runs through at a butted corner, as the spec says (ties: the longer). */
+    const pickThrough = (ms: MemberFeature[]): MemberFeature =>
+      [...ms].sort((p, q) => {
+        const by = spec.runThrough === "posts" ? upright(q) - upright(p) : spec.runThrough === "rails" ? upright(p) - upright(q) : 0;
+        return Math.abs(by) > 1e-6 ? by : length(q) - length(p);
+      })[0];
     const dir = (m: MemberFeature, node: string): Vec3 => {
       const d = m.fromNode === node ? sub3(m.to, m.from) : sub3(m.from, m.to);
       const l = Math.hypot(...d);
@@ -243,11 +258,11 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
         feature =
           spec.corners === "mitre"
             ? { op: "joint", node, type: "mitre", members: [m1.id, m2.id] }
-            : { op: "joint", node, type: "butt", through: (length(m1) >= length(m2) ? m1 : m2).id };
+            : { op: "joint", node, type: "butt", through: pickThrough([m1, m2]).id };
       } else if (ending.length > 2) {
         // Three or more: one of two in line runs through (a run split at the node), else the longest; the others butt against it.
         const inLine = ending.filter((m) => ending.some((o) => o !== m && dot3(dir(m, node), dir(o, node)) < -1 + 1e-6));
-        feature = { op: "joint", node, type: "butt", through: [...(inLine.length ? inLine : ending)].sort((p, q) => length(q) - length(p))[0].id };
+        feature = { op: "joint", node, type: "butt", through: (spec.runThrough && spec.runThrough !== "longer" ? pickThrough(ending) : [...(inLine.length ? inLine : ending)].sort((p, q) => length(q) - length(p))[0]).id };
       }
       if (!feature) continue;
       const id = freeId(next, `corner_${node}`);
@@ -258,6 +273,15 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
     }
   }
   if (!members.length) return { ok: false, error: skipped.length ? `every line picked has a member on it already` : "no members to add" };
+  // Together in the tree: a folder named for the sketches they are on.
+  if (members.length > 1 && spec.folder !== false) {
+    const taken = new Set([...next.features.map((f) => String(f.id)), ...(Array.isArray(next.folders) ? (next.folders as { id: string }[]).map((f) => f.id) : [])]);
+    let k = 1;
+    while (taken.has(`frame_${k}`)) k++;
+    const sketches = [...new Set(lines.map((l) => l.line.sketch))];
+    const problem = run({ type: "setFolder", id: `frame_${k}`, folder: { name: `Frame on ${sketches.join(", ")}`, features: [...members, ...joints] } });
+    if (problem) return { ok: false, error: problem };
+  }
   return { ok: true, doc: next, members, joints, nodes: made, skipped, commands, warnings };
 }
 
@@ -288,5 +312,6 @@ export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>, 
   } else return { ok: false, error: 'name a "sketch" (all its lines) or "lines": [{ "sketch", "entity" }]' };
   const line = a.line === "centre" || a.line === "center" ? "centre" : "outside";
   const corners = a.corners === "butt" || a.corners === "none" ? a.corners : "mitre";
-  return addSketchMembers(doc, { profile, size, lines, line, corners, frames });
+  const runThrough = a.runThrough === "posts" || a.runThrough === "rails" ? a.runThrough : "longer";
+  return addSketchMembers(doc, { profile, size, lines, line, corners, runThrough, frames });
 }

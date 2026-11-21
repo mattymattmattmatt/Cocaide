@@ -109,3 +109,28 @@ test("a frame on a sketch on a plate's top face: it stands on the plate", async 
   await expect(page.getByTestId("node-link-A")).toContainText("t1.start");
   await expect(page.getByTestId("node-link-A")).not.toHaveClass(/broken/);
 });
+
+test("from an empty part: a box layout, its lines picked, posts through at the corners", async ({ page }) => {
+  const blank = { version: 1, units: "mm", name: "stand", profiles: table.profiles, features: [] };
+  const text = JSON.stringify(blank, null, 2);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  const panel = page.getByTestId("sketch-members");
+  await expect(panel).toBeVisible();
+  await panel.getByTestId("new-layout").locator("summary").click();
+  await panel.getByTestId("layout-kind").selectOption("box");
+  await panel.getByTestId("layout-width").fill("1200");
+  await panel.getByTestId("layout-depth").fill("600");
+  await panel.getByTestId("layout-height").fill("750");
+  await panel.getByTestId("layout-add").click();
+  await expect(panel.getByTestId("sketch-members-picked")).toContainText("12 lines");
+  expect((await saved(page)).parameters).toMatchObject({ frame_w: 1200, frame_d: 600, frame_h: 750 });
+  await panel.getByTestId("sketch-members-corners").selectOption("butt");
+  await expect(panel.getByTestId("sketch-members-through")).toHaveValue("posts");
+  await panel.getByTestId("sketch-members-add").click();
+  await expect.poll(async () => (await saved(page)).features.filter((f: any) => f.op === "member").length).toBe(12);
+  const d = await saved(page);
+  expect(d.features.filter((f: any) => f.op === "joint").every((j: any) => String(j.through).startsWith("post"))).toBe(true);
+  expect(d.folders?.[0]).toMatchObject({ name: "Frame on box_layout" });
+  await expect(page.getByTestId("bodies")).toContainText("12");
+});

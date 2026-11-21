@@ -2469,3 +2469,9 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .sketch3d-list li.follows { grid-template-columns: 24px minmax(0, 1fr) auto 22px; }
 .sketch3d-follows { display: flex; align-items: center; gap: 4px; color: var(--muted); font-family: var(--mono); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sketch3d-editor button.link-button { border: none; background: none; color: var(--accent-2); padding: 0 2px; }
+.new-layout { margin: 4px 0 8px; font-size: 12px; }
+.new-layout summary { cursor: pointer; color: var(--accent-2); font-weight: 600; }
+.layout-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.layout-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.layout-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+.layout-field input { width: 100%; }

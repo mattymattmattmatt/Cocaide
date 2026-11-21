@@ -450,10 +450,17 @@ That suite is `tests/bracket.acceptance.test.ts`. FreeCAD verification is `scrip
 - In the tree, select a feature to edit it in the Properties panel. Each field commits on Enter or blur as one command. You can also suppress, move up or down, drag to reorder, and delete. Moves that break a reference are refused and the notice says why.
 - Ctrl+Z / Ctrl+Shift+Z undo and redo any change to the document. Inside a sketch they undo sketch edits. The Document tab is the same document as JSON.
 - **Parameters** (left panel) are named numbers. Type `=plate_t` or `=plate_t * 2 + 1` in any number field; the field shows what it evaluates to, and a bad expression is shown and not committed. Changing a parameter is one undo step, and sketches whose dimensions use it are re-solved. The sketcher works on numbers but keeps every expression whose value you did not change.
+- **Starter layouts.** **Members from sketch → New layout…** adds a frame's sizes as parameters and a layout sketch driven by them. Its lines come picked, so the next step is a size and **Add members**:
+  - **Wall or panel**: a rectangle on Front with posts evenly between its sides. It is a dimensioned 2D sketch (`width = frame_w`, `height = frame_h`, each post at `frame_w * k / (n + 1)`), so it re-solves when they change;
+  - **Box** (table, stand): a 3D sketch `frame_w × frame_d × frame_h`;
+  - **Pitched portal**: posts `frame_h` to the eaves, the ridge `frame_rise` above, repeated in bays `frame_bay` apart, joined at the eaves and the ridge.
+  Change a parameter and the frame follows. The agent has the same as `frameLayout`.
 - **Members from a sketch.** Draw the frame as a sketch on a plane, then in **Members from sketch** (left panel) pick a size (the part's or the library's). Then either click **Pick lines** and click the lines in the view, or take **All lines of…** a sketch. Click a picked line again to take it out; Escape stops picking. Choose whether the lines are the frame's outside edges or its centrelines, and whether the corners are mitred, butted or left alone. **Add members** puts a member on each line, in one undo step:
   - ends that meet share a node, and each node follows the sketch point it is on (**Nodes** shows `l1.end` with a link; **Unlink** keeps it where it is);
   - two members meeting at an angle are mitred (or butted: the longer runs through); a member ending on another's side butts against it; where three or more meet, one of a pair in line runs through;
   - lines that already have a member are skipped, so picking a sketch's lines again adds only the new ones.
+  - at a butted corner, choose what runs through: posts (the default for butt corners), rails, or the longer member;
+  - the members and joints made together go in a folder, "Frame on <sketches>". Frame points that follow a sketch aren't labelled in the view (the sketch shows them); hand-placed nodes still are.
   - members are named by how they run: `post_1` (within 10° of upright), `rail_1` (within 10° of level), `brace_1` (anything else). Rename one in Properties and the joints, end caps and gussets that name it follow;
   - a member that stops inside another's section (a post at a rail's underside) is butted against it; one that stops short of a member or of another end gets no joint, and the message says which and by how much, so the sketch can be fixed.
   Edit the sketch (drag a corner, change a dimension) and the members and their joints follow it. A sketch-only part is framed by Fit and when it opens, and the view frames the members once they are added.

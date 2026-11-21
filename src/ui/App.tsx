@@ -50,10 +50,11 @@ import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
 import { addSketchMembers, type SketchLine } from "../weldment/sketchFrame";
-import { framesOf, resolveNodeLink } from "../weldment/sketchNodes";
+import { framesOf, isNodeLink, resolveNodeLink } from "../weldment/sketchNodes";
 import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { SketchMembersPanel, type SketchMembersRequest } from "./SketchMembersPanel";
+import { frameTemplate, type TemplateSpec } from "../weldment/frameTemplates";
 import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
@@ -461,7 +462,14 @@ export function App() {
   /** Where the last rebuild put each sketch: nodes that follow a sketch on a face are placed from these. */
   const sketchFrames = useMemo(() => framesOf(view?.sketches), [view]);
   d.setSketchFrames(sketchFrames);
-  const shownNodes = useMemo<FrameNode[]>(() => (shown ? Object.entries(validateDocument(shown, { sketchFrames }).nodes).map(([name, at]) => ({ name, at })) : []), [shown, sketchFrames]);
+  // A frame's nodes in the view: the ones placed by hand. Those that follow a sketch are its points, which the sketch shows.
+  const shownNodes = useMemo<FrameNode[]>(() => {
+    if (!shown) return [];
+    const raw = ((shown as { nodes?: unknown }).nodes ?? {}) as Record<string, unknown>;
+    return Object.entries(validateDocument(shown, { sketchFrames }).nodes)
+      .filter(([name]) => !isNodeLink(raw[name]))
+      .map(([name, at]) => ({ name, at }));
+  }, [shown, sketchFrames]);
   /** The drawing as shown (an open proposal's, while it is previewed), and as it is in the document. */
   const shownDrawing = useMemo(() => (shown ? validateDocument(shown).drawing : null), [shown]);
   const docDrawing = useMemo(() => (doc ? validateDocument(doc).drawing : null), [doc]);
@@ -570,7 +578,7 @@ export function App() {
         // planes, axes and points are ids, and stay picked while they exist.
         // The same solid again (a session closed, an OK that changed nothing): the selection stays as it is.
         if (!sameSolid(before, v)) setSelection((sel) => carrySelection(sel, before, v, (id) => Object.hasOwn(DEFAULT_DATUMS, id) || Object.hasOwn(v.datums ?? {}, id)));
-        if (fitAfter.current && v.mesh) {
+        if (fitAfter.current && (v.mesh || v.sketches?.length)) {
           fitAfter.current = false;
           requestAnimationFrame(() => requestAnimationFrame(() => viewCommands.current?.("view.fit")));
         }
@@ -1251,12 +1259,29 @@ export function App() {
     return true;
   };
 
+  /** A starter frame layout: its parameters and its sketch, one undo step; its sketch's id. */
+  const addLayout = (spec: TemplateSpec): string | null => {
+    if (!doc) return null;
+    const t = frameTemplate(doc, spec);
+    if ("error" in t) return setNotice({ kind: "error", text: t.error }), null;
+    let next: RawDocument = doc;
+    for (const c of t.commands) {
+      const r = apply(next, c, { user: true });
+      if (!r.ok) return setNotice({ kind: "error", text: r.error }), null;
+      next = r.doc;
+    }
+    d.replaceDoc(next);
+    setNotice({ kind: "info", text: `Added ${t.sketch}, driven by frame_w, frame_h${spec.kind === "box" ? ", frame_d" : spec.kind === "portal" ? ", frame_rise, frame_bay" : ""} (Parameters). Its lines are picked: choose a size and Add members.` });
+    fitAfter.current = true;
+    return t.sketch;
+  };
+
   /** Members on picked sketch lines, on nodes that follow the sketch, the corners joined: one undo step. */
   const addFromSketch = (req: SketchMembersRequest): boolean => {
     if (!doc) return false;
     const sz = sizeIn(doc, req.size);
     if (!sz) return false;
-    const r = addSketchMembers(sz.next, { profile: sz.profile, size: sz.size, lines: req.lines, line: req.line, corners: req.corners, frames: sketchFrames });
+    const r = addSketchMembers(sz.next, { profile: sz.profile, size: sz.size, lines: req.lines, line: req.line, corners: req.corners, runThrough: req.runThrough, frames: sketchFrames });
     if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
     d.replaceDoc(r.doc);
     const joints = r.joints.length ? ` and ${r.joints.length} joint${r.joints.length === 1 ? "" : "s"}` : "";
@@ -2876,7 +2901,7 @@ export function App() {
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} onManage={sketch ? undefined : () => setPmOpen(true)} />
             {!sketch && (
-              <SketchMembersPanel doc={doc} sizes={sizeChoices} picking={memberPick} onPicking={setMemberPick} onCreate={addFromSketch} onError={(text) => setNotice({ kind: "error", text })} />
+              <SketchMembersPanel doc={doc} sizes={sizeChoices} picking={memberPick} onPicking={setMemberPick} onCreate={addFromSketch} onTemplate={addLayout} onError={(text) => setNotice({ kind: "error", text })} />
             )}
             <NodesPanel doc={doc} frames={sketchFrames} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
             <BodiesPanel
