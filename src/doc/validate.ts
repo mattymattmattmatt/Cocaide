@@ -87,6 +87,7 @@ import { MAX_TEXT, missingGlyphs, TEXT_ALIGNS, TEXT_FONTS, type TextAlign, type 
 import { ARC_CONDITIONS, SKETCH_AXES, type ArcCondition, type CsysPart } from "./types";
 import { DIMENSION_NAME, dimensionNames } from "./dimensions";
 import { folderGap } from "./tree";
+import { isNodeLink, resolveNodeLink, type NodeLink } from "../weldment/sketchNodes";
 import { HOLE_FITS, HOLE_KINDS, HOLE_SIZES, holeKind, holeSpec, type HoleFit, type HoleKind } from "../features/hole/standards";
 
 export interface ValidatedFeature {
@@ -119,8 +120,12 @@ export interface ValidationResult {
   bodyAppearances?: Record<string, Appearance>;
   /** The weldment profiles that validated, by name. */
   profiles: Record<string, ProfileDef>;
-  /** The frame's nodes, with expressions evaluated. */
+  /** The frame's nodes, with expressions evaluated (a node that follows a sketch: where the sketch puts it). */
   nodes: Record<string, Vec3>;
+  /** The nodes that follow a sketch point, and which. */
+  nodeLinks: Record<string, NodeLink>;
+  /** Nodes that follow a sketch point that can't be found, and why: not in `nodes`; what names them fails with this. */
+  nodeProblems: Record<string, string>;
   /** The weld table. */
   welds: Weld[];
   /** The drawing, when the document has one and it is valid. */
@@ -145,6 +150,8 @@ export interface FeatureContext {
   /** Every profile the part lists, valid or not. */
   listed: string[];
   nodes: Record<string, Vec3>;
+  /** Linked nodes whose sketch point can't be found, and why. */
+  nodeProblems?: Record<string, string>;
   /** Valid members so far, by id. */
   members: Map<string, MemberFeature>;
   /** The joint at each node so far. */
@@ -175,7 +182,7 @@ export function toDocument(v: ValidationResult): CocaideDocument | null {
 }
 
 export function validateDocument(input: unknown): ValidationResult {
-  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], madeBodies: [], bodyMaterials: {}, profiles: {}, nodes: {}, welds: [], drawing: null, drawingErrors: [], properties: {} };
+  const result: ValidationResult = { headerErrors: [], name: "", parameters: {}, material: undefined, features: [], bodies: [], madeBodies: [], bodyMaterials: {}, profiles: {}, nodes: {}, nodeLinks: {}, nodeProblems: {}, welds: [], drawing: null, drawingErrors: [], properties: {} };
   const header = new Checker("document");
   if (!isObject(input)) {
     header.fail("", `must be a JSON object (got ${describe(input)})`);
@@ -249,11 +256,19 @@ export function validateDocument(input: unknown): ValidationResult {
     }
   }
   if (input.nodes !== undefined) {
-    if (!isObject(input.nodes)) header.fail("nodes", `must be an object of name: [x, y, z] (got ${describe(input.nodes)})`);
+    if (!isObject(input.nodes)) header.fail("nodes", `must be an object of name: [x, y, z] or { sketch, point } (got ${describe(input.nodes)})`);
     else
       for (const [name, at] of Object.entries(input.nodes)) {
         if (!NODE_NAME.test(name)) {
           header.fail(`nodes.${name}`, "a node name is letters, digits and _ and starts with a letter");
+          continue;
+        }
+        // A node that follows a sketch point: where the sketch puts it. A broken link fails what uses the node, not the part.
+        if (isNodeLink(at)) {
+          const r = resolveNodeLink(Array.isArray(input.features) ? input.features : [], at, symbols);
+          if (r.ok) result.nodes[name] = r.at;
+          else result.nodeProblems[name] = r.error;
+          result.nodeLinks[name] = { sketch: String(at.sketch), point: String(at.point) };
           continue;
         }
         const exprErrors: string[] = [];
@@ -272,7 +287,7 @@ export function validateDocument(input: unknown): ValidationResult {
   result.headerErrors = header.errors;
   /** Every profile the part lists, valid or not: a member of a broken one points at its errors. */
   const listed = isObject(input.profiles) ? Object.keys(input.profiles) : [];
-  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, members: new Map(), joints: new Map(), sketches: new Map() };
+  const ctx: FeatureContext = { profiles: result.profiles, listed, nodes: result.nodes, nodeProblems: result.nodeProblems, members: new Map(), joints: new Map(), sketches: new Map() };
 
   const seen = new Map<string, string>(); // id -> op, for features before the current one
   // A { sketch, entity } reference is checked against the valid sketches before it.
@@ -2051,8 +2066,7 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
     const v = raw[key];
     if (typeof v !== "string") return [c.vec3(raw, key, ""), undefined];
     if (!(v in ctx.nodes)) {
-      const names = Object.keys(ctx.nodes);
-      c.fail(key, `no node "${v}" (${names.length ? `nodes: ${names.join(", ")}` : "the part has no nodes"})`);
+      c.fail(key, noNode(v, ctx));
       return [undefined, undefined];
     }
     return [ctx.nodes[v], v];
@@ -2143,8 +2157,20 @@ function namedMember(id: unknown, path: string, c: Checker, earlier: Map<string,
   return undefined;
 }
 
+/** Why a node named isn't there: no such node, or one whose sketch link is broken (and why). */
+function noNode(name: string, ctx: FeatureContext): string {
+  const problem = ctx.nodeProblems?.[name];
+  if (problem) return `node ${name} ${problem}`;
+  const names = Object.keys(ctx.nodes);
+  return `no node "${name}" (${names.length ? `nodes: ${names.join(", ")}` : "the part has no nodes"})`;
+}
+
 function nodeName(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext): string | undefined {
   if (typeof raw.node === "string" && raw.node in ctx.nodes) return raw.node;
+  if (typeof raw.node === "string" && ctx.nodeProblems?.[raw.node]) {
+    c.fail("node", noNode(raw.node, ctx));
+    return undefined;
+  }
   const names = Object.keys(ctx.nodes);
   c.fail("node", `must name a node (got ${describe(raw.node)}; ${names.length ? `nodes: ${names.join(", ")}` : "the part has no nodes"})`);
   return undefined;

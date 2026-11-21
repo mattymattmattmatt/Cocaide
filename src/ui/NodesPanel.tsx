@@ -6,6 +6,8 @@ import { useState } from "react";
 import type { Command, RawDocument } from "../doc/commands";
 import { NODE_NAME } from "../doc/types";
 import { nodeUsers } from "../doc/commands";
+import { validateDocument } from "../doc/validate";
+import { isNodeLink, linkText } from "../weldment/sketchNodes";
 import { NumberInput, TextInput, Vec3Input, type NumberValue } from "./fields";
 import { Section } from "./Section";
 import { Icon } from "./icons";
@@ -49,6 +51,7 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
   const [mitre, setMitre] = useState(true);
   if (!doc) return null;
   const nodes = (doc.nodes ?? {}) as Record<string, NumberValue[]>;
+  const v = Object.values(nodes).some(isNodeLink) ? validateDocument(doc) : null;
   const names = Object.keys(nodes);
   const run = (cmd: Command) => {
     const problem = dispatch(cmd);
@@ -74,7 +77,19 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath }: Props) {
               <span className="node-name" title={users.length ? `used by ${users.join(", ")}` : "not used yet"}>
                 <TextInput value={n} onCommit={(to) => run({ type: "renameNode", from: n, to })} testId={`node-name-${n}`} />
               </span>
-              <Vec3Input value={nodes[n]} onCommit={(v) => run({ type: "setNode", name: n, at: v })} testId={`node-${n}`} />
+              {isNodeLink(nodes[n]) ? (
+                <span className={`node-link${v?.nodeProblems[n] ? " broken" : ""}`} title={v?.nodeProblems[n] ? `${n} ${v.nodeProblems[n]}` : `Follows ${linkText(nodes[n] as unknown as { sketch: string; point: string })}${v?.nodes[n] ? `, now at ${v.nodes[n].map((x) => Math.round(x * 100) / 100).join(", ")}` : ""}: it moves with the sketch`} data-testid={`node-link-${n}`}>
+                  <Icon name="link" size={12} />
+                  <span>{(nodes[n] as unknown as { point: string }).point}</span>
+                  {v?.nodes[n] && (
+                    <button type="button" className="link-button small" onClick={() => run({ type: "setNode", name: n, at: [...v.nodes[n]] })} title="Keep it where it is, no longer following the sketch" data-testid={`node-unlink-${n}`}>
+                      Unlink
+                    </button>
+                  )}
+                </span>
+              ) : (
+                <Vec3Input value={nodes[n]} onCommit={(at) => run({ type: "setNode", name: n, at })} testId={`node-${n}`} />
+              )}
               <button className="icon" aria-label={`Delete ${n}`} title={users.length ? `Used by ${users.join(", ")}` : "Delete"} onClick={() => run({ type: "setNode", name: n, at: null })} data-testid={`node-delete-${n}`}>
                 <Icon name="trash" size={14} />
               </button>

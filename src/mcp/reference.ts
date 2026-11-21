@@ -338,6 +338,10 @@ catalogue section from the standard section library into the part. If the part h
 ## frames: nodes, joints, end caps, gussets, welds
 "nodes": { "A": [0, 0, "=frame_h"], "B": ["=frame_w", 0, "=frame_h"] } at the top of the document: named points,
 coordinates numbers or "=expressions". A member's "from"/"to" can name a node ("from": "A"); it moves with it.
+A node can follow a point of a layout sketch instead: "A": { "sketch": "layout", "point": "l1.end" } (a line's start,
+end or mid, an arc's or circle's center, a point's at; the sketch on Top, Front, Right or a plane offset from one).
+Editing the sketch then moves the members and joints on it. membersFromSketch does it all from a sketch's lines:
+a member per line, shared nodes that follow the sketch, and the corners mitred or butted.
 "align": [ax, ay] on a member puts its line on the section's envelope ([-1..1, -1..1], seen from the "to" end,
 x across, y up): a frame whose nodes are its outside corners has its members aligned to the outside.
 { "id": "corner_A", "op": "joint", "node": "A", "type": "mitre", "members": ["DA", "AB"], "gap": 0 }

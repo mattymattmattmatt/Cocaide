@@ -91,7 +91,7 @@ export function toolCommand(name: string, a: Raw): Command | string {
     case "renameBody":
       return { type: "renameBody", from: str("from"), to: str("to") };
     case "setNode":
-      return { type: "setNode", name: str("name"), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null };
+      return { type: "setNode", name: str("name"), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : typeof a.at === "object" && a.at !== null ? (a.at as { sketch: string; point: string }) : null };
     case "renameNode":
       return { type: "renameNode", from: str("from"), to: str("to") };
     case "setWeld":

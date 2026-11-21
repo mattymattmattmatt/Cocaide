@@ -383,8 +383,14 @@ const FEATURE_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "setNode",
-    description: 'Add or move a frame node ([x, y, z], numbers or "=expressions"), or remove one nothing names (at: null). Members on it move with it.',
-    input_schema: obj({ name: { type: "string" }, at: { type: ["array", "null"], items: { type: ["number", "string"] } } }, ["name", "at"]),
+    description: 'Add or move a frame node ([x, y, z], numbers or "=expressions"; or { "sketch": <sketch id>, "point": "l1.end" } to follow a point of a layout sketch), or remove one nothing names (at: null). Members on it move with it.',
+    input_schema: obj({ name: { type: "string" }, at: { type: ["array", "object", "null"] } }, ["name", "at"]),
+  },
+  {
+    name: "membersFromSketch",
+    description:
+      'Members on a layout sketch\'s lines, the usual way to model a frame: a member on each line, on nodes that follow the sketch (edit the sketch and the frame moves), ends that meet sharing a node, and the corners joined (two members at an angle mitred, or butted with corners "butt"; a member ending on another\'s side butted against it; "none" for no joints). size: one of the part\'s profile sizes (profile may be left out when one profile has it). "sketch": all its own lines, or "lines": [{ "sketch", "entity" }]. line: "outside" (default: the lines are the frame\'s outside edges) or "centre". One undo step. The sketch must be on a plane (Top, Front, Right or a plane feature offset from one), not a face.',
+    input_schema: obj({ size: { type: "string" }, profile: { type: "string" }, sketch: { type: "string" }, lines: { type: "array", items: obj({ sketch: { type: "string" }, entity: { type: "string" } }, ["sketch", "entity"]) }, line: { type: "string", enum: ["outside", "centre"] }, corners: { type: "string", enum: ["mitre", "butt", "none"] } }, ["size"]),
   },
   {
     name: "setBodyMaterial",

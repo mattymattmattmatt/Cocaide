@@ -195,6 +195,10 @@ interface Props {
   sketchPick?: ((hit: SketchEntityHit) => boolean) | null;
   /** What a click on such an entity would do, for the pointer's tip ("Click to use it for Axis"). */
   sketchHint?: ((hit: SketchEntityHit) => string | null) | null;
+  /** Sketch picking takes whole lines (the members-from-sketch tool): other entities and lines' end points aren't hit. */
+  sketchLines?: boolean;
+  /** Sketch entities lit up as picked (the lines the members-from-sketch tool has). */
+  sketchMarks?: readonly { sketch: string; entity: string }[] | null;
   /** Phase P wave 2A: a sketch open in the view (see SketchStage). */
   sketch?: SketchStage | null;
 }
@@ -259,6 +263,8 @@ interface ViewportApi {
   setSelection(sel: Selection): void;
   setSketchesVisible(visible: boolean): void;
   setNodes(nodes: FrameNode[]): void;
+  /** Sketch entities lit up as picked. */
+  setSketchMarks(marks: readonly { sketch: string; entity: string }[]): void;
   setUnderlay(u: Underlay | null): void;
   /** See the photo through the part (while picking points on it). */
   setGhost(ghost: boolean): void;
@@ -357,6 +363,8 @@ export function Viewport({
   peek: peekList = null,
   pickReach = null,
   sketchPick = null,
+  sketchLines = false,
+  sketchMarks = null,
   sketchHint = null,
   sketch = null,
 }: Props) {
@@ -473,6 +481,14 @@ export function Viewport({
     let hovered: PickTarget | null = null;
     /** Another sketch's entity under the pointer (a session's reference field takes it): lit up as the pick a click makes. */
     let sketchHot: SketchEntityHit | null = null;
+    /** Sketch entities lit up as picked (the members-from-sketch tool's lines). */
+    let sketchPicked: readonly { sketch: string; entity: string }[] = [];
+    /** The sketch entity under the pointer that a click would take: a whole line, when picking takes lines. */
+    const sketchHitAt = (x: number, y: number): SketchEntityHit | null => {
+      const hit = sketchEntityAt(drawnSketches(), projectPx, x, y);
+      if (!hit || !sketchLinesRef.current) return hit;
+      return hit.type === "line" ? { ...hit, at: undefined } : null;
+    };
     /** What is lit up through whatever hides it: Select Other's row under the pointer, a session field's chip under the pointer. */
     let peek: PickTarget[] = [];
     /** One end of an edge per vertex of the part (the lowest edge that ends there stands for it), for picking vertices. */
@@ -999,6 +1015,12 @@ export function Viewport({
         return { position: c.clone().addScaledVector(d, dist), target: c.clone(), up: u };
       };
       if (on && "center" in on) return sphere(on.center, on.radius);
+      // Nothing solid shown (a layout sketch, say): the sketches drawn are what is framed.
+      if (!on && !visibleBox) {
+        const pts: number[] = [];
+        for (const sk of drawnSketches()) for (const e of sk.entities) for (const line of entityPolylines(e)) for (const q of line) pts.push(...to3D(sk.frame, q));
+        if (pts.length >= 6) on = { points: pts };
+      }
       const pos = mesh?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
       const pts = on ? on.points : (pos?.array as ArrayLike<number> | undefined);
       const f = pts ? framePoints(pts, d, u, camera.aspect, camera.fov, { perspective, keep: on ? undefined : (i) => vertexBody[i] >= 0 }) : null;
@@ -1143,6 +1165,23 @@ export function Viewport({
       if (dot) group.add(dot);
       return group.children.length ? group : null;
     };
+    /** The picked sketch entities, drawn as selected edges are. */
+    const sketchPickedMark = (): THREE.Object3D | null => {
+      if (!sketchPicked.length) return null;
+      const pts: number[] = [];
+      for (const m of sketchPicked) {
+        const sk = drawnSketches().find((x) => x.id === m.sketch);
+        const e = sk?.entities.find((x) => x.id === m.entity);
+        if (!sk || !e) continue;
+        for (const line of entityPolylines(e)) for (let i = 0; i + 1 < line.length; i++) pts.push(...to3D(sk.frame, line[i]), ...to3D(sk.frame, line[i + 1]));
+      }
+      if (!pts.length) return null;
+      const g = new LineSegmentsGeometry();
+      g.setPositions(pts);
+      const l = new LineSegments2(g, selectEdgeWhole);
+      l.renderOrder = 5;
+      return l;
+    };
     const redrawMarks = () => {
       disposeGroup(marks);
       const edges = shownView?.edges ?? [];
@@ -1160,7 +1199,7 @@ export function Viewport({
       const peekFaces = peek.flatMap((t) => (t.kind === "face" ? [t.index] : []));
       const peekEdges = peek.flatMap((t) => (t.kind === "edge" ? [t.index] : []));
       const look = [peekFaces.length ? faceMesh(peekFaces, HOVER_COLOR, 0.42, true) : null, peekEdges.length ? edgeMarks(peekEdges, hoverEdgeMat, hoverEdgeWhole) : null];
-      for (const o of [...sel, hov, ...look, sketchMark()]) if (o) marks.add(o);
+      for (const o of [...sel, hov, ...look, sketchPickedMark(), sketchMark()]) if (o) marks.add(o);
       datums.mark(selection.datums ?? [], hovered?.kind === "datum" ? hovered.id : null);
       relabelDatums();
       render();
@@ -1825,7 +1864,7 @@ export function Viewport({
       renderer.domElement.style.cursor = hot ? (hot.locked ? "not-allowed" : "grab") : "";
       const rect = renderer.domElement.getBoundingClientRect();
       // A session's reference field takes other sketches' entities: one under the pointer wins, as a click on it does.
-      const sketchHit = !hot && sketchPickRef.current && overlays.visible && shownView?.sketches?.length ? sketchEntityAt(drawnSketches(), projectPx, e.clientX, e.clientY) : null;
+      const sketchHit = !hot && sketchPickRef.current && overlays.visible && shownView?.sketches?.length ? sketchHitAt(e.clientX, e.clientY) : null;
       const sketchKey = (h: SketchEntityHit | null) => (h ? `${h.sketch}:${h.entity}:${h.at ?? ""}` : "");
       if (sketchKey(sketchHit) !== sketchKey(sketchHot)) {
         sketchHot = sketchHit;
@@ -1913,7 +1952,7 @@ export function Viewport({
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
       // A session's reference field: another sketch's line, arc, circle or point drawn in the view, before the model under it.
       if (e.button === 0 && sketchPickRef.current && overlays.visible && shownView?.sketches?.length) {
-        const hit = sketchEntityAt(drawnSketches(), projectPx, e.clientX, e.clientY);
+        const hit = sketchHitAt(e.clientX, e.clientY);
         if (hit && sketchPickRef.current(hit)) return;
       }
       if (e.button === 2) {
@@ -2240,6 +2279,10 @@ export function Viewport({
         hidden = next;
         setModel(shownView);
       },
+      setSketchMarks(next) {
+        sketchPicked = next;
+        redrawMarks();
+      },
       setHiddenSketches(next: ReadonlySet<string>) {
         if (next.size === hiddenSketchIds.size && [...next].every((id) => hiddenSketchIds.has(id))) return;
         hiddenSketchIds = next;
@@ -2533,6 +2576,11 @@ export function Viewport({
   sketchPickRef.current = sketchPick;
   const sketchHintRef = useRef(sketchHint);
   sketchHintRef.current = sketchHint;
+  const sketchLinesRef = useRef(sketchLines);
+  sketchLinesRef.current = sketchLines;
+  useEffect(() => {
+    api.current?.setSketchMarks(sketchMarks ?? []);
+  }, [sketchMarks]);
   // No field takes sketch entities any more: no tip for one.
   useEffect(() => {
     if (!sketchPick) setSketchHover(null);

@@ -85,8 +85,13 @@ export const TOOLS: Record<string, ToolSpec> = {
     input: { from: z.string(), to: z.string() },
   },
   setNode: {
-    description: 'Add or move a frame node (coordinates are numbers or "=expressions"), or remove one nothing names (at: null). Members on it move with it.',
-    input: { name: z.string(), at: z.array(z.union([z.number(), z.string()])).length(3).nullable() },
+    description: 'Add or move a frame node (coordinates are numbers or "=expressions"; or { "sketch": <sketch id>, "point": "l1.end" } to follow a point of a layout sketch), or remove one nothing names (at: null). Members on it move with it.',
+    input: { name: z.string(), at: z.union([z.array(z.union([z.number(), z.string()])).length(3), z.object({ sketch: z.string(), point: z.string() })]).nullable() },
+  },
+  membersFromSketch: {
+    description:
+      'Members on a layout sketch\'s lines, the usual way to model a frame: a member on each line, on nodes that follow the sketch (edit the sketch and the frame moves), ends that meet sharing a node, and the corners joined (two members at an angle mitred, or butted with corners "butt"; a member ending on another\'s side butted against it; "none" for no joints). size: one of the part\'s profile sizes (profile may be left out when one profile has it). "sketch": all its own lines, or "lines": [{ "sketch", "entity" }]. line: "outside" (default: the lines are the frame\'s outside edges) or "centre". One undo step. The sketch must be on a plane (Top, Front, Right or a plane feature offset from one), not a face.',
+    input: { size: z.string(), profile: z.string().optional(), sketch: z.string().optional(), lines: z.array(z.object({ sketch: z.string(), entity: z.string() })).optional(), line: z.enum(["outside", "centre"]).optional(), corners: z.enum(["mitre", "butt", "none"]).optional() },
   },
   renameNode: {
     description: "Rename a frame node. The members, joints and gussets that name it follow.",

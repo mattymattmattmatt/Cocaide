@@ -90,7 +90,7 @@ describe("tool schemas for Ollama", () => {
     expect(sp.required).toEqual(["name", "value"]);
     expect(sp.properties!.value).toMatchObject({ type: "number", description: "(number or string)" });
     const sn = toOllamaTool(tool("setNode")).function.parameters;
-    expect(sn.properties!.at).toMatchObject({ type: "array", description: "(or null)" });
+    expect(sn.properties!.at).toMatchObject({ type: "array", description: "(array or object, or null)" });
     const mb = toOllamaTool(tool("measureBetween")).function.parameters;
     expect(mb.properties!.a.description).toMatch(/^\(array or object\) A face or edge selector/);
   });

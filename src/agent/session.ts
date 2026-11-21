@@ -5,6 +5,7 @@
 //
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
+import { membersFromSketch } from "../weldment/sketchFrame";
 import { assemblyBom } from "../assembly/bom";
 import { composePack, packParts } from "../drafting/pack";
 import type { ComposeContext } from "../drafting/compose";
@@ -111,6 +112,7 @@ export const EDIT_TOOLS = [
   "deleteParameter",
   "renameBody",
   "setNode",
+  "membersFromSketch",
   "renameNode",
   "setWeld",
   "setBodyMaterial",
@@ -454,7 +456,12 @@ export class AgentSession {
       case "renameBody":
         return this.edit({ type: "renameBody", from: String(a.from), to: String(a.to) });
       case "setNode":
-        return this.edit({ type: "setNode", name: String(a.name), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : null });
+        return this.edit({ type: "setNode", name: String(a.name), at: Array.isArray(a.at) ? (a.at as (number | string)[]) : isObject(a.at) ? { sketch: String(a.at.sketch), point: String(a.at.point) } : null });
+      case "membersFromSketch": {
+        const r = membersFromSketch(this.doc, a);
+        if (!r.ok) return this.fail(`membersFromSketch: ${r.error}`);
+        return this.editMany(r.commands, { extra: { members: r.members, joints: r.joints, nodes: r.nodes, ...(r.skipped.length ? { skipped: r.skipped } : {}) } });
+      }
       case "renameNode":
         return this.edit({ type: "renameNode", from: String(a.from), to: String(a.to) });
       case "setWeld":

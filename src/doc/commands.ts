@@ -9,6 +9,7 @@
 import { expandShorthands } from "./shorthand";
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
+import { isNodeLink, resolveNodeLink, type NodeLink } from "../weldment/sketchNodes";
 import { documentParameters, isExpression, PARAMETER_NAME, parameterRefs, rawParameters, resolveExpressions, type Parameters } from "./parameters";
 import { dependentNames, DIMENSION_NAME, dimensionNames, documentSymbols, isDimension, namedDimensions, pinReferencedNames, readersOf, referencedNames, renameInDocument, symbolEntries } from "./dimensions";
 import { measureConstraint } from "../geom/constraints";
@@ -119,7 +120,8 @@ export type Command =
   /** Puts a weldment profile in the part's profiles (a copy from the library), or removes one nothing uses. */
   | { type: "setProfile"; name: string; profile: ProfileDef | Record<string, unknown> | null }
   /** Adds or moves a node (coordinates may be expressions), or removes one nothing names. */
-  | { type: "setNode"; name: string; at: (number | string)[] | null }
+  /** A node at [x, y, z] (numbers or =expressions), or following a sketch point ({ sketch, point: "l1.end" }); null deletes it. */
+  | { type: "setNode"; name: string; at: (number | string)[] | NodeLink | null }
   /** Renames a node; the members, joints and gussets that name it follow. */
   | { type: "renameNode"; from: string; to: string }
   /** Adds or replaces a weld in the weld table by id, or removes it. */
@@ -331,6 +333,10 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         const problem = resolveSketchesUsing(doc, sketchDimensionNames(doc.features[i]), String(next.id));
         if (problem) return { ok: false, error: `${cmd.type}: ${problem}` };
       }
+      // Nodes that follow the sketch's points follow it to its new id.
+      if (next.id !== cmd.id && prev.op === "sketch" && isObject(doc.nodes)) {
+        doc.nodes = Object.fromEntries(Object.entries(doc.nodes).map(([n, v]) => [n, isNodeLink(v) && v.sketch === cmd.id ? { ...v, sketch: String(next.id) } : v]));
+      }
       // The drawing names features by id (balloons, member dimensions, hole callouts): it follows.
       if (next.id !== cmd.id && doc.drawing !== undefined) doc.drawing = renameInDrawing(doc.drawing, "feature", cmd.id, String(next.id));
       // A member, end cap or gusset that names its body by its id renames the body: its welds and material follow.
@@ -342,6 +348,15 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       const i = need(cmd.id);
       if (typeof i === "string") return { ok: false, error: i };
       const users = dependants(features, cmd.id);
+      // Nodes that follow the sketch's points (and so the members on them).
+      const following = Object.entries(isObject(doc.nodes) ? doc.nodes : {}).filter(([, v]) => isNodeLink(v) && v.sketch === cmd.id).map(([n]) => n);
+      if (following.length) {
+        const members = [...new Set(following.flatMap((n) => nodeUsers(features, n)))];
+        return {
+          ok: false,
+          error: `deleteFeature: nodes ${following.join(", ")} follow ${cmd.id}${members.length ? ` (members ${members.join(", ")} run on them)` : ""}; delete them, or give them coordinates, first`,
+        };
+      }
       if (users.length) {
         return {
           ok: false,
@@ -487,6 +502,10 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
         const users = nodeUsers(features, cmd.name);
         if (users.length) return { ok: false, error: `setNode: ${cmd.name} is used by ${users.join(", ")}` };
         delete nodes[cmd.name];
+      } else if (isNodeLink(cmd.at)) {
+        const r = resolveNodeLink(features, cmd.at, documentParameters(doc));
+        if (!r.ok) return { ok: false, error: `setNode: ${cmd.name} ${r.error}` };
+        nodes[cmd.name] = { sketch: cmd.at.sketch, point: cmd.at.point };
       } else {
         if (!Array.isArray(cmd.at) || cmd.at.length !== 3 || !cmd.at.every((x) => (typeof x === "number" && Number.isFinite(x)) || isExpression(x))) {
           return { ok: false, error: `setNode: ${cmd.name} must be at [x, y, z], numbers or =expressions (got ${JSON.stringify(cmd.at)})` };

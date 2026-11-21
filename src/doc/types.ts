@@ -38,8 +38,12 @@ export interface CocaideDocument {
   photo?: PhotoUnderlay;
   /** Weldment profiles the part uses, by name: its own copies, so it opens anywhere. */
   profiles?: Record<string, ProfileDef>;
-  /** Named points a frame is built on (Phase J). In the file, coordinates may be expressions. */
-  nodes?: Record<string, Vec3>;
+  /**
+   * Named points a frame is built on (Phase J). In the file, coordinates may be
+   * expressions; a node may instead follow a point of a layout sketch
+   * ({ "sketch": "layout", "point": "l1.end" }), so the frame moves with it.
+   */
+  nodes?: Record<string, Vec3 | NodeLink>;
   /** The weld table: notes, stored and listed, never modelled. */
   welds?: Weld[];
   /** The cut list's text and settings (Phase Q): descriptions, finishes, custom properties, stock bars and kerf, kept item numbers (src/doc/cutListSettings.ts). */
@@ -1010,6 +1014,12 @@ export const VIEW_ANNOTATIONS: readonly AnnotationType[] = ["dimension", "hole",
 
 /** A node's name: letters, digits and _, starting with a letter ("A", "top_1"). */
 export const NODE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** A node that follows a point of a sketch: "l1.start", "l1.end", "l1.mid", "a1.center", "p1.at". */
+export interface NodeLink {
+  sketch: string;
+  point: string;
+}
 
 /** A weld, as a note: where it is, what it is. Never modelled. */
 export interface Weld {
