@@ -43,19 +43,20 @@ import { exportBodyFeature } from "./model/tools/exportBody";
 import { isIdentity } from "../geom/exportFrame";
 import { CutListPanel } from "./CutListPanel";
 import type { FrameActions } from "./FrameProps";
-import { NodesPanel, type PathRequest, type SizeChoice } from "./NodesPanel";
+import { NodesPanel, type SizeChoice } from "./NodesPanel";
 import { useAsk } from "./ask/useAsk";
 import { useFollow } from "./ask/useFollow";
 import type { Drawing, Photo } from "../ask/part";
 import { loadPhoto, savePhoto } from "../photo/store";
 import { addFramePath } from "../weldment/frame";
-import { addSketchMembers, type SketchLine } from "../weldment/sketchFrame";
+import { addSketchMembers, sketchLines } from "../weldment/sketchFrame";
 import { framesOf, isNodeLink, resolveNodeLink } from "../weldment/sketchNodes";
 import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
-import { SketchMembersPanel, type SketchMembersRequest } from "./SketchMembersPanel";
+import { MemberCommand, type MemberCommandState, type MemberSummary } from "./weldment/MemberCommand";
+import { FrameLayoutDialog } from "./weldment/FrameLayoutDialog";
 import { frameTemplate, type TemplateSpec } from "../weldment/frameTemplates";
-import { addLibraryMember, ensureCopy, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
+import { ensureCopy, placeMember, exportLibrary, mergeLibrary, toEntry, updatePartCopy, type LibraryEntry } from "../weldment/library";
 import { deleteProfile, listProfiles, saveProfile, saveProfiles } from "../weldment/store";
 import { DocumentEditor, type EditorHandle } from "./DocumentEditor";
 import { exportBase } from "../doc/properties";
@@ -199,6 +200,8 @@ const FINISH_FIRST = "Finish the feature that is open first: OK or Cancel it.";
 /** Files that open the part-level ask as a drawing rather than as a document. */
 const DRAWING_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"];
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
 export function App() {
   const kernel = useMemo(() => new KernelClient(), []);
   const [kernelState, setKernelState] = useState<KernelState>({ phase: "loading" });
@@ -210,15 +213,16 @@ export function App() {
   const [rebuildMs, setRebuildMs] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
-  /** The members-from-sketch tool's picked lines, while the view is picking them (null: not picking). */
-  const [memberPick, setMemberPick] = useState<SketchLine[] | null>(null);
-  // Escape stops picking lines and drops the lines picked.
-  useEffect(() => {
-    if (memberPick === null) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMemberPick(null);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [memberPick === null]);
+  /** The Member command, while it is open: its size, picks and settings (null: closed). */
+  const [memberCmd, setMemberCmd] = useState<MemberCommandState | null>(null);
+  const [memberPin, setMemberPin] = useState(false);
+  const [memberSummary, setMemberSummary] = useState<MemberSummary | null>(null);
+  const [memberBusy, setMemberBusy] = useState(false);
+  /** The part when the command opened (every preview is built on it), and the last preview put in. */
+  const memberBase = useRef<RawDocument | null>(null);
+  const memberLast = useRef<RawDocument | null>(null);
+  /** Sketch → Frame layout… open. */
+  const [layoutOpen, setLayoutOpen] = useState(false);
   const [fitToken, setFitToken] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -1175,17 +1179,11 @@ export function App() {
   };
 
   /** A member of a library size: the part's copy of the profile and the member, as one undo step. */
+  /** Sections' "+ Member": the Member command with that size (the part's copy of it, if it has one). */
   const addMember = (entry: LibraryEntry, designation: string) => {
     if (!doc) return setNotice({ kind: "error", text: "Fix the document JSON first." });
-    const r = addLibraryMember(doc, entry, designation);
-    if (!r.ok) return setNotice({ kind: "error", text: r.error });
-    d.replaceDoc(r.doc);
-    setSelectedFeature(r.id);
-    setRightTab("properties");
-    setNotice(r.note ? { kind: "info", text: r.note } : null);
-    const used = { ...entry, uses: entry.uses + 1 };
-    setLibrary((l) => l.map((e) => (e.id === entry.id ? used : e)));
-    void saveProfile(used).catch(() => undefined);
+    const copy = Object.entries((doc.profiles ?? {}) as Record<string, ProfileDef>).find(([, p]) => p.library?.id === entry.id && p.sizes.some((x) => x.designation === designation));
+    openMembers({ size: copy ? `part|${copy[0]}|${designation}` : `lib|${entry.id}|${designation}`, ...(sketchLines(doc).length ? {} : { source: "points" as const }) });
   };
 
   const updateCopy = (entry: LibraryEntry) => {
@@ -1222,20 +1220,6 @@ export function App() {
     return out;
   }, [doc, library]);
 
-  /**
-   * A size picked from sizeChoices, as the part names it: its profile and
-   * designation, and the document with the part's copy of a library profile
-   * when it needs one (with what was copied, and the library entry to count).
-   */
-  const sizeIn = (doc: RawDocument, choice: string): { next: RawDocument; profile: string; size: string; note?: string; entry?: LibraryEntry } | null => {
-    const [where, key, size] = choice.split("|");
-    if (where !== "lib") return { next: doc, profile: key, size };
-    const entry = library.find((e) => e.id === key);
-    if (!entry) return setNotice({ kind: "error", text: "That section is no longer in the library." }), null;
-    const copy = ensureCopy(doc, entry, size);
-    if (!copy.ok) return setNotice({ kind: "error", text: copy.error }), null;
-    return { next: copy.doc, profile: copy.name, size, note: copy.note, entry };
-  };
   /** A library section used for `n` more members: counted, for the library's order. */
   const countUses = (entry: LibraryEntry | undefined, n: number) => {
     if (!entry) return;
@@ -1244,52 +1228,197 @@ export function App() {
     void saveProfile(used).catch(() => undefined);
   };
 
-  /** Members along a path of nodes, with the part's copy of a library profile if it needs one: one undo step. */
-  const addPath = (req: PathRequest): boolean => {
-    if (!doc) return false;
-    const sz = sizeIn(doc, req.size);
-    if (!sz) return false;
-    const r = addFramePath(sz.next, { profile: sz.profile, size: sz.size, path: req.path, line: req.line, mitre: req.mitre });
-    if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
-    d.replaceDoc(r.doc);
-    const joints = r.joints.length ? ` and ${r.joints.length} mitre${r.joints.length === 1 ? "" : "s"}` : "";
-    setNotice({ kind: "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${sz.size}${joints}.${sz.note ? ` ${sz.note}` : ""}` });
-    fitAfter.current = true;
-    countUses(sz.entry, r.members.length);
-    return true;
+  /** A size picked from sizeChoices, quietly: the part's profile and size (and its copy of a library profile), or why not. */
+  const sizeFor = (base: RawDocument, choice: string): { ok: true; next: RawDocument; profile: string; size: string; note?: string; entry?: LibraryEntry } | { ok: false; error: string } => {
+    const [where, key, size] = choice.split("|");
+    if (!size) return { ok: false, error: "Pick a size first." };
+    if (where !== "lib") return { ok: true, next: base, profile: key, size };
+    const entry = library.find((e) => e.id === key);
+    if (!entry) return { ok: false, error: "That section is no longer in the library." };
+    const copy = ensureCopy(base, entry, size);
+    return copy.ok ? { ok: true, next: copy.doc, profile: copy.name, size, note: copy.note, entry } : { ok: false, error: copy.error };
   };
 
-  /** A starter frame layout: its parameters and its sketch, one undo step; its sketch's id. */
-  const addLayout = (spec: TemplateSpec): string | null => {
-    if (!doc) return null;
+  // ------------------------------------------------------------ the Member command
+  const MEMBER_PREFS = "cocaide.memberCommand.v1";
+  type MemberPrefs = Partial<Pick<MemberCommandState, "size" | "source" | "placement" | "align" | "rotation" | "corners" | "runThrough">> & { recent?: string[] };
+  const memberPrefs = (): MemberPrefs => {
+    try {
+      return JSON.parse(localStorage.getItem(MEMBER_PREFS) ?? "{}") as MemberPrefs;
+    } catch {
+      return {};
+    }
+  };
+  const framesRef = useRef(sketchFrames);
+  framesRef.current = sketchFrames;
+  /** The members the command's picks and settings make, built on `base`, and what to say about them. */
+  const buildMembers = (base: RawDocument, st: MemberCommandState): { doc: RawDocument; summary: MemberSummary | null } => {
+    if (st.source === "lines" ? !st.lines.length : st.source === "nodes" ? !st.path.trim() : false) return { doc: base, summary: null };
+    const fail = (error: string) => ({ doc: base, summary: { members: 0, joints: 0, length: 0, warnings: [], skipped: [], error } });
+    const sz = sizeFor(base, st.size);
+    if (!sz.ok) return fail(sz.error);
+    const align = st.placement === "custom" ? st.align : undefined;
+    const rotation = st.placement === "custom" ? st.rotation : 0;
+    const line = st.placement === "outside" ? "outside" : "centre";
+    let next: RawDocument;
+    let made: { members: string[]; joints: string[]; warnings: string[]; skipped: string[] };
+    if (st.source === "points") {
+      // One member between two points: beside the members already there unless its ends are given.
+      const placed = placeMember(sz.next, sz.profile, sz.size);
+      if (!placed.ok) return fail(placed.error);
+      next = placed.doc;
+      const patch = { ...(st.from && st.to ? { from: st.from, to: st.to } : {}), ...(align ? { align } : {}), ...(rotation ? { rotation } : {}) };
+      if (Object.keys(patch).length) {
+        const x = apply(next, { type: "updateFeature", id: placed.id, patch });
+        if (!x.ok) return fail(x.error);
+        next = x.doc;
+      }
+      made = { members: [placed.id], joints: [], warnings: [], skipped: [] };
+    } else if (st.source === "lines") {
+      const r = addSketchMembers(sz.next, { profile: sz.profile, size: sz.size, lines: st.lines, line, ...(align ? { align } : {}), rotation, corners: st.corners, runThrough: st.runThrough, frames: framesRef.current });
+      if (!r.ok) return fail(r.error);
+      next = r.doc;
+      made = r;
+    } else {
+      const r = addFramePath(sz.next, { profile: sz.profile, size: sz.size, path: st.path, line, mitre: st.corners === "mitre" });
+      if (!r.ok) return fail(r.error);
+      next = r.doc;
+      for (const id of r.members) {
+        if (!align && !rotation) break;
+        const x = apply(next, { type: "updateFeature", id, patch: { ...(align ? { align } : {}), ...(rotation ? { rotation } : {}) } });
+        if (x.ok) next = x.doc;
+      }
+      made = { members: r.members, joints: r.joints, warnings: [], skipped: [] };
+    }
+    const v = validateDocument(next, { sketchFrames: framesRef.current });
+    let length = 0;
+    for (const f of v.features) if (f.feature?.op === "member" && made.members.includes(f.id)) length += Math.hypot(...[0, 1, 2].map((k) => (f.feature as { to: Vec3 }).to[k] - (f.feature as { from: Vec3 }).from[k]));
+    return { doc: next, summary: { members: made.members.length, joints: made.joints.length, length, warnings: made.warnings, skipped: made.skipped } };
+  };
+  /** The anchor of the profile a size is of (the grid's "anchor" button names it). */
+  const memberAnchor = (choice: string): string => {
+    const [where, key] = choice.split("|");
+    if (where === "lib") return library.find((e) => e.id === key)?.anchor ?? "centroid";
+    return ((doc?.profiles ?? {}) as Record<string, ProfileDef>)[key]?.anchor ?? "centroid";
+  };
+  /** Opens the Member command (or, open, changes it): on `base`, the part as it is unless a step just made a new one. */
+  const openMembers = (init: Partial<MemberCommandState> = {}, base: RawDocument | null = doc) =>
+    void sessionApi.finishFirst(
+      "add members",
+      () => {
+        if (memberCmd) return setMemberCmd((st) => (st ? { ...st, ...init } : st));
+        if (!base) return setNotice({ kind: "error", text: "Fix the document JSON first." });
+        const problem = d.begin("Add members");
+        if (problem) return setNotice({ kind: "error", text: problem });
+        memberBase.current = base;
+        memberLast.current = base;
+        const p = memberPrefs();
+        const size = init.size ?? (p.size && sizeChoices.some((x) => x.value === p.size) ? p.size : (sizeChoices[0]?.value ?? ""));
+        // Nothing to run along yet (no sketch lines, no nodes): one member between two points.
+        const hasLines = sketchLines(base).length > 0;
+        const hasNodes = Object.keys(isRecord(base.nodes) ? base.nodes : {}).length >= 2;
+        const source = !hasLines && !hasNodes ? "points" : p.source === "points" || !p.source ? (hasLines ? "lines" : "nodes") : p.source;
+        setMemberCmd({ source, lines: [], path: "", placement: p.placement ?? "outside", ...(p.align ? { align: p.align } : {}), rotation: p.rotation ?? 0, corners: p.corners ?? "mitre", runThrough: p.runThrough ?? "posts", ...init, size });
+        setMemberSummary(null);
+        setNotice(null);
+        setRightTab("properties");
+      },
+      true,
+    );
+  // Every change of the picks or settings: the members built on the part as it was, in place of the last ones.
+  useEffect(() => {
+    if (!memberCmd || !memberBase.current) return;
+    setMemberBusy(true);
+    const t = setTimeout(() => {
+      const r = buildMembers(memberBase.current!, memberCmd);
+      if (r.doc !== memberLast.current) {
+        d.replaceDoc(r.doc);
+        memberLast.current = r.doc;
+      }
+      setMemberSummary(r.summary);
+      setMemberBusy(false);
+    }, 120);
+    return () => clearTimeout(t);
+  }, [memberCmd]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeMembers = () => {
+    setMemberCmd(null);
+    setMemberSummary(null);
+    memberBase.current = null;
+    memberLast.current = null;
+  };
+  const cancelMembers = () => {
+    if (!memberCmd) return;
+    d.rollback();
+    closeMembers();
+  };
+  const okMembers = () => {
+    const st = memberCmd;
+    const s = memberSummary;
+    if (!st || !s || !s.members || s.error || memberBusy) return;
+    const sz = memberBase.current ? sizeFor(memberBase.current, st.size) : null;
+    const size = sz?.ok ? sz.size : st.size;
+    const label = `Add ${s.members} member${s.members === 1 ? "" : "s"} of ${size}`;
+    d.commit(label);
+    // Remembered for next time: the size (as the part now names it) first among the recent ones, and the settings.
+    const kept = sz?.ok ? `part|${sz.profile}|${sz.size}` : st.size;
+    try {
+      const p = memberPrefs();
+      localStorage.setItem(MEMBER_PREFS, JSON.stringify({ size: kept, source: st.source, placement: st.placement, align: st.align, rotation: st.rotation, corners: st.corners, runThrough: st.runThrough, recent: [kept, ...(p.recent ?? []).filter((x) => x !== kept)].slice(0, 6) }));
+    } catch {
+      // Not remembered: fine.
+    }
+    if (sz?.ok) countUses(sz.entry, s.members);
+    fitAfter.current = true;
+    const warned = s.warnings.length ? ` Check: ${s.warnings.join("; ")}.` : "";
+    setNotice({ kind: s.warnings.length ? "error" : "info", text: `${label}, ${s.joints} joint${s.joints === 1 ? "" : "s"}.${warned}${sz?.ok && sz.note ? ` ${sz.note}` : ""}` });
+    if (memberPin && memberLast.current) {
+      // Open again for the next group, on the part as it is now.
+      const problem = d.begin("Add members");
+      if (problem) return closeMembers();
+      memberBase.current = memberLast.current;
+      setMemberCmd({ ...st, size: kept, lines: [], path: "" });
+      setMemberSummary(null);
+    } else {
+      // One member: selected, its properties open (to set its ends, length or caps).
+      if (st.source === "points" && memberLast.current) {
+        const ids = new Set(memberBase.current?.features.map((f) => f.id));
+        const made = memberLast.current.features.find((f) => f.op === "member" && !ids.has(f.id));
+        if (made) setSelectedFeature(String(made.id));
+      }
+      closeMembers();
+    }
+  };
+  // Esc cancels the command, Enter keeps it (not while typing in a field).
+  useEffect(() => {
+    if (!memberCmd) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "Escape") cancelMembers();
+      else if (e.key === "Enter") okMembers();
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
+  /** A starter frame layout: its parameters and its sketch, one undo step; then the Member command on its lines. */
+  const addLayout = (spec: TemplateSpec): boolean => {
+    if (!doc) return false;
     const t = frameTemplate(doc, spec);
-    if ("error" in t) return setNotice({ kind: "error", text: t.error }), null;
+    if ("error" in t) return setNotice({ kind: "error", text: t.error }), false;
     let next: RawDocument = doc;
     for (const c of t.commands) {
       const r = apply(next, c, { user: true });
-      if (!r.ok) return setNotice({ kind: "error", text: r.error }), null;
+      if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
       next = r.doc;
     }
     d.replaceDoc(next);
-    setNotice({ kind: "info", text: `Added ${t.sketch}, driven by frame_w, frame_h${spec.kind === "box" ? ", frame_d" : spec.kind === "portal" ? ", frame_rise, frame_bay" : ""} (Parameters). Its lines are picked: choose a size and Add members.` });
     fitAfter.current = true;
-    return t.sketch;
-  };
-
-  /** Members on picked sketch lines, on nodes that follow the sketch, the corners joined: one undo step. */
-  const addFromSketch = (req: SketchMembersRequest): boolean => {
-    if (!doc) return false;
-    const sz = sizeIn(doc, req.size);
-    if (!sz) return false;
-    const r = addSketchMembers(sz.next, { profile: sz.profile, size: sz.size, lines: req.lines, line: req.line, corners: req.corners, runThrough: req.runThrough, frames: sketchFrames });
-    if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
-    d.replaceDoc(r.doc);
-    const joints = r.joints.length ? ` and ${r.joints.length} joint${r.joints.length === 1 ? "" : "s"}` : "";
-    const skipped = r.skipped.length ? ` Skipped ${r.skipped.length === 1 ? `${r.skipped[0]}, which has` : `${r.skipped.length} lines that have`} a member already.` : "";
-    const warned = r.warnings.length ? ` Check: ${r.warnings.join("; ")}.` : "";
-    setNotice({ kind: r.warnings.length ? "error" : "info", text: `Added ${r.members.length} member${r.members.length === 1 ? "" : "s"} of ${sz.size}${joints}, following the sketch.${skipped}${warned}${sz.note ? ` ${sz.note}` : ""}` });
-    fitAfter.current = true;
-    countUses(sz.entry, r.members.length);
+    const lines = sketchLines(next).find((x) => x.sketch === t.sketch)?.lines ?? [];
+    openMembers({ source: "lines", lines: lines.map((entity) => ({ sketch: t.sketch, entity })), ...(spec.kind === "box" ? { corners: "butt" as const, runThrough: "posts" as const } : {}) }, next);
     return true;
   };
 
@@ -1786,6 +1915,8 @@ export function App() {
       setRightTab,
       evaluate: (panel: EvaluatePanel) => openEvaluate(panel),
       files: files.tool,
+      members: (init) => openMembers(init ?? {}),
+      frameLayout: () => setLayoutOpen(true),
     },
   );
   /** The newest ToolCtx, for menu entries run at the click (after the right-click's selection has landed). */
@@ -1797,6 +1928,8 @@ export function App() {
   const runTool = (id: string) => {
     const t = toolById(id);
     if (!t) return;
+    // Another tool: the Member command's group is dropped first (the Member tool itself just brings it up).
+    if (memberCmd && id !== "tool.member") cancelMembers();
     const why = t.disabled?.(toolCtx);
     if (why) return setNotice({ kind: "info", text: why });
     lastTool.current = id;
@@ -2664,19 +2797,19 @@ export function App() {
       },
     };
   }, [drawFeature, draw, params, sketchFrames]); // eslint-disable-line react-hooks/exhaustive-deps
-  // The members-from-sketch tool picking lines in the view (not while a sketch is open or a feature is being edited).
-  const linePicking = memberPick !== null && !sketch && !session;
+  // The Member command picking sketch lines in the view (not while a sketch is open or a feature is being edited).
+  const linePicking = !!memberCmd && memberCmd.source === "lines" && !sketch && !session;
   const pickMemberLine = (hit: SketchEntityHit): boolean => {
     if (hit.type !== "line") return false;
-    setMemberPick((p) => {
-      const list = p ?? [];
-      const has = list.some((x) => x.sketch === hit.sketch && x.entity === hit.entity);
-      return has ? list.filter((x) => !(x.sketch === hit.sketch && x.entity === hit.entity)) : [...list, { sketch: hit.sketch, entity: hit.entity }];
+    setMemberCmd((st) => {
+      if (!st) return st;
+      const has = st.lines.some((x) => x.sketch === hit.sketch && x.entity === hit.entity);
+      return { ...st, lines: has ? st.lines.filter((x) => !(x.sketch === hit.sketch && x.entity === hit.entity)) : [...st.lines, { sketch: hit.sketch, entity: hit.entity }] };
     });
     return true;
   };
   const memberLineHint = (hit: SketchEntityHit): string | null =>
-    (memberPick ?? []).some((x) => x.sketch === hit.sketch && x.entity === hit.entity) ? "Click to take it out" : "Click to put a member on it";
+    memberCmd?.lines.some((x) => x.sketch === hit.sketch && x.entity === hit.entity) ? "Click to take it out" : "Click to put a member on it";
 
   const dirty = d.text !== d.savedText;
   const status =
@@ -2697,6 +2830,7 @@ export function App() {
   return (
     <ParametersContext.Provider value={params}>
       <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
+      {layoutOpen && <FrameLayoutDialog onAdd={addLayout} onClose={() => setLayoutOpen(false)} />}
       <div
         className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}${locked ? " bridge-locked" : ""}`}
         onDragOver={(e) => {
@@ -2900,10 +3034,7 @@ export function App() {
               request={treeRequest}
             />
             <ParametersPanel doc={doc} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onAsk={sketch ? undefined : contextMenu} onManage={sketch ? undefined : () => setPmOpen(true)} />
-            {!sketch && (
-              <SketchMembersPanel doc={doc} sizes={sizeChoices} picking={memberPick} onPicking={setMemberPick} onCreate={addFromSketch} onTemplate={addLayout} onError={(text) => setNotice({ kind: "error", text })} />
-            )}
-            <NodesPanel doc={doc} frames={sketchFrames} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} sizes={sizeChoices} onPath={addPath} />
+            <NodesPanel doc={doc} frames={sketchFrames} dispatch={d.dispatch} onError={(text) => setNotice({ kind: "error", text })} onMembers={() => openMembers({ source: "nodes" })} />
             <BodiesPanel
               measurements={view?.measurements ?? null}
               bodies={view?.bodies ?? []}
@@ -2960,7 +3091,7 @@ export function App() {
                   sketchPick={session && activeField?.sketches ? (hit) => (pickRouter.current?.sketch(hit) ?? "none") === null : linePicking ? pickMemberLine : null}
                   sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : linePicking ? memberLineHint : null}
                   sketchLines={!session && linePicking}
-                  sketchMarks={!session ? memberPick : null}
+                  sketchMarks={!session && memberCmd ? memberCmd.lines : null}
                   draw3d={draw3d}
                   peek={peek ?? hoverPeek}
                   onPick={onPick}
@@ -3201,7 +3332,25 @@ export function App() {
                   />
                 ) : rightTab === "properties" ? (
                   <section className="panel">
-                    {doc && selectedFeature ? (
+                    {memberCmd ? (
+                      <MemberCommand
+                        state={memberCmd}
+                        onChange={(patch) => setMemberCmd((st) => (st ? { ...st, ...patch } : st))}
+                        sizes={sizeChoices}
+                        recent={memberPrefs().recent ?? []}
+                        familyOf={(v) => library.find((e) => e.id === v.split("|")[1])?.name}
+                        sketches={sketchLines(memberBase.current)}
+                        nodes={memberBase.current ? Object.keys(validateDocument(memberBase.current, { sketchFrames }).nodes) : []}
+                        anchor={memberAnchor(memberCmd.size)}
+                        summary={memberSummary}
+                        busy={memberBusy}
+                        pinned={memberPin}
+                        onPin={setMemberPin}
+                        onOk={okMembers}
+                        onCancel={cancelMembers}
+                        onBrowse={() => setRightTab("sections")}
+                      />
+                    ) : doc && selectedFeature ? (
                       <PropertyPanel
                         key={selectedFeature}
                         doc={doc}

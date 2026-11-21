@@ -22,10 +22,12 @@ test("members of a standard UB and an MGP10 stud, found by search", async ({ pag
   await page.getByTestId("sections-search").fill("200UB25.4");
   await expect(page.getByTestId("section-size-200UB25.4")).toContainText("3,229.7 mm²25.35 kg/m");
   await page.getByTestId("section-add-200UB25.4").click();
+  await page.getByTestId("member-cmd-ok").click();
   await page.getByTestId("tab-sections").click();
   await page.getByTestId("sections-search").fill("90x45 mgp10");
   await expect(page.getByTestId("section-size-90x45 MGP10")).toContainText("4,050 mm²2.23 kg/m");
   await page.getByTestId("section-add-90x45 MGP10").click();
+  await page.getByTestId("member-cmd-ok").click();
 
   const rows = page.getByTestId("member-row");
   await expect(rows).toHaveCount(2);

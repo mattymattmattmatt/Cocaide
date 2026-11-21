@@ -5,6 +5,7 @@
 // tabs, the shortcut bar (S), the keyboard, Enter (repeat) and the right-click
 // menus all read the one list in tools/index.ts.
 
+import type { MemberCommandState } from "../weldment/MemberCommand";
 import type { LibraryEntry } from "../../weldment/library";
 import type { Command, RawDocument } from "../../doc/commands";
 import type { PlaneSpec } from "../../doc/types";
@@ -60,6 +61,10 @@ export interface ToolCtx {
   draft?(feature: Raw, opts?: { active?: string; complete?: (f: Raw) => Raw }): void;
   /** The last values used for each kind of feature in this browser (src/ui/model/toolMemory.ts). */
   memory?: ToolMemory;
+  /** Opens the Member command (size, lines or a node path, placement, corners), maybe with a size or lines picked. */
+  members?(init?: Partial<MemberCommandState>): void;
+  /** Opens Sketch → Frame layout… (a starter layout sketch and its parameters). */
+  frameLayout?(): void;
   /** Puts a whole new document in as one undo step (a tool that adds several things), then selects `select`. */
   replace(doc: RawDocument, select?: string): void;
   /** Tells the user something: what to click first ("error"), or what happened ("info"). */

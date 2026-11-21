@@ -90,10 +90,12 @@ test("members on a 3D sketch's lines: a pitched portal frame, mitred at the knee
   await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
   await page.goto("/?e2e");
   await waitForRebuild(page);
-  const panel = page.getByTestId("sketch-members");
-  await panel.getByTestId("sketch-members-all").selectOption("frame3d");
-  await expect(panel.getByTestId("sketch-members-picked")).toContainText("4 lines");
-  await panel.getByTestId("sketch-members-add").click();
+  await page.getByText("Weldments", { exact: true }).click();
+  await page.getByTestId("tool-member").click();
+  const cmd = page.getByTestId("member-cmd");
+  await cmd.getByTestId("member-cmd-all").selectOption("frame3d");
+  await expect(cmd.getByTestId("member-cmd-summary")).toContainText("4 members");
+  await cmd.getByTestId("member-cmd-ok").click();
   await expect.poll(async () => (await saved(page)).features.filter((f: any) => f.op === "member").length).toBe(4);
   const d = await saved(page);
   expect(d.features.filter((f: any) => f.op === "joint").map((j: any) => j.type)).toEqual(["mitre", "mitre", "mitre"]);

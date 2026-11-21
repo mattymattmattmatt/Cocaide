@@ -106,13 +106,20 @@ export function frameEnds(members: FrameMember[], joints: JointFeature[], nodes:
       }
     }
 
-    // Everything else that ends here stops at the targets' faces.
+    // Everything else that ends here stops at the targets' faces; with an arrangement order, each member at the faces
+    // of every member before it (the ones it doesn't list, at all of them).
+    const order = j.type === "butt" && j.order ? j.order.map((id) => byId.get(id)).filter((m): m is FrameMember => !!m) : null;
+    const before = (q: FrameMember): FrameMember[] => {
+      if (!order) return targets;
+      const k = order.indexOf(q);
+      return k < 0 ? order : order.slice(0, k);
+    };
     let failed: string | null = null;
     for (const q of ending) {
       if (targets.includes(q)) continue;
       const dq = away(q);
       const cut: MemberEnd = { extend: 0, planes: [], joint: j.id };
-      for (const t of targets) {
+      for (const t of before(q)) {
         const u = sub3(dq, scale3(t.placed.dir, dot3(dq, t.placed.dir)));
         const across = len3(u);
         if (across < 0.05) {
@@ -146,7 +153,7 @@ export function frameEnds(members: FrameMember[], joints: JointFeature[], nodes:
       e.planes = cut.planes;
       e.joint = cut.joint;
     }
-    shaped.set(j.id, [...new Set([...targets.map((t) => t.f.id), ...plan.keys()])]);
+    shaped.set(j.id, [...new Set([...targets.map((t) => t.f.id), ...(order ?? []).map((m) => m.f.id), ...plan.keys()])]);
   }
   return { ends, errors, shaped };
 }

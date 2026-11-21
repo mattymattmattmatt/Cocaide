@@ -164,6 +164,7 @@ describe("Sketch", () => {
       ["Right (YZ)", "plane-right", false],
       ["On the selected face", "plane-selected-face", true],
       ["3D Sketch", "sketch-3d", false],
+      ["Frame layout…", "sketch-frame-layout", false],
     ]);
     items[1].run(ctx);
     expect(out.sketches).toEqual([{ type: "ref", ref: { datum: "Front" } }]);

@@ -2193,7 +2193,7 @@ function nodeName(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext)
 }
 
 function validateJoint(raw: Record<string, unknown>, c: Checker, earlier: Map<string, string>, ctx: FeatureContext): JointFeature | null {
-  c.keys(raw, "", ["id", "op", "node", "type", "members", "through", "gap"]);
+  c.keys(raw, "", ["id", "op", "node", "type", "members", "through", "order", "gap"]);
   const node = nodeName(raw, c, ctx);
   if (!JOINT_TYPES.includes(raw.type as never)) c.fail("type", `must be ${JOINT_TYPES.map((t) => `"${t}"`).join(" or ")} (got ${describe(raw.type)})`);
   const gap = raw.gap === undefined ? undefined : c.num(raw, "gap", "", { nonNegative: true });
@@ -2225,6 +2225,18 @@ function validateJoint(raw: Record<string, unknown>, c: Checker, earlier: Map<st
     if (through && !memberAtNode(through, node, at) && !insideSection(through, at, ctx.profiles[through.profile])) c.fail("through", `${through.id} neither ends at ${node} nor passes through it`);
     if (through && !ending.some((id) => id !== through.id)) c.fail("through", `no other member ends at ${node} to butt against ${through.id}`);
     if (through) f.through = through.id;
+    if (raw.order !== undefined) {
+      const order = raw.order;
+      if (!Array.isArray(order) || order.length < 2 || new Set(order).size !== order.length) c.fail("order", `must be two or more different members, the one that runs through first (got ${describe(order)})`);
+      else if (through && order[0] !== through.id) c.fail("order", `starts with the member that runs through (${through.id}), got ${describe(order[0])}`);
+      else {
+        order.forEach((id, i) => {
+          const m = namedMember(id, `order[${i}]`, c, earlier, ctx);
+          if (m && i > 0 && memberAtNode(m, node, at) !== "ends") c.fail(`order[${i}]`, `${m.id} does not end at ${node}, so it can't be trimmed there (only the first may run past it)`);
+        });
+        if (!c.errors.length) f.order = order as string[];
+      }
+    }
   }
   if (gap !== undefined) f.gap = gap;
   return c.errors.length ? null : f;

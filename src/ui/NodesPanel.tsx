@@ -29,8 +29,8 @@ interface Props {
   doc: RawDocument | null;
   dispatch(cmd: Command): string | null;
   onError(text: string): void;
-  sizes: SizeChoice[];
-  onPath(req: PathRequest): boolean;
+  /** Opens the Member command on a path of nodes. */
+  onMembers(): void;
   /** Where the last rebuild put each sketch (nodes on a face sketch are placed from these). */
   frames?: SketchFrames;
 }
@@ -44,13 +44,9 @@ export function nextNodeName(taken: string[]): string {
   for (let k = 1; ; k++) if (!taken.includes(`N${k}`)) return `N${k}`;
 }
 
-export function NodesPanel({ doc, dispatch, onError, sizes, onPath, frames }: Props) {
+export function NodesPanel({ doc, dispatch, onError, onMembers, frames }: Props) {
   const [at, setAt] = useState<NumberValue[]>([0, 0, 0]);
   const [name, setName] = useState("");
-  const [size, setSize] = useState("");
-  const [path, setPath] = useState("");
-  const [line, setLine] = useState<PathRequest["line"]>("outside");
-  const [mitre, setMitre] = useState(true);
   if (!doc) return null;
   const nodes = (doc.nodes ?? {}) as Record<string, NumberValue[]>;
   const v = Object.values(nodes).some(isNodeLink) ? validateDocument(doc, { sketchFrames: frames }) : null;
@@ -66,7 +62,6 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath, frames }: Pr
     if (n in nodes) return onError(`there is already a node "${n}"`);
     if (!run({ type: "setNode", name: n, at })) setName("");
   };
-  const chosen = sizes.some((s) => s.value === size) ? size : (sizes[0]?.value ?? "");
 
   return (
     <Section title="Nodes" className="nodes" testId="nodes" count={names.length} open={names.length > 0} autoOpen={names.length > 0}>
@@ -112,38 +107,10 @@ export function NodesPanel({ doc, dispatch, onError, sizes, onPath, frames }: Pr
         </button>
       </div>
       {names.length >= 2 && (
-        <form
-          className="path-tool"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!chosen) return onError("Pick a section size first: save a profile to the section library, or put one in the part.");
-            if (onPath({ size: chosen, path, line, mitre })) setPath("");
-          }}
-        >
-          <h3>Members along a path</h3>
-          <select value={chosen} onChange={(e) => setSize(e.target.value)} aria-label="Section size" data-testid="path-size">
-            {sizes.length === 0 && <option value="">No sections yet</option>}
-            {sizes.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="A B C D A, A E" aria-label="Path of nodes" data-testid="path-text" />
-          <div className="path-options">
-            <select value={line} onChange={(e) => setLine(e.target.value as PathRequest["line"])} aria-label="Where the line runs" data-testid="path-line">
-              <option value="outside">Nodes on the outside</option>
-              <option value="centre">Nodes on the centrelines</option>
-            </select>
-            <label className="check">
-              <input type="checkbox" checked={mitre} onChange={(e) => setMitre(e.target.checked)} data-testid="path-mitre" />
-              Mitre corners
-            </label>
-          </div>
-          <button type="submit" disabled={!path.trim()} data-testid="path-add">
-            Add members
-          </button>
-        </form>
+        <button type="button" className="node-members" onClick={onMembers} data-testid="nodes-members" title="The Member command, with a path of nodes (A B C D A)">
+          <Icon name="member" size={14} />
+          Members along nodes…
+        </button>
       )}
     </Section>
   );

@@ -12,12 +12,17 @@ export const tools: ToolDef[] = [
     icon: "member",
     tab: "weldments",
     group: "members",
-    title: "A straight member of a weldment profile: another like the selected one, or pick a size in Sections",
+    title: "Members of a weldment profile: pick a size, then click sketch lines (or type a path of nodes); choose where the section sits on the line and how the corners join",
     testId: "tool-member",
     run: (ctx) => {
       const { doc } = ctx;
       if (!doc) return ctx.notice("Fix the document JSON first.");
       const like = (ctx.selected?.op === "member" ? ctx.selected : [...ctx.resolved].reverse().find((f) => f.op === "member")) as { profile: string; size: string } | undefined;
+      // The Member command: a size, the lines (or nodes) they run along, where the section sits, the corners.
+      if (ctx.members) {
+        const known = like && (doc.profiles as Record<string, ProfileDef> | undefined)?.[like.profile];
+        return ctx.members(known ? { size: `part|${like.profile}|${like.size}` } : {});
+      }
       if (!like || !(doc.profiles as Record<string, ProfileDef> | undefined)?.[like.profile]) {
         ctx.setRightTab("sections");
         return ctx.notice(

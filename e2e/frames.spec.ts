@@ -44,14 +44,24 @@ test("a table frame from nodes, mitred at the top, measured into a cut list, the
   await addNode(page, "H", ["0", "=frame_d", "0"]);
 
   // The top rails round the corners, mitred; then the legs, up to the corners. Both from the library's SHS 40×40×3.
-  await page.getByTestId("path-size").selectOption({ label: "SHS 40x40x3 (library)" });
-  await page.getByTestId("path-text").fill("A B C D A");
-  await page.getByTestId("path-add").click();
-  await expect(page.getByTestId("notice")).toContainText("Added 4 members of SHS 40x40x3 and 4 mitres.");
-  await page.getByTestId("path-size").selectOption({ label: "SHS 40x40x3 (in this part)" });
-  await page.getByTestId("path-text").fill("E A, F B, G C, H D");
-  await page.getByTestId("path-add").click();
-  await expect(page.getByTestId("notice")).toContainText("Added 4 members of SHS 40x40x3.");
+  // The Member command along nodes: a path of them.
+  await page.getByTestId("nodes-members").click();
+  const cmd = page.getByTestId("member-cmd");
+  await expect(cmd.getByTestId("member-cmd-source-nodes")).toHaveAttribute("aria-checked", "true");
+  await cmd.getByTestId("member-cmd-size").click();
+  await cmd.getByTestId("member-cmd-size-filter").fill("SHS 40x40x3");
+  await cmd.locator('[data-testid^="member-cmd-size-lib|"]').first().click();
+  await cmd.getByTestId("member-cmd-path").fill("A B C D A");
+  await expect(cmd.getByTestId("member-cmd-summary")).toContainText("4 members");
+  await cmd.getByTestId("member-cmd-ok").click();
+  await expect(page.getByTestId("notice")).toContainText("Add 4 members of SHS 40x40x3, 4 joints.");
+  // Again for the legs: the size remembered (the part's copy now).
+  await page.getByTestId("nodes-members").click();
+  await expect(cmd.getByTestId("member-cmd-size")).toContainText("SHS 40x40x3");
+  await cmd.getByTestId("member-cmd-path").fill("E A, F B, G C, H D");
+  await expect(cmd.getByTestId("member-cmd-summary")).toContainText("4 members");
+  await cmd.getByTestId("member-cmd-ok").click();
+  await expect(page.getByTestId("notice")).toContainText("Add 4 members of SHS 40x40x3, 0 joints.");
 
   // It builds, with no interference: rails 1200 and 600 long point to long point, legs under them.
   await expectVolume(page, "3,054,720");

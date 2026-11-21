@@ -212,9 +212,9 @@ const ALIGN_ROWS = [1, 0, -1];
 const ALIGN_COLS = [-1, 0, 1];
 
 /** Nine points of the section's envelope, as seen from the member's To end, or the profile's anchor. */
-function AlignGrid({ value, anchor, onChange }: { value: [number, number] | undefined; anchor: string; onChange(a: [number, number] | undefined): void }) {
+export function AlignGrid({ value, anchor, onChange, testId = "prop-align" }: { value: [number, number] | undefined; anchor: string; onChange(a: [number, number] | undefined): void; testId?: string }) {
   return (
-    <span className="align-grid" data-testid="prop-align">
+    <span className="align-grid" data-testid={testId}>
       <span className="align-cells">
         {ALIGN_ROWS.flatMap((ay) =>
           ALIGN_COLS.map((ax) => {
@@ -226,13 +226,13 @@ function AlignGrid({ value, anchor, onChange }: { value: [number, number] | unde
                 aria-pressed={on}
                 aria-label={`Line through ${ay === 1 ? "top" : ay === -1 ? "bottom" : "middle"} ${ax === -1 ? "left" : ax === 1 ? "right" : "centre"}`}
                 onClick={() => onChange([ax, ay])}
-                data-testid={`prop-align-${ax}_${ay}`}
+                data-testid={`${testId}-${ax}_${ay}`}
               />
             );
           }),
         )}
       </span>
-      <button className={`align-anchor${value ? "" : " on"}`} aria-pressed={!value} onClick={() => onChange(undefined)} data-testid="prop-align-anchor">
+      <button className={`align-anchor${value ? "" : " on"}`} aria-pressed={!value} onClick={() => onChange(undefined)} data-testid={`${testId}-anchor`}>
         the {anchor === "centroid" ? "centroid" : "sketch origin"}
       </button>
     </span>

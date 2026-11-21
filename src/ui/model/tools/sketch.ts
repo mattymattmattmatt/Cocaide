@@ -95,6 +95,7 @@ const sketch: ToolDef = {
       run: (c: ToolCtx) => c.sketchOnFace(),
     },
     { label: "3D Sketch", icon: "sketch3d", hint: "Points and lines in space: a frame that isn't flat", testId: "sketch-3d", run: newSketch3d },
+    { label: "Frame layout…", icon: "member", hint: "A wall, box or portal layout sketch, sized by parameters, ready for members", testId: "sketch-frame-layout", run: (c: ToolCtx) => (c.frameLayout ? c.frameLayout() : c.notice("Frame layouts open from the app.")) },
   ],
   contextOn: "face",
   contextLabel: "Sketch on this face",

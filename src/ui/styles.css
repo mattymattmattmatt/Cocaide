@@ -2475,3 +2475,81 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .layout-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .layout-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
 .layout-field input { width: 100%; }
+
+/* The Member command: size, what the members run along, where the section sits, corners, and what it makes. */
+.member-cmd { display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.member-cmd .session-ok:disabled { opacity: 0.45; cursor: default; }
+.mc-section { display: flex; flex-direction: column; gap: 6px; }
+.mc-section h3 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.mc-section .small { font-size: 12px; margin: 0; }
+.mc-section input, .mc-section select { height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); color: var(--text); font-size: 13px; min-width: 0; }
+.mc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mc-row select { flex: 1; }
+.seg { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.seg button { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 8px; border: none; border-left: 1px solid var(--border); background: none; color: var(--text); font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.seg button:first-child { border-left: none; }
+.seg button:hover:not(.on) { background: var(--panel-2); }
+.seg button.on { background: color-mix(in srgb, var(--accent-2) 16%, var(--panel)); color: var(--accent-2); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent-2); }
+.seg.small button { height: 26px; font-size: 12px; padding: 0 6px; }
+.mc-size { position: relative; }
+.mc-size-button { width: 100%; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer; text-align: left; }
+.mc-size-button:hover { border-color: var(--accent-2); }
+.mc-size-name { flex: 1; font-weight: 600; font-family: var(--mono); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-size-list { position: absolute; z-index: 30; left: 0; right: 0; top: 38px; display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18); }
+.mc-size-scroll { max-height: 260px; overflow: auto; display: flex; flex-direction: column; }
+.mc-size-group { padding: 6px 4px 2px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.mc-size-scroll button { text-align: left; padding: 6px 8px; border: none; border-radius: 6px; background: none; color: var(--text); font-family: var(--mono); font-size: 12.5px; cursor: pointer; }
+.mc-size-scroll button:hover { background: var(--panel-2); }
+.mc-size-scroll button.on { background: color-mix(in srgb, var(--accent-2) 14%, var(--panel)); color: var(--accent-2); font-weight: 600; }
+.mc-empty { padding: 8px; }
+.mc-picked { min-height: 44px; padding: 7px 8px; border: 1px dashed color-mix(in srgb, var(--pick-active, #4c8dff) 55%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--pick-active-bg, #eef4ff) 55%, var(--panel)); display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.mc-picked.empty { justify-content: center; }
+.mc-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.mc-chip-sketch { font-size: 11px; font-weight: 700; color: var(--muted); margin-right: 2px; }
+.mc-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 3px 1px 7px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); font-family: var(--mono); font-size: 11.5px; }
+.mc-chip button { display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.mc-chip button:hover { background: var(--panel-2); color: var(--bad); }
+.mc-custom { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.mc-custom .align-cells button { width: 20px; height: 20px; padding: 0; border-radius: 4px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; }
+.mc-custom .align-cells { grid-template-columns: repeat(3, 20px); grid-template-rows: repeat(3, 20px); }
+.mc-custom .align-cells button.on { background: var(--accent-2); border-color: var(--accent-2); }
+.mc-custom .align-anchor { height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: 12px; cursor: pointer; }
+.mc-custom .align-anchor.on { border-color: var(--accent-2); color: var(--accent-2); }
+.mc-rotation { display: flex; align-items: center; gap: 8px; }
+.mc-rotation .seg { flex: 1; }
+.corner-glyph { flex: none; }
+.mc-summary { padding: 9px 10px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; }
+.mc-summary > strong, .mc-summary > span { display: inline; }
+.mc-summary.warn { border-color: color-mix(in srgb, #d4a017 55%, var(--border)); background: color-mix(in srgb, #d4a017 9%, var(--panel)); }
+.mc-summary.bad { border-color: color-mix(in srgb, var(--bad) 55%, var(--border)); background: color-mix(in srgb, var(--bad) 8%, var(--panel)); color: var(--bad); }
+.mc-warning { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: #9a6b00; }
+.member-cmd .link-button { border: none; background: none; color: var(--accent-2); padding: 0 2px; cursor: pointer; }
+.member-cmd .link-button:disabled { opacity: 0.4; cursor: default; }
+
+.nodes button.node-members { display: inline-flex; align-items: center; gap: 6px; width: 100%; justify-content: center; margin-top: 4px; }
+/* Sketch → Frame layout… */
+.modal.frame-layout { width: min(520px, calc(100vw - 32px)); }
+.modal.frame-layout header { display: flex; align-items: center; gap: 8px; }
+.modal.frame-layout header h2 { flex: 1; }
+.modal.frame-layout header button { border: none; background: none; cursor: pointer; color: var(--muted); }
+.layout-kinds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.layout-kinds button { display: flex; flex-direction: column; gap: 4px; padding: 10px; text-align: left; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 12px; }
+.layout-kinds button strong { font-size: 13px; }
+.layout-kinds button.on { border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 18%, transparent); }
+.frame-layout .layout-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.frame-layout .layout-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.frame-layout .layout-input { position: relative; display: flex; }
+.frame-layout .layout-input .unit { position: absolute; right: 8px; top: 7px; font-size: 11px; color: var(--muted); pointer-events: none; }
+.frame-layout footer { display: flex; justify-content: flex-end; gap: 8px; }
+.frame-layout footer button { height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.frame-layout footer button.primary { background: var(--accent-2); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+@media (max-width: 560px) { .layout-kinds { grid-template-columns: 1fr; } }
+.mc-points { display: flex; flex-direction: column; gap: 6px; }
+.mc-point { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 6px; }
+.mc-point .vec { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.mc-point input { height: 28px; width: 100%; }
+.mc-title { display: inline-flex; align-items: center; gap: 7px; }
+.mc-size-scroll button { display: block; width: 100%; }
+.mc-size-button svg { transform: rotate(90deg); color: var(--muted); }
+.mc-summary-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.mc-summary-line span::before { content: "·"; margin-right: 6px; color: var(--muted); }

@@ -1952,6 +1952,13 @@ export interface JointFeature extends FeatureBase {
   type: JointType;
   members?: [string, string];
   through?: string;
+  /**
+   * butt: the arrangement order, `through` first. Each member after it is
+   * trimmed to every member before it (the second to the first, the third to
+   * both). Members that end at the node and aren't listed are trimmed to all
+   * of them. Without it, every other member stops at `through`.
+   */
+  order?: string[];
   gap?: number;
 }
 export const JOINT_TYPES = ["mitre", "butt"] as const;

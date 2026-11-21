@@ -7,7 +7,7 @@
 // pure: works on the document through apply.
 
 import { apply, type Command, type RawDocument } from "../doc/commands";
-import type { MemberFeature, NodeLink, Vec3 } from "../doc/types";
+import type { MemberFeature, NodeLink, Vec2, Vec3 } from "../doc/types";
 import { memberAtNode, validateDocument } from "../doc/validate";
 import { documentParameters } from "../doc/parameters";
 import { dot3, sub3 } from "../geom/vec";
@@ -29,6 +29,10 @@ export interface SketchMembersSpec {
   lines: readonly SketchLine[];
   /** "centre": the profile's anchor on each line. "outside": each member on the outside of the frame, the lines its outside edges. */
   line: "centre" | "outside";
+  /** Where every line runs through the section instead (the 3 × 3 grid, as a member's align), overriding `line`. */
+  align?: Vec2;
+  /** Every member turned this many degrees about its line. */
+  rotation?: number;
   /** What each corner gets: two members meeting at an angle mitred or butted; "none" leaves the corners to be joined by hand. */
   corners: "mitre" | "butt" | "none";
   /**
@@ -200,8 +204,11 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
       return { ok: false, error: `${line.entity}: "${line.id}" ${next.features.some((f) => f.id === line.id) ? "is taken by another feature" : "is not an id (letters, digits, _ and -)"}` };
     }
     const id = line.id ?? freeId(next, `${memberKind(ends[0], ends[1])}_1`, true);
-    const align = spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined;
-    const problem = run({ type: "addFeature", feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}), along: { sketch: line.sketch, entity: line.entity } } });
+    const align = spec.align ?? (spec.line === "outside" ? outsideAlign(ends[0], ends[1], middle) : undefined);
+    const problem = run({
+      type: "addFeature",
+      feature: { id, op: "member", profile: spec.profile, size: spec.size, from: a, to: b, ...(align ? { align } : {}), ...(spec.rotation ? { rotation: spec.rotation } : {}), along: { sketch: line.sketch, entity: line.entity } },
+    });
     if (problem) return { ok: false, error: problem };
     members.push(id);
     touched.add(a).add(b);
@@ -329,3 +336,14 @@ export function membersFromSketch(doc: RawDocument, a: Record<string, unknown>, 
   const runThrough = a.runThrough === "posts" || a.runThrough === "rails" ? a.runThrough : "longer";
   return addSketchMembers(doc, { profile, size, lines, line, corners, runThrough, frames });
 }
+
+/** Each sketch's (and 3D sketch's) own lines, in the order they are listed: what the Member command can take all of. */
+export function sketchLines(doc: RawDocument | null): { sketch: string; lines: string[] }[] {
+  if (!doc) return [];
+  return doc.features.flatMap((f) => {
+    if ((f.op !== "sketch" && f.op !== "sketch3d") || f.suppressed === true) return [];
+    const lines = ownLines(f);
+    return lines.length ? [{ sketch: String(f.id), lines }] : [];
+  });
+}
+

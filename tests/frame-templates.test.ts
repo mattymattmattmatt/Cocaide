@@ -87,3 +87,23 @@ describe("starter frame layouts", () => {
     expect(frameTemplate(empty(), { kind: "box", width: 1000, height: 700 })).toEqual({ error: "the depth must be more than 0" });
   });
 });
+
+describe("a corner's arrangement order", () => {
+  it("trims each member to the ones before it, and builds; a bad order says why", () => {
+    const { doc, sketch } = made({ kind: "box", width: 1200, height: 750, depth: 600 });
+    const r = framed(doc, sketch);
+    const v = validateDocument(r.doc);
+    // The corner at the top of the first post: rail along x, then the one along y, then the post under them.
+    const corner = r.doc.features.find((f) => f.op === "joint" && JSON.stringify(v.nodes[String(f.node)]) === JSON.stringify([0, 0, 750]))!;
+    const members = v.features.flatMap((x) => (x.feature?.op === "member" ? [x.feature as unknown as { id: string; fromNode?: string; toNode?: string; from: number[]; to: number[] }] : []));
+    const at = members.filter((m) => m.fromNode === corner.node || m.toNode === corner.node);
+    const alongX = at.find((m) => Math.abs(m.to[0] - m.from[0]) > 1)!.id;
+    const alongY = at.find((m) => Math.abs(m.to[1] - m.from[1]) > 1)!.id;
+    const post = at.find((m) => Math.abs(m.to[2] - m.from[2]) > 1)!.id;
+    const ordered = apply(r.doc, { type: "updateFeature", id: String(corner.id), patch: { through: alongX, order: [alongX, alongY, post] } });
+    if (!ordered.ok) throw new Error(ordered.error);
+    expect(size(ordered.doc)).toEqual({ bodies: 12, size: [1200, 600, 750] });
+    const bad = apply(r.doc, { type: "updateFeature", id: String(corner.id), patch: { through: alongX, order: [alongY, alongX] } });
+    expect(bad).toMatchObject({ ok: false, error: expect.stringContaining("starts with the member that runs through") });
+  });
+});

@@ -58,10 +58,12 @@ test("draw an SHS, save it to the section library, and make members of it in ano
   await commit(page, "doc-name", "frame");
   await page.getByTestId("tab-sections").click();
   await page.getByTestId("section-add-SHS 40x40x3").click();
+  await page.getByTestId("member-cmd-ok").click();
   await commit(page, "prop-length", "900");
   await expectVolume(page, "399,600");
   await page.getByTestId("tab-sections").click();
   await page.getByTestId("section-add-SHS 50x50x3").click();
+  await page.getByTestId("member-cmd-ok").click();
   await commit(page, "prop-length", "600");
   await expectVolume(page, "738,000");
 
@@ -105,11 +107,18 @@ test("the toolbar's Member adds another like the selected one; undo takes the me
 
   await page.getByTestId("new-part").click();
   await page.getByTestId("tab-weldments").click();
-  await page.getByTestId("tool-member").click(); // nothing to copy yet: the library opens
-  await expect(page.getByTestId("notice")).toContainText("Pick a size in Sections");
-  await page.getByTestId("section-add-SHS 40x40x3").click();
-  await expectVolume(page, "444,000");
+  // The Member command: nothing to run along yet, so one member between two points; a size from the library.
   await page.getByTestId("tool-member").click();
+  await page.getByTestId("member-cmd-size").click();
+  await page.getByTestId("member-cmd-size-filter").fill("SHS 40x40x3");
+  await page.locator('[data-testid^="member-cmd-size-lib|"]').first().click();
+  await expect(page.getByTestId("member-cmd-source-points")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("member-cmd-ok").click();
+  await expectVolume(page, "444,000");
+  // Again, with the member selected: the same size, beside it.
+  await page.getByTestId("tool-member").click();
+  await expect(page.getByTestId("member-cmd-size")).toContainText("SHS 40x40x3");
+  await page.getByTestId("member-cmd-ok").click();
   await expectVolume(page, "888,000");
   await expect(page.getByTestId("member-row").locator("td")).toHaveText(["SHS 40x40x3", "1,000", "2", "6.97"]);
 
