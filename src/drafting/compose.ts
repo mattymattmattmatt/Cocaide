@@ -443,7 +443,8 @@ class Composer {
 
     const blocks = [
       ...tables.map((t) => ({ id: t.a.id, box: t.box })),
-      ...this.notes().map((n) => ({ id: n.a.id, box: n.box })),
+      // A note as it was laid out (wrapped, in the sheet's lettering), else as estimated.
+      ...this.notes().map((n) => ({ id: n.a.id, box: this.annotations.get(n.a.id)?.box ?? n.box })),
       ...sheetTables.flatMap((t) => (t.rendered.box ? [{ id: t.table.id, box: t.rendered.box }] : [])),
     ];
     const sheet: ComposedSheet = {
@@ -1921,14 +1922,33 @@ class Composer {
     });
   }
 
+  /** The sheet's notes and the room each takes: wrapped as they are drawn (to their width, else the border), titled. */
   private notes(): { a: NoteAnnotation; box: Box; lines: string[] }[] {
     return this.s.annotations
-      .filter((a): a is NoteAnnotation => a.type === "note")
+      .filter((a): a is NoteAnnotation => a.type === "note" && !a.view)
       .map((a) => {
-        const lines = a.text.split("\n");
-        const w = Math.max(...lines.map((l) => textWidth(l, TEXT.note)));
-        const h = (lines.length - 1) * TEXT.note * 1.4;
-        return { a, lines, box: { min: [a.at[0], a.at[1] - h - 0.25 * TEXT.note], max: [a.at[0] + w, a.at[1] + TEXT.note * CAP] } };
+        const size = TEXT.note;
+        const indent = a.numbered ? textWidth("10. ", size) : 0;
+        const room = a.width ?? (a.angle ? Infinity : this.frame.max[0] - a.at[0] - 6);
+        const lines: string[] = [];
+        for (const l of a.text.split("\n")) {
+          if (!Number.isFinite(room) || room <= 20) {
+            lines.push(l);
+            continue;
+          }
+          let cur = "";
+          for (const w of l.split(" ")) {
+            const next = cur ? `${cur} ${w}` : w;
+            if (cur && textWidth(next, size) + indent > room) {
+              lines.push(cur);
+              cur = w;
+            } else cur = next;
+          }
+          lines.push(cur);
+        }
+        const w = Math.max(a.title ? textWidth(a.title, size * 1.1, true) : 0, ...lines.map((l) => textWidth(l, size) + indent));
+        const h = (lines.length - 1) * size * 1.4 + (a.title ? size * 1.1 * 1.6 : 0);
+        return { a, lines, box: { min: [a.at[0], a.at[1] - h - 0.25 * size], max: [a.at[0] + w, a.at[1] + size * CAP] } };
       });
   }
 
