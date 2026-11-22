@@ -29,12 +29,13 @@ export function tessellate(oc: OC, shape: TopoDS_Shape): MeshData {
   const raw = oc.ReplicadMeshExtractor.extract(shape, tolerance, angular, false);
   let positions: Float32Array, normals: Float32Array, indices: Uint32Array, groups: Int32Array;
   try {
-    // Views are taken after extraction: the call may have grown wasm memory.
+    // Views are taken after extraction: the call may have grown wasm memory. Pointers past 2 GB come back from the
+    // binding as negative numbers (a large assembly's drawings get there): read them unsigned.
     const buffer = oc.wasmMemory.buffer as ArrayBuffer;
-    positions = new Float32Array(buffer, raw.getVerticesPtr(), raw.getVerticesSize()).slice();
-    normals = new Float32Array(buffer, raw.getNormalsPtr(), raw.getNormalsSize()).slice();
-    indices = new Uint32Array(buffer, raw.getTrianglesPtr(), raw.getTrianglesSize()).slice();
-    groups = new Int32Array(buffer, raw.getFaceGroupsPtr(), raw.getFaceGroupsSize()).slice();
+    positions = new Float32Array(buffer, raw.getVerticesPtr() >>> 0, raw.getVerticesSize()).slice();
+    normals = new Float32Array(buffer, raw.getNormalsPtr() >>> 0, raw.getNormalsSize()).slice();
+    indices = new Uint32Array(buffer, raw.getTrianglesPtr() >>> 0, raw.getTrianglesSize()).slice();
+    groups = new Int32Array(buffer, raw.getFaceGroupsPtr() >>> 0, raw.getFaceGroupsSize()).slice();
   } finally {
     raw.delete();
   }
@@ -45,8 +46,8 @@ export function tessellate(oc: OC, shape: TopoDS_Shape): MeshData {
   let points: Float32Array, edgeGroups: Int32Array;
   try {
     const buffer = oc.wasmMemory.buffer as ArrayBuffer;
-    points = new Float32Array(buffer, rawEdges.getLinesPtr(), rawEdges.getLinesSize()).slice();
-    edgeGroups = new Int32Array(buffer, rawEdges.getEdgeGroupsPtr(), rawEdges.getEdgeGroupsSize()).slice();
+    points = new Float32Array(buffer, rawEdges.getLinesPtr() >>> 0, rawEdges.getLinesSize()).slice();
+    edgeGroups = new Int32Array(buffer, rawEdges.getEdgeGroupsPtr() >>> 0, rawEdges.getEdgeGroupsSize()).slice();
   } finally {
     rawEdges.delete();
   }
