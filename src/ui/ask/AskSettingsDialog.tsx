@@ -10,14 +10,17 @@ import { logText, readLog } from "./log";
 import { loadSpin, saveSpin } from "../sketcher/modify";
 import { MAX_ROTATE_SPEED, MIN_ROTATE_SPEED, resetViewPrefs, setViewPrefs, useViewPrefs } from "../viewport/viewPrefs";
 import { HAS_PROXY, type AskSettings, type Provider } from "./settings";
+import { setVrPrefs, useVrPrefs, vrSupported } from "../vr/vrPrefs";
+import type { VrStart } from "../../doc/vr";
 import { OllamaSettingsPanel } from "./OllamaSettings";
 import { ClaudeCodeSettingsPanel } from "./ClaudeCodeSettings";
 
-export type SettingsTab = "units" | "mouse" | "keyboard" | "assistant";
+export type SettingsTab = "units" | "mouse" | "keyboard" | "vr" | "assistant";
 const TABS: [SettingsTab, string][] = [
   ["units", "Units"],
   ["mouse", "Mouse"],
   ["keyboard", "Keyboard"],
+  ["vr", "VR"],
   ["assistant", "Assistant"],
 ];
 
@@ -26,11 +29,13 @@ interface Props {
   onSave(s: AskSettings): void;
   onClose(): void;
   tab?: SettingsTab;
+  /** The VR walkthrough's start point in this document, and placing or clearing it. */
+  vr?: { start: VrStart | null; onPlace(): void; onClear(): void };
   /** Live link: follow a part file through the bridge (the settings as typed, not yet saved). */
   onFollow?(path: string, bridge: AskSettings["bridge"]): void;
 }
 
-export function AskSettingsDialog({ settings, onSave, onClose, onFollow, tab: initial = "assistant" }: Props) {
+export function AskSettingsDialog({ settings, onSave, onClose, onFollow, vr, tab: initial = "assistant" }: Props) {
   const [s, setS] = useState(settings);
   const [tab, setTab] = useState<SettingsTab>(initial);
   const effort = MODELS.find((m) => m.id === s.model)?.effort ?? false;
@@ -60,6 +65,7 @@ export function AskSettingsDialog({ settings, onSave, onClose, onFollow, tab: in
           {tab === "units" && <UnitsTab />}
           {tab === "mouse" && <MouseTab />}
           {tab === "keyboard" && <KeyboardTab />}
+          {tab === "vr" && <VrTab vr={vr} />}
           {tab === "assistant" && (
             <>
               <p className="muted small">
@@ -167,6 +173,80 @@ export function AskSettingsDialog({ settings, onSave, onClose, onFollow, tab: in
         </div>
       </form>
     </div>
+  );
+}
+
+/** Settings > VR: what the walkthrough is, where it starts, how you move. */
+function VrTab({ vr }: { vr?: Props["vr"] }) {
+  const p = useVrPrefs();
+  const [ok, setOk] = useState<boolean | null>(null);
+  useEffect(() => {
+    void vrSupported().then(setOk);
+  }, []);
+  return (
+    <>
+      <p className="muted small">
+        Walk around your design at full size in a VR headset. Open Cocaide in the headset&apos;s browser (on a Meta Quest: the Browser app), open the file, and an{" "}
+        <strong>VR</strong> button appears in the view&apos;s bar at the bottom; on a computer it stays hidden. In VR: either trigger aims an arc, let go to teleport
+        where it lands; the left stick walks; the right stick turns; B or Y takes the roof off; A or X takes you back to the start.
+      </p>
+      <p className="small" data-testid="vr-support">
+        {ok === null ? "Checking this browser…" : ok ? "This browser can do VR: the button is in the view's bar." : "This browser can't do VR (it is not a headset's browser)."}
+      </p>
+      <div className="field">
+        <span className="field-label">Start point</span>
+        <span className="row">
+          <span data-testid="vr-start-readout">{vr?.start ? `X ${Math.round(vr.start.at[0])}, Y ${Math.round(vr.start.at[1])}, Z ${Math.round(vr.start.at[2])}, facing ${Math.round(vr.start.heading)}°` : "Not set: in front of the model, facing it"}</span>
+        </span>
+      </div>
+      <div className="row">
+        <button type="button" onClick={() => vr?.onPlace()} disabled={!vr} data-testid="vr-start-place">
+          Set the start point in the view…
+        </button>
+        {vr?.start && (
+          <button type="button" className="link" onClick={() => vr.onClear()} data-testid="vr-start-clear">
+            Clear it
+          </button>
+        )}
+      </div>
+      <p className="muted small">Click the floor where you want to stand, then the way to face. It is saved in the file, so whoever opens it in a headset starts there.</p>
+      <label className="field">
+        <span className="field-label">Show the start</span>
+        <input type="checkbox" checked={p.showStart} onChange={(e) => setVrPrefs({ ...p, showStart: e.target.checked })} data-testid="vr-show-start" /> a figure where you will stand, in the 3D view
+      </label>
+      <label className="field">
+        <span className="field-label">VR button</span>
+        <input type="checkbox" checked={p.button} onChange={(e) => setVrPrefs({ ...p, button: e.target.checked })} data-testid="vr-button-pref" /> show it on a headset
+      </label>
+      <label className="field">
+        <span className="field-label">Walk with the stick</span>
+        <input type="checkbox" checked={p.smooth} onChange={(e) => setVrPrefs({ ...p, smooth: e.target.checked })} data-testid="vr-smooth" /> as well as teleporting (off if it makes you queasy)
+      </label>
+      <label className="field">
+        <span className="field-label">Walking speed</span>
+        <select value={p.speed} onChange={(e) => setVrPrefs({ ...p, speed: Number(e.target.value) })} data-testid="vr-speed">
+          <option value={1}>Slow (1 m/s)</option>
+          <option value={1.4}>Walking (1.4 m/s)</option>
+          <option value={2}>Brisk (2 m/s)</option>
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">Snap turn</span>
+        <select value={p.snapTurn} onChange={(e) => setVrPrefs({ ...p, snapTurn: Number(e.target.value) as 30 | 45 | 90 })} data-testid="vr-snap">
+          <option value={30}>30°</option>
+          <option value={45}>45°</option>
+          <option value={90}>90°</option>
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">Roof off above</span>
+        <select value={p.cutAbove} onChange={(e) => setVrPrefs({ ...p, cutAbove: Number(e.target.value) })} data-testid="vr-cut">
+          <option value={2100}>2100 mm</option>
+          <option value={2300}>2300 mm</option>
+          <option value={2600}>2600 mm</option>
+        </select>
+      </label>
+    </>
   );
 }
 

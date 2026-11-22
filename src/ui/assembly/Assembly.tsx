@@ -19,6 +19,7 @@ import { MeasurePanel, SectionPanel } from "../evaluate/EvaluatePanels";
 import { itemName, measure, measureItems, type MeasureItem } from "../evaluate/measure";
 import { meshClosest } from "../evaluate/meshDistance";
 import type { EvalOverlay } from "../viewport/evalLayer";
+import type { VrViewProps } from "../vr/types";
 import { EMPTY_SELECTION } from "../model/selection";
 import { addPlane, sectionChoices } from "../evaluate/section";
 import type { RebuildView } from "../../worker/protocol";
@@ -144,8 +145,11 @@ export function AssemblyMain({
   onDisplay,
   section,
   sectionView,
+  vr,
 }: {
   a: AssemblyWorkspace;
+  /** The VR walkthrough's start point and placing it. */
+  vr?: VrViewProps;
   display?: Parameters<typeof Viewport>[0]["display"];
   onDisplay?: Parameters<typeof Viewport>[0]["onDisplay"];
   /** The assembly's section view and the view its box comes from. */
@@ -244,6 +248,7 @@ export function AssemblyMain({
           hiddenBodies={a.isolateHides}
           appearances={a.appearances}
           overlay={overlay}
+          vr={vr}
           {...(section ? { section: section.section, onSection: section.setSection, onSectionToggle: section.toggleShown, onSectionPanel: section.openPanel } : {})}
         />
         {a.isolated && (

@@ -36,6 +36,9 @@ import { KernelClient } from "../worker/client";
 import type { RebuildView } from "../worker/protocol";
 import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog, type SettingsTab } from "./ask/AskSettingsDialog";
+import { useVrPrefs } from "./vr/vrPrefs";
+import type { VrViewProps } from "./vr/types";
+import { vrStartOf } from "../doc/vr";
 import { canAsk, modelFor } from "./ask/settings";
 import type { ProfileFacts } from "../ask/profile";
 import { BodiesPanel } from "./BodiesPanel";
@@ -857,6 +860,34 @@ export function App() {
     },
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  // ------------------------------------------------------------ VR walkthrough (Settings > VR)
+
+  /** Placing the VR start point in the view (Settings > VR > Set the start point). */
+  const [vrPlacing, setVrPlacing] = useState(false);
+  const vrPrefsNow = useVrPrefs();
+  const vrStart = useMemo(() => vrStartOf(doc), [doc]);
+  const vrProps = (placingHere: boolean): VrViewProps => ({
+    start: vrStart,
+    showStart: vrPrefsNow.showStart,
+    placing: vrPlacing && placingHere,
+    onPlaced: (start) => {
+      setVrPlacing(false);
+      const problem = d.dispatch({ type: "setVr", vr: { start } });
+      setNotice(problem ? { kind: "error", text: problem } : { kind: "info", text: `VR start set: you will stand here facing ${Math.round(start.heading)}° when you put the headset on (it is saved in the file).` });
+    },
+    onCancel: () => setVrPlacing(false),
+  });
+  // Opened from a link: ?open=<url of a .cocaide.json> (what a headset can't drop a file on).
+  useEffect(() => {
+    const url = new URLSearchParams(window.location.search).get("open");
+    if (!url) return;
+    setNotice({ kind: "info", text: `Opening ${url}…` });
+    fetch(url)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status} ${r.statusText}`))))
+      .then((text) => replaceDocument(text, `Opened ${decodeURIComponent(url.split("/").pop() ?? "the link")}`))
+      .catch((e: Error) => setNotice({ kind: "error", text: `Could not open ${url}: ${e.message} (the file's host must allow it to be read from another site, as GitHub's raw files and many file hosts do).` }));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = () => {
     if (!parsed.ok) {
@@ -3134,7 +3165,7 @@ export function App() {
 
         <main className={`workspace${leftHidden ? " no-left" : ""}${dockClass(dock)}`}>
           {mode === "assembly" && !sketch ? (
-            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} section={asmSectionCtl} sectionView={asmSectionView} />
+            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} section={asmSectionCtl} sectionView={asmSectionView} vr={vrProps(true)} />
           ) : mode === "drawing" && !sketch ? (
             <DrawingMain
               ws={drawingWs}
@@ -3248,6 +3279,7 @@ export function App() {
               <section className={`center${sketch ? " sketch-center" : ""}`}>
                 {sketch && <div className="sketch-top" ref={setSketchTop} />}
                 <Viewport
+                  vr={vrProps(mode === "model")}
                   // In a feature session: the part as it stands before the feature, its active field's items lit up, and the preview over it.
                   view={(!previewDoc && pickView) || view}
                   fitToken={fitToken}
@@ -3730,6 +3762,18 @@ export function App() {
               void follow.start(path, bridge);
             }}
             tab={settingsTab}
+            vr={{
+              start: vrStart,
+              onPlace: () => {
+                ask.setSettingsOpen(false);
+                if (mode !== "model" && mode !== "assembly") setMode("model");
+                setVrPlacing(true);
+              },
+              onClear: () => {
+                const problem = d.dispatch({ type: "setVr", vr: null });
+                if (problem) setNotice({ kind: "error", text: problem });
+              },
+            }}
             onClose={() => {
               ask.setSettingsOpen(false);
               setSettingsTab("assistant");

@@ -38,6 +38,9 @@ import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECT
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
+import { XrWalk } from "./vr/xrWalk";
+import { useVrPrefs, vrPrefs, vrSupported } from "./vr/vrPrefs";
+import type { VrViewProps } from "./vr/types";
 import { threadBands, ThreadLayer } from "./viewport/threadLayer";
 import { PreviewLayer, type PreviewLook } from "./viewport/preview";
 import { entityPolylines3d, sketchAt, sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
@@ -125,6 +128,8 @@ export interface Underlay {
 export type HandlePhase = "start" | "move" | "end" | "cancel";
 
 interface Props {
+  /** The VR walkthrough: where it starts, and placing that start point in the view (Settings > VR). */
+  vr?: VrViewProps;
   view: RebuildView | null;
   /** Bump to re-frame the camera on the current model. */
   fitToken: number;
@@ -367,6 +372,7 @@ const NO_BODIES: ReadonlySet<string> = new Set();
 const NO_PLANES: THREE.Plane[] = [];
 
 export function Viewport({
+  vr,
   view,
   fitToken,
   selection,
@@ -426,6 +432,21 @@ export function Viewport({
   // Read by the view's own listeners, which are made once: always the newest.
   const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch });
   live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch };
+  const vrLive = useRef(vr);
+  vrLive.current = vr;
+  /** The VR walkthrough and the start marker, from inside the view's set-up. */
+  const vrApi = useRef<{ enter(): void; sync(): void; dispose(): void } | null>(null);
+  const [vrOk, setVrOk] = useState(false);
+  const [vrHint, setVrHint] = useState<string | null>(null);
+  const vrPrefsNow = useVrPrefs();
+  useEffect(() => {
+    let on = true;
+    void vrSupported().then((ok) => on && setVrOk(ok));
+    return () => {
+      on = false;
+    };
+  }, []);
+  useEffect(() => vrApi.current?.sync(), [vr?.start, vr?.placing, vr?.showStart]);
   const [hover, setHover] = useState<Hover | null>(null);
   /** Another sketch's entity under the pointer, when a session's reference field takes one (its tip, in the view's pixels). */
   const [sketchHover, setSketchHover] = useState<{ x: number; y: number; hit: SketchEntityHit } | null>(null);
@@ -725,6 +746,8 @@ export function Viewport({
     };
 
     const render = () => {
+      // In VR the walkthrough draws every frame itself, from the headset.
+      if (renderer.xr.isPresenting) return;
       if (!perspective) syncOrtho();
       updateOutline();
       // The arrows are sized and placed for this camera before the frame is drawn (after it, a frame drawn
@@ -2433,6 +2456,133 @@ export function Viewport({
     window.addEventListener("keydown", handleKey, true);
     window.addEventListener("keydown", escape);
 
+    // ------------------------------------------------------------ VR: the walkthrough, its start point
+    const xr = new XrWalk({ renderer, scene, model, render: () => render(), prefs: vrPrefs, start: () => vrLive.current?.start ?? null, onChange: (on) => vrLive.current?.onVr?.(on) });
+    // The start marker: a figure where you will stand, facing the way you will look (model mm, Z up).
+    const marker = new THREE.Group();
+    marker.name = "vr-start";
+    {
+      const m = new THREE.MeshLambertMaterial({ color: 0x1f6feb, transparent: true, opacity: 0.55, depthWrite: false });
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(170, 200, 1300, 24).rotateX(Math.PI / 2), m);
+      body.position.z = 650;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(130, 20, 14), m);
+      head.position.z = 1520;
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(60, 180, 16).rotateZ(-Math.PI / 2), m);
+      nose.position.set(150, 0, 1520);
+      const arrow = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape([new THREE.Vector2(0, -260), new THREE.Vector2(700, 0), new THREE.Vector2(0, 260)])), new THREE.MeshBasicMaterial({ color: 0x1f6feb, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+      arrow.position.z = 8;
+      marker.add(body, head, nose, arrow);
+    }
+    marker.visible = false;
+    scene.add(marker);
+    const showMarker = (at: Vec3 | null, heading: number) => {
+      marker.visible = !!at;
+      if (at) {
+        marker.position.set(...at);
+        marker.rotation.set(0, 0, (heading * Math.PI) / 180);
+      }
+    };
+    /** Placing the start: the point on the floor first, then the way to face. */
+    let placing: { stage: "point" | "heading"; at: Vec3 | null; heading: number } | null = null;
+    const syncVr = () => {
+      const v = vrLive.current;
+      if (v?.placing && !placing) {
+        placing = { stage: "point", at: null, heading: v.start?.heading ?? 90 };
+        setVrHint("Click the floor where you want to stand when you put the headset on (Esc to cancel)");
+        renderer.domElement.style.cursor = "crosshair";
+      } else if (!v?.placing && placing) {
+        placing = null;
+        setVrHint(null);
+        renderer.domElement.style.cursor = "";
+      }
+      if (!placing) showMarker(v?.start && v.showStart ? v.start.at : null, v?.start?.heading ?? 90);
+      render();
+    };
+    vrApi.current = {
+      enter: () => void xr.enter().catch((e: Error) => live.current.onMessage?.(`Could not start VR: ${e.message}`)),
+      sync: syncVr,
+      dispose: () => {
+        el.removeEventListener("pointermove", vrMove, true);
+        el.removeEventListener("pointerdown", vrDown, true);
+        el.removeEventListener("pointerup", vrSwallow, true);
+        el.removeEventListener("click", vrSwallow, true);
+        window.removeEventListener("keydown", vrKey, true);
+        if (xr.active) xr.exit();
+      },
+    };
+    syncVr();
+    const floorAt = (x: number, y: number): Vec3 | null => {
+      if (!mesh) return null;
+      aim(x, y);
+      const h = raycaster.intersectObject(mesh, false)[0];
+      return h ? (h.point.toArray().map((v) => Math.round(v)) as Vec3) : null;
+    };
+    const headingTo = (x: number, y: number, at: Vec3): number | null => {
+      aim(x, y);
+      const p = raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -at[2]), new THREE.Vector3());
+      if (!p || Math.hypot(p.x - at[0], p.y - at[1]) < 50) return null;
+      return Math.round((Math.atan2(p.y - at[1], p.x - at[0]) * 180) / Math.PI);
+    };
+    const vrMove = (e: PointerEvent) => {
+      if (!placing) return;
+      if (placing.stage === "point") {
+        const at = floorAt(e.clientX, e.clientY);
+        if (at) showMarker(at, placing.heading);
+        placing.at = at;
+      } else if (placing.at) {
+        const h = headingTo(e.clientX, e.clientY, placing.at);
+        if (h !== null) placing.heading = h;
+        showMarker(placing.at, placing.heading);
+      }
+      render();
+    };
+    /** A click while placing is the placing's, not a pick. */
+    let swallow = false;
+    const vrSwallow = (e: Event) => {
+      if (!swallow) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (e.type === "click" || e.type === "pointerup") swallow = e.type === "pointerup";
+    };
+    const vrDown = (e: PointerEvent) => {
+      if (!placing || e.button !== 0) return;
+      e.stopPropagation();
+      e.preventDefault();
+      swallow = true;
+      if (placing.stage === "point") {
+        const at = floorAt(e.clientX, e.clientY);
+        if (!at) return live.current.onMessage?.("Click on the model: a floor, the ground, a deck.");
+        placing.at = at;
+        placing.stage = "heading";
+        setVrHint("Now click the way you want to face (Esc to cancel)");
+        showMarker(at, placing.heading);
+        render();
+      } else if (placing.at) {
+        const h = headingTo(e.clientX, e.clientY, placing.at) ?? placing.heading;
+        const done = { at: placing.at, heading: ((h % 360) + 360) % 360 };
+        placing = null;
+        setVrHint(null);
+        renderer.domElement.style.cursor = "";
+        vrLive.current?.onPlaced?.(done);
+      }
+    };
+    const vrKey = (e: KeyboardEvent) => {
+      if (placing && e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        placing = null;
+        setVrHint(null);
+        renderer.domElement.style.cursor = "";
+        vrLive.current?.onCancel?.();
+        syncVr();
+      }
+    };
+    el.addEventListener("pointermove", vrMove, true);
+    el.addEventListener("pointerdown", vrDown, true);
+    el.addEventListener("pointerup", vrSwallow, true);
+    el.addEventListener("click", vrSwallow, true);
+    window.addEventListener("keydown", vrKey, true);
+
     // Automation hook for end-to-end tests (only with ?e2e in the URL): world point -> client pixels.
     if (automated) {
       const toScreen = (p: Vec3): [number, number] => {
@@ -2445,6 +2595,12 @@ export function Viewport({
       const r4 = (v: THREE.Vector3 | Vec3) => (Array.isArray(v) ? v : v.toArray()).map((x) => Math.round(x * 1e4) / 1e4 + 0) as Vec3;
       (window as unknown as { __cocaideViewport?: unknown }).__cocaideViewport = {
         project: toScreen,
+        /** The VR walkthrough: in it, where you stand (model mm) and face, the roof cut; the start marker. */
+        vr() {
+          return { active: xr.active, ...(xr.active ? { standing: xr.standing(), roofOff: xr.roof(), drawn: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles } } : {}), marker: marker.visible ? { at: marker.position.toArray().map(Math.round), heading: Math.round((marker.rotation.z * 180) / Math.PI) } : null };
+        },
+        enterVr: () => xr.enter(),
+        exitVr: () => xr.exit(),
         /** Where the camera is, what it looks at, and which way is up. */
         camera() {
           return { position: r4(camera.position), target: r4(controls.target), up: r4(camera.up) };
@@ -2820,6 +2976,8 @@ export function Viewport({
       restoredAtMount.current = true;
     }
     return () => {
+      vrApi.current?.dispose();
+      vrApi.current = null;
       api.current?.dispose();
       api.current = null;
     };
@@ -3189,6 +3347,11 @@ export function Viewport({
           })}
         </div>
       )}
+      {vrHint && (
+        <div className="view-hint vr-hint" role="status" data-testid="vr-hint">
+          {vrHint}
+        </div>
+      )}
       <div className="view-buttons" role="toolbar" aria-label="Views" onMouseDown={(e) => e.preventDefault()}>
         {QUICK_VIEWS.map((name) => (
           <button
@@ -3215,6 +3378,12 @@ export function Viewport({
           <span className="label">Views</span>
           <Icon name="up" size={10} className="caret" />
         </button>
+        {vrOk && vrPrefsNow.button && vr && (
+          <button onClick={() => vrApi.current?.enter()} title="Enter VR: walk around the design at full size (A/X back to the start, B/Y roof off, triggers to teleport)" data-testid="view-vr">
+            <Icon name="perspective" />
+            <span className="label">VR</span>
+          </button>
+        )}
         <span className="sep" />
         <button className="icon-only" onClick={() => api.current?.fit()} aria-label="Fit" title={`Zoom to fit: frame the whole part from the current direction${keyHint("view.fit", prefs)}; a middle double-click does it too`} data-testid="view-fit">
           <Icon name="fit" />

@@ -6,6 +6,7 @@
 // was, if it would introduce a validation error that was not there before
 // (a bad field, a broken reference, a duplicate id).
 
+import { vrProblems, type VrSettings } from "./vr";
 import { expandShorthands } from "./shorthand";
 import { checkConstraints } from "../geom/constraints";
 import { solveSketch, wouldOverDefine } from "../geom/solver";
@@ -162,6 +163,8 @@ export type Command =
    * How something looks: the part (no target), a body, the faces a feature
    * makes, or one assembly component. null goes back to what it inherits.
    */
+  /** The VR walkthrough's settings (where you start), or null to remove them. */
+  | { type: "setVr"; vr: VrSettings | null }
   | { type: "setAppearance"; body?: string; feature?: string; component?: string; appearance: Appearance | Record<string, unknown> | null }
   /**
    * Changes the part's properties (partNumber, description, revision, author, finish, custom). Merged in;
@@ -575,6 +578,16 @@ export function apply(input: unknown, cmd: Command, opts: ApplyOptions = {}): Ap
       if (Object.keys(materials).length) doc.bodyMaterials = materials;
       else delete doc.bodyMaterials;
       break;
+    }
+    case "setVr": {
+      const next = { ...doc } as Record<string, unknown>;
+      if (cmd.vr === null || (cmd.vr && Object.keys(cmd.vr).length === 0)) delete next.vr;
+      else {
+        const problems = vrProblems(cmd.vr);
+        if (problems.length) return { ok: false, error: `setVr: ${problems.map(([p, m]) => `${p} ${m}`).join("; ")}` };
+        next.vr = structuredClone(cmd.vr);
+      }
+      return { ok: true, doc: next as RawDocument };
     }
     case "setAppearance": {
       const targets = (["body", "feature", "component"] as const).filter((k) => cmd[k] !== undefined);

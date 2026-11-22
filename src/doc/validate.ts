@@ -5,6 +5,7 @@
 // document unusable. Feature problems are reported per feature so the rest of
 // the part can still rebuild.
 
+import { vrProblems } from "./vr";
 import {
   BODY_NAME,
   type Assembly,
@@ -200,7 +201,7 @@ export function validateDocument(input: unknown, opts: ValidateOptions = {}): Va
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "appearance", "bodyAppearances", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "appearance", "bodyAppearances", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly", "vr"]);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);
@@ -362,6 +363,7 @@ export function validateDocument(input: unknown, opts: ValidateOptions = {}): Va
     const look = checkAppearance(input.appearance, "appearance", header);
     if (look) result.appearance = look;
   }
+  if (input.vr !== undefined) for (const [path, msg] of vrProblems(input.vr)) header.fail(path, msg);
   if (input.bodyAppearances !== undefined) {
     const m = new Checker("document");
     if (!isObject(input.bodyAppearances)) m.fail("bodyAppearances", `must be an object of body name: appearance (got ${describe(input.bodyAppearances)})`);
