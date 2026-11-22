@@ -1077,7 +1077,18 @@ export class AgentSession {
     return this.inspector.projectNow(this.doc, views) ?? { views: [], holes: this.built.holes };
   }
 
+  /** The drawing composed for the document as it stands: kept until the document changes (a big assembly's sheets take minutes). */
+  private composedFor: { hash: string; value: ReturnType<AgentSession["composeNow"]> } | null = null;
+
   private composed() {
+    if (this.composedFor && this.composedFor.hash === this.hash) return this.composedFor.value;
+    const value = this.composeNow();
+    // Keeping the refs' places may rewrite the document (its hash with it); the composition is the same.
+    this.composedFor = { hash: this.hash, value };
+    return value;
+  }
+
+  private composeNow() {
     const v = validateDocument(this.doc, { sketchFrames: framesOf(this.built.sketches) });
     if (!v.drawing) return null;
     const geometry = this.built.solid ? this.geometry(viewSpecs(v.drawing)) : null;
