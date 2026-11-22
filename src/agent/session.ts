@@ -664,11 +664,13 @@ export class AgentSession {
           return { result: { ok: true, passes: !findings.some((f) => f.severity === "error"), findings: findings.map((f) => `${f.severity} (${f.rule}): ${f.message}`) } };
         }
         case "renderSheet": {
-          this.composed();
-          const st = await detailState(this.doc, this.inspector, typeof a.sheet === "string" ? { sheet: a.sheet } : {});
-          if (!st.sheet) return this.fail("renderSheet: the part has no drawing (newDrawing makes one)");
-          const shot = await sheetRaster(st.sheet, { side: 1800 });
-          return { result: { ok: true, sheet: st.sheet.id, width: shot.width, height: shot.height }, image: shot.png };
+          // The session's composition (kept until the document changes): composing every sheet again for one picture
+          // took minutes on a big assembly's drawing.
+          const c = this.composed();
+          const sheet = typeof a.sheet === "string" ? c?.sheets.find((x) => x.id === a.sheet) : c?.sheet;
+          if (!sheet) return this.fail(c?.sheets.length ? `renderSheet: no sheet "${String(a.sheet)}" (sheets: ${c.sheets.map((x) => x.id).join(", ")})` : "renderSheet: the part has no drawing (newDrawing makes one)");
+          const shot = await sheetRaster(sheet, { side: 1800 });
+          return { result: { ok: true, sheet: sheet.id, width: shot.width, height: shot.height }, image: shot.png };
         }
         case "deleteAnnotations": {
           const ids = strs(a.ids) ?? [];
