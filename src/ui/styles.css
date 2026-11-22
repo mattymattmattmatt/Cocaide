@@ -914,13 +914,19 @@ svg.icon { flex: none; display: block; }
 .workspace.no-left > .side.left { display: none; }
 
 /* settings */
-.modal.settings { width: min(620px, calc(100vw - 32px)); }
+/* As tall as the window allows: a long tab (VR) scrolls inside, the tabs and the buttons stay in view. */
+.modal.settings { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); }
 .settings-tabs { display: flex; gap: 2px; margin: 4px 0 2px; border-bottom: 1px solid var(--border); }
 .settings-tabs button {
   height: 32px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); cursor: pointer; font-size: 13px;
 }
 .settings-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-.settings-body { display: flex; flex-direction: column; gap: 10px; min-height: 260px; }
+.settings-body { display: flex; flex-direction: column; gap: 10px; min-height: min(260px, 30vh); flex: 1 1 auto; overflow-y: auto; padding-right: 4px; }
+.settings-body .check-line { display: flex; align-items: flex-start; gap: 8px; }
+.settings-body .check-line input { margin-top: 2px; flex: none; }
+.settings-body .vr-start { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.settings-body .vr-help { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.settings-body:has(.vr-help) .field { grid-template-columns: 130px minmax(0, 1fr); }
 .settings-check { margin: 2px 0; }
 .settings-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .settings-table th, .settings-table td { padding: 5px 6px; border-top: 1px solid var(--border); text-align: left; vertical-align: middle; }

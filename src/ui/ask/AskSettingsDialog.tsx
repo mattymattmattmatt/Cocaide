@@ -201,36 +201,48 @@ function VrTab({ vr }: { vr?: Props["vr"] }) {
       </p>
       <div className="field">
         <span className="field-label">Start point</span>
-        <span className="row">
+        <span className="vr-start">
           <span data-testid="vr-start-readout">{vr?.start ? `X ${Math.round(vr.start.at[0])}, Y ${Math.round(vr.start.at[1])}, Z ${Math.round(vr.start.at[2])}, facing ${Math.round(vr.start.heading)}°` : "Not set: in front of the model, facing it"}</span>
+          <span className="row">
+            <button type="button" onClick={() => vr?.onPlace()} disabled={!vr} data-testid="vr-start-place">
+              Set the start point in the view…
+            </button>
+            {vr?.start && (
+              <button type="button" className="link" onClick={() => vr.onClear()} data-testid="vr-start-clear">
+                Clear it
+              </button>
+            )}
+          </span>
+          <span className="muted small">Click the floor where you want to stand, then the way to face. It is saved in the file, so whoever opens it in a headset starts there.</span>
         </span>
       </div>
-      <div className="row">
-        <button type="button" onClick={() => vr?.onPlace()} disabled={!vr} data-testid="vr-start-place">
-          Set the start point in the view…
-        </button>
-        {vr?.start && (
-          <button type="button" className="link" onClick={() => vr.onClear()} data-testid="vr-start-clear">
-            Clear it
-          </button>
-        )}
-      </div>
-      <p className="muted small">Click the floor where you want to stand, then the way to face. It is saved in the file, so whoever opens it in a headset starts there.</p>
       <label className="field">
         <span className="field-label">Show the start</span>
-        <input type="checkbox" checked={p.showStart} onChange={(e) => setVrPrefs({ ...p, showStart: e.target.checked })} data-testid="vr-show-start" /> a figure where you will stand, in the 3D view
+        <span className="check-line">
+          <input type="checkbox" checked={p.showStart} onChange={(e) => setVrPrefs({ ...p, showStart: e.target.checked })} data-testid="vr-show-start" />
+          <span>a figure where you will stand, in the 3D view</span>
+        </span>
       </label>
       <label className="field">
         <span className="field-label">VR button</span>
-        <input type="checkbox" checked={p.button} onChange={(e) => setVrPrefs({ ...p, button: e.target.checked })} data-testid="vr-button-pref" /> show it on a headset
+        <span className="check-line">
+          <input type="checkbox" checked={p.button} onChange={(e) => setVrPrefs({ ...p, button: e.target.checked })} data-testid="vr-button-pref" />
+          <span>show it on a headset</span>
+        </span>
       </label>
       <label className="field">
         <span className="field-label">Walk with the stick</span>
-        <input type="checkbox" checked={p.smooth} onChange={(e) => setVrPrefs({ ...p, smooth: e.target.checked })} data-testid="vr-smooth" /> as well as teleporting (off if it makes you queasy)
+        <span className="check-line">
+          <input type="checkbox" checked={p.smooth} onChange={(e) => setVrPrefs({ ...p, smooth: e.target.checked })} data-testid="vr-smooth" />
+          <span>as well as teleporting (off if it makes you queasy)</span>
+        </span>
       </label>
       <label className="field">
         <span className="field-label">Comfort vignette</span>
-        <input type="checkbox" checked={p.vignette} onChange={(e) => setVrPrefs({ ...p, vignette: e.target.checked })} data-testid="vr-vignette" /> darken the edges while walking with the stick
+        <span className="check-line">
+          <input type="checkbox" checked={p.vignette} onChange={(e) => setVrPrefs({ ...p, vignette: e.target.checked })} data-testid="vr-vignette" />
+          <span>darken the edges while walking with the stick</span>
+        </span>
       </label>
       <label className="field">
         <span className="field-label">Walking speed</span>
