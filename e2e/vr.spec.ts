@@ -149,10 +149,11 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   expect((await st()).snap).toBe(false);
   const pose = (q: number[]) => device(page, `const c = d.controllers.right; c.position.set(0.6, 1.2, -0.3); c.quaternion.set(${q.join(",")});`);
   const click = async (btn = "trigger") => {
+    // Held long enough for a frame to see it down and another to see it up, even on a slow machine.
     await device(page, `d.controllers.right.updateButtonValue('${btn}', 1);`);
-    await page.waitForTimeout(120);
+    await page.waitForTimeout(250);
     await device(page, `d.controllers.right.updateButtonValue('${btn}', 0);`);
-    await page.waitForTimeout(120);
+    await page.waitForTimeout(250);
   };
   // Close the menu (pressing a button opened it): the right trigger then works the tool.
   await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");

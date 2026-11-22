@@ -2718,6 +2718,7 @@ export function Viewport({
         enterVr: () => xr.enter(),
         vrState: () => xr.state(),
         vrPress: (id: string) => xr.press(id),
+        vrStandAt: (at: [number, number, number], heading: number) => xr.standAt({ at, heading }),
         vrNotes: () => vrNotes.children.length,
         vrItems: () => itemsOf(shownView).map((i) => `${i.key}:${i.movable}`),
         exitVr: () => xr.exit(),
@@ -3501,7 +3502,7 @@ export function Viewport({
           <Icon name="up" size={10} className="caret" />
         </button>
         {vrOk && vrPrefsNow.button && vr && (
-          <button onClick={() => vrApi.current?.enter()} title="Enter VR: walk around the design at full size (A/X back to the start, B/Y roof off, triggers to teleport)" data-testid="view-vr">
+          <button onClick={() => vrApi.current?.enter()} title="Enter VR: walk around the design at full size (left trigger teleports, X the menu, Y back to the start, B roof off, grip picks up furniture)" data-testid="view-vr">
             <Icon name="perspective" />
             <span className="label">VR</span>
           </button>

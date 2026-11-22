@@ -156,6 +156,12 @@ export class XrWalk {
   private toastUntil = 0;
   private startNow: VrStart = { at: [0, 0, 0], heading: 90 };
   private culled: THREE.Object3D[] = [];
+  /**
+   * What VR draws of the model: its triangles sorted by look, one draw call each (the model's own mesh draws runs of
+   * faces, which for a house can be hundreds of calls, each made twice, once an eye). The model's mesh stays, hidden,
+   * for pointing at; `at` is each of its triangles' place in the copy.
+   */
+  private draw: { from: THREE.Mesh; mesh: THREE.Mesh; at: Int32Array; index: Uint32Array } | null = null;
   // Tools.
   tool: VrTool = "teleport";
   snap = true;
@@ -226,6 +232,7 @@ export class XrWalk {
     }
     this.zup.add(model);
     model.visible = true;
+    this.buildDraw();
     // Standing inside the model, a mesh's bounding sphere can miss you (and the whole house be culled when you
     // look up): nothing in the model is culled while you are in it; the scene is small enough not to need it.
     this.culled = [];
@@ -286,7 +293,8 @@ export class XrWalk {
     }
     this.controllers = [];
     this.clearNotes();
-    this.host.hideFaces(null);
+    this.hide(null);
+    this.dropDraw();
     scene.add(model);
     for (const o of this.culled) o.frustumCulled = true;
     this.culled = [];
@@ -524,7 +532,7 @@ export class XrWalk {
 
   private applyHidden(): void {
     const faces = [...this.placed.values()].flatMap((p) => p.item.faces);
-    this.host.hideFaces(faces.length ? faces : null);
+    this.hide(faces.length ? faces : null);
   }
 
   /** The movable item a ray hits (the model's own mesh, or a moved copy). */
@@ -846,9 +854,99 @@ export class XrWalk {
     return null;
   }
 
+  /** The model's mesh copied with its triangles sorted by look (see `draw`); the mesh hidden while VR draws the copy. */
+  private buildDraw(): void {
+    this.dropDraw();
+    const m = this.host.mesh();
+    const src = m?.geometry.index;
+    if (!m || !src || !Array.isArray(m.material) || m.material.length < 2 || !m.parent) return;
+    const g = m.geometry;
+    // One material for each look (colour, finish, opacity, shown or not): the first of the mesh's with it.
+    const keys = new Map<string, number>();
+    const looks: THREE.Material[] = [];
+    const slot = m.material.map((mt) => {
+      const s = mt as THREE.MeshStandardMaterial;
+      const k = [s.color?.getHex(), s.metalness, s.roughness, s.opacity, s.transparent, s.visible, !!s.envMap].join("|");
+      let i = keys.get(k);
+      if (i === undefined) {
+        i = looks.length;
+        keys.set(k, i);
+        looks.push(mt);
+      }
+      return i;
+    });
+    const lists: number[][] = looks.map(() => []);
+    for (const gr of g.groups) for (let t = gr.start / 3; t < (gr.start + gr.count) / 3; t++) lists[slot[gr.materialIndex ?? 0]].push(t);
+    const from = src.array;
+    const at = new Int32Array(from.length / 3).fill(-1);
+    const index = new Uint32Array(from.length);
+    const copy = new THREE.BufferGeometry();
+    copy.setAttribute("position", g.getAttribute("position"));
+    copy.setAttribute("normal", g.getAttribute("normal"));
+    let n = 0;
+    lists.forEach((list, k) => {
+      const first = n;
+      for (const t of list) {
+        at[t] = n;
+        index[n * 3] = from[t * 3];
+        index[n * 3 + 1] = from[t * 3 + 1];
+        index[n * 3 + 2] = from[t * 3 + 2];
+        n++;
+      }
+      if (n > first) copy.addGroup(first * 3, (n - first) * 3, k);
+    });
+    const built = index.slice(0, n * 3);
+    copy.setIndex(new THREE.BufferAttribute(built.slice(), 1));
+    const mesh = new THREE.Mesh(copy, looks);
+    mesh.name = "vr-draw";
+    mesh.raycast = () => {};
+    mesh.frustumCulled = false;
+    mesh.position.copy(m.position);
+    mesh.quaternion.copy(m.quaternion);
+    mesh.scale.copy(m.scale);
+    m.parent.add(mesh);
+    m.visible = false;
+    this.draw = { from: m, mesh, at, index: built };
+  }
+  private dropDraw(): void {
+    const d = this.draw;
+    if (!d) return;
+    d.mesh.removeFromParent();
+    d.mesh.geometry.dispose();
+    d.from.visible = true;
+    this.draw = null;
+  }
+  /** Faces hidden (what is being carried) from the model and from what VR draws of it; null shows them all again. */
+  private hide(faces: number[] | null): void {
+    this.host.hideFaces(faces);
+    const d = this.draw;
+    if (!d) return;
+    const idx = d.index.slice();
+    if (faces) {
+      const ranges = this.host.view()?.mesh?.faceRanges ?? [];
+      for (const f of faces) {
+        const r = ranges[f];
+        if (!r) continue;
+        for (let t = r.start / 3; t < (r.start + r.count) / 3; t++) {
+          const k = d.at[t];
+          if (k < 0) continue;
+          idx[k * 3 + 1] = idx[k * 3];
+          idx[k * 3 + 2] = idx[k * 3];
+        }
+      }
+    }
+    d.mesh.geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+  }
+
   private frame(t: number): void {
     const dt = Math.min(0.1, (t - this.last) / 1000);
     this.last = t;
+    // The model rebuilt while in VR: draw the new one (sorted again); shown again by the desktop's display style: hide it.
+    const m = this.host.mesh();
+    if (this.draw && m !== this.draw.from) {
+      this.buildDraw();
+      this.applyHidden();
+    } else if (this.draw?.from.visible) this.draw.from.visible = false;
     const prefs = this.host.prefs();
     const sources = this.session ? [...this.session.inputSources] : [];
     let walking = 0;
@@ -1023,6 +1121,14 @@ export class XrWalk {
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
       carrying: this.carry?.key ?? null,
     };
+  }
+  /** For tests: stand at a point (model mm), facing a heading, full size. */
+  standAt(start: VrStart): void {
+    this.dollhouse = null;
+    this.rig.scale.setScalar(1);
+    const { rotY, position } = rigFor(start);
+    this.rig.rotation.set(0, rotY, 0);
+    this.rig.position.copy(position);
   }
   /** For tests: a menu button pressed, as the right trigger on it would. */
   press(id: string): void {
