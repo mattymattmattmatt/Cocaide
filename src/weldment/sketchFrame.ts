@@ -339,8 +339,8 @@ export function addSketchMembers(doc: RawDocument, spec: SketchMembersSpec): Ske
         feature = { op: "joint", node, type: "butt", through: passing[0].id };
       } else if (ending.length === 2) {
         const [m1, m2] = ending;
-        const straight = dot3(dir(m1, node), dir(m2, node)) < -1 + 1e-6;
-        if (straight) continue; // two in line: nothing to cut
+        // Two in line, or two the same way side by side (a doubled lintel on one line): nothing to cut.
+        if (parallel(m1, m2)) continue;
         feature =
           spec.corners === "mitre"
             ? { op: "joint", node, type: "mitre", members: [m1.id, m2.id] }

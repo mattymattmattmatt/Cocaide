@@ -317,6 +317,27 @@ describe("a frame made in groups, as a person would", () => {
     expect(addSketchMembers(second.doc, { profile: "SHS", size: "SHS 40x40x3", line: "centre", corners: "butt", align: [-1, 0], lines: [{ sketch: "wall", entity: "lintel" }] })).toMatchObject({ ok: false, error: expect.stringContaining("already") });
   });
 
+  it("puts a doubled lintel's two leaves on one line with no joint between them, and butts both to the kings", () => {
+    // The lintel line from king to king; the kings drawn after.
+    const doc = opening();
+    (doc.features[0].entities as Record<string, unknown>[]).push(line("king_l", [130, 0], [130, 1200]), line("king_r", [870, 0], [870, 1200]));
+    (doc.features[0].entities as Record<string, unknown>[]).find((e) => e.id === "lintel")!.start = [130, 800];
+    (doc.features[0].entities as Record<string, unknown>[]).find((e) => e.id === "lintel")!.end = [870, 800];
+    const a = add(doc, ["lintel"], { align: [1, 0] });
+    const b = add(a.doc, ["lintel"], { align: [-1, 0] });
+    expect(b.joints).toEqual([]);
+    const kings = add(b.doc, ["king_l", "king_r"]);
+    const v = validateDocument(kings.doc);
+    const atEnds = kings.doc.features.filter((f) => f.op === "joint" && [[130, 0, 800], [870, 0, 800]].some((p) => JSON.stringify(v.nodes[String(f.node)]) === JSON.stringify(p)));
+    expect(atEnds).toHaveLength(2);
+    const built = rebuild(kings.doc, oc);
+    try {
+      expect(built.errors).toEqual([]);
+    } finally {
+      built.dispose();
+    }
+  });
+
   it("doesn't butt a trimmer against the king stud beside it", () => {
     // A king stud full height 20 mm beside the left trimmer: the trimmer's top is inside the stud's section reach.
     const doc = opening();
