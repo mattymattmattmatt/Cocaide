@@ -13,6 +13,7 @@ import standText from "../../examples/stand.cocaide.json?raw";
 import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
 import type { DrawingGeometry } from "../ask/kernel";
+import type { ProjectedView } from "../kernel/drawingViews";
 import { featureKind, isDrawingTarget, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
 import { allAnnotations, allViews, geometryKey } from "../doc/drawing";
 import { drawingChecks } from "../drafting/checks";
@@ -160,6 +161,8 @@ const EXAMPLES: Record<string, string> = {
 };
 const STORAGE_KEY = "cocaide.document.v1";
 const REBUILD_DELAY_MS = 250;
+/** In the drawing, how long the model is still before the sheets not on screen are projected. */
+const REST_OF_SHEETS_DELAY_MS = 600;
 const BLANK = formatDocument({ version: 1, units: "mm", name: "part", features: [] });
 
 type KernelState = { phase: "loading" } | { phase: "ready"; loadMs: number } | { phase: "failed"; message: string };
@@ -617,55 +620,98 @@ export function App() {
   const specs = useMemo(() => (shownDrawing ? viewSpecs(shownDrawing) : []), [shownDrawing]);
   const viewsKey = JSON.stringify(specs);
   const projectionKey = shown && shownDrawing && view ? `${geometryKey(shown)}|${viewsKey}` : null;
-  // The sheet on screen first (its views and the views they come from), then the rest: on a big assembly or a slow device
-  // the sheet you look at comes in seconds, and the others follow. The worker keeps each view, so the second ask only
-  // projects what the first didn't.
+  // Only the sheet on screen is projected straight away (its views and the views they come from): on a big pack, an edit
+  // costs one sheet, not every sheet. The others follow a sheet at a time once the model has been still for a moment,
+  // so a new edit or a change of sheet goes first. The worker keeps each view, so nothing is projected twice, and the
+  // views of one geometry gather in `geometry` (its key gets "#partial" until every view is in).
   const [projecting, setProjecting] = useState<{ done: number; total: number } | null>(null);
+  const closureOf = useCallback(
+    (ids: Iterable<string>) => {
+      const byId = new Map(specs.map((x) => [x.id, x]));
+      const out = new Set<string>();
+      const add = (id: string) => {
+        const sp = byId.get(id);
+        if (!sp || out.has(id)) return;
+        out.add(id);
+        if (sp.frame && "parent" in sp.frame) add(sp.frame.parent);
+      };
+      for (const id of ids) add(id);
+      return out;
+    },
+    [specs],
+  );
   useEffect(() => {
     if (mode !== "drawing" || !projectionKey || !shown || !shownDrawing || geometry?.key === projectionKey) return;
     let live = true;
-    const onSheet = new Set((shownDrawing.sheets.find((x) => x.id === activeSheet) ?? shownDrawing.sheets[0])?.views.map((v) => v.id) ?? []);
-    const byId = new Map(specs.map((x) => [x.id, x]));
-    const first = new Set<string>();
-    const add = (id: string) => {
-      const sp = byId.get(id);
-      if (!sp || first.has(id)) return;
-      first.add(id);
-      if (sp.frame && "parent" in sp.frame) add(sp.frame.parent);
-    };
-    for (const id of onSheet) add(id);
-    const firstSpecs = specs.filter((x) => first.has(x.id));
-    setProjecting({ done: 0, total: specs.length });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const partialKey = `${projectionKey}#partial`;
+    // What this geometry has already (nothing when the model or the views changed since).
+    const have = new Map<string, ProjectedView>(geometry?.key === partialKey ? (geometry.g?.views ?? []).map((v) => [v.id, v]) : []);
+    let holes = geometry?.key === partialKey ? geometry.g?.holes ?? [] : [];
+    let parts = geometry?.key === partialKey ? geometry.g?.assemblyParts : undefined;
+    const onScreen = shownDrawing.sheets.find((x) => x.id === activeSheet) ?? shownDrawing.sheets[0];
+    const sheetsFirst = [onScreen, ...shownDrawing.sheets.filter((x) => x !== onScreen)].filter(Boolean);
     const fail = (e: Error) => {
       if (!live) return;
       setProjecting(null);
       setNotice({ kind: "error", text: `Could not project the views: ${e.message}` });
     };
-    const all = () =>
-      kernel.port.project(shown, specs).then((g) => {
-        if (!live) return;
-        setGeometry({ key: projectionKey, g });
+    const step = (k: number) => {
+      if (!live) return;
+      // The next sheet with views still to project (the one on screen first).
+      let need = new Set<string>();
+      for (; k < sheetsFirst.length && ![...need].some((id) => !have.has(id)); k++) need = closureOf(sheetsFirst[k].views.map((v) => v.id));
+      if (![...need].some((id) => !have.has(id))) {
+        setGeometry({ key: projectionKey, g: { views: specs.map((x) => have.get(x.id)).filter((v): v is ProjectedView => !!v), holes, ...(parts ? { assemblyParts: parts } : {}) } });
         setProjecting(null);
-      }, fail);
-    if (firstSpecs.length && firstSpecs.length < specs.length) {
-      kernel.port.project(shown, firstSpecs).then((g) => {
+        return;
+      }
+      setProjecting({ done: have.size, total: specs.length });
+      // The views it comes from go too (the worker kept them, so they cost nothing).
+      const ask = specs.filter((x) => need.has(x.id));
+      kernel.port.project(shown, ask).then((g) => {
         if (!live) return;
-        setGeometry({ key: `${projectionKey}#first`, g });
-        setProjecting({ done: firstSpecs.length, total: specs.length });
-        void all();
+        if (!g) {
+          setGeometry({ key: projectionKey, g: null });
+          setProjecting(null);
+          return;
+        }
+        for (const v of g.views) have.set(v.id, v);
+        holes = g.holes;
+        parts = g.assemblyParts ?? parts;
+        const views = specs.map((x) => have.get(x.id)).filter((v): v is ProjectedView => !!v);
+        const done = views.length >= specs.length;
+        setGeometry({ key: done ? projectionKey : partialKey, g: { views, holes, ...(parts ? { assemblyParts: parts } : {}) } });
+        if (done) return setProjecting(null);
+        setProjecting({ done: views.length, total: specs.length });
+        timer = setTimeout(() => step(k), REST_OF_SHEETS_DELAY_MS);
       }, fail);
-    } else void all();
+    };
+    step(0);
     return () => {
       live = false;
+      clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, projectionKey]);
+  }, [mode, projectionKey, activeSheet]);
+  /** Every view projected (for an export of every sheet): what the drawing has, and the rest asked for now. */
+  const allProjected = useCallback(async (): Promise<DrawingGeometry | null> => {
+    if (!shown || !shownDrawing) return null;
+    if (geometry?.key === projectionKey) return geometry.g;
+    return kernel.port.project(shown, specs);
+  }, [shown, shownDrawing, geometry, projectionKey, kernel, specs]);
   /** The views not projected yet: drawn as "Projecting…", with no problems, until they come. */
   const pendingViews = useMemo(() => {
     if (!projecting) return undefined;
     const have = new Set((geometry?.g?.views ?? []).map((v) => v.id));
     return new Set(specs.filter((x) => !have.has(x.id)).map((x) => x.id));
   }, [projecting, geometry, specs]);
+  /** Whether the sheet on screen still waits on a view (the progress shows only then). */
+  const sheetPending = useMemo(() => {
+    if (!pendingViews?.size || !shownDrawing) return false;
+    const on = shownDrawing.sheets.find((x) => x.id === activeSheet) ?? shownDrawing.sheets[0];
+    return [...closureOf(on?.views.map((v) => v.id) ?? [])].some((id) => pendingViews.has(id));
+  }, [pendingViews, shownDrawing, activeSheet, closureOf]);
   const composed = useMemo(
     () => (shown && shownDrawing ? composeDrawing(shown, { measurements: view?.measurements ?? null, geometry: geometry?.g ?? null, ...(pendingViews ? { pending: pendingViews } : {}) }) : null),
     [shown, shownDrawing, view, geometry, pendingViews],
@@ -1649,12 +1695,18 @@ export function App() {
   const exportDrawing = async (kind: "pdf" | "svg" | "dxf" | "png", opts: ExportOptions = {}) => {
     if (!sheet || !composed) return setNotice({ kind: "error", text: "There is no drawing to export." });
     let name: string;
+    let sheets = composed.sheets;
     try {
-      name = await exportSheets(kind, composed.sheets, sheet, opts, { base: exportBase(doc, view?.name ?? "part"), title: docDrawing?.sheets[0]?.format.title ?? view?.name ?? "drawing" }, download);
+      if (kind === "pdf" && opts.sheets !== "current" && pendingViews?.size && shown) {
+        setNotice({ kind: "info", text: "Projecting the other sheets for the PDF…" });
+        const g = await allProjected();
+        sheets = composeDrawing(shown, { measurements: view?.measurements ?? null, geometry: g })?.sheets ?? sheets;
+      }
+      name = await exportSheets(kind, sheets, sheets.find((x) => x.id === sheet.id) ?? sheet, opts, { base: exportBase(doc, view?.name ?? "part"), title: docDrawing?.sheets[0]?.format.title ?? view?.name ?? "drawing" }, download);
     } catch (e) {
       return setNotice({ kind: "error", text: `Could not export: ${(e as Error).message}` });
     }
-    const pages = kind === "pdf" && opts.sheets !== "current" ? composed.sheets.length : 1;
+    const pages = kind === "pdf" && opts.sheets !== "current" ? sheets.length : 1;
     const failing = drawingChecksNow.filter((c) => !c.ok).length;
     setNotice({ kind: "info", text: `Exported ${name}${pages > 1 ? ` (${pages} pages)` : ""}.${failing ? ` ${failing} drawing check${failing === 1 ? "" : "s"} fail${failing === 1 ? "s" : ""}: see Checks.` : ""}` });
   };
@@ -1662,6 +1714,7 @@ export function App() {
   // The drawing workspace (Phase Q wave Q2B): its toolbar, tree, sheet and panel share one state.
   const drawingWs = useDrawingWorkspace({
     projecting,
+    sheetPending,
     doc,
     drawing: docDrawing,
     sheets: composed?.sheets ?? [],
