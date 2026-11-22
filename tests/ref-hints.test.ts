@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Drawing } from "../src/doc/types";
-import { geoInView } from "../src/drafting/georef";
+import { geoInView, listGeoRefs, resolveGeoRef } from "../src/drafting/georef";
 import { refHintsFor, withRefHints } from "../src/drafting/refHints";
 
 const edge = (key: string, a: [number, number], b: [number, number], visible = true) => ({ key, body: "post", type: visible ? "visible" : "hidden", visible, pts: [a, b], look: "line" });
@@ -46,5 +46,16 @@ describe("GeoRefs that keep hold of their geometry", () => {
     const v = view([edge("post/l0", [0, 0], [10, 0]), edge("post/l1", [0, 5], [3, 9], false), edge("post/l3", [0, 5], [10, 5])]);
     const r = refHintsFor(drawing(hints), [{ views: [v] }]);
     expect(r?.renamed.get("front:vpost/l1.0")).toBe("front:vpost/l3.0");
+  });
+});
+
+describe("points seen through a cut", () => {
+  it("an end of a hidden edge that lands on a visible corner (a cut face's) counts as seen; elsewhere it stays hidden", () => {
+    // A wall's vertical edge seen end on in a plan section: hidden, under the corner of the cut face.
+    const cv = { ...(view([edge("clad/l6", [0, 0], [0, 0], false), edge("cut/l0", [0, 0], [90, 0]), edge("clad/l7", [50, 50], [60, 50], false)]) as object), kind: "section", look: "custom", source: "front", scale: 1, centre: [0, 0], origin: [0, 0], box: null, square: true, breaks: [], auto: true };
+    const m = { drawing: { sheets: [] }, sheets: [{ id: "s1", views: [cv], points: { nodes: {}, members: [], holes: new Map() } }] } as never;
+    expect(resolveGeoRef(m, "front:vclad/l6.0")).toMatchObject({ kind: "point", visible: true });
+    expect(resolveGeoRef(m, "front:vclad/l7.0")).toMatchObject({ kind: "point", visible: false });
+    expect(listGeoRefs(m, "front").find((g) => g.ref === "front:vclad/l7.0")?.visible).toBe(false);
   });
 });

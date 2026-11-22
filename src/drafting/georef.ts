@@ -99,8 +99,9 @@ export function resolveGeoRef(m: Model, ref: GeoRef): ResolvedGeoRef | null {
   const found = findComposedView(m, parts.view);
   if (!found) return null;
   const { sheet, cv } = found;
-  const r = geoInView(cv, parts, sheet.points);
-  if (!r) return null;
+  const found0 = geoInView(cv, parts, sheet.points);
+  if (!found0) return null;
+  const r = found0.kind === "point" && !found0.visible && parts.form === "v" && seenAt(cv.edges, found0.p) ? { ...found0, visible: true } : found0;
   const toSheet = (p: Vec2) => viewToSheet(cv, p);
   const inside = (p: Vec2) => {
     const c = cv.clip;
@@ -146,6 +147,20 @@ export function geoInView(cv: Pick<ComposedView, "edges" | "frame" | "outline">,
   // thing is still where it was (the faces split differently and renumbered), is found again there.
   if (found && !movedFrom(found, hint)) return found;
   return healRef(cv, parts, hint)?.found ?? found;
+}
+
+/**
+ * A point of an edge that the hidden-line pass calls hidden can still be seen: an edge seen end on, cut by a section,
+ * has its ends under a corner of the cut face; a corner where a visible edge ends is drawn whatever the edge behind it
+ * is. Such a point counts as seen (a dimension to it measures to a line on the drawing).
+ */
+const SEEN_TOL = 0.05;
+function seenAt(edges: ProjectedEdge[], p: Vec2): boolean {
+  for (const e of edges) {
+    if (!e.visible || !e.pts.length) continue;
+    for (const q of [e.pts[0], e.pts[e.pts.length - 1]]) if (Math.abs(q[0] - p[0]) <= SEEN_TOL && Math.abs(q[1] - p[1]) <= SEEN_TOL) return true;
+  }
+  return false;
 }
 
 function edgeRefInView(cv: Pick<ComposedView, "edges" | "frame" | "outline">, parts: Exclude<GeoRefParts, { form: "point" }>): InView | null {
@@ -325,7 +340,7 @@ export function listGeoRefs(m: Model, view: string): GeoRefInfo[] {
       for (const end of [0, 1] as const) {
         const r = geoInView(cv, { view, form: "v", key, end });
         if (!r || r.kind !== "point") continue;
-        vertices.push({ p: r.p, info: { ref: `${view}:v${key}.${end}`, kind: "point", what: "vertex", visible, at: toSheet(r.p), ...meta } });
+        vertices.push({ p: r.p, info: { ref: `${view}:v${key}.${end}`, kind: "point", what: "vertex", visible: r.visible || seenAt(cv.edges, r.p), at: toSheet(r.p), ...meta } });
       }
     }
   }
