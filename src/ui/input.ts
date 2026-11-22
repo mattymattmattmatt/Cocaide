@@ -82,6 +82,7 @@ export const COMMANDS: CommandDef[] = [
   { id: "tool.move", label: "Move", group: "Model tools", key: null },
   { id: "tool.deleteBody", label: "Delete body", group: "Model tools", key: null },
   { id: "tool.member", label: "Member", group: "Model tools", key: null },
+  { id: "tool.stair", label: "Stair", group: "Model tools", key: null },
   { id: "tool.sketch3d", label: "3D Sketch", group: "Model tools", key: null },
   // Model tools still to come: ids, labels and keys reserved (each loses `planned` when its tool lands).
   { id: "tool.plane", label: "Reference plane", group: "Model tools", key: null },
