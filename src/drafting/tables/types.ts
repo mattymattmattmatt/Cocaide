@@ -58,6 +58,12 @@ export interface DrawingTable {
   group?: string;
   /** At most this many rows in one block; more continue in a second block beside it, with the header again. */
   maxRows?: number;
+  /**
+   * Cut list and BOM: carries on a table on an earlier sheet (its id) with the rows that one had no room for, with
+   * its columns, sort and grouping unless this one gives its own. A table with no maxRows is split into blocks that
+   * fit the sheet from its anchor; rows that still don't fit go to the table that continues it.
+   */
+  continues?: string;
   /** Where further blocks go: "left" (default for tables on the right of the sheet) or "right". */
   split?: "left" | "right";
   /** Column headings at the top (default), or at the bottom with rows growing upward (a parts list above a title block, ISO 7200). */
@@ -79,7 +85,7 @@ export interface DrawingTable {
   rows?: string[][];
 }
 
-export const TABLE_KEYS = ["id", "kind", "title", "columns", "widths", "sort", "group", "maxRows", "split", "headerAt", "totals", "footer", "anchor", "style", "view", "origin", "only", "header", "rows"] as const;
+export const TABLE_KEYS = ["id", "kind", "title", "columns", "widths", "sort", "group", "maxRows", "continues", "split", "headerAt", "totals", "footer", "anchor", "style", "view", "origin", "only", "header", "rows"] as const;
 
 /** A revision as a revision table lists it. The drawing's revisions (Drawing.revisions, wave Q1A) read as these. */
 export interface RevisionRow {

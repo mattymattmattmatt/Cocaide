@@ -605,11 +605,14 @@ a kerf between pieces, the offcut (kept when at least minOffcut) and the scrap. 
 "plan", columns?, file?) writes it. Write scope: "cutList" (or "drawing", or "*").
 Tables on a drawing sheet (DrawingSheet.tables): { "id": "t1", "kind": "cutList" | "bom" | "holes" | "welds" |
   "revisions" | "general" | "stock", "title"?: "CUT LIST" | null, "columns"?: [keys, "prop:Supplier"], "widths"?: { key: mm },
-  "sort"?: [{ "column": "length", "descending": true }], "group"?: "group", "maxRows"?: 20, "split"?: "left" | "right",
+  "sort"?: [{ "column": "length", "descending": true }], "group"?: "group", "maxRows"?: 20, "continues"?: "t1", "split"?: "left" | "right",
   "headerAt"?: "top" | "bottom", "totals"?: true, "footer"?: "ALL LENGTHS IN mm",
   "anchor"?: { "corner": "topLeft" | "topRight" | "bottomLeft" | "bottomRight" | "aboveTitleBlock" | "leftOfTitleBlock", "offset"?: [x, y] } | { "at": [x, y] },
   "style"?: { "textSize": 3.5, "rowHeight": 6, "titleSize": 4.2, "boldHeader": true, "rowLines": true },
   "view"?: "top" (holes), "origin"?: "@lowerLeft" (holes), "only"?: [items or bodies] (cutList, bom), "header"?, "rows"? (general) }
+A cut list or BOM with no maxRows is split into blocks that fit the sheet from its anchor, side by side while they fit;
+rows still left over are a sheet problem until a table on a later sheet has "continues": <its id>, which shows them (taking
+the first one's columns, sort, grouping and place unless it gives its own; "(continued)" on its title, the totals at the end).
 Columns: cutList: item, quantity, description, profile, designation, standard, material, grade, length, width, thickness,
 angle1, angle2, orientation, face, ends, cuts, massEach, massTotal, areaEach, areaTotal, plateArea, finish, weldPrep, group,
 notes, members, prop:<name>. bom: item, quantity, part, description, material, grade, finish, massEach, massTotal, notes.

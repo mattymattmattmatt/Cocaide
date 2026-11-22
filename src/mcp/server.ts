@@ -277,7 +277,7 @@ export const TOOLS: Record<string, ToolSpec> = {
   },
   setTable: {
     description:
-      'Add or replace a table on a sheet by id, or remove it (table: null): { "kind": "cutList" | "bom" | "holes" | "welds" | "revisions" | "general" | "stock", "title"?, "columns"?, "sort"?, "group"?, "maxRows"?, "anchor"?: { "corner": "aboveTitleBlock" | "topRight" ... } or { "at": [x, y] }, "view" and "origin" (holes: a view and "@lowerLeft" or a GeoRef), "header"/"rows" (general) } (see cocaide://reference cutList). Views and annotations keep clear of it.',
+      'Add or replace a table on a sheet by id, or remove it (table: null): { "kind": "cutList" | "bom" | "holes" | "welds" | "revisions" | "general" | "stock", "title"?, "columns"?, "sort"?, "group"?, "maxRows"?, "continues"? (a table on an earlier sheet whose left-over rows it shows), "anchor"?: { "corner": "aboveTitleBlock" | "topRight" ... } or { "at": [x, y] }, "view" and "origin" (holes: a view and "@lowerLeft" or a GeoRef), "header"/"rows" (general) } (see cocaide://reference cutList). Views and annotations keep clear of it.',
     input: { id: z.string(), table: obj.nullable(), sheet: z.string().optional() },
   },
   drawing: {

@@ -58,6 +58,7 @@ export function checkDrawingTable(raw: unknown, path: string, ctx: TableCheckCon
   }
   if (raw.group !== undefined && (typeof raw.group !== "string" || !tableColumn(kind, raw.group))) fail("group", `must be a column key of a ${kind} table (got ${describe(raw.group)})`);
   if (raw.maxRows !== undefined && (typeof raw.maxRows !== "number" || !Number.isInteger(raw.maxRows) || raw.maxRows < 1 || raw.maxRows > 200)) fail("maxRows", `must be a whole number from 1 to 200 (got ${describe(raw.maxRows)})`);
+  if (raw.continues !== undefined && (typeof raw.continues !== "string" || !raw.continues.trim() || raw.continues === raw.id)) fail("continues", `must be the id of a table on an earlier sheet (got ${describe(raw.continues)})`);
   if (raw.split !== undefined && raw.split !== "left" && raw.split !== "right") fail("split", `must be "left" or "right" (got ${describe(raw.split)})`);
   if (raw.headerAt !== undefined && raw.headerAt !== "top" && raw.headerAt !== "bottom") fail("headerAt", `must be "top" or "bottom" (got ${describe(raw.headerAt)})`);
   if (raw.totals !== undefined && typeof raw.totals !== "boolean") fail("totals", `must be true or false (got ${describe(raw.totals)})`);

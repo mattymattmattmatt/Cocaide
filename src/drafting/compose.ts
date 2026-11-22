@@ -41,7 +41,7 @@ import { clipOutside, clipToCircle, clipToPolygon, insidePolygon } from "./clip"
 import { drawFormat, paperSize, type FormatLayout } from "./formats";
 import { BODY_ANGLES, hatchLines, materialPattern } from "./hatch";
 import { geoInView, resolveGeoRef } from "./georef";
-import { holesInView, holeTable, holeTagPrims, outlineOrigin, renderSheetTables, type DrawingTable, type HoleTableRow, type RenderedTable, type RevisionRow, type TableContext, type TableCorner } from "./tables";
+import { holesInView, holeTable, holeTagPrims, outlineOrigin, renderSheetTables, type DrawingTable, type HoleTableRow, type RenderedTable, type RevisionRow, type TableContext, type TableCorner, type TableFlow } from "./tables";
 import { cutListOf, itemNumberFor } from "../weldment/items";
 import { draftStyle, layoutSheetAnnotations, measureDimension, Occupancy, planDimensionRows, rowDistance, type AnnotationContext, type AnnotationData, type DraftStyle, type Grip, type Measure, type ViewInfo } from "./annotate";
 import { nestCutList } from "../weldment/nesting";
@@ -503,8 +503,43 @@ class Composer {
     return out;
   }
 
+  /** A table that continues one on an earlier sheet, with what it takes from that one (columns, sort, grouping, place), and the sheet it is on. */
+  private continuedTable(t: DrawingTable, seen = new Set<string>()): { table: DrawingTable; source: { sheet: number; id: string } | null } {
+    if (!t.continues || seen.has(t.id)) return { table: t, source: null };
+    seen.add(t.id);
+    for (let j = 0; j < this.index; j++) {
+      const src = this.d.sheets[j].tables?.find((x) => x.id === t.continues);
+      if (!src) continue;
+      const { continues: _c, ...own } = t;
+      const { id: _i, continues: _s, ...inherited } = this.continuedTable(src, seen).table;
+      return { table: { ...inherited, ...own, continues: t.continues }, source: { sheet: j, id: src.id } };
+    }
+    const problem = `${t.id}: continues "${t.continues}", which is not a table on an earlier sheet`;
+    if (!this.problems.includes(problem)) this.problems.push(problem);
+    return { table: t, source: null };
+  }
+
+  /** Where a table's rows stop on this sheet (for the table that continues it). */
+  tableEnd(id: string): number {
+    return this.renderTables().find((x) => x.table.id === id)?.rendered.layout.end ?? 0;
+  }
+
+  private readonly startRows = new Map<string, number>();
+  /** Each table's flow: where its rows start (carrying on another) and whether one on a later sheet carries it on. */
+  private tableFlows(tables: DrawingTable[]): Record<string, TableFlow> {
+    const later = new Set(this.d.sheets.slice(this.index + 1).flatMap((x) => (x.tables ?? []).flatMap((t) => (t.continues ? [t.continues] : []))));
+    const out: Record<string, TableFlow> = {};
+    for (const t of tables) {
+      const src = t.continues ? this.continuedTable(t).source : null;
+      if (src && !this.startRows.has(t.id)) this.startRows.set(t.id, new Composer(this.v, this.d, this.d.sheets[src.sheet], src.sheet, this.ctx, this.doc).tableEnd(src.id));
+      const from = src ? this.startRows.get(t.id)! : 0;
+      out[t.id] = { ...(from ? { from } : {}), ...(later.has(t.id) ? { continued: true } : {}) };
+    }
+    return out;
+  }
+
   private renderTables(corners: Record<string, TableCorner> = {}): { table: DrawingTable; rendered: RenderedTable; holes?: { view: string; rows: HoleTableRow[]; origin: Vec2 } }[] {
-    const tables = (this.s.tables ?? []).map((t) => (corners[t.id] ? { ...t, anchor: { corner: corners[t.id] } } : t));
+    const tables = (this.s.tables ?? []).map((t) => this.continuedTable(t).table).map((t) => (corners[t.id] ? { ...t, anchor: { corner: corners[t.id] } } : t));
     if (!tables.length) return [];
     const m = this.ctx.measurements;
     const cutList = m && this.doc ? cutListOf(this.doc, m) : null;
@@ -518,7 +553,7 @@ class Composer {
     const sf = { frame: this.frame, titleBlock: this.titleBlock };
     const out: { table: DrawingTable; rendered: RenderedTable; holes?: { view: string; rows: HoleTableRow[]; origin: Vec2 } }[] = [];
     const plain = tables.filter((t) => t.kind !== "holes");
-    renderSheetTables(plain, base, sf).forEach((rendered, i) => out.push({ table: plain[i], rendered }));
+    renderSheetTables(plain, base, sf, this.tableFlows(plain)).forEach((rendered, i) => out.push({ table: plain[i], rendered }));
     for (const t of tables.filter((x) => x.kind === "holes")) {
       const holes = this.holeRows(t);
       const rendered = renderSheetTables([t], { ...base, holes: holes?.rows ?? null }, sf)[0];

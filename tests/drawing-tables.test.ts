@@ -24,6 +24,7 @@ import {
   type DrawingTable,
   type SheetFrame,
 } from "../src/drafting/tables";
+import { composeDrawing } from "../src/drafting/compose";
 import { textWidth } from "../src/drafting/text";
 import { viewFrame } from "../src/drafting/views";
 import type { HoleMeasurement } from "../src/kernel/measure";
@@ -143,6 +144,39 @@ describe("layout and placement", () => {
     expect(texts(r.prims).filter((x) => x === "ITEM")).toHaveLength(2);
   });
 
+  it("a long list with no maxRows splits into blocks that fit the sheet from its anchor", () => {
+    const long = cutListItems({ measurements: { members: Array.from({ length: 60 }, (_, k) => member(`m${k}`, 300 + 10 * k)), bodies: [] }, profiles: {}, settings: {} });
+    const t: DrawingTable = { id: "t", kind: "cutList", columns: ["item", "quantity", "length"] };
+    const r = renderTable(t, { cutList: long }, SHEET);
+    // Above the title block: 287 − 49 = 238 mm; the title (6.72), header and totals take 18.72, leaving 36 rows of 6.
+    expect(r.layout.blocks.map((b) => b.rows.filter((x) => x.kind === "data").length)).toEqual([36, 24]);
+    expect(r.layout.blocks[1].rows.at(-1)!.kind).toBe("totals");
+    expect(Math.max(...r.boxes.map((b) => b.max[1]))).toBeLessThanOrEqual(287 + 1e-9);
+    expect([r.layout.end, r.layout.overflow, r.problems]).toEqual([60, 0, []]);
+    // A table given maxRows keeps it.
+    expect(renderTable({ ...t, maxRows: 50 }, { cutList: long }, SHEET).layout.blocks.map((b) => b.rows.filter((x) => x.kind === "data").length)).toEqual([50, 10]);
+  });
+
+  it("rows the sheet has no room for: a problem, or carried on by a table that continues it", () => {
+    const long = cutListItems({ measurements: { members: Array.from({ length: 60 }, (_, k) => member(`m${k}`, 300 + 10 * k)), bodies: [] }, profiles: {}, settings: {} });
+    const t: DrawingTable = { id: "bom1", kind: "cutList", columns: ["item", "quantity", "length"], anchor: { corner: "topLeft" } };
+    // A narrow frame: one block across.
+    const narrow: SheetFrame = { frame: { min: [0, 0], max: [40, 120] }, titleBlock: { min: [0, 0], max: [40, 10] } };
+    const r = renderTable(t, { cutList: long }, narrow);
+    expect(r.layout.blocks).toHaveLength(1);
+    const shown = r.layout.blocks[0].rows.filter((x) => x.kind === "data").length;
+    expect([r.layout.end, r.layout.overflow]).toEqual([shown, 60 - shown]);
+    expect(r.layout.blocks[0].rows.some((x) => x.kind === "totals")).toBe(false);
+    expect(r.problems[0]).toMatch(/rows don't fit on the sheet: add a table with "continues": "bom1"/);
+    expect(renderTable(t, { cutList: long }, narrow, { continued: true }).problems).toEqual([]);
+    // The table carrying it on: from the next row, its title marked, the totals at its end.
+    const next = renderTable({ ...t, id: "bom2" }, { cutList: long }, SHEET, { from: shown });
+    expect(next.layout.blocks[0].rows[0].cells[0]).toBe("CUT LIST (continued)");
+    expect(next.layout.blocks[0].rows.find((x) => x.kind === "data")!.cells[0]).toBe(String(shown + 1));
+    expect(next.layout.end).toBe(60);
+    expect(next.layout.blocks.at(-1)!.rows.at(-1)!.kind).toBe("totals");
+  });
+
   it("puts the header at the bottom with rows reading upward from it (a parts list on a title block)", () => {
     const t: DrawingTable = { id: "t", kind: "bom", headerAt: "bottom", title: null };
     const l = layoutTable(t, tableData(t, { cutList: list }));
@@ -258,5 +292,33 @@ describe("validation", () => {
     expect(setTableIn([], "t9", null)).toEqual({ ok: false, error: "no table \"t9\" (tables: none)" });
     const bad = setTableIn([], "t1", { kind: "pie" });
     expect(bad.ok || bad.error).toContain('table "t1".kind: must be "cutList"');
+  });
+});
+
+describe("a table carried on over sheets", () => {
+  it("continues: the next sheet picks up the rows the first had no room for, with its columns; the last says what is left", () => {
+    const members = Array.from({ length: 300 }, (_, k) => member(`m${k}`, 300 + 10 * k));
+    const fmt = { size: "A4", orientation: "landscape" };
+    const sheets = [
+      { id: "s1", format: fmt, projection: "third", views: [], annotations: [], tables: [{ id: "cl", kind: "cutList", columns: ["item", "quantity", "length"] }] },
+      { id: "s2", format: fmt, projection: "third", views: [], annotations: [], tables: [{ id: "cl2", kind: "cutList", continues: "cl" }] },
+    ];
+    const compose = (s: unknown[]) => composeDrawing({ version: 1, units: "mm", name: "p", features: [], drawing: { sheets: s } }, { measurements: { members, bodies: [], mass: { kg: 1, material: "steel" }, volume: 1 } as never, geometry: null })!;
+    const items = (prims: Prim[], owner: string) => prims.flatMap((p) => (p.k === "text" && p.owner === owner && /^\d+$/.test(p.text) ? [Number(p.text)] : []));
+    const two = compose(sheets);
+    expect(two.sheets[0].problems).toEqual([]);
+    expect(two.sheets[1].problems).toEqual([expect.stringMatching(/^cl2: \d+ rows don't fit on the sheet: add a table with "continues": "cl2"/)]);
+    // Item numbers carry on (the continuation took cl's three columns): the first sheet's last item, then the next.
+    const first = items(two.sheets[0].prims, "cl");
+    const second = items(two.sheets[1].prims, "cl2");
+    const last = Math.max(...first.filter((_, i) => i % 3 === 0));
+    expect(second[0]).toBe(last + 1);
+    expect(texts(two.sheets[1].prims)).toContain("CUT LIST (continued)");
+    // A third sheet takes the rest: no problems left, the totals (300 pieces) at the end.
+    const three = compose([...sheets, { id: "s3", format: fmt, projection: "third", views: [], annotations: [], tables: [{ id: "cl3", kind: "cutList", continues: "cl2" }] }]);
+    expect(three.sheets.flatMap((s) => s.problems)).toEqual([]);
+    expect(items(three.sheets[2].prims, "cl3")).toContain(300);
+    expect(texts(three.sheets[2].prims)).toContain("TOTAL");
+    expect(compose([sheets[1]]).sheets[0].problems[0]).toBe('cl2: continues "cl", which is not a table on an earlier sheet');
   });
 });

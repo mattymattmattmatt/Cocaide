@@ -54,6 +54,12 @@ export interface TableData {
   problems: string[];
 }
 
+/** The room a table has on its sheet from its anchor: up or down to the frame, and along it the way its blocks go. */
+export interface TableRoom {
+  height: number;
+  width: number;
+}
+
 export const TABLE_STYLE = { textSize: 3.5, rowHeight: 6, titleSize: 4.2, pad: 1.5, minWidth: 8, maxWidth: 90 } as const;
 
 /** To `digits` places, halves rounded up (0.15 → "0.2", where toFixed would write the binary "0.1"). */
@@ -321,10 +327,14 @@ export interface TableLayout {
   boldHeader: boolean;
   rowLines: boolean;
   blocks: TableBlock[];
+  /** Where its rows stop in the data's rows (all of them, unless the sheet had no room for the rest). */
+  end: number;
+  /** Rows the sheet had no room for (a table that continues it shows them). */
+  overflow: number;
 }
 
 /** Column widths fitted to the text (within limits, or fixed by the table), rows split into blocks. */
-export function layoutTable(table: DrawingTable, data: TableData): TableLayout {
+export function layoutTable(table: DrawingTable, data: TableData, room?: TableRoom | null, from = 0): TableLayout {
   const textSize = table.style?.textSize ?? TABLE_STYLE.textSize;
   const rowHeight = Math.max(table.style?.rowHeight ?? TABLE_STYLE.rowHeight, textSize * 1.3);
   const titleSize = table.style?.titleSize ?? TABLE_STYLE.titleSize;
@@ -340,29 +350,47 @@ export function layoutTable(table: DrawingTable, data: TableData): TableLayout {
     return Math.min(TABLE_STYLE.maxWidth, Math.max(TABLE_STYLE.minWidth, Math.ceil(w * 2) / 2));
   });
   // The title and group rows and the footer span every column: widen the last column if one would not fit.
-  const spanText = [data.title ? textWidth(data.title, titleSize, true) : 0, ...data.rows.filter((r) => r.kind === "group").map((r) => textWidth(r.cells[0], textSize, true)), data.footer ? textWidth(data.footer, textSize) : 0];
+  const titleText = data.title && from > 0 ? `${data.title} (continued)` : data.title;
+  const spanText = [titleText ? textWidth(titleText, titleSize, true) : 0, ...data.rows.filter((r) => r.kind === "group").map((r) => textWidth(r.cells[0], textSize, true)), data.footer ? textWidth(data.footer, textSize) : 0];
   const need = Math.max(...spanText) + 2 * pad;
   const total = widths.reduce((a, b) => a + b, 0);
   if (need > total) widths[widths.length - 1] += Math.ceil(need - total);
   const width = widths.reduce((a, b) => a + b, 0);
   const header: LayoutRow = { kind: "header", cells: data.columns.map((c) => c.header) };
-  const per = table.maxRows && table.maxRows > 0 ? table.maxRows : Infinity;
+  // Carrying on another table: the rows from where it stopped, under the heading of the group they are in.
+  let rows = data.rows.slice(from);
+  if (from > 0) {
+    const heading = data.rows.slice(0, from).reverse().find((r) => r.kind === "group");
+    if (heading && rows[0]?.kind !== "group") rows = [{ ...heading, cells: [`${heading.cells[0]} (continued)`] }, ...rows];
+  }
+  const lead = rows.length - (data.rows.length - from); // a repeated group heading
+  // Blocks of at most maxRows; with none, of as many as fit the room from the anchor, and as many blocks as fit along it.
+  const titleH = data.title ? Math.max(rowHeight, titleSize * 1.6) : 0;
+  const overhead = titleH + rowHeight * (1 + (data.totals ? 1 : 0) + (data.footer ? 1 : 0));
+  const fits = room ? Math.max(1, Math.floor((room.height - overhead + 1e-6) / rowHeight)) : Infinity;
+  const per = table.maxRows && table.maxRows > 0 ? table.maxRows : fits;
+  const most = room ? Math.max(1, Math.floor((room.width + 1e-6) / width)) : Infinity;
   const chunks: TableRow[][] = [];
-  for (let i = 0; i < data.rows.length; i += per === Infinity ? Math.max(1, data.rows.length) : per) chunks.push(data.rows.slice(i, i + (per === Infinity ? data.rows.length : per)));
+  if (per === Infinity) chunks.push(rows);
+  else for (let i = 0; i < rows.length && chunks.length < most; i += per) chunks.push(rows.slice(i, i + per));
   if (!chunks.length) chunks.push([]);
+  const shown = chunks.reduce((n, c) => n + c.length, 0) - lead;
+  const end = Math.min(data.rows.length, from + Math.max(0, shown));
+  const overflow = data.rows.length - end;
   const bottom = table.headerAt === "bottom";
   const blocks: TableBlock[] = chunks.map((chunk, b) => {
     const body: LayoutRow[] = chunk.map((r) => ({ kind: r.kind, cells: r.cells, ...(r.ref !== undefined ? { ref: r.ref } : {}) }));
-    const last = b === chunks.length - 1;
+    // The totals and footer close the whole table: on its last block, and not where it carries on elsewhere.
+    const last = b === chunks.length - 1 && !overflow;
     const totals: LayoutRow[] = last && data.totals ? [{ kind: "totals", cells: data.totals }] : [];
-    const title: LayoutRow[] = b === 0 && data.title ? [{ kind: "title", cells: [data.title] }] : [];
+    const title: LayoutRow[] = b === 0 && data.title ? [{ kind: "title", cells: [titleText!] }] : [];
     const footer: LayoutRow[] = last && data.footer ? [{ kind: "footer", cells: [data.footer] }] : [];
     // Header at the bottom: the rows read upward from it (item 1 just above the header).
     const rows = bottom ? [...title, ...totals, ...[...body].reverse(), header, ...footer] : [...title, header, ...body, ...totals, ...footer];
     const height = rows.reduce((h, r) => h + (r.kind === "title" ? Math.max(rowHeight, titleSize * 1.6) : rowHeight), 0);
     return { rows, width, height };
   });
-  return { id: table.id, widths, align: data.columns.map((c) => c.align), rowHeight, textSize, titleSize, boldHeader, rowLines: table.style?.rowLines ?? true, blocks };
+  return { id: table.id, widths, align: data.columns.map((c) => c.align), rowHeight, textSize, titleSize, boldHeader, rowLines: table.style?.rowLines ?? true, blocks, end, overflow };
 }
 
 // -------------------------------------------------------------- placement
@@ -407,6 +435,24 @@ export function placeTable(table: DrawingTable, layout: TableLayout, sheet: Shee
     cursor = leftward ? bx : bx + b.width;
   }
   return boxes;
+}
+
+/** The room a table has from its anchor (after its offset): to the far edge of the frame, and along it the way its blocks go. */
+export function tableRoom(table: DrawingTable, sheet: SheetFrame): TableRoom {
+  const a = table.anchor;
+  const corner: TableCorner | null = a && "at" in a ? null : (a?.corner ?? DEFAULT_CORNERS[table.kind]);
+  const off: Vec2 = a && "corner" in a && a.offset ? a.offset : [0, 0];
+  const F = sheet.frame;
+  let x: number, y: number, fromRight: boolean, fromTop: boolean;
+  if (!corner) {
+    [x, y] = (a as { at: Vec2 }).at;
+    fromRight = false;
+    fromTop = true;
+  } else ({ x, y, fromRight, fromTop } = cornerPoint(corner, F, sheet.titleBlock));
+  x += off[0];
+  y += off[1];
+  const leftward = table.split ? table.split === "left" : fromRight;
+  return { height: Math.max(0, fromTop ? y - F.min[1] : F.max[1] - y), width: Math.max(0, leftward ? x - F.min[0] : F.max[0] - x) };
 }
 
 function cornerPoint(corner: TableCorner, F: Box, T: Box): { x: number; y: number; fromRight: boolean; fromTop: boolean } {
@@ -492,12 +538,26 @@ export interface RenderedTable {
   problems: string[];
 }
 
+/** Where a table's rows start (a table that continues another), and whether a table carries it on (no problem then if rows are left over). */
+export interface TableFlow {
+  from?: number;
+  continued?: boolean;
+}
+
+/** Cut lists and BOMs fit the sheet (a table with maxRows keeps it); other tables are laid out as they are. */
+const fitsRoom = (t: DrawingTable) => t.kind === "cutList" || t.kind === "bom";
+
+function overflowProblems(t: DrawingTable, layout: TableLayout, flow: TableFlow): string[] {
+  if (!layout.overflow || flow.continued) return [];
+  return [`${layout.overflow} row${layout.overflow === 1 ? "" : "s"} don't fit on the sheet: add a table with "continues": "${t.id}" on a later sheet (or give it maxRows, or a smaller text size)`];
+}
+
 /** A table, start to finish: rows, layout, placement, primitives. */
-export function renderTable(table: DrawingTable, ctx: TableContext, sheet: SheetFrame): RenderedTable {
+export function renderTable(table: DrawingTable, ctx: TableContext, sheet: SheetFrame, flow: TableFlow = {}): RenderedTable {
   const data = tableData(table, ctx);
-  const layout = layoutTable(table, data);
+  const layout = layoutTable(table, data, fitsRoom(table) ? tableRoom(table, sheet) : null, flow.from ?? 0);
   const boxes = placeTable(table, layout, sheet);
-  return { data, layout, boxes, box: boxOf(boxes.flatMap((b) => [b.min, b.max])), prims: tablePrims(layout, boxes), problems: data.problems };
+  return { data, layout, boxes, box: boxOf(boxes.flatMap((b) => [b.min, b.max])), prims: tablePrims(layout, boxes), problems: [...data.problems, ...overflowProblems(table, layout, flow)] };
 }
 
 /**
@@ -506,21 +566,22 @@ export function renderTable(table: DrawingTable, ctx: TableContext, sheet: Sheet
  * bottom, below it for anchors on the top — so two default tables never
  * overlap.
  */
-export function renderSheetTables(tables: DrawingTable[], ctx: TableContext, sheet: SheetFrame): RenderedTable[] {
+export function renderSheetTables(tables: DrawingTable[], ctx: TableContext, sheet: SheetFrame, flows: Record<string, TableFlow> = {}): RenderedTable[] {
   const used = new Map<string, number>();
   return tables.map((t) => {
     const a = t.anchor;
-    if (a && "at" in a) return renderTable(t, ctx, sheet);
+    const flow = flows[t.id] ?? {};
+    if (a && "at" in a) return renderTable(t, ctx, sheet, flow);
     const corner = a?.corner ?? DEFAULT_CORNERS[t.kind];
-    const data = tableData(t, ctx);
-    const layout = layoutTable(t, data);
     const shift = used.get(corner) ?? 0;
     const bottomAnchored = corner === "aboveTitleBlock" || corner === "leftOfTitleBlock" || corner === "bottomLeft" || corner === "bottomRight";
     const off: Vec2 = [a?.offset?.[0] ?? 0, (a?.offset?.[1] ?? 0) + (bottomAnchored ? shift : -shift)];
     const placed: DrawingTable = { ...t, anchor: { corner, offset: off } };
+    const data = tableData(t, ctx);
+    const layout = layoutTable(t, data, fitsRoom(t) ? tableRoom(placed, sheet) : null, flow.from ?? 0);
     const boxes = placeTable(placed, layout, sheet);
     const height = Math.max(...boxes.map((b) => b.max[1] - b.min[1]));
     used.set(corner, shift + height);
-    return { data, layout, boxes, box: boxOf(boxes.flatMap((b) => [b.min, b.max])), prims: tablePrims(layout, boxes), problems: data.problems };
+    return { data, layout, boxes, box: boxOf(boxes.flatMap((b) => [b.min, b.max])), prims: tablePrims(layout, boxes), problems: [...data.problems, ...overflowProblems(t, layout, flow)] };
   });
 }

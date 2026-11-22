@@ -827,7 +827,7 @@ How New drawing and Fit views choose a scale: the largest standard scale at whic
 - **Hole callout:** the hole feature's size and count, with a centre mark.
 - **Balloon:** a member's cut list item number.
 - **Weld symbol:** a weld from the weld table, with its arrow to where its bodies meet, the fillet, butt or plug symbol, its size and length, and the all-round circle.
-- **Table:** the cut list or the weld table.
+- **Table:** the cut list or the weld table. A long cut list or BOM splits into blocks side by side that fit the sheet from where it sits; whatever is still left over goes to a table on a later sheet that **continues** it (its title marked "(continued)", the totals at the very end), and until there is one the sheet's checks say how many rows are missing.
 - **Note:** free text.
 
 Click a view or annotation, on the sheet or in the list, to edit it; drag a balloon, callout, weld symbol, table or note to move it.
