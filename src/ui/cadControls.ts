@@ -12,6 +12,11 @@
 // (a marker shows it) until a middle-click on empty space, Esc, Fit or a
 // standard view. Dragging across the view's height turns half a turn (times
 // the speed in Settings > Mouse); "Keep Z up" makes it a turntable.
+//
+// Touch: one finger turns the view; two pinch to zoom (about the point between
+// them) and drag to pan; a double tap zooms in on the part where it lands (on
+// empty space: fits the part). A tap after two fingers were down is not a click
+// (see multiTouch).
 
 import * as THREE from "three";
 import { inputPrefs, wheelZoom } from "./input";
@@ -47,6 +52,13 @@ export class CadControls {
   private pinnedAt: THREE.Vector3 | null = null;
   private drag: { gesture: Gesture | null; button: number; x: number; y: number; lastX: number; lastY: number; id: number; moving: boolean; centre: THREE.Vector3 | null } | null = null;
   private lastMiddleClick = 0;
+  /** The fingers on the view, by pointer id. */
+  private touches = new Map<number, { x: number; y: number }>();
+  /** Two fingers down: their spread and middle when last seen. */
+  private pinch: { dist: number; x: number; y: number } | null = null;
+  /** Two fingers were down since the first went down: lifting them is not a tap (the view does not pick). */
+  multiTouch = false;
+  private lastTap = { t: 0, x: 0, y: 0 };
   /** A turn driven from outside the view (the view cube dragged): the centre it turns about. */
   private dragCentre: THREE.Vector3 | null = null;
 
@@ -240,7 +252,27 @@ export class CadControls {
     return null;
   }
 
+  /** The first two fingers' spread and middle. */
+  private twoFingers(): { dist: number; x: number; y: number } | null {
+    const [a, b] = [...this.touches.values()];
+    if (!a || !b) return null;
+    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
   private onDown = (e: PointerEvent) => {
+    if (e.pointerType === "touch") {
+      if (!this.touches.size) this.multiTouch = false;
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.touches.size >= 2) {
+        // A second finger: the one-finger turn stops where it is, and the two pinch and pan.
+        this.multiTouch = true;
+        this.drag = null;
+        this.pinch = this.twoFingers();
+        this.hooks.interrupt?.();
+        (e.currentTarget as Element | null)?.setPointerCapture?.(e.pointerId);
+        return;
+      }
+    }
     if (e.button === 1) e.preventDefault();
     const gesture = this.gestureFor(e);
     if (!gesture && e.button !== 1) return;
@@ -249,6 +281,17 @@ export class CadControls {
   };
 
   private onMove = (e: PointerEvent) => {
+    if (e.pointerType === "touch" && this.touches.has(e.pointerId)) {
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pinch) {
+        const now = this.twoFingers();
+        if (!now) return;
+        this.zoom(now.dist / this.pinch.dist, now.x, now.y);
+        this.pan(now.x - this.pinch.x, now.y - this.pinch.y);
+        this.pinch = now;
+        return;
+      }
+    }
     const d = this.drag;
     if (!d || e.pointerId !== d.id) return;
     if (!d.moving) {
@@ -285,9 +328,27 @@ export class CadControls {
   };
 
   private onUp = (e: PointerEvent) => {
+    if (e.pointerType === "touch") {
+      this.touches.delete(e.pointerId);
+      if (this.pinch) {
+        if (this.touches.size < 2) this.pinch = null;
+        const el = e.currentTarget as Element | null;
+        if (el?.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
+        return;
+      }
+    }
     const d = this.drag;
     if (!d || e.pointerId !== d.id) return;
     this.drag = null;
+    // A double tap: zoom in on the part where it lands, or fit it (empty space).
+    if (e.pointerType === "touch" && !d.moving && !this.multiTouch) {
+      const now = performance.now();
+      if (now - this.lastTap.t < 320 && Math.hypot(e.clientX - this.lastTap.x, e.clientY - this.lastTap.y) < 40) {
+        this.lastTap.t = 0;
+        if (this.hooks.pick(e.clientX, e.clientY)) this.zoom(2, e.clientX, e.clientY);
+        else this.hooks.fit();
+      } else this.lastTap = { t: now, x: e.clientX, y: e.clientY };
+    }
     const el = e.currentTarget as Element | null;
     if (el?.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
     if (d.moving || d.button !== 1) return;

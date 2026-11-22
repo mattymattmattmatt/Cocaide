@@ -20,10 +20,12 @@ export interface VrReviewProps {
   onReject(id: string): void;
   onPinText(id: string, text: string): void;
   onPinDelete(id: string): void;
+  /** Open from the start (the phone viewer's VR notes sheet). */
+  startOpen?: boolean;
 }
 
 export function VrReview(p: VrReviewProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!p.startOpen);
   const n = p.pins.length + p.moves.length;
   if (!n) return null;
   const summary = [p.moves.length ? `${p.moves.length} move${p.moves.length === 1 ? "" : "s"}` : "", p.pins.length ? `${p.pins.length} pin${p.pins.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");

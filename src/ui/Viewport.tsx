@@ -475,6 +475,8 @@ export function Viewport({
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, stencil: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.localClippingEnabled = true;
+    // Touch: the view takes the fingers (no page scroll or browser zoom on it): src/ui/cadControls.
+    renderer.domElement.style.touchAction = "none";
     el.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -2261,6 +2263,11 @@ export function Viewport({
     };
     const onUp = (e: PointerEvent) => {
       if (!down || e.button !== down.button) return;
+      // Fingers lifted after a pinch: not a tap.
+      if (e.pointerType === "touch" && controls.multiTouch) {
+        down = null;
+        return;
+      }
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       const wasBox = boxing;
       const start = down;

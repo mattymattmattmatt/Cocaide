@@ -617,6 +617,8 @@ export function useAssembly(o: AssemblyOptions) {
     fit: () => setFitToken((t) => t + 1),
     clashes,
     busy,
+    /** The parts built so far, of those the assembly uses (they come back one by one). */
+    built: { done: Object.keys(docs).filter((k) => views.has(k)).length, total: Object.keys(docs).length },
     bom,
     mateChoices,
     pick,

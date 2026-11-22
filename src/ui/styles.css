@@ -2633,3 +2633,57 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .share-get { display: flex; gap: 8px; width: 100%; }
 .share-get input { font: 600 20px var(--mono); letter-spacing: 0.08em; height: 40px; flex: 1; min-width: 0; text-align: center; }
 .share-get button { height: 40px; }
+
+/* ---------------------------------------------------------------- the touch viewer (a phone: src/ui/mobile) */
+.mobile-viewer {
+  position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--panel); color: var(--text);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); overscroll-behavior: none;
+}
+.mv-top { display: flex; align-items: center; gap: 6px; height: 50px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border); flex: none; }
+.mv-name { flex: 1; min-width: 0; font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-status { font-size: 12px; color: var(--muted); }
+.mv-top button { height: 40px; min-width: 40px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 10px; background: none; color: var(--text); cursor: pointer; font: inherit; }
+.mv-top button:active { background: var(--panel-2); }
+.mv-top .mv-full { padding: 0 10px; font-size: 13px; border-color: var(--border); }
+.mobile-viewer > .notice { position: relative; margin: 6px 8px 0; flex: none; }
+.mv-view { position: relative; flex: 1; min-height: 0; }
+/* The desktop's view bar and selection filter are the viewer's own sheets here; the cube smaller, out of the thumbs' way. */
+.mv-view .view-buttons, .mv-view .filter-buttons { display: none; }
+.mv-view .view-cube { transform: scale(0.72); transform-origin: top right; }
+.mv-sheet {
+  flex: none; max-height: 46vh; max-height: 46dvh; overflow-y: auto; padding: 12px 14px; border-top: 1px solid var(--border);
+  background: var(--panel); box-shadow: 0 -6px 18px rgb(0 0 0 / 0.08); font-size: 15px;
+}
+.mv-sheet p { margin: 0 0 8px; color: var(--muted); }
+.mv-sheet h3 { margin: 0 0 6px; font-size: 15px; }
+.mv-sheet button { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: 15px; cursor: pointer; }
+.mv-sheet button.on, .mv-sheet button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--info-bg); font-weight: 600; }
+.mv-sheet button:disabled { opacity: 0.4; }
+.mv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.mv-measure table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; }
+.mv-measure th, .mv-measure td { text-align: left; padding: 6px 4px; border-top: 1px solid var(--border); font-weight: normal; }
+.mv-measure th { color: var(--muted); width: 45%; }
+.mv-measure td { font-family: var(--mono); }
+.mv-piece { color: var(--text) !important; font-weight: 600; }
+.mv-slider { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; color: var(--muted); }
+.mv-slider input { width: 100%; height: 36px; }
+.mv-parts ul { list-style: none; margin: 0 0 10px; padding: 0; }
+.mv-parts li label { display: flex; align-items: center; gap: 12px; min-height: 44px; border-top: 1px solid var(--border); }
+.mv-parts li input { width: 22px; height: 22px; }
+.mv-notes .vr-review { position: static; transform: none; width: auto; max-width: none; box-shadow: none; }
+.mv-bar {
+  flex: none; display: flex; justify-content: space-around; border-top: 1px solid var(--border); background: var(--panel);
+  padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+}
+.mv-bar button {
+  position: relative; flex: 1; max-width: 96px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  border: none; border-radius: 12px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.mv-bar button.on { color: var(--accent); background: var(--info-bg); }
+.mv-badge { position: absolute; top: 4px; right: 18%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #f59e0b; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; }
+.layout-viewer-fab {
+  /* Top left, over the logo: the full app is wider and taller than a phone's screen, so its corners further away are off it. */
+  position: fixed; left: 6px; top: calc(6px + env(safe-area-inset-top)); z-index: 1000; display: inline-flex; align-items: center; gap: 6px;
+  height: 40px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; font-weight: 600;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25); cursor: pointer;
+}

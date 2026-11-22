@@ -155,6 +155,8 @@ import { nextSketch3dId, sketch3dPositions, sketch3dSegments } from "../geom/ske
 import { setDraw, useDraw } from "./sketch3d/drawState";
 import type { CornerMark, Draw3d } from "./Viewport";
 import { ShareDialog } from "./ShareDialog";
+import { MobileViewer } from "./mobile/MobileViewer";
+import { phoneBrowser, setLayout, useLayout } from "./mobile/layout";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -258,6 +260,16 @@ export function App() {
   const [savedProfile, setSavedProfile] = useState<string | null>(null);
   /** The 3D model, or the part's drawing (Phase L). */
   const [mode, setMode] = useState<"model" | "drawing" | "assembly">("model");
+  /** The touch viewer (a phone) or the full app (src/ui/mobile/layout). */
+  const layout = useLayout();
+  const viewer = layout === "viewer";
+  const docHasAssembly = !!((d.doc as { assembly?: { components?: unknown[] } } | null)?.assembly?.components?.length);
+  // The viewer shows the assembly when the project has one, else the part.
+  useEffect(() => {
+    if (!viewer) return;
+    const want = docHasAssembly ? "assembly" : "model";
+    if (mode !== want) setMode(want);
+  }, [viewer, docHasAssembly, mode]);
   // The Assembly tab: components of this part and others, placed and mated (src/ui/assembly).
   const assemblyWs = useAssembly({
     doc: d.doc,
@@ -878,8 +890,9 @@ export function App() {
     const problem = d.dispatch({ type: "setVr", vr: Object.keys(vr).length ? vr : null });
     if (problem) setNotice({ kind: "error", text: problem });
   };
-  const vrReview = (
+  const vrReviewOf = (startOpen?: boolean) => (
     <VrReview
+      startOpen={startOpen}
       pins={vrNotes.pins}
       moves={vrNotes.moves}
       hidden={vrNotesHidden}
@@ -896,6 +909,7 @@ export function App() {
       onPinDelete={(id) => setVrNotes(vrNotes.pins.filter((p) => p.id !== id), vrNotes.moves)}
     />
   );
+  const vrReview = vrReviewOf();
   const vrProps = (placingHere: boolean): VrViewProps => ({
     start: vrStart,
     showStart: vrPrefsNow.showStart,
@@ -3063,9 +3077,81 @@ export function App() {
                 : `${view.ok ? "Rebuilt" : `${view.errors.length} error${view.errors.length === 1 ? "" : "s"}`}${rebuildMs !== null ? ` · ${Math.round(rebuildMs)} ms` : ""}`
               : "Waiting for kernel…";
 
+  const shareDialog = shareOpen && (
+    <ShareDialog
+      project={() => (parsed.ok ? { name: view?.name ?? "part", text: formatDocument(parsed.value) } : null)}
+      onReceived={(name, text) => replaceDocument(text, `Received ${name} from another device`)}
+      onClose={() => setShareOpen(false)}
+    />
+  );
+  const noticeBar = notice && (
+    <div className={`notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"} data-testid="notice">
+      <span>{notice.text}</span>
+      <button aria-label="Dismiss" onClick={() => setNotice(null)}>
+        <Icon name="x" size={15} />
+      </button>
+    </div>
+  );
+  if (viewer) {
+    const asm = mode === "assembly" && docHasAssembly;
+    const comps = assemblyWs.asm?.components ?? [];
+    const label = (id: string) => {
+      const w = id.replace(/-\d+$/, "").replace(/[-_]+/g, " ").trim() || id;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    };
+    const shownView = asm ? assemblyWs.scene.view : view;
+    return (
+      <>
+        {shareDialog}
+        <input
+          ref={fileInput}
+          type="file"
+          accept={OPEN_ACCEPT}
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) openFile(file);
+            e.target.value = "";
+          }}
+        />
+        <MobileViewer
+          name={docName || "—"}
+          status={kernelState.phase !== "ready" ? "Loading…" : asm ? (assemblyWs.built.done < assemblyWs.built.total ? `Building ${assemblyWs.built.done + 1} of ${assemblyWs.built.total}…` : null) : !view ? "Building…" : null}
+          view={shownView}
+          fitToken={asm ? assemblyWs.fitToken : fitToken}
+          parts={asm ? comps.filter((k) => !k.hidden).map((k) => ({ id: k.id, label: label(k.id) })) : (view?.bodies.length ?? 0) > 1 ? view!.bodies.map((b) => ({ id: b.name, label: b.name })) : []}
+          partsNoun={asm ? "components" : "bodies"}
+          appearances={asm ? assemblyWs.appearances : appearances}
+          clearBodies={asm ? assemblyWs.clearBodies : undefined}
+          alsoHidden={asm ? assemblyWs.isolateHides : hiddenBodies}
+          memoryKey={asm ? `${docName}#assembly` : docName}
+          display={display}
+          onDisplay={asm ? setDisplay : changeDisplay}
+          section={asm ? asmSectionCtl : sectionCtl}
+          sectionBox={(asm ? asmSectionView : view)?.measurements?.boundingBox ?? null}
+          capColour={asm ? "bodies" : "single"}
+          vr={vrProps(true)}
+          vrNotes={vrReviewOf(true)}
+          vrNoteCount={vrNotes.pins.length + vrNotes.moves.length}
+          notice={noticeBar}
+          onOpen={() => fileInput.current?.click()}
+          onShare={() => setShareOpen(true)}
+          onFull={() => setLayout("full")}
+        />
+      </>
+    );
+  }
+
   return (
     <ParametersContext.Provider value={params}>
       <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
+      {phoneBrowser() && (
+        // On a phone (the full app asked for): back to the touch viewer, out of the crowded top bar's way.
+        <button className="layout-viewer-fab" onClick={() => setLayout("viewer")} title="The touch viewer: views, measure, section, parts" data-testid="layout-viewer">
+          <Icon name="iso" size={16} />
+          Viewer
+        </button>
+      )}
       {layoutOpen && <FrameLayoutDialog onAdd={addLayout} onClose={() => setLayoutOpen(false)} />}
       {stairOpen && <StairDialog onAdd={addStair} onClose={() => setStairOpen(false)} />}
       {wallOpen && <WallFrameDialog onAdd={addWall} onClose={() => setWallOpen(false)} />}
@@ -3165,6 +3251,7 @@ export function App() {
               <Icon name="share" />
               <span className="label">Share</span>
             </button>
+
             <span className="sep" />
             <button aria-label="Settings" onClick={() => openSettings("units")} title="Settings: units, mouse, keyboard shortcuts, and the assistant" data-testid="ask-settings-open">
               <Icon name="settings" />
@@ -3196,14 +3283,8 @@ export function App() {
           <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
 
-        {notice && (
-          <div className={`notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"} data-testid="notice">
-            <span>{notice.text}</span>
-            <button aria-label="Dismiss" onClick={() => setNotice(null)}>
-              <Icon name="x" size={15} />
-            </button>
-          </div>
-        )}
+        {noticeBar}
+
 
         <main className={`workspace${leftHidden ? " no-left" : ""}${dockClass(dock)}`}>
           {mode === "assembly" && !sketch ? (
@@ -3795,13 +3876,7 @@ export function App() {
           />
         )}
         {mode !== "drawing" && !vrPlacing && vrReview}
-        {shareOpen && (
-          <ShareDialog
-            project={() => (parsed.ok ? { name: view?.name ?? "part", text: formatDocument(parsed.value) } : null)}
-            onReceived={(name, text) => replaceDocument(text, `Received ${name} from another device`)}
-            onClose={() => setShareOpen(false)}
-          />
-        )}
+        {shareDialog}
         {ask.settingsOpen && (
           <AskSettingsDialog
             settings={ask.settings}
