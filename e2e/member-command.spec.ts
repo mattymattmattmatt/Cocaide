@@ -243,3 +243,24 @@ test("Weldments → Stair: the numbers as it is set up, a warning for a short op
   await expect(page.getByTestId("notice")).toContainText("Stair: 17 risers of 181.1");
   await expect(page.getByTestId("status")).toContainText("Rebuilt");
 });
+
+test("Weldments → Wall frame: counts as it is set up, a warning for an opening at the end, the frame added in one step", async ({ page }) => {
+  await open(page, { version: 1, units: "mm", name: "wall", features: [] });
+  await page.getByText("Weldments", { exact: true }).click();
+  await page.getByTestId("tool-wall-frame").click();
+  const dlg = page.getByTestId("wall-dialog");
+  await expect(dlg.getByTestId("wall-summary")).toContainText("members");
+  await expect(dlg.getByTestId("wall-warnings")).toHaveCount(0);
+  await dlg.getByTestId("wall-opening-0-at").fill("20");
+  await expect(dlg.getByTestId("wall-warnings")).toBeVisible();
+  await dlg.getByTestId("wall-opening-0-at").fill("900");
+  await expect(dlg.getByTestId("wall-warnings")).toHaveCount(0);
+  await dlg.getByTestId("wall-add").click();
+  await expect(dlg).toHaveCount(0);
+  await waitForRebuild(page);
+  const d = await saved(page);
+  const ids = d.features.map((f: any) => f.id);
+  expect(ids).toEqual(expect.arrayContaining(["wall_frame", "wall_lintel_w1_a", "wall_sill_w1", "wall_lining_in"]));
+  await expect(page.getByTestId("notice")).toContainText("Wall frame wall:");
+  await expect(page.getByTestId("status")).toContainText("Rebuilt");
+});

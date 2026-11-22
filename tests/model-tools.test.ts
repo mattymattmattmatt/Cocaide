@@ -58,6 +58,7 @@ describe("the registry", () => {
       "tool-delete-body",
       "tool-member",
       "tool-stair",
+      "tool-wall-frame",
       "tool-plane",
       "tool-axis",
       "tool-point",
@@ -99,7 +100,7 @@ describe("the registry", () => {
       ["tool.combine", "tool.split", "tool.move", "tool.deleteBody", "tool.scale"],
       ["tool.importStep", "tool.exportPlates", "tool.exportFaceDxf", "tool.exportBody"],
     ]);
-    expect(ids(toolbarGroups("weldments"))).toEqual([["tool.sketch3d", "tool.member", "tool.stair"]]);
+    expect(ids(toolbarGroups("weldments"))).toEqual([["tool.sketch3d", "tool.member", "tool.stair", "tool.wallFrame"]]);
     expect(ids(toolbarGroups("reference"))).toEqual([["tool.plane", "tool.axis", "tool.point", "tool.coordinateSystem"]]);
     expect(ids(toolbarGroups("evaluate"))).toEqual([["tool.measure", "tool.massProperties"], ["tool.section"]]);
   });

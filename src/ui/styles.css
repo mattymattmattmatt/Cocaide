@@ -2593,3 +2593,8 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .stair-summary { margin: 10px 0 4px; font-size: 13px; }
 .stair-warnings { margin: 4px 0; padding: 6px 10px; list-style: none; border-radius: 6px; background: color-mix(in srgb, var(--bad, #c0392b) 10%, var(--panel)); color: var(--bad, #c0392b); font-size: 12px; }
 .stair-warnings li { display: flex; align-items: center; gap: 6px; }
+.wall-openings { margin: 10px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.wall-openings-head { display: flex; align-items: baseline; gap: 8px; }
+.wall-opening, .wall-opening-labels { display: grid; grid-template-columns: 84px repeat(4, minmax(0, 1fr)) 24px; gap: 4px; align-items: center; }
+.wall-opening input, .wall-opening select { width: 100%; min-width: 0; }
+.wall-opening-labels span { padding-left: 2px; }

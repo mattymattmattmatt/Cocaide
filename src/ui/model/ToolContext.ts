@@ -67,6 +67,8 @@ export interface ToolCtx {
   frameLayout?(): void;
   /** Opens Weldments → Stair… (a stair by the riser and going rules). */
   stair?(): void;
+  /** Opens Weldments → Wall frame… (a timber wall frame from its openings). */
+  wallFrame?(): void;
   /** Puts a whole new document in as one undo step (a tool that adds several things), then selects `select`. */
   replace(doc: RawDocument, select?: string): void;
   /** Tells the user something: what to click first ("error"), or what happened ("info"). */

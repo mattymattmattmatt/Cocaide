@@ -56,6 +56,8 @@ import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { MemberCommand, type MemberCommandState, type MemberSummary } from "./weldment/MemberCommand";
 import { StairDialog } from "./weldment/StairDialog";
+import { WallFrameDialog } from "./weldment/WallFrameDialog";
+import { planWallFrame, type WallFrameSpec } from "../weldment/wallFrame";
 import { planStair, type StairSpec } from "../weldment/stairs";
 import { FrameLayoutDialog } from "./weldment/FrameLayoutDialog";
 import { CornerPanel, cornerCommands, cycleCorner, framesCorners } from "./weldment/CornerPanel";
@@ -228,6 +230,7 @@ export function App() {
   /** Sketch → Frame layout… open. */
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [stairOpen, setStairOpen] = useState(false);
+  const [wallOpen, setWallOpen] = useState(false);
   /** A frame's corner selected in the view (its node): its panel shows. */
   const [selectedCorner, setSelectedCorner] = useState<string | null>(null);
   const [fitToken, setFitToken] = useState(0);
@@ -1429,6 +1432,20 @@ export function App() {
     return true;
   };
 
+  /** A wall frame (Weldments → Wall frame…): its sketch, members, joints and linings as one undo step. */
+  const addWall = (spec: WallFrameSpec): boolean => {
+    if (!doc) return false;
+    let id = "wall";
+    for (let k = 2; doc.features.some((f) => String(f.id) === id || String(f.id).startsWith(`${id}_`)); k++) id = `wall${k}`;
+    const r = planWallFrame(doc, { ...spec, id });
+    if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
+    d.replaceDoc(r.doc);
+    fitAfter.current = true;
+    const n = r.report;
+    setNotice({ kind: n.warnings.length ? "error" : "info", text: `Wall frame ${id}: ${n.members} members (${n.studs} studs, ${n.noggings} noggings${n.lintels ? `, ${n.lintels} lintels` : ""}).${n.warnings.length ? ` Check: ${n.warnings.join("; ")}.` : ""}` });
+    return true;
+  };
+
   /** A starter frame layout: its parameters and its sketch, one undo step; then the Member command on its lines. */
   const addLayout = (spec: TemplateSpec): boolean => {
     if (!doc) return false;
@@ -1943,6 +1960,7 @@ export function App() {
       members: (init) => openMembers(init ?? {}),
       frameLayout: () => setLayoutOpen(true),
       stair: () => setStairOpen(true),
+      wallFrame: () => setWallOpen(true),
     },
   );
   /** The newest ToolCtx, for menu entries run at the click (after the right-click's selection has landed). */
@@ -2928,6 +2946,7 @@ export function App() {
       <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
       {layoutOpen && <FrameLayoutDialog onAdd={addLayout} onClose={() => setLayoutOpen(false)} />}
       {stairOpen && <StairDialog onAdd={addStair} onClose={() => setStairOpen(false)} />}
+      {wallOpen && <WallFrameDialog onAdd={addWall} onClose={() => setWallOpen(false)} />}
       <div
         className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}${locked ? " bridge-locked" : ""}`}
         onDragOver={(e) => {

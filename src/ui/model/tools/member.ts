@@ -48,4 +48,17 @@ export const tools: ToolDef[] = [
       ctx.stair?.();
     },
   },
+  {
+    id: "tool.wallFrame",
+    label: "Wall frame",
+    icon: "member",
+    tab: "weldments",
+    group: "members",
+    title: "A timber wall frame from its length, height and openings: plates, studs at the spacing, kings and jacks, doubled lintels, sills, cripples, noggings and linings, its joints made",
+    testId: "tool-wall-frame",
+    run: (ctx) => {
+      if (!ctx.doc) return ctx.notice("Fix the document JSON first.");
+      ctx.wallFrame?.();
+    },
+  },
 ];
