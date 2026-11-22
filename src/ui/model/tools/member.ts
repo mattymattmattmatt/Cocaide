@@ -35,4 +35,17 @@ export const tools: ToolDef[] = [
       ctx.replace(r.doc, r.id);
     },
   },
+  {
+    id: "tool.stair",
+    label: "Stair",
+    icon: "member",
+    tab: "weldments",
+    group: "members",
+    title: "A straight, L or U stair from floor-to-floor height: risers and goings by the rules, LVL stringers cut level and plumb, housed treads, a landing; with a headroom check",
+    testId: "tool-stair",
+    run: (ctx) => {
+      if (!ctx.doc) return ctx.notice("Fix the document JSON first.");
+      ctx.stair?.();
+    },
+  },
 ];

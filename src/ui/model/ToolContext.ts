@@ -65,6 +65,8 @@ export interface ToolCtx {
   members?(init?: Partial<MemberCommandState>): void;
   /** Opens Sketch → Frame layout… (a starter layout sketch and its parameters). */
   frameLayout?(): void;
+  /** Opens Weldments → Stair… (a stair by the riser and going rules). */
+  stair?(): void;
   /** Puts a whole new document in as one undo step (a tool that adds several things), then selects `select`. */
   replace(doc: RawDocument, select?: string): void;
   /** Tells the user something: what to click first ("error"), or what happened ("info"). */

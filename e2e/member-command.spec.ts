@@ -219,3 +219,27 @@ test("a stringer's ends cut in its properties: the foot on Top, the head on a pl
   await page.getByTestId("prop-cutEnd").selectOption("");
   await expect.poll(async () => (await saved(page)).features[1].cutEnd).toBeUndefined();
 });
+
+test("Weldments → Stair: the numbers as it is set up, a warning for a short opening, an L stair added in one step", async ({ page }) => {
+  await open(page, { version: 1, units: "mm", name: "stair", features: [] });
+  await page.getByText("Weldments", { exact: true }).click();
+  await page.getByTestId("tool-stair").click();
+  const dlg = page.getByTestId("stair-dialog");
+  await dlg.getByTestId("stair-rise").fill("3079");
+  await expect(dlg.getByTestId("stair-summary")).toContainText("17 risers of 181.1 · 16 treads of 260 · 2R + G 622");
+  await dlg.getByTestId("stair-opening").fill("1500");
+  await expect(dlg.getByTestId("stair-warnings")).toContainText("headroom is");
+  await dlg.getByTestId("stair-opening").fill("3800");
+  await expect(dlg.getByTestId("stair-warnings")).toHaveCount(0);
+  await dlg.getByTestId("stair-type-L").click();
+  await dlg.getByTestId("stair-turn").selectOption("left");
+  await dlg.getByTestId("stair-add").click();
+  await expect(dlg).toHaveCount(0);
+  await waitForRebuild(page);
+  const d = await saved(page);
+  const ids = d.features.map((f: any) => f.id);
+  expect(ids).toEqual(expect.arrayContaining(["stair_f1_stringer_left", "stair_f2_stringer_right", "stair_landing"]));
+  expect(d.features.find((f: any) => f.id === "stair_f1_stringer_left").cutStart).toEqual({ to: { datum: "stair_f1_foot_plane" } });
+  await expect(page.getByTestId("notice")).toContainText("Stair: 17 risers of 181.1");
+  await expect(page.getByTestId("status")).toContainText("Rebuilt");
+});

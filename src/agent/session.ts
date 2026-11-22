@@ -6,6 +6,7 @@
 // Node only (files, hashing). The MCP server is a thin layer over this.
 
 import { membersFromSketch } from "../weldment/sketchFrame";
+import { planStair, type StairSpec } from "../weldment/stairs";
 import { frameTemplate, type FrameTemplate } from "../weldment/frameTemplates";
 import { framesOf } from "../weldment/sketchNodes";
 import { assemblyBom } from "../assembly/bom";
@@ -118,6 +119,7 @@ export const EDIT_TOOLS = [
   "setNode",
   "membersFromSketch",
   "frameLayout",
+  "stair",
   "renameNode",
   "setWeld",
   "setBodyMaterial",
@@ -466,6 +468,11 @@ export class AgentSession {
         const t = frameTemplate(this.doc, { kind: a.kind as FrameTemplate, width: Number(a.width), height: Number(a.height), ...(a.depth !== undefined ? { depth: Number(a.depth) } : {}), ...(a.posts !== undefined ? { posts: Number(a.posts) } : {}), ...(a.rise !== undefined ? { rise: Number(a.rise) } : {}), ...(a.bays !== undefined ? { bays: Number(a.bays) } : {}), ...(a.bay !== undefined ? { bay: Number(a.bay) } : {}) });
         if ("error" in t) return this.fail(`frameLayout: ${t.error}`);
         return this.editMany(t.commands, { extra: { sketch: t.sketch } });
+      }
+      case "stair": {
+        const r = planStair(this.doc, a as unknown as StairSpec);
+        if (!r.ok) return this.fail(`stair: ${r.error}`);
+        return this.editMany(r.commands, { extra: { report: r.report, features: r.features.length } });
       }
       case "membersFromSketch": {
         const r = membersFromSketch(this.doc, a, framesOf(this.built.sketches));

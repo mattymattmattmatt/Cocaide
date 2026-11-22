@@ -55,6 +55,8 @@ import { framesOf, isNodeLink, resolveNodeLink } from "../weldment/sketchNodes";
 import { withRefHints } from "../drafting/refHints";
 import type { SketchEntityHit } from "./model/sketchPick";
 import { MemberCommand, type MemberCommandState, type MemberSummary } from "./weldment/MemberCommand";
+import { StairDialog } from "./weldment/StairDialog";
+import { planStair, type StairSpec } from "../weldment/stairs";
 import { FrameLayoutDialog } from "./weldment/FrameLayoutDialog";
 import { CornerPanel, cornerCommands, cycleCorner, framesCorners } from "./weldment/CornerPanel";
 import { frameTemplate, type TemplateSpec } from "../weldment/frameTemplates";
@@ -225,6 +227,7 @@ export function App() {
   const memberLast = useRef<RawDocument | null>(null);
   /** Sketch → Frame layout… open. */
   const [layoutOpen, setLayoutOpen] = useState(false);
+  const [stairOpen, setStairOpen] = useState(false);
   /** A frame's corner selected in the view (its node): its panel shows. */
   const [selectedCorner, setSelectedCorner] = useState<string | null>(null);
   const [fitToken, setFitToken] = useState(0);
@@ -1411,6 +1414,21 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
+  /** A stair (Weldments → Stair…): its features in the part as one undo step, its numbers and warnings said. */
+  const addStair = (spec: StairSpec): boolean => {
+    if (!doc) return false;
+    const taken = new Set(doc.features.map((f) => String(f.id)));
+    let id = "stair";
+    for (let k = 2; [...taken].some((x) => x.startsWith(`${id}_`)); k++) id = `stair${k}`;
+    const r = planStair(doc, { ...spec, id });
+    if (!r.ok) return setNotice({ kind: "error", text: r.error }), false;
+    d.replaceDoc(r.doc);
+    fitAfter.current = true;
+    const n = r.report;
+    setNotice({ kind: r.report.warnings.length ? "error" : "info", text: `Stair: ${n.risers} risers of ${n.riser.toFixed(1)}, ${n.treads} treads of ${n.going}, 2R + G ${n.stride.toFixed(0)}${n.headroom !== null ? `, headroom ${n.headroom}` : ""}.${n.warnings.length ? ` Check: ${n.warnings.join("; ")}.` : ""}` });
+    return true;
+  };
+
   /** A starter frame layout: its parameters and its sketch, one undo step; then the Member command on its lines. */
   const addLayout = (spec: TemplateSpec): boolean => {
     if (!doc) return false;
@@ -1924,6 +1942,7 @@ export function App() {
       files: files.tool,
       members: (init) => openMembers(init ?? {}),
       frameLayout: () => setLayoutOpen(true),
+      stair: () => setStairOpen(true),
     },
   );
   /** The newest ToolCtx, for menu entries run at the click (after the right-click's selection has landed). */
@@ -2908,6 +2927,7 @@ export function App() {
     <ParametersContext.Provider value={params}>
       <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
       {layoutOpen && <FrameLayoutDialog onAdd={addLayout} onClose={() => setLayoutOpen(false)} />}
+      {stairOpen && <StairDialog onAdd={addStair} onClose={() => setStairOpen(false)} />}
       <div
         className={`app${dragging ? " dragging" : ""}${sketch ? " sketching" : ""}${locked ? " bridge-locked" : ""}`}
         onDragOver={(e) => {
