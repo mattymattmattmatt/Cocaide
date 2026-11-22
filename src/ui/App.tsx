@@ -154,6 +154,7 @@ import { resolveExpressions } from "../doc/parameters";
 import { nextSketch3dId, sketch3dPositions, sketch3dSegments } from "../geom/sketch3d";
 import { setDraw, useDraw } from "./sketch3d/drawState";
 import type { CornerMark, Draw3d } from "./Viewport";
+import { ShareDialog } from "./ShareDialog";
 
 const EXAMPLES: Record<string, string> = {
   bracket: bracketText,
@@ -2686,6 +2687,8 @@ export function App() {
   };
 
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
+  /** Share project: send the open project to another device by a code, or get one. */
+  const [shareOpen, setShareOpen] = useState(false);
   /** The tab Settings opens on: the assistant's when an ask needs it set up, else Units. */
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
   const openSettings = (tab: SettingsTab) => {
@@ -3157,6 +3160,10 @@ export function App() {
             <button aria-label="Save" onClick={save} title={`Download the part as .cocaide.json${keyHint("save", prefs)}`}>
               <Icon name="save" />
               <span className="label">Save</span>
+            </button>
+            <button aria-label="Share" onClick={() => setShareOpen(true)} title="Share project: send it to another device (a VR headset, another computer) with a 6-digit code, or type a code to get one" data-testid="share-open">
+              <Icon name="share" />
+              <span className="label">Share</span>
             </button>
             <span className="sep" />
             <button aria-label="Settings" onClick={() => openSettings("units")} title="Settings: units, mouse, keyboard shortcuts, and the assistant" data-testid="ask-settings-open">
@@ -3788,6 +3795,13 @@ export function App() {
           />
         )}
         {mode !== "drawing" && !vrPlacing && vrReview}
+        {shareOpen && (
+          <ShareDialog
+            project={() => (parsed.ok ? { name: view?.name ?? "part", text: formatDocument(parsed.value) } : null)}
+            onReceived={(name, text) => replaceDocument(text, `Received ${name} from another device`)}
+            onClose={() => setShareOpen(false)}
+          />
+        )}
         {ask.settingsOpen && (
           <AskSettingsDialog
             settings={ask.settings}

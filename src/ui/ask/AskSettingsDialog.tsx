@@ -187,7 +187,7 @@ function VrTab({ vr }: { vr?: Props["vr"] }) {
     <>
       <p className="muted small">
         Walk around your design at full size in a VR headset. Open Cocaide in the headset&apos;s browser (on a Meta Quest: the Browser app), open the file, and an{" "}
-        <strong>VR</strong> button appears in the view&apos;s bar at the bottom; on a computer it stays hidden.
+        <strong>VR</strong> button appears in the view&apos;s bar at the bottom; on a computer it stays hidden. To get a project onto the headset, use <strong>Share</strong> in the top bar: get a code on your computer, type it on the headset.
       </p>
       <ul className="muted small vr-help">
         <li>Left trigger: aim the arc, let go to teleport (onto floors). Left stick: walk. Right stick: turn.</li>

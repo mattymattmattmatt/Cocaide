@@ -2618,3 +2618,18 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .vr-pin-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
 .vr-pin-body { flex: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
 .vr-pin-body input { width: 100%; margin-top: 3px; }
+
+/* Share project: two columns (share / get), stacked when narrow; the code large enough to read across a room. */
+.modal.share { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.share-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 560px) { .share-cols { grid-template-columns: 1fr; } }
+.share-col { border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.share-col h3 { margin: 0; font-size: 14px; }
+.share-col p { margin: 0; }
+.share-col button { height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; }
+.share-col button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.share-col button:disabled { opacity: 0.45; cursor: default; }
+.share-code { font: 700 38px/1.1 var(--mono); letter-spacing: 0.08em; color: var(--text); padding: 4px 0; }
+.share-get { display: flex; gap: 8px; width: 100%; }
+.share-get input { font: 600 20px var(--mono); letter-spacing: 0.08em; height: 40px; flex: 1; min-width: 0; text-align: center; }
+.share-get button { height: 40px; }
