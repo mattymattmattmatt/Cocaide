@@ -730,6 +730,47 @@ export interface CenterlineAnnotation {
   extend?: number;
 }
 
+/**
+ * A door's swing on a plan: the leaf open and the arc its edge sweeps, in the view's own millimetres (so it scales
+ * with the view). The hinge is a point in the view ([x, y] view mm, or a GeoRef point such as a jamb's corner); the
+ * closed leaf runs from it at `angle` (degrees counter-clockwise in the view) for `width`; it opens to the left of
+ * that line (counter-clockwise) or the right. A double door has two leaves meeting in the middle of the width.
+ */
+export interface DoorAnnotation {
+  id: string;
+  type: "door";
+  view: string;
+  hinge: Vec2 | GeoRef;
+  width: number;
+  /** The way the closed leaf runs from the hinge, degrees counter-clockwise in the view (default 0: along +x). */
+  angle?: number;
+  /** Which side it opens to: "left" (counter-clockwise, the default) or "right". */
+  swing?: "left" | "right";
+  /** How far it opens, degrees (default 90). */
+  open?: number;
+  double?: boolean;
+}
+
+/**
+ * A room's name on a plan, with its area worked out from the plan: the region round `at` (view mm, a point inside
+ * the room) bounded by the view's visible lines, doors closing their openings, anything standing in it (a bench, an
+ * island) counted in; or the polygon `outline` (view mm) when given. The label goes at `at`.
+ */
+export interface RoomAnnotation {
+  id: string;
+  type: "room";
+  view: string;
+  name: string;
+  at: Vec2;
+  outline?: Vec2[];
+  /** Show the area under the name (default true), m² (or ft² for an inch part). */
+  area?: boolean;
+  /** Show its size across, "3600 × 4200" (default false). */
+  size?: boolean;
+  /** Lettering height of the name, sheet mm (default 3.5; the area is one size smaller). */
+  height?: number;
+}
+
 /** The ISO 1101 / ASME Y14.5 material and zone modifiers a tolerance may carry (after its value). */
 export const GDT_MODIFIERS = ["P", "F", "T", "S", "U", "CZ", "ST", "E", "I", "LE", "ACS"] as const;
 export type GdtModifier = (typeof GDT_MODIFIERS)[number];
@@ -971,6 +1012,8 @@ export type Annotation = (
   | TextAnnotation
   | LineAnnotation
   | SketchAnnotation
+  | DoorAnnotation
+  | RoomAnnotation
 ) & { hidden?: boolean };
 export type AnnotationType = Annotation["type"];
 export const ANNOTATION_TYPES = [
@@ -992,6 +1035,8 @@ export const ANNOTATION_TYPES = [
   "text",
   "line",
   "sketch",
+  "door",
+  "room",
 ] as const;
 export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
   dimension: ["id", "type", "view", "kind", "from", "to", "member", "refs", "origin", "points", "direction", "offset", "at", "major", "jog", "arrows", "flip", "prefix", "suffix", "below", "override", "count", "typ", "inspection", "tolerance", "precision", "dual", "last", "hidden"],
@@ -1008,13 +1053,15 @@ export const ANNOTATION_KEYS: Record<AnnotationType, readonly string[]> = {
   surface: ["id", "type", "view", "symbol", "values", "process", "lay", "allowance", "allAround", "on", "dimension", "extension", "at", "general", "hidden"],
   cosmeticThread: ["id", "type", "view", "hole", "on", "at", "hidden"],
   revisionCloud: ["id", "type", "pts", "view", "rev", "at", "arc", "hidden"],
+  door: ["id", "type", "view", "hinge", "width", "angle", "swing", "open", "double", "hidden"],
+  room: ["id", "type", "view", "name", "at", "outline", "area", "size", "height", "hidden"],
   leader: ["id", "type", "view", "to", "at", "text", "via", "arrow", "spline", "hidden"],
   text: ["id", "type", "text", "at", "view", "height", "angle", "anchor", "bold", "hidden"],
   line: ["id", "type", "view", "pts", "line", "hidden"],
   sketch: ["id", "type", "view", "items", "hidden"],
 };
 /** The annotations that must sit in a view (the others may, or are the sheet's). */
-export const VIEW_ANNOTATIONS: readonly AnnotationType[] = ["dimension", "hole", "balloon", "weld", "centerMark", "centerline", "gdt", "datum", "datumTarget", "cosmeticThread"];
+export const VIEW_ANNOTATIONS: readonly AnnotationType[] = ["dimension", "hole", "balloon", "weld", "centerMark", "centerline", "gdt", "datum", "datumTarget", "cosmeticThread", "door", "room"];
 
 // ------------------------------------------------------------ frames
 

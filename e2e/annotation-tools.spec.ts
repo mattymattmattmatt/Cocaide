@@ -368,3 +368,45 @@ test("a table frame with a weld: the weld symbol from the weld, Auto Balloon in 
   await page.waitForTimeout(200);
   await shot(page, "frame-finished");
 });
+
+test("plan symbols: a room's name and area from the walls round it, a door's swing from three clicks", async ({ page }) => {
+  const doc = {
+    version: 1,
+    units: "mm",
+    name: "room",
+    features: [
+      { id: "walls", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "o", type: "rect", center: [2000, 1500], w: 4180, h: 3180 }, { id: "i", type: "rect", center: [2000, 1500], w: 4000, h: 3000 }] },
+      { id: "ext", op: "extrude", sketch: "walls", distance: 2400, direction: [0, 0, 1] },
+    ],
+    drawing: { sheets: [{ id: "s1", format: { size: "A3" }, projection: "third", views: [{ id: "plan", look: "top", scale: "1:50" }], annotations: [] }] },
+  };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await waitForRebuild(page);
+  await page.getByTestId("mode-drawing").click();
+  await page.getByTestId("dtab-annotation").click();
+  const plan = await viewOf(page, "plan");
+  // The plan's centre is the room's (2000, 1500); 1:50.
+  const at = (x: number, y: number): V2 => [plan.centre[0] + ((x - 2000) * plan.scale), plan.centre[1] + ((y - 1500) * plan.scale)];
+
+  await page.getByTestId("tool-annotation-room").click();
+  await page.getByTestId("room-name").fill("BED 1");
+  await page.getByTestId("room-name").press("Enter");
+  await page.getByTestId("room-size").check();
+  await clickAt(page, at(1700, 1300));
+  await expect.poll(async () => (await annotations(page)).find((a) => a.type === "room")).toMatchObject({ type: "room", view: "plan", name: "BED 1", size: true });
+  await expect.poll(async () => (await sheetTexts(page)).filter((t) => /BED 1|m²|×/.test(t))).toEqual(["BED 1", "12.0 m²", "4000 × 3000"]);
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("tool-annotation-door").click();
+  await clickAt(page, at(500, 300));
+  await clickAt(page, at(1320, 300));
+  await clickAt(page, at(900, 800));
+  await expect.poll(async () => (await annotations(page)).find((a) => a.type === "door")).toMatchObject({ type: "door", view: "plan", width: 820 });
+  const door = (await annotations(page)).find((a) => a.type === "door")!;
+  expect(door.swing).toBeUndefined();
+  expect(Math.abs((door.hinge as V2)[0] - 500)).toBeLessThan(15);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("status")).toContainText("Rebuilt");
+});

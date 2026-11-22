@@ -21,6 +21,7 @@ import { layoutDimension, type Measure } from "./dimension";
 import { framePrims, layoutDatum, layoutDatumTarget, layoutGdt } from "./gdt";
 import { layoutHole, layoutThread } from "./hole";
 import { layoutLeader, layoutLine, layoutNote, layoutRevisionCloud, layoutSketch, layoutText } from "./notes";
+import { layoutDoor, layoutRoom } from "./plan";
 import { layoutSurface } from "./surface";
 import { layoutWeld } from "./weld";
 
@@ -35,12 +36,13 @@ export * from "./weld";
 export * from "./balloon";
 export * from "./notes";
 export * from "./centers";
+export * from "./plan";
 
 /** The colour a dangling annotation is drawn in (its target gone): at its last place, never deleted. */
 export const DANGLING = "#c0392b";
 
 /** The order kinds are laid out in: each keeps clear of the ones before. */
-const ORDER: Annotation["type"][] = ["centerMark", "centerline", "dimension", "hole", "cosmeticThread", "gdt", "datum", "datumTarget", "surface", "weld", "balloon", "note", "leader", "text", "line", "sketch", "revisionCloud", "table"];
+const ORDER: Annotation["type"][] = ["centerMark", "centerline", "dimension", "hole", "cosmeticThread", "gdt", "datum", "datumTarget", "surface", "weld", "balloon", "note", "leader", "text", "line", "sketch", "revisionCloud", "door", "room", "table"];
 
 /** One annotation on the sheet. `measure` is a dimension's, measured before the views were placed. */
 export function layoutAnnotation(a: Annotation, ctx: AnnotationContext, measure?: Measure | { problem: string }): AnnotationLayout {
@@ -102,7 +104,12 @@ function run(a: Annotation, ctx: AnnotationContext, measure?: Measure | { proble
       return layoutCenterMark(a, ctx, cv);
     case "centerline":
       return layoutCenterline(a, ctx, cv);
+    case "door":
+      return layoutDoor(a, ctx, cv);
+    case "room":
+      return layoutRoom(a, ctx, cv);
   }
+  return { problem: "not laid out in a view" };
 }
 
 export function boxOfPrims(prims: Prim[]): Box | null {

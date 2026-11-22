@@ -829,6 +829,7 @@ How New drawing and Fit views choose a scale: the largest standard scale at whic
 - **Weld symbol:** a weld from the weld table, with its arrow to where its bodies meet, the fillet, butt or plug symbol, its size and length, and the all-round circle.
 - **Table:** the cut list or the weld table. A long cut list or BOM splits into blocks side by side that fit the sheet from where it sits; whatever is still left over goes to a table on a later sheet that **continues** it (its title marked "(continued)", the totals at the very end), and until there is one the sheet's checks say how many rows are missing.
 - **Note:** free text.
+- **Door** and **Room** (plans): a door's leaf and swing from three clicks (the hinge, the other jamb, the side it opens to; double doors too), and a room's name with its area (and size across, if asked) worked out from the plan's lines round where you click. A door on the plan closes its opening for the room on either side; a bench or island standing in a room counts in its area; a room left open says so instead of guessing. Both are kept in the view's own millimetres, so they scale and move with the plan.
 
 Click a view or annotation, on the sheet or in the list, to edit it; drag a balloon, callout, weld symbol, table or note to move it.
 

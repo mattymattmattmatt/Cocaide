@@ -16,7 +16,7 @@ import type { PropField } from "./schema";
 const PICKS: SnapKind[] = ["vertex", "centre", "quadrant", "midpoint", "edge", "circle", "arc"];
 
 /** The engine's fields as the panel's: nested ones (a tolerance, a frame's first row, a weld side) flattened to paths. */
-function fieldsOf(schema: FieldSchema[]): PropField[] {
+export function fieldsOf(schema: FieldSchema[]): PropField[] {
   const out: PropField[] = [];
   for (const f of schema) {
     const common = { label: f.label, optional: !f.required, ...(f.help ? { help: f.help } : {}) };

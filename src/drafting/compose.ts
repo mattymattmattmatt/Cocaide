@@ -273,6 +273,12 @@ export function viewToSheet(cv: Pick<ComposedView, "centre" | "origin" | "scale"
   return [cv.centre[0] + d[0], cv.centre[1] + d[1]];
 }
 
+/** A sheet point back in the view (view mm): viewToSheet undone (a view with breaks: as if it had none). */
+export function sheetToView(cv: Pick<ComposedView, "centre" | "origin" | "scale"> & { rotation?: number }, p: Vec2): Vec2 {
+  const d = turnVec([p[0] - cv.centre[0], p[1] - cv.centre[1]], cv.rotation ? -cv.rotation : undefined);
+  return [cv.origin[0] + d[0] / cv.scale, cv.origin[1] + d[1] / cv.scale];
+}
+
 /** A point of a view with its breaks taken out: past a break, closer by what it leaves out; in one, squeezed into its gap. */
 export function unbreak(breaks: ComposedBreak[], p: Vec2): Vec2 {
   const q: Vec2 = [p[0], p[1]];

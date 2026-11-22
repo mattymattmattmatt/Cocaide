@@ -419,3 +419,37 @@ describe("exports", () => {
     expect(b!.views[0].edges).toBe(a!.views[0].edges);
   });
 });
+
+describe("plan symbols on a real plan", () => {
+  it("a room's area from the walls round it, a door's leaf and swing, scaled with the view", async () => {
+    // A 4 × 3 m room inside 90 mm walls, seen from above.
+    const room: RawDocument = {
+      version: 1,
+      units: "mm",
+      name: "room",
+      features: [
+        { id: "walls", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "o", type: "rect", center: [2000, 1500], w: 4180, h: 3180 }, { id: "i", type: "rect", center: [2000, 1500], w: 4000, h: 3000 }] },
+        { id: "ext", op: "extrude", sketch: "walls", distance: 2400, direction: [0, 0, 1] },
+      ],
+    } as never;
+    const doc = run(room, {
+      type: "setDrawing",
+      drawing: sheet([{ id: "plan", look: "top", scale: "1:50" }], [
+        { id: "bed", type: "room", view: "plan", name: "BED 1", at: [2000, 1500], size: true },
+        { id: "d1", type: "door", view: "plan", hinge: [500, 0], width: 820, swing: "left" },
+      ]),
+    });
+    const c = await compose(doc);
+    const s = c.sheets[0];
+    expect(s.problems).toEqual([]);
+    const label = s.annotations.find((a) => a.id === "bed")!;
+    expect(label.text).toBe("BED 1 12.0 m² 4000 × 3000");
+    // The door at 1:50: an 820 leaf is 16.4 mm on the sheet, and its arc ends where the leaf does.
+    const door = s.prims.filter((p) => p.k === "line" && p.owner === "d1");
+    expect(door.length).toBe(2);
+    const [leaf, arc] = door as { pts: [number, number][] }[];
+    expect(Math.hypot(leaf.pts[1][0] - leaf.pts[0][0], leaf.pts[1][1] - leaf.pts[0][1])).toBeCloseTo(16.4, 6);
+    expect(arc.pts.at(-1)![0]).toBeCloseTo(leaf.pts[1][0], 6);
+    expect(arc.pts.at(-1)![1]).toBeCloseTo(leaf.pts[1][1], 6);
+  });
+});

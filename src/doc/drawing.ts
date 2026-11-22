@@ -872,6 +872,31 @@ function checkAnnotation(a: Record<string, unknown>, at: string, here: Map<strin
       arrow();
       bool("spline");
       break;
+    case "door":
+      if (typeof a.hinge === "string") geo(a.hinge, `${at}.hinge`, ["v", "c", "m", "q", "point"]);
+      else if (!vec(a.hinge)) c.fail(`${at}.hinge`, `must be a point in the view [x, y] (view mm) or a GeoRef point (got ${describe(a.hinge)})`);
+      if (c.num(a, "width", at, { positive: true }) === undefined && a.width === undefined) c.fail(`${at}.width`, "is required: the door's width, mm");
+      if (a.angle !== undefined) c.num(a, "angle", at, {});
+      if (a.open !== undefined) {
+        const o = c.num(a, "open", at, { positive: true });
+        if (o !== undefined && o > 180) c.fail(`${at}.open`, `a door opens at most 180° (got ${o})`);
+      }
+      oneOf("swing", ["left", "right"]);
+      bool("double");
+      break;
+    case "room": {
+      str("name", 80, true);
+      c.vec2(a, "at", at);
+      const o = a.outline;
+      if (o !== undefined && (!Array.isArray(o) || o.length < 3 || !o.every(vec))) c.fail(`${at}.outline`, `must be 3 or more [x, y] corners, view mm (got ${describe(o)})`);
+      bool("area");
+      bool("size");
+      if (a.height !== undefined) {
+        const h = c.num(a, "height", at, { positive: true });
+        if (h !== undefined && (h < 1.8 || h > 20)) c.fail(`${at}.height`, `lettering is 1.8 to 20 mm high (got ${h})`);
+      }
+      break;
+    }
     case "line":
       pts("pts", 2, 2);
       oneOf("line", SKETCH_LINES);

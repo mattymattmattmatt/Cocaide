@@ -186,6 +186,19 @@ export const ANNOTATION_SCHEMAS: Record<AnnotationType, FieldSchema[]> = {
     { key: "line", label: "Line", kind: "enum", options: opts(SKETCH_LINES) },
   ],
   sketch: [{ key: "items", label: "Items", kind: "items", required: true }],
+  door: [
+    { key: "width", label: "Width", kind: "number", unit: "mm", required: true },
+    { key: "angle", label: "Runs at", kind: "number", unit: "°", help: "the way the shut leaf runs from the hinge, counter-clockwise in the view" },
+    { key: "swing", label: "Opens to", kind: "enum", options: opts(["left", "right"]) },
+    { key: "open", label: "Opens", kind: "number", unit: "°" },
+    { key: "double", label: "Double", kind: "boolean" },
+  ],
+  room: [
+    { key: "name", label: "Name", kind: "text", required: true },
+    { key: "area", label: "Area", kind: "boolean", help: "worked out from the plan's lines round the label (doors close their openings)" },
+    { key: "size", label: "Size across", kind: "boolean" },
+    { key: "height", label: "Height", kind: "number", unit: "mm" },
+  ],
 };
 
 /** A weld side's fields (inside a "weldSide" field). */

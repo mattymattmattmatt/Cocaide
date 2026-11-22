@@ -13,6 +13,8 @@ import "./dimensionTools";
 import "./symbolTools";
 import "./noteTools";
 import "./sketchTools";
+// Plan symbols: doors and rooms.
+import "./planTools";
 import "./editing";
 // Phase Q wave Q3B: AI detailing (Detail with AI…, Auto-detail, contextual asks).
 import "./aiTools";

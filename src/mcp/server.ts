@@ -267,7 +267,7 @@ export const TOOLS: Record<string, ToolSpec> = {
   },
   setAnnotation: {
     description:
-      "Add or replace an annotation by id, or remove it (annotation: null): a dimension (linear, angular, radius, diameter, ordinate, baseline, chain, arcLength, chamfer, pathLength; tolerances incl. ISO 286 fits), hole callout, balloon, weld symbol (ISO 2553 / AWS), gdt (feature control frame), datum, datumTarget, surface (texture), cosmeticThread, note (rich, leaders, numbered), leader, text, line, sketch, revisionCloud, table, centerMark or centerline (see cocaide://reference drawing). It goes on its view's sheet. What it reads is measured on the rebuild; the result says what it reads.",
+      "Add or replace an annotation by id, or remove it (annotation: null): a dimension (linear, angular, radius, diameter, ordinate, baseline, chain, arcLength, chamfer, pathLength; tolerances incl. ISO 286 fits), hole callout, balloon, weld symbol (ISO 2553 / AWS), gdt (feature control frame), datum, datumTarget, surface (texture), cosmeticThread, note (rich, leaders, numbered), leader, text, line, sketch, revisionCloud, table, centerMark, centerline, door (a plan's door swing) or room (a plan's room name and area, worked out from the plan) (see cocaide://reference drawing). It goes on its view's sheet. What it reads is measured on the rebuild; the result says what it reads.",
     input: { id: z.string(), annotation: obj.nullable(), sheet: z.string().optional() },
   },
   editAnnotation: {

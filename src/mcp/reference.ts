@@ -532,6 +532,13 @@ Notes: { "type": "note", "text": "BREAK ALL SHARP EDGES\\nDEBURR", "at": [30, 60
   { "type": "sketch", "items": [{ "kind": "line", "a", "b" } | { "kind": "arc", "c", "r", "start", "end" } | { "kind": "circle", "c", "r" } |
   { "kind": "rect", "a", "b" } | { "kind": "polyline", "pts" } | { "kind": "text", "at", "text" }] },
   { "type": "revisionCloud", "pts": [[x, y], ...], "rev": "B" }, { "type": "centerMark", ..., "style": "lines" | "cross" | "pitch" }.
+Plan symbols, in the view's own mm (they scale and move with the plan; on a top view, x and y are the model's):
+  { "type": "door", "view": "plan", "hinge": [x, y] | GeoRef point, "width": 820, "angle"?: 0 (the way the shut leaf runs
+  from the hinge, degrees counter-clockwise), "swing"?: "left" (counter-clockwise, default) | "right", "open"?: 90,
+  "double"?: true } draws the leaf open and its swing arc; { "type": "room", "view": "plan", "name": "BED 1", "at": [x, y]
+  (inside the room), "area"?: true, "size"?: false, "outline"?: [[x, y], ...], "height"?: 3.5 } writes the name and the area
+  (m²), worked out from the plan's visible lines round "at" (doors on the plan close their openings; a bench or island in it
+  counts) or from "outline"; a room not closed on the plan is a sheet problem and shows no area.
 New drawing dimensions a part from its design intent: overall sizes once (a round part's diameters from the side), alike holes in one
 callout, hole places from datums A, B, C (or centre to centre when symmetric), pockets and slots sized and placed, corner radii and
 fillets once TYP, a numbered general notes block. A dimension whose target goes stays where it was, red, listed by the checks.
