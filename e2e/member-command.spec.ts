@@ -196,3 +196,26 @@ test("a long pick folds to a row per sketch: opened, a line comes out; the row's
   await cmd.locator(".mc-fold-x").click();
   await expect(cmd.getByTestId("member-cmd-picked")).toContainText("Click sketch lines");
 });
+
+test("a stringer's ends cut in its properties: the foot on Top, the head on a plane, a gap; back to square", async ({ page }) => {
+  await open(page, {
+    version: 1, units: "mm", name: "stringer", profiles: table.profiles,
+    features: [
+      { id: "head", op: "plane", mode: "parallelThroughPoint", refs: [{ datum: "Right" }, { point: [1000, 0, 0] }] },
+      { id: "stringer", op: "member", profile: "SHS", size: "SHS 40x40x3", from: [0, 0, 0], to: [1000, 0, 700] },
+    ],
+  });
+  await page.getByTestId("feature-stringer").locator(".feature-row").click();
+  await page.getByTestId("prop-cutStart").selectOption("Top");
+  await expect.poll(async () => (await saved(page)).features[1].cutStart).toEqual({ to: { datum: "Top" } });
+  await page.getByTestId("prop-cutEnd").selectOption("head");
+  await expect.poll(async () => (await saved(page)).features[1].cutEnd).toEqual({ to: { datum: "head" } });
+  await waitForRebuild(page);
+  // Both ends cut at the slope: 35° and 55° from square in the measurement.
+  await expect(page.getByTestId("prop-member-measured")).toContainText("55° / 35°");
+  await page.getByTestId("prop-cutStart-offset").fill("10");
+  await page.getByTestId("prop-cutStart-offset").press("Enter");
+  await expect.poll(async () => (await saved(page)).features[1].cutStart).toEqual({ to: { datum: "Top" }, offset: 10 });
+  await page.getByTestId("prop-cutEnd").selectOption("");
+  await expect.poll(async () => (await saved(page)).features[1].cutEnd).toBeUndefined();
+});

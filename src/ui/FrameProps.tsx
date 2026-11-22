@@ -134,6 +134,8 @@ export function MemberProps({
           />
         )}
       </Field>
+      <EndCutField end="cutStart" label="From end cut" cut={f.cutStart as Raw | undefined} planes={planeChoices(view)} update={update} />
+      <EndCutField end="cutEnd" label="To end cut" cut={f.cutEnd as Raw | undefined} planes={planeChoices(view)} update={update} />
       <Field label="Rotation" unit="°" hint="About the member's line">
         <NumberInput value={(f.rotation as NumberValue) ?? 0} onCommit={(v) => update({ rotation: v === 0 ? null : v })} testId="prop-rotation" />
       </Field>
@@ -165,6 +167,44 @@ export function MemberProps({
         </div>
       )}
     </>
+  );
+}
+
+/** The planes an end can be cut on: the default planes, then the part's plane features. */
+function planeChoices(view: RebuildView | null): [string, string][] {
+  const own = Object.entries(view?.datums ?? {}).filter(([, d]) => d.kind === "plane").map(([id]): [string, string] => [id, id]);
+  return [["Top", "Top plane"], ["Front", "Front plane"], ["Right", "Right plane"], ...own];
+}
+
+/**
+ * A member end cut on a plane (a stringer's foot level on the floor, its head plumb against a trimmer): square as the
+ * joint leaves it, or on a plane, with a gap. A face of another body is set as { "face": <selector> } in the file.
+ */
+function EndCutField({ end, label, cut, planes, update }: { end: "cutStart" | "cutEnd"; label: string; cut: Raw | undefined; planes: [string, string][]; update(p: Raw): unknown }) {
+  const to = cut?.to as Raw | undefined;
+  const datum = typeof to?.datum === "string" ? to.datum : null;
+  const face = !!to && "face" in to;
+  return (
+    <Field label={label} hint="Cut on a plane: built on until its whole section reaches it (a stringer's foot level on the floor)">
+      <span className="end-field">
+        <select
+          value={face ? "@face" : (datum ?? "")}
+          data-testid={`prop-${end}`}
+          onChange={(e) => update({ [end]: e.target.value ? { ...(cut ?? {}), to: { datum: e.target.value } } : null })}
+        >
+          <option value="">Square (its joint)</option>
+          {planes.map(([v, l]) => (
+            <option key={v} value={v}>
+              On {l}
+            </option>
+          ))}
+          {face && <option value="@face">On a face</option>}
+        </select>
+        {cut && (
+          <NumberInput value={(cut.offset as NumberValue) ?? 0} onCommit={(v) => update({ [end]: { ...cut, offset: v === 0 ? undefined : v } })} testId={`prop-${end}-offset`} ariaLabel={`${label} gap, mm`} />
+        )}
+      </span>
+    </Field>
   );
 }
 

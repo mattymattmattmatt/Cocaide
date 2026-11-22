@@ -19,13 +19,13 @@ import { roundTo, scale3 } from "../geom/vec";
 import { to3D, type Frame } from "../geom/frame";
 import { placeSection } from "../geom/member";
 import { buildProfile, entityPolylines } from "../geom/profile";
-import { frameEnds, type FrameMember } from "../weldment/joints";
+import { frameEnds, withPlaneCut, type FrameMember } from "../weldment/joints";
 import { bodyRanges, compound, describePart, partShape, type BodyRange } from "./bodies";
 import { memberCut } from "./cutlist";
 import { plateOf } from "./flat";
 import { sectionSymmetry } from "../weldment/endCuts";
 import { dot3 } from "../geom/vec";
-import { planeSpecFrame, resolveDatum } from "./datum";
+import { nameOf as nameOfRef, planeSpecFrame, resolveDatum } from "./datum";
 import { solvedSketch } from "./sketchRefs";
 import { byBody, treatBody, treatments } from "./edgeTreat";
 import { cutMissed, extrudeTool } from "./extrude";
@@ -673,8 +673,20 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
             y: placed.frame.y,
             symmetry: sectionSymmetry(placed.outline.map((o) => [dot3(o, placed.frame.x), dot3(o, placed.frame.y)])),
           };
+          // Ends cut on a plane or a face made before it (a stringer's foot level on the floor).
+          let ends = shapes.ends.get(raw.id);
+          for (const [side, cut, key] of [["start", raw.cutStart, "cutStart"], ["end", raw.cutEnd, "cutEnd"]] as const) {
+            if (!cut) continue;
+            const p = resolveDatum(ctx, cut.to, "plane", `${key}.to`);
+            try {
+              ends = withPlaneCut(placed, raw, ends, side, { point: p.origin, normal: p.normal }, cut.offset ?? 0, nameOfRef(cut.to));
+            } catch (e) {
+              throw new OpError(`${key}: ${(e as Error).message}`);
+            }
+            shapes.ends.set(raw.id, ends);
+          }
           scoped((s) => {
-            const tool = memberTool(oc, s, raw, def, shapes.ends.get(raw.id));
+            const tool = memberTool(oc, s, raw, def, ends);
             commit(new Map([[name, tool]]));
             tools.set(raw.id, { tool: copyOut(tool), kind: "fuse", newBody: name, member: line });
           });

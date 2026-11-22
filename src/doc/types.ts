@@ -1933,7 +1933,24 @@ export interface MemberFeature extends FeatureBase {
   newBody?: string;
   /** The sketch line it was put on (Members from sketch): the rebuild warns when the member has left it. */
   along?: { sketch: string; entity: string };
+  /** Its `from` end cut on a plane or a flat face (a stringer's foot level on the floor): see MemberCut. */
+  cutStart?: MemberCut;
+  /** Its `to` end cut on a plane or a flat face (a stringer's head plumb against the trimmer). */
+  cutEnd?: MemberCut;
 }
+
+/**
+ * A member end cut on a plane: a default plane, a plane feature, a coordinate
+ * system's plane or a flat face of a body made before it. The member is built
+ * on (or stopped short) until the whole of its section reaches the plane, and
+ * cut there; `offset` moves the plane along its normal toward the member
+ * (a gap, mm; negative: past it). It works with the joint at that end.
+ */
+export interface MemberCut {
+  to: DatumRef;
+  offset?: number;
+}
+export const MEMBER_CUT_KEYS = ["to", "offset"] as const;
 
 // ------------------------------------------------------------------ joints
 

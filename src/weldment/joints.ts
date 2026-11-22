@@ -188,3 +188,32 @@ export function faceToward(p: PlacedSection, v: Vec3): { normal: Vec3; reach: nu
 function round(x: number): number {
   return Math.round(x * 10) / 10;
 }
+
+/**
+ * A member end cut on a plane (MemberFeature.cutStart / cutEnd): the end is
+ * built on until the whole section reaches the plane (or stopped short of
+ * where it was drawn) and cut there, with the joint's own cuts at that end
+ * kept. `offset` moves the plane toward the member. Throws a sentence when
+ * the plane runs along the member.
+ */
+export function withPlaneCut(placed: PlacedSection, f: MemberFeature, ends: MemberEnds | undefined, side: "start" | "end", plane: { point: Vec3; normal: Vec3 }, offset = 0, label = "the plane"): MemberEnds {
+  const d = placed.dir;
+  const u = side === "start" ? scale3(d, -1) : d; // out of the member at this end
+  const e = side === "start" ? f.from : f.to;
+  const n0 = normalize3(plane.normal);
+  const c = dot3(u, n0);
+  if (Math.abs(c) < 0.05) throw new Error(`${label} runs along the member: its ${side === "start" ? "from" : "to"} end can't be cut on it`);
+  // The way to cut away is out of the member; the plane moved toward the member by the offset.
+  const n = c > 0 ? n0 : scale3(n0, -1);
+  const point = sub3(plane.point, scale3(n, offset));
+  const t = dot3(sub3(point, e), n) / Math.abs(c); // along u from the end to the plane
+  // The section's far corner reaches the plane only that much further out when the plane is at an angle.
+  const across = normalize3(sub3(n, scale3(u, dot3(n, u))));
+  const tilt = Math.hypot(...across) > 1e-9 ? Math.sqrt(Math.max(0, 1 - c * c)) / Math.abs(c) : 0;
+  const r = Math.hypot(...across) > 1e-9 ? Math.max(reach(placed, scale3(across, -1)), reach(placed, across)) : 0;
+  const need = Math.max(0, t + r * tilt + 1);
+  const was = ends?.[side] ?? { extend: 0, planes: [] };
+  const next: MemberEnd = { extend: Math.max(was.extend, need), planes: [...was.planes, { point, normal: n }], joint: was.joint ?? `the cut on ${label}` };
+  const other = side === "start" ? "end" : "start";
+  return { [side]: next, [other]: ends?.[other] ?? { extend: 0, planes: [] } } as unknown as MemberEnds;
+}

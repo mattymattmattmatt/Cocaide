@@ -47,6 +47,8 @@ import {
   type AppearanceFinish,
   APPEARANCE_FINISHES,
   type MemberFeature,
+  type MemberCut,
+  MEMBER_CUT_KEYS,
   type PartProperties,
   PROFILE_KEYS,
   type ProfileDef,
@@ -517,7 +519,7 @@ function validateFeature(input: Record<string, unknown>, c: Checker, earlier: Ma
       feature = validateCombine(raw, c);
       break;
     case "member":
-      feature = validateMember(raw, c, ctx);
+      feature = validateMember(raw, c, ctx, earlier);
       break;
     case "joint":
       feature = validateJoint(raw, c, earlier, ctx);
@@ -2052,9 +2054,9 @@ function libraryRef(v: unknown, path: string, c: Checker): { id: string; version
   return { id: v.id, version: v.version as number };
 }
 
-function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext): MemberFeature | null {
+function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureContext, earlier: ReadonlyMap<string, string>): MemberFeature | null {
   const { profiles, listed } = ctx;
-  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "align", "newBody", "along"]);
+  c.keys(raw, "", ["id", "op", "profile", "size", "from", "to", "rotation", "align", "newBody", "along", "cutStart", "cutEnd"]);
   // A profile named by its family alone ("SHS") is the part's one profile of that family ("SHS (AS/NZS 1163)"), when just one is.
   let profileKey = typeof raw.profile === "string" ? raw.profile : undefined;
   if (profileKey !== undefined && !(profileKey in profiles) && !listed.includes(profileKey)) {
@@ -2101,6 +2103,25 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   const newBody = raw.newBody === undefined ? undefined : bodyName(raw.newBody, "newBody", c);
   const along = raw.along === undefined ? undefined : isObject(raw.along) && typeof raw.along.sketch === "string" && typeof raw.along.entity === "string" ? { sketch: raw.along.sketch, entity: raw.along.entity } : undefined;
   if (raw.along !== undefined && !along) c.fail("along", 'is the sketch line it was put on: { "sketch", "entity" }');
+  // An end cut on a plane or a flat face.
+  const cut = (key: "cutStart" | "cutEnd"): MemberCut | undefined => {
+    const v = raw[key];
+    if (v === undefined) return undefined;
+    if (!isObject(v)) {
+      c.fail(key, `must be { "to": <a plane or flat face: { "datum": "Top" } or { "face": <selector> }>, "offset"? } (got ${describe(v)})`);
+      return undefined;
+    }
+    c.keys(v, key, [...MEMBER_CUT_KEYS]);
+    if (v.to === undefined) {
+      c.fail(`${key}.to`, 'needed: the plane or flat face to cut on ({ "datum": "Top" or a plane feature }, { "face": <selector> })');
+      return undefined;
+    }
+    const ref = validateDatumRef(v.to, `${key}.to`, c, earlier, "plane");
+    const offset = v.offset === undefined ? undefined : c.num(v, "offset", key, {});
+    return ref ? { to: ref, ...(offset ? { offset } : {}) } : undefined;
+  };
+  const cutStart = cut("cutStart");
+  const cutEnd = cut("cutEnd");
   if (c.errors.length > 0 || !from || !to) return null;
   const f: MemberFeature = { id: raw.id as string, op: "member", profile: profileKey as string, size: size as string, from, to };
   if (fromNode) f.fromNode = fromNode;
@@ -2109,6 +2130,8 @@ function validateMember(raw: Record<string, unknown>, c: Checker, ctx: FeatureCo
   if (align) f.align = align;
   if (newBody) f.newBody = newBody;
   if (along) f.along = along;
+  if (cutStart) f.cutStart = cutStart;
+  if (cutEnd) f.cutEnd = cutEnd;
   return f;
 }
 

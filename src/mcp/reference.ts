@@ -345,6 +345,10 @@ Editing the sketch then moves the members and joints on it. membersFromSketch do
 a member per line, shared nodes that follow the sketch, and the corners mitred or butted.
 "align": [ax, ay] on a member puts its line on the section's envelope ([-1..1, -1..1], seen from the "to" end,
 x across, y up): a frame whose nodes are its outside corners has its members aligned to the outside.
+"cutStart" / "cutEnd": { "to": <plane or flat face>, "offset"? } cut a member's from / to end on a plane ({ "datum": "Top" },
+a plane feature) or a flat face of a body made before it ({ "face": <selector> }): it is built on until its whole section
+reaches the plane and cut there (a stringer's foot level on the floor, its head plumb against a trimmer, a rafter's
+seat on a raked plate); "offset" leaves a gap toward the member. It works with the joint at that end.
 { "id": "corner_A", "op": "joint", "node": "A", "type": "mitre", "members": ["DA", "AB"], "gap": 0 }
 { "id": "foot_A", "op": "joint", "node": "E", "type": "butt", "through": "EA" }
 { "id": "corner_C", "op": "joint", "node": "C", "type": "butt", "through": "rail_x", "order": ["rail_x", "rail_y", "post_3"] }
