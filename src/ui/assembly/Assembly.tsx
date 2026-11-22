@@ -3,7 +3,7 @@
 // component's place, a mate's type and value, the mates the selection can
 // make, interference, the parts list).
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { SELF } from "../../doc/assembly";
 import { MATE_TYPES } from "../../doc/types";
 import type { MateType, Vec3 } from "../../doc/types";
@@ -15,7 +15,11 @@ import { Viewport } from "../Viewport";
 import type { PickTarget } from "../model/selection";
 import type { AssemblyWorkspace } from "./useAssembly";
 import type { SectionControl } from "../evaluate/useSection";
-import { SectionPanel } from "../evaluate/EvaluatePanels";
+import { MeasurePanel, SectionPanel } from "../evaluate/EvaluatePanels";
+import { itemName, measure, measureItems, type MeasureItem } from "../evaluate/measure";
+import { meshClosest } from "../evaluate/meshDistance";
+import type { EvalOverlay } from "../viewport/evalLayer";
+import { EMPTY_SELECTION } from "../model/selection";
 import { addPlane, sectionChoices } from "../evaluate/section";
 import type { RebuildView } from "../../worker/protocol";
 import { AppearanceChip, AppearancePicker, describeAppearance, sourceWords } from "../appearance/AppearancePicker";
@@ -76,6 +80,18 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing, sectio
               pressed={!!sel?.transparent}
               title={sel ? (sel.transparent ? "Make it solid again" : "See through it, and click through it to faces inside or behind it (to mate them)") : "Select a component"}
               testId="asm-transparent"
+            />
+            <ToolButton
+              icon="measure"
+              label="Measure"
+              onClick={() => {
+                a.setMeasuring(!a.measuring);
+                if (!a.measuring) a.setSelection(EMPTY_SELECTION);
+              }}
+              disabled={!has}
+              pressed={a.measuring}
+              title="Measure what you click, across components: one face or edge for its size, two for the distance and angle between them (stays on while you pick)"
+              testId="asm-measure"
             />
             {section && (
               <ToolButton
@@ -138,6 +154,23 @@ export function AssemblyMain({
 }) {
   const comps = a.asm?.components ?? [];
   const status = new Map((a.solve?.mates ?? []).map((m) => [m.id, m]));
+  // Measure: the picked faces and edges, the closest points between two from the placed parts' shapes.
+  const measured = useMemo(() => {
+    if (!a.measuring) return null;
+    const v = a.scene.view;
+    const items = measureItems(a.selection, v.faces, v.edges);
+    const ref = (it: MeasureItem) => (it.kind === "face" ? { kind: "face" as const, index: it.index } : it.kind === "edge" ? { kind: "edge" as const, index: it.index } : null);
+    const ra = items.length === 2 ? ref(items[0]) : null;
+    const rb = items.length === 2 ? ref(items[1]) : null;
+    const closest = ra && rb && v.mesh ? meshClosest(v.mesh, ra, rb) : null;
+    const r = measure(items, closest);
+    // Which component each one is on.
+    const owner = (it: MeasureItem) => (it.kind === "face" ? a.scene.faceOwner[it.index]?.component : it.kind === "edge" ? a.scene.edgeOwner[it.index]?.component : undefined);
+    const named = (it: MeasureItem) => `${itemName(it)}${owner(it) ? ` of ${owner(it)}` : ""}`;
+    const title = items.length === 1 ? named(items[0]) : items.length === 2 ? `${named(items[0])} to ${named(items[1])}` : r.title;
+    return { ...r, title: title.charAt(0).toUpperCase() + title.slice(1) };
+  }, [a.measuring, a.selection, a.scene]);
+  const overlay = useMemo<EvalOverlay | null>(() => (measured && (measured.line || measured.points.length) ? { lines: measured.line ? [measured.line] : [], points: measured.points, centreOfMass: null } : null), [measured]);
   // The selected component's faces light up, so it is plain which one it is.
   const selectedId = a.item?.kind === "component" ? a.item.id : null;
   const body = selectedId ? a.scene.view.bodies.find((b) => b.name === selectedId) : undefined;
@@ -210,6 +243,7 @@ export function AssemblyMain({
           clearBodies={a.clearBodies}
           hiddenBodies={a.isolateHides}
           appearances={a.appearances}
+          overlay={overlay}
           {...(section ? { section: section.section, onSection: section.setSection, onSectionToggle: section.toggleShown, onSectionPanel: section.openPanel } : {})}
         />
         {a.isolated && (
@@ -224,6 +258,11 @@ export function AssemblyMain({
         {a.busy && <div className="asm-busy">{a.busy}</div>}
       </section>
       <SidePanel title="Properties" testId="assembly-props">
+        {measured && (
+          <div className="eval-panels eval-dock" data-testid="asm-measure-dock">
+            <MeasurePanel result={measured} busy={false} error={null} onClose={() => a.setMeasuring(false)} onClear={() => a.setSelection(EMPTY_SELECTION)} />
+          </div>
+        )}
         {section?.section?.on && section.panelOpen && (
           <div className="eval-panels eval-dock" data-testid="asm-section-dock">
             <SectionPanel
@@ -250,7 +289,7 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
   const k = a.item?.kind === "component" ? a.asm?.components.find((x) => x.id === a.item!.id) : undefined;
   const m = a.item?.kind === "mate" ? a.asm?.mates?.find((x) => x.id === a.item!.id) : undefined;
   const st = m ? a.solve?.mates.find((x) => x.id === m.id) : undefined;
-  const picking = a.selection.faces.length + a.selection.edges.length > 0;
+  const picking = !a.measuring && a.selection.faces.length + a.selection.edges.length > 0;
   const sections: ReactNode[] = [];
   if (picking) {
     sections.push(

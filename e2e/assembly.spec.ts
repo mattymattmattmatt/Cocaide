@@ -245,3 +245,31 @@ test("the assembly sectioned: a plane through both components, caps in each one'
   await page.getByTestId("mode-model").click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.section())).toBeNull();
 });
+
+test("measuring in the assembly: a face of one component, then the gap to a face of another", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  await expect(page.getByTestId("asm-measure")).toBeDisabled();
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+  }
+  await expect(page.getByTestId("asm-component-bracket-2")).toBeVisible();
+  await page.waitForTimeout(1500);
+  await page.getByTestId("asm-measure").click();
+  await expect(page.getByTestId("asm-measure")).toHaveAttribute("aria-pressed", "true");
+  const panel = page.getByTestId("asm-measure-dock").getByTestId("measure-panel");
+  await expect(panel).toContainText("one for its size, two for the distance");
+  // One face: its size, named with its component.
+  await clickAt(page, [-20, 10, 6]);
+  await expect(panel).toContainText("Flat face of bracket-1");
+  // A second click adds (no Ctrl): the second bracket's top, 10 apart (one ends at x 40, the other starts at 50).
+  await clickAt(page, [70, 10, 6]);
+  await expect(panel).toContainText("Flat face of bracket-1 to flat face of bracket-2");
+  await expect(panel).toContainText("10 mm");
+  // Measuring picks don't make mates or select components; Clear starts again, the button turns it off.
+  await expect(page.getByTestId("asm-mate-panel")).toHaveCount(0);
+  await panel.getByTestId("measure-clear").click();
+  await expect(panel).toContainText("one for its size, two for the distance");
+  await page.getByTestId("asm-measure").click();
+  await expect(page.getByTestId("asm-measure-dock")).toHaveCount(0);
+});

@@ -16,6 +16,7 @@ import type { RebuildView } from "../../worker/protocol";
 import { componentStates, facesAlign, floatingGroups, motionWords, partSize, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
 import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, type Clash, type MateSuggestion } from "../../assembly/features";
 import { stepPart } from "../files/plan";
+import { measurePick } from "../evaluate/measure";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
 import { asAppearance, PartAppearances } from "../../appearance";
 import { BODY_COLORS } from "../Viewport";
@@ -52,6 +53,8 @@ export function useAssembly(o: AssemblyOptions) {
   const [views, setViews] = useState<Map<string, RebuildView>>(new Map());
   const keys = useRef(new Map<string, string>());
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  /** Measure is on: a click adds a face or edge to what is measured (no Ctrl), a third starts again. */
+  const [measuring, setMeasuring] = useState(false);
   const [item, setItem] = useState<AssemblyItem>(null);
   const [fitToken, setFitToken] = useState(0);
   const [clashes, setClashes] = useState<Clash[] | null>(null);
@@ -448,7 +451,8 @@ export function useAssembly(o: AssemblyOptions) {
   const pick = (t: PickTarget | null, additive: boolean) => {
     // Faces and edges only: what mates hold.
     if (t && t.kind !== "face" && t.kind !== "edge") return;
-    setSelection((s) => pickInto(s, t, additive));
+    setSelection((s) => (measuring ? measurePick(s, t) : pickInto(s, t, additive)));
+    if (measuring) return;
     const owner = t ? (t.kind === "face" ? scene.faceOwner[t.index] : scene.edgeOwner[t.index]) : null;
     if (owner && !additive) setItem({ kind: "component", id: owner.component });
   };
@@ -605,6 +609,8 @@ export function useAssembly(o: AssemblyOptions) {
     solve,
     selection,
     setSelection,
+    measuring,
+    setMeasuring,
     item,
     setItem,
     fitToken,
