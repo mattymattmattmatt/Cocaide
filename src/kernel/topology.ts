@@ -36,6 +36,8 @@ export interface FaceInfo {
   cylinder?: CylinderInfo;
   /** The body the face belongs to, when the part has been described body by body. */
   body?: string;
+  /** In an assembly's joined view (where `body` is the component): the body's own name on its part. */
+  partBody?: string;
   /** Provenance (src/kernel/provenance.ts): the feature that made this face, when the rebuild recorded it. */
   createdBy?: string;
   /** The features after it that changed this face (trimmed it, cut into it), in order. */

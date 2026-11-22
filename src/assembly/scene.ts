@@ -78,6 +78,7 @@ export function composeScene(components: SceneComponent[], name = "assembly"): A
         ...(point ? { point } : {}),
         ...(normal && point ? { offset: normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2] } : {}),
         ...(f.cylinder ? { cylinder: { ...f.cylinder, origin: pt(f.cylinder.origin), axis: dir(f.cylinder.axis) } } : {}),
+        ...(f.body !== undefined ? { partBody: f.body } : {}),
         body: k.id,
       });
       faceOwner.push({ component: k.id, local: f.index });

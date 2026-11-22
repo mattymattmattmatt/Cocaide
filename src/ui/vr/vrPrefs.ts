@@ -17,11 +17,13 @@ export interface VrPrefs {
   speed: number;
   /** Show the VR start point (a figure where you will stand) in the 3D view. */
   showStart: boolean;
+  /** Darken the edge of view while walking with the stick (eases motion sickness). */
+  vignette: boolean;
   /** "Roof off" hides what is more than this above the floor you stand on, mm. */
   cutAbove: number;
 }
 
-export const DEFAULT_VR_PREFS: VrPrefs = { button: true, smooth: true, snapTurn: 30, speed: 1.4, showStart: true, cutAbove: 2300 };
+export const DEFAULT_VR_PREFS: VrPrefs = { button: true, smooth: true, snapTurn: 30, speed: 1.4, showStart: true, vignette: true, cutAbove: 2300 };
 const STORE_KEY = "cocaide.vrPrefs.v1";
 
 export function parseVrPrefs(raw: unknown): VrPrefs {
@@ -34,6 +36,7 @@ export function parseVrPrefs(raw: unknown): VrPrefs {
     snapTurn: r.snapTurn === 45 || r.snapTurn === 90 ? r.snapTurn : 30,
     speed: num(r.speed, 0.5, 3, DEFAULT_VR_PREFS.speed),
     showStart: r.showStart !== false,
+    vignette: r.vignette !== false,
     cutAbove: num(r.cutAbove, 1500, 4000, DEFAULT_VR_PREFS.cutAbove),
   };
 }

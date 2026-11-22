@@ -187,9 +187,15 @@ function VrTab({ vr }: { vr?: Props["vr"] }) {
     <>
       <p className="muted small">
         Walk around your design at full size in a VR headset. Open Cocaide in the headset&apos;s browser (on a Meta Quest: the Browser app), open the file, and an{" "}
-        <strong>VR</strong> button appears in the view&apos;s bar at the bottom; on a computer it stays hidden. In VR: either trigger aims an arc, let go to teleport
-        where it lands; the left stick walks; the right stick turns; B or Y takes the roof off; A or X takes you back to the start.
+        <strong>VR</strong> button appears in the view&apos;s bar at the bottom; on a computer it stays hidden.
       </p>
+      <ul className="muted small vr-help">
+        <li>Left trigger: aim the arc, let go to teleport (onto floors). Left stick: walk. Right stick: turn.</li>
+        <li>X: the menu (point with the right hand, pull the trigger): tools, snapping, the kind of pin, roof off, the dollhouse, the next pin, leave VR.</li>
+        <li>Right trigger: the tool in use. Measure: point to point (snaps to corners and edges unless switched off). Pin: a note where you point. Move: drag furniture along the floor.</li>
+        <li>Either grip: pick up furniture; the right stick turns it while you hold it. A: undo. B: roof off. Y: back to the start.</li>
+        <li>Pins and moved furniture are saved to the file as proposals when you leave VR: the VR notes at the top of the view list them, the moves shown as orange ghosts, to accept or reject.</li>
+      </ul>
       <p className="small" data-testid="vr-support">
         {ok === null ? "Checking this browser…" : ok ? "This browser can do VR: the button is in the view's bar." : "This browser can't do VR (it is not a headset's browser)."}
       </p>
@@ -221,6 +227,10 @@ function VrTab({ vr }: { vr?: Props["vr"] }) {
       <label className="field">
         <span className="field-label">Walk with the stick</span>
         <input type="checkbox" checked={p.smooth} onChange={(e) => setVrPrefs({ ...p, smooth: e.target.checked })} data-testid="vr-smooth" /> as well as teleporting (off if it makes you queasy)
+      </label>
+      <label className="field">
+        <span className="field-label">Comfort vignette</span>
+        <input type="checkbox" checked={p.vignette} onChange={(e) => setVrPrefs({ ...p, vignette: e.target.checked })} data-testid="vr-vignette" /> darken the edges while walking with the stick
       </label>
       <label className="field">
         <span className="field-label">Walking speed</span>

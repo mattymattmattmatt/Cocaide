@@ -1,4 +1,4 @@
-import type { VrStart } from "../../doc/vr";
+import type { VrMove, VrPin, VrStart } from "../../doc/vr";
 
 /** What a view needs for the VR walkthrough: its start point, and placing it (Settings > VR > Set the start point). */
 export interface VrViewProps {
@@ -11,4 +11,11 @@ export interface VrViewProps {
   onCancel?(): void;
   /** In VR or out of it. */
   onVr?(inVr: boolean): void;
+  /** The document's pins and moved furniture from VR: drawn on the desktop (onion skin) and in VR. */
+  pins?: VrPin[];
+  moves?: VrMove[];
+  /** Don't draw them on the desktop (the review panel's eye). */
+  notesHidden?: boolean;
+  /** What was added in a visit to VR, when you leave it. */
+  onNotes?(pins: VrPin[], moves: VrMove[]): void;
 }

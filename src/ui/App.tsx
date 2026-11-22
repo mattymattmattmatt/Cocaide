@@ -38,7 +38,8 @@ import { AskPopover } from "./ask/AskPopover";
 import { AskSettingsDialog, type SettingsTab } from "./ask/AskSettingsDialog";
 import { useVrPrefs } from "./vr/vrPrefs";
 import type { VrViewProps } from "./vr/types";
-import { vrStartOf } from "../doc/vr";
+import { acceptMove, vrNotesOf, vrStartOf, withNotes, type VrMove, type VrPin, type VrSettings } from "../doc/vr";
+import { VrReview } from "./vr/VrReview";
 import { canAsk, modelFor } from "./ask/settings";
 import type { ProfileFacts } from "../ask/profile";
 import { BodiesPanel } from "./BodiesPanel";
@@ -867,10 +868,44 @@ export function App() {
   const [vrPlacing, setVrPlacing] = useState(false);
   const vrPrefsNow = useVrPrefs();
   const vrStart = useMemo(() => vrStartOf(doc), [doc]);
+  const vrNotes = useMemo(() => vrNotesOf(doc), [doc]);
+  const [vrNotesHidden, setVrNotesHidden] = useState(false);
+  const vrSettings = () => ((doc as Record<string, unknown> | null)?.vr ?? undefined) as VrSettings | undefined;
+  const setVrNotes = (pins: VrPin[], moves: VrMove[]) => {
+    const { pins: _p, moves: _m, ...rest } = vrSettings() ?? {};
+    const vr: VrSettings = { ...rest, ...(pins.length ? { pins } : {}), ...(moves.length ? { moves } : {}) };
+    const problem = d.dispatch({ type: "setVr", vr: Object.keys(vr).length ? vr : null });
+    if (problem) setNotice({ kind: "error", text: problem });
+  };
+  const vrReview = (
+    <VrReview
+      pins={vrNotes.pins}
+      moves={vrNotes.moves}
+      hidden={vrNotesHidden}
+      onHidden={setVrNotesHidden}
+      onAccept={(id) => {
+        if (!doc) return;
+        const r = acceptMove(doc as Record<string, unknown>, id);
+        if ("error" in r) return setNotice({ kind: "error", text: `Could not accept the move: ${r.error}` });
+        d.replaceDoc(r.doc as RawDocument);
+        setNotice({ kind: r.note ? "error" : "info", text: `Accepted: a Move feature now moves it in the model (undo takes it back).${r.note ? ` Note: ${r.note}.` : ""}` });
+      }}
+      onReject={(id) => setVrNotes(vrNotes.pins, vrNotes.moves.filter((m) => m.id !== id))}
+      onPinText={(id, text) => setVrNotes(vrNotes.pins.map((p) => (p.id === id ? { ...p, ...(text ? { text } : {}), ...(text ? {} : { text: undefined }) } : p)).map((p) => (p.text === undefined ? (({ text: _t, ...rest }) => rest)(p) : p)), vrNotes.moves)}
+      onPinDelete={(id) => setVrNotes(vrNotes.pins.filter((p) => p.id !== id), vrNotes.moves)}
+    />
+  );
   const vrProps = (placingHere: boolean): VrViewProps => ({
     start: vrStart,
     showStart: vrPrefsNow.showStart,
     placing: vrPlacing && placingHere,
+    pins: vrNotes.pins,
+    moves: vrNotes.moves,
+    notesHidden: vrNotesHidden,
+    onNotes: (pins, moves) => {
+      const problem = d.dispatch({ type: "setVr", vr: withNotes(vrSettings(), pins, moves) });
+      setNotice(problem ? { kind: "error", text: problem } : { kind: "info", text: `From VR: ${pins.length} pin${pins.length === 1 ? "" : "s"} and ${moves.length} move${moves.length === 1 ? "" : "s"}, saved as proposals (VR notes, at the top of the view). Save the file to keep them.` });
+    },
     onPlaced: (start) => {
       setVrPlacing(false);
       const problem = d.dispatch({ type: "setVr", vr: { start } });
@@ -3752,6 +3787,7 @@ export function App() {
             onSuggest={suggestNames}
           />
         )}
+        {mode !== "drawing" && !vrPlacing && vrReview}
         {ask.settingsOpen && (
           <AskSettingsDialog
             settings={ask.settings}

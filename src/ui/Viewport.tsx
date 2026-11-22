@@ -39,6 +39,9 @@ import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
 import { XrWalk } from "./vr/xrWalk";
+import { itemOfMove, itemsOf, itemTriangles } from "./vr/items";
+import { disposeSprite, textSprite } from "./vr/vrText";
+import { niceName, PIN_COLORS, PIN_WORDS } from "../doc/vr";
 import { useVrPrefs, vrPrefs, vrSupported } from "./vr/vrPrefs";
 import type { VrViewProps } from "./vr/types";
 import { threadBands, ThreadLayer } from "./viewport/threadLayer";
@@ -435,6 +438,7 @@ export function Viewport({
   const vrLive = useRef(vr);
   vrLive.current = vr;
   /** The VR walkthrough and the start marker, from inside the view's set-up. */
+  const vrNotesRef = useRef<THREE.Group | null>(null);
   const vrApi = useRef<{ enter(): void; sync(): void; dispose(): void } | null>(null);
   const [vrOk, setVrOk] = useState(false);
   const [vrHint, setVrHint] = useState<string | null>(null);
@@ -446,7 +450,7 @@ export function Viewport({
       on = false;
     };
   }, []);
-  useEffect(() => vrApi.current?.sync(), [vr?.start, vr?.placing, vr?.showStart]);
+  useEffect(() => vrApi.current?.sync(), [vr?.start, vr?.placing, vr?.showStart, vr?.pins, vr?.moves, vr?.notesHidden]);
   const [hover, setHover] = useState<Hover | null>(null);
   /** Another sketch's entity under the pointer, when a session's reference field takes one (its tip, in the view's pixels). */
   const [sketchHover, setSketchHover] = useState<{ x: number; y: number; hit: SketchEntityHit } | null>(null);
@@ -749,6 +753,19 @@ export function Viewport({
       // In VR the walkthrough draws every frame itself, from the headset.
       if (renderer.xr.isPresenting) return;
       if (!perspective) syncOrtho();
+      // The VR notes' labels and pin heads stay the same size on screen, however far you zoom.
+      if (vrNotesRef.current?.children.length) {
+        const wpp = controls.worldPerPixel();
+        for (const o of vrNotesRef.current.children) {
+          const px = o.userData.px as number | undefined;
+          if (!px) continue;
+          if ((o as THREE.Sprite).isSprite) {
+            const aspect = (o as THREE.Sprite).userData.aspect ?? o.scale.y / o.scale.x;
+            o.userData.aspect = aspect;
+            o.scale.set(px * wpp, px * wpp * aspect, 1);
+          } else o.scale.setScalar(Math.max(1, (px * wpp) / 60));
+        }
+      }
       updateOutline();
       // The arrows are sized and placed for this camera before the frame is drawn (after it, a frame drawn
       // right after their handles were set showed them unplaced: a speck at the origin, until the next frame).
@@ -2457,7 +2474,105 @@ export function Viewport({
     window.addEventListener("keydown", escape);
 
     // ------------------------------------------------------------ VR: the walkthrough, its start point
-    const xr = new XrWalk({ renderer, scene, model, render: () => render(), prefs: vrPrefs, start: () => vrLive.current?.start ?? null, onChange: (on) => vrLive.current?.onVr?.(on) });
+    /** The model's index and edge points as built, while VR hides what is being carried. */
+    let hiddenBackup: { index: THREE.BufferAttribute; edges: Float32Array | null } | null = null;
+    const hideFaces = (faces: number[] | null) => {
+      if (!mesh) return;
+      const g = mesh.geometry;
+      const edgeAttr = edgeLines?.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+      if (faces === null) {
+        if (!hiddenBackup) return;
+        g.setIndex(hiddenBackup.index);
+        if (edgeAttr && hiddenBackup.edges) {
+          (edgeAttr.array as Float32Array).set(hiddenBackup.edges);
+          edgeAttr.needsUpdate = true;
+        }
+        hiddenBackup = null;
+        return;
+      }
+      if (!hiddenBackup) hiddenBackup = { index: g.index!, edges: edgeAttr ? (edgeAttr.array as Float32Array).slice() : null };
+      const idx = new Uint32Array(hiddenBackup.index.array as ArrayLike<number>);
+      const set = new Set(faces);
+      for (const f of set) {
+        const r = faceRanges[f];
+        if (r) for (let t = r.start; t < r.start + r.count; t++) idx[t] = idx[r.start];
+      }
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      if (edgeAttr && hiddenBackup.edges) {
+        const pos = edgeAttr.array as Float32Array;
+        pos.set(hiddenBackup.edges);
+        const edges = shownView?.edges ?? [];
+        for (let k = 0; k < segmentEdge.length; k++) {
+          const e = edges[segmentEdge[k]];
+          if (e && e.faces.length && e.faces.every((f) => set.has(f))) for (let c = 0; c < 3; c++) pos[k * 6 + 3 + c] = pos[k * 6 + c];
+        }
+        edgeAttr.needsUpdate = true;
+      }
+    };
+    const xr = new XrWalk({
+      renderer,
+      scene,
+      model,
+      render: () => render(),
+      prefs: vrPrefs,
+      start: () => vrLive.current?.start ?? null,
+      view: () => shownView,
+      mesh: () => mesh,
+      hideFaces,
+      notes: () => ({ pins: vrLive.current?.pins ?? [], moves: vrLive.current?.moves ?? [] }),
+      onChange: (on) => vrLive.current?.onVr?.(on),
+      onDone: (pins, moves) => vrLive.current?.onNotes?.(pins, moves),
+    });
+    // The VR notes on the desktop: each moved piece as a ghost where it was put (onion skin), each pin with its note.
+    const vrNotes = new THREE.Group();
+    vrNotes.name = "vr-notes";
+    vrNotesRef.current = vrNotes;
+    scene.add(vrNotes);
+    const drawNotes = () => {
+      for (const o of [...vrNotes.children]) {
+        o.removeFromParent();
+        if ((o as THREE.Mesh).geometry) (o as THREE.Mesh).geometry.dispose();
+        if ((o as THREE.Sprite).isSprite) disposeSprite(o as THREE.Sprite);
+      }
+      const v = vrLive.current;
+      if (!v || (!v.pins?.length && !v.moves?.length) || v.notesHidden) return;
+      const items = itemsOf(shownView);
+      for (const m of v.moves ?? []) {
+        const it = itemOfMove(items, m);
+        if (!it || !shownView) continue;
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(itemTriangles(shownView, it), 3));
+        g.computeVertexNormals();
+        const ghost = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.5, depthWrite: false }));
+        const c = new THREE.Vector3(...m.centre);
+        ghost.matrixAutoUpdate = false;
+        ghost.matrix
+          .makeTranslation(c.x + m.move[0], c.y + m.move[1], c.z + m.move[2])
+          .multiply(new THREE.Matrix4().makeRotationZ(((m.turn ?? 0) * Math.PI) / 180))
+          .multiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, -c.z));
+        ghost.renderOrder = 5;
+        ghost.userData.vrMove = m.id;
+        const to = c.clone().add(new THREE.Vector3(...m.move));
+        const link = new THREE.Line(new THREE.BufferGeometry().setFromPoints([c, to]), new THREE.LineDashedMaterial({ color: 0xd97706, dashSize: 60, gapSize: 40, depthTest: false }));
+        link.computeLineDistances();
+        link.renderOrder = 6;
+        const label = textSprite(`moved in VR: ${niceName(it.partBody ?? it.body)}`, 1, { bg: "rgba(217,119,6,0.92)", size: 40 });
+        label.userData.px = 170;
+        label.position.set(to.x, to.y, it.max[2] + 150);
+        vrNotes.add(ghost, link, label);
+      }
+      for (const p of v.pins ?? []) {
+        const col = PIN_COLORS[p.tag];
+        const head = new THREE.Mesh(new THREE.SphereGeometry(60, 16, 12), new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 0.3 }));
+        head.position.set(p.at[0], p.at[1], p.at[2] + 400);
+        const stick = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...p.at), head.position.clone()]), new THREE.LineBasicMaterial({ color: col }));
+        const label = textSprite(p.text ? `${PIN_WORDS[p.tag]}: ${p.text}` : PIN_WORDS[p.tag], 1, { bg: `#${col.toString(16).padStart(6, "0")}ee`, size: 40 });
+        label.userData.px = 190;
+        head.userData.px = 12;
+        label.position.set(p.at[0], p.at[1], p.at[2] + 600);
+        vrNotes.add(head, stick, label);
+      }
+    };
     // The start marker: a figure where you will stand, facing the way you will look (model mm, Z up).
     const marker = new THREE.Group();
     marker.name = "vr-start";
@@ -2496,6 +2611,7 @@ export function Viewport({
         renderer.domElement.style.cursor = "";
       }
       if (!placing) showMarker(v?.start && v.showStart ? v.start.at : null, v?.start?.heading ?? 90);
+      drawNotes();
       render();
     };
     vrApi.current = {
@@ -2600,6 +2716,10 @@ export function Viewport({
           return { active: xr.active, ...(xr.active ? { standing: xr.standing(), roofOff: xr.roof(), drawn: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles } } : {}), marker: marker.visible ? { at: marker.position.toArray().map(Math.round), heading: Math.round((marker.rotation.z * 180) / Math.PI) } : null };
         },
         enterVr: () => xr.enter(),
+        vrState: () => xr.state(),
+        vrPress: (id: string) => xr.press(id),
+        vrNotes: () => vrNotes.children.length,
+        vrItems: () => itemsOf(shownView).map((i) => `${i.key}:${i.movable}`),
         exitVr: () => xr.exit(),
         /** Where the camera is, what it looks at, and which way is up. */
         camera() {
@@ -2985,6 +3105,8 @@ export function Viewport({
 
   useEffect(() => {
     api.current?.setModel(view);
+    // The VR notes are drawn on the view as it now is (a moved piece's ghost is made from its faces).
+    vrApi.current?.sync();
   }, [view]);
 
   // ---- Phase P wave 2A: a sketch opens in the view (it turns to face it) and closes (back to the view before).
