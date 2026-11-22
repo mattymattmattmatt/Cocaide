@@ -49,7 +49,14 @@ function planeSelected(view: RebuildView | null, selection: Selection): boolean 
   return !!datum && (Object.hasOwn(DEFAULT_DATUMS, datum) ? DEFAULT_DATUMS[datum] : view?.datums?.[datum])?.kind === "plane";
 }
 
-export function useSectionView(docName: string, view: RebuildView | null, selection: Selection, notice: (kind: "info" | "error", text: string) => void): SectionControl {
+export function useSectionView(
+  docName: string,
+  view: RebuildView | null,
+  selection: Selection,
+  notice: (kind: "info" | "error", text: string) => void,
+  /** How a section starts the first time: an assembly's caps in each component's colour. */
+  opts: { capColour?: SectionView["capColour"] } = {},
+): SectionControl {
   const [section, setSectionState] = useState<SectionView | null>(() => (docName ? (loadView(docName).section ?? null) : null));
   const [panelOpen, setPanelOpen] = useState(() => !!section?.on);
   // Another part: its own section, as it was left.
@@ -113,7 +120,7 @@ export function useSectionView(docName: string, view: RebuildView | null, select
       notice("error", first);
       return false;
     }
-    setSection(section ? { ...setPlane(section, 0, first), on: true, active: 0, collapsed: false } : sectionViewOf(first));
+    setSection(section ? { ...setPlane(section, 0, first), on: true, active: 0, collapsed: false } : { ...sectionViewOf(first), ...(opts.capColour ? { capColour: opts.capColour } : {}) });
     return true;
   };
 

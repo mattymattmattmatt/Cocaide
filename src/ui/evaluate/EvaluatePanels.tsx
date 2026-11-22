@@ -246,8 +246,11 @@ export function SectionPanel({
   onChange,
   onAdd,
   onClose,
+  noun = "bodies",
 }: {
   section: SectionView;
+  /** What the cut things are called: "bodies" (a part's), "components" (an assembly's). */
+  noun?: string;
   choices: { id: string; label: string }[];
   /** A flat face is selected: "Selected face" can be chosen. */
   faceOk: boolean;
@@ -392,13 +395,13 @@ export function SectionPanel({
               <select value={section.capColour} onChange={(e) => onChange({ ...section, capColour: e.target.value === "bodies" ? "bodies" : "single" })} data-testid="section-cap-colour">
                 <option value="single">One colour, hatched</option>
                 <option value="bodies" disabled={bodies.length < 2}>
-                  Each body&apos;s colour{bodies.length < 2 ? " (one body)" : ""}
+                  {noun === "components" ? "Each component's colour" : "Each body's colour"}{bodies.length < 2 ? ` (one ${noun === "components" ? "component" : "body"})` : ""}
                 </option>
               </select>
             </label>
             {bodies.length > 1 && (
               <details className="section-bodies" open={bodiesOpen} onToggle={(e) => setBodiesOpen(e.currentTarget.open)} data-testid="section-bodies">
-                <summary>Section bodies: {cut ? `${cut.length} of ${bodies.length}` : "all"}</summary>
+                <summary>Section {noun}: {cut ? `${cut.length} of ${bodies.length}` : "all"}</summary>
                 <div className="section-body-list">
                   {bodies.map((b) => (
                     <label key={b} className="eval-check">

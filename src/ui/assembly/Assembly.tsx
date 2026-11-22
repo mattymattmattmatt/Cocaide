@@ -14,6 +14,10 @@ import { MenuItem, ToolButton, ToolMenu } from "../tools";
 import { Viewport } from "../Viewport";
 import type { PickTarget } from "../model/selection";
 import type { AssemblyWorkspace } from "./useAssembly";
+import type { SectionControl } from "../evaluate/useSection";
+import { SectionPanel } from "../evaluate/EvaluatePanels";
+import { addPlane, sectionChoices } from "../evaluate/section";
+import type { RebuildView } from "../../worker/protocol";
 import { AppearanceChip, AppearancePicker, describeAppearance, sourceWords } from "../appearance/AppearancePicker";
 
 const MATE_WORDS: Record<MateType, { label: string; icon: IconName; hint: string }> = {
@@ -25,7 +29,7 @@ const MATE_WORDS: Record<MateType, { label: string; icon: IconName; hint: string
   angle: { label: "Angle", icon: "angle", hint: "Two faces or edges at an angle" },
 };
 
-export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing }: { a: AssemblyWorkspace; undo(): void; redo(): void; canUndo: boolean; canRedo: boolean; onDrawing?: () => void }) {
+export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing, section }: { a: AssemblyWorkspace; undo(): void; redo(): void; canUndo: boolean; canRedo: boolean; onDrawing?: () => void; section?: SectionControl }) {
   const has = !!a.asm?.components.length;
   const sel = a.item?.kind === "component" ? a.asm?.components.find((k) => k.id === a.item!.id) : undefined;
   const ready = a.mateChoices.some((c) => c.ok);
@@ -73,6 +77,17 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing }: { a:
               title={sel ? (sel.transparent ? "Make it solid again" : "See through it, and click through it to faces inside or behind it (to mate them)") : "Select a component"}
               testId="asm-transparent"
             />
+            {section && (
+              <ToolButton
+                icon="section"
+                label="Section"
+                onClick={section.toggleTool}
+                disabled={!has}
+                pressed={!!section.section?.on}
+                title="Cut the assembly open: a plane (or up to three) through it, the cut faces hatched in each component's colour; drag its arrow to move it"
+                testId="asm-section"
+              />
+            )}
             <ToolButton
               icon="isolate"
               label={a.isolated ? "Exit isolate" : "Isolate"}
@@ -107,7 +122,20 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing }: { a:
   );
 }
 
-export function AssemblyMain({ a, display, onDisplay }: { a: AssemblyWorkspace; display?: Parameters<typeof Viewport>[0]["display"]; onDisplay?: Parameters<typeof Viewport>[0]["onDisplay"] }) {
+export function AssemblyMain({
+  a,
+  display,
+  onDisplay,
+  section,
+  sectionView,
+}: {
+  a: AssemblyWorkspace;
+  display?: Parameters<typeof Viewport>[0]["display"];
+  onDisplay?: Parameters<typeof Viewport>[0]["onDisplay"];
+  /** The assembly's section view and the view its box comes from. */
+  section?: SectionControl;
+  sectionView?: RebuildView;
+}) {
   const comps = a.asm?.components ?? [];
   const status = new Map((a.solve?.mates ?? []).map((m) => [m.id, m]));
   // The selected component's faces light up, so it is plain which one it is.
@@ -168,7 +196,22 @@ export function AssemblyMain({ a, display, onDisplay }: { a: AssemblyWorkspace; 
         )}
       </aside>
       <section className="center">
-        <Viewport view={a.scene.view} fitToken={a.fitToken} selection={a.selection} onPick={a.pick} peek={peek} handles={a.handles} onHandle={a.onHandle} memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`} display={display} onDisplay={onDisplay} clearBodies={a.clearBodies} hiddenBodies={a.isolateHides} appearances={a.appearances} />
+        <Viewport
+          view={a.scene.view}
+          fitToken={a.fitToken}
+          selection={a.selection}
+          onPick={a.pick}
+          peek={peek}
+          handles={a.handles}
+          onHandle={a.onHandle}
+          memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`}
+          display={display}
+          onDisplay={onDisplay}
+          clearBodies={a.clearBodies}
+          hiddenBodies={a.isolateHides}
+          appearances={a.appearances}
+          {...(section ? { section: section.section, onSection: section.setSection, onSectionToggle: section.toggleShown, onSectionPanel: section.openPanel } : {})}
+        />
         {a.isolated && (
           <div className="view-hint asm-isolate-hint" role="status" data-testid="asm-isolate-hint">
             <Icon name="isolate" />
@@ -181,6 +224,22 @@ export function AssemblyMain({ a, display, onDisplay }: { a: AssemblyWorkspace; 
         {a.busy && <div className="asm-busy">{a.busy}</div>}
       </section>
       <SidePanel title="Properties" testId="assembly-props">
+        {section?.section?.on && section.panelOpen && (
+          <div className="eval-panels eval-dock" data-testid="asm-section-dock">
+            <SectionPanel
+              section={section.section}
+              choices={sectionChoices({})}
+              faceOk={a.selection.faces.length === 1 && a.scene.view.faces[a.selection.faces[0]]?.type === "plane"}
+              box={sectionView?.measurements?.boundingBox ?? null}
+              bodies={(a.asm?.components ?? []).filter((k) => !k.hidden).map((k) => k.id)}
+              onPlane={section.planeTo}
+              onChange={section.setSection}
+              onAdd={() => section.section && section.setSection(addPlane(section.section, {}, sectionView?.measurements?.boundingBox ?? null))}
+              onClose={section.close}
+              noun="components"
+            />
+          </div>
+        )}
         <AssemblyProps a={a} />
       </SidePanel>
     </>

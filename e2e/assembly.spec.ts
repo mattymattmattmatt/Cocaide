@@ -210,3 +210,38 @@ test("exploded in the Assembly tab, then drawn: the assembly's views, an explode
   await page.waitForTimeout(3000);
   await page.screenshot({ path: "test-results/assembly-drawing.png" });
 });
+
+test("the assembly sectioned: a plane through both components, caps in each one's colour, one left whole, dragged and off", async ({ page }) => {
+  type Hook = { section(): { normal: number[]; constant: number; capped: boolean } | null; sections(): { planes: unknown[]; bodies: string[] | null; capped: boolean; planesDrawn: number } };
+  const hook = () => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.sections());
+  await page.getByTestId("mode-assembly").click();
+  await expect(page.getByTestId("asm-section")).toBeDisabled();
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+  }
+  await expect(page.getByTestId("asm-component-bracket-2")).toBeVisible();
+  await page.getByTestId("asm-section").click();
+  await expect(page.getByTestId("asm-section-dock").getByTestId("section-panel")).toBeVisible();
+  await expect(page.getByTestId("asm-section")).toHaveAttribute("aria-pressed", "true");
+  // Front through the middle of the assembly, capped, the caps each component's colour.
+  await expect.poll(async () => (await hook()).planes.length).toBe(1);
+  await expect.poll(async () => (await hook()).capped).toBe(true);
+  await expect(page.getByTestId("section-cap-colour")).toHaveValue("bodies");
+  await expect(page.getByTestId("section-cap-colour").locator("option[value=bodies]")).toHaveText("Each component's colour");
+  // The second component left whole.
+  await page.getByTestId("section-bodies").locator("summary").click();
+  await expect(page.getByTestId("section-bodies").locator("summary")).toHaveText("Section components: all");
+  await page.getByTestId("section-body-bracket-2").uncheck();
+  await expect.poll(async () => (await hook()).bodies).toEqual(["bracket-1"]);
+  // Moved by its offset, then off from the toolbar.
+  await page.getByTestId("section-offset").fill("3");
+  await page.getByTestId("section-offset").press("Enter");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.section()?.constant)).toBe(3);
+  await page.getByTestId("asm-section").click();
+  await expect(page.getByTestId("asm-section-dock")).toHaveCount(0);
+  await expect.poll(async () => (await hook()).planes.length).toBe(0);
+  // The part's own section (Model tab) is its own: still off.
+  await page.getByTestId("mode-model").click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __cocaideViewport: Hook }).__cocaideViewport.section())).toBeNull();
+});

@@ -456,6 +456,9 @@ export function App() {
   };
   /** The section view (Phase P): up to three planes, kept on while you work and remembered for the document. */
   const sectionCtl = useSectionView(docName, view, selection, (kind, text) => setNotice({ kind, text }));
+  /** The assembly's own section: its box from the assembled mesh (the assembly has no measurements), its caps per component. */
+  const asmSectionView = useMemo(() => withMeshBox(assemblyWs.scene.view), [assemblyWs.scene.view]);
+  const asmSectionCtl = useSectionView(docName ? `${docName}#assembly` : "", asmSectionView, assemblyWs.selection, (kind, text) => setNotice({ kind, text }), { capColour: "bodies" });
   // The view bar's Section menu and the Section tag open the docked Section panel: unfolded (a fresh one) and scrolled into sight.
   const [sectionReveal, setSectionReveal] = useState(0);
   const revealSection = useCallback(() => {
@@ -3023,7 +3026,7 @@ export function App() {
         </header>
 
         {!sketch && mode === "drawing" && <DrawingCommandBar ws={drawingWs} undoLabel={d.undoLabel} redoLabel={d.redoLabel} />}
-        {!sketch && mode === "assembly" && <AssemblyBar a={assemblyWs} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} onDrawing={() => void newAssemblyDrawing()} />}
+        {!sketch && mode === "assembly" && <AssemblyBar a={assemblyWs} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} onDrawing={() => void newAssemblyDrawing()} section={asmSectionCtl} />}
         {!sketch && mode === "model" && (
           <CommandManager ctx={toolCtx} prefs={prefs} runTool={runTool} runItem={runToolItem} undo={d.undo} redo={d.redo} canUndo={d.canUndo} canRedo={d.canRedo} undoLabel={undoTip} redoLabel={d.redoLabel} />
         )}
@@ -3039,7 +3042,7 @@ export function App() {
 
         <main className={`workspace${leftHidden ? " no-left" : ""}${dockClass(dock)}`}>
           {mode === "assembly" && !sketch ? (
-            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} />
+            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} section={asmSectionCtl} sectionView={asmSectionView} />
           ) : mode === "drawing" && !sketch ? (
             <DrawingMain
               ws={drawingWs}
@@ -3712,3 +3715,19 @@ function DrawingHelp() {
 
 
 
+
+/** A view with its bounding box worked out from its mesh, when it has none (an assembly's: where a section starts and its slider runs). */
+function withMeshBox(v: RebuildView): RebuildView {
+  if (v.measurements?.boundingBox) return v;
+  const p = v.mesh?.positions;
+  if (!p?.length) return v;
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < p.length; i += 3)
+    for (let k = 0; k < 3; k++) {
+      if (p[i + k] < min[k]) min[k] = p[i + k];
+      if (p[i + k] > max[k]) max[k] = p[i + k];
+    }
+  const size: [number, number, number] = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+  return { ...v, measurements: { ...(v.measurements ?? {}), boundingBox: { min, max, size } } as RebuildView["measurements"] };
+}
