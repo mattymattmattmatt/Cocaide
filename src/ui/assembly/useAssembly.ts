@@ -18,7 +18,8 @@ import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, t
 import { stepPart } from "../files/plan";
 import { mateFlips, startingWay } from "../../assembly/flip";
 import { selectEdges, selectFaces } from "../../kernel/selectors";
-import { measureNow, world } from "../../assembly/solve";
+import { freeMotions, measureNow, solveMates, world } from "../../assembly/solve";
+import type { Placement } from "../../assembly/transform";
 import { mul, transpose, written } from "../../assembly/transform";
 import { measurePick } from "../evaluate/measure";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
@@ -602,15 +603,71 @@ export function useAssembly(o: AssemblyOptions) {
     return [arrow(0), arrow(1), arrow(2), turn];
   }, [item, asm, scene, dragging, exploded]);
 
-  /** A handle dragged: shown live, written (with the mates solved) when let go. */
+  /**
+   * Where a component dragged toward `want` can be with its mates holding: the nearest place they allow, the other
+   * components held where they are (a pin slides along its hole, a hinge turns, a limit stops it at its end).
+   */
+  const constrained = (id: string, want: { at: Vec3; rotation: Vec3 }): { at: Vec3; rotation: Vec3 } => {
+    const mine = (solve?.held ?? []).filter((m) => m.a.component === id || m.b.component === id);
+    if (!mine.length || !asm) return want;
+    const placements = new Map<string, Placement>(asm.components.map((k) => [k.id, placementOf(k.id === id ? want : k)]));
+    const others = new Set(asm.components.filter((k) => k.id !== id).map((k) => k.id));
+    const r = solveMates(placements, others, mine, { iterations: 60 });
+    const w = written(r.placements.get(id)!);
+    const r3 = (v: Vec3) => v.map((x) => Math.round(x * 1000) / 1000 + 0) as Vec3;
+    return { at: r3(w.at), rotation: r3(w.rotation) };
+  };
+  /** Can this face's part be dragged: a part that isn't fixed (not while measuring or exploded). */
+  const canDrag = (t: PickTarget): boolean => {
+    if (measuring || exploded || t.kind !== "face") return false;
+    const owner = scene.faceOwner[t.index];
+    const k = owner && asm?.components.find((x) => x.id === owner.component);
+    return !!k && !k.fixed && !k.hidden;
+  };
+  /** Where a drag started: the part, and where it was. */
+  const dragFrom = useRef<{ id: string; at: Vec3; rotation: Vec3 } | null>(null);
+  /** A part dragged in the view: it follows the pointer as far as its mates let it, live; written when let go. */
+  const onDragObject = (phase: "start" | "move" | "end" | "cancel", from: Vec3, to: Vec3, pressed: PickTarget) => {
+    if (phase === "start") return beginDrag(pressed);
+    const s = dragFrom.current;
+    if (!s) return;
+    if (phase === "cancel") {
+      dragFrom.current = null;
+      return setDragging(null);
+    }
+    const want = { at: [s.at[0] + to[0] - from[0], s.at[1] + to[1] - from[1], s.at[2] + to[2] - from[2]] as Vec3, rotation: s.rotation };
+    const next = { id: s.id, ...constrained(s.id, want) };
+    if (phase === "end") {
+      dragFrom.current = null;
+      setDragging(null);
+      const moved = Math.hypot(next.at[0] - s.at[0], next.at[1] - s.at[1], next.at[2] - s.at[2]) > 1e-3 || next.rotation.some((v, i) => Math.abs(v - s.rotation[i]) > 1e-3);
+      if (moved) editComponent(s.id, { at: next.at, rotation: next.rotation }, `Move ${s.id}`);
+      return;
+    }
+    setDragging(next);
+  };
+  /** A drag begun on a part: remember it and where it was (and say so when its mates hold it fully). */
+  const beginDrag = (t: PickTarget) => {
+    if (t.kind !== "face") return;
+    const owner = scene.faceOwner[t.index];
+    const k = owner && asm?.components.find((x) => x.id === owner.component);
+    if (!k) return;
+    dragFrom.current = { id: k.id, at: ((k.at ?? [0, 0, 0]) as Vec3).slice() as Vec3, rotation: ((k.rotation ?? [0, 0, 0]) as Vec3).slice() as Vec3 };
+    setItem({ kind: "component", id: k.id });
+    const mine = (solve?.held ?? []).filter((m) => m.a.component === k.id || m.b.component === k.id);
+    if (mine.length && solve && !freeMotions(solve.placements, mine, k.id).length) o.notice(`${k.id} is held by its mates in every direction: it won't move (suppress a mate to free it).`);
+  };
+
+  /** A handle dragged: shown live as far as the mates let it go, written when let go. */
   const onHandle = (h: HandleSpec, phase: "start" | "move" | "end" | "cancel", value: number | [number, number]) => {
     const k = asm?.components.find((x) => x.id === h.feature);
     if (!k || typeof value !== "number") return;
-    const cur = dragging?.id === k.id ? dragging : { id: k.id, at: ((k.at ?? [0, 0, 0]) as Vec3).slice() as Vec3, rotation: ((k.rotation ?? [0, 0, 0]) as Vec3).slice() as Vec3 };
+    const start = { at: ((k.at ?? [0, 0, 0]) as Vec3).slice() as Vec3, rotation: ((k.rotation ?? [0, 0, 0]) as Vec3).slice() as Vec3 };
     const [what, i] = h.key.split(".");
-    const next = { id: k.id, at: cur.at.slice() as Vec3, rotation: cur.rotation.slice() as Vec3 };
-    (what === "at" ? next.at : next.rotation)[Number(i)] = Math.round(value * 1000) / 1000;
+    const want = { at: start.at.slice() as Vec3, rotation: start.rotation.slice() as Vec3 };
+    (what === "at" ? want.at : want.rotation)[Number(i)] = Math.round(value * 1000) / 1000;
     if (phase === "cancel") return setDragging(null);
+    const next = { id: k.id, ...constrained(k.id, want) };
     if (phase === "end") {
       setDragging(null);
       editComponent(k.id, { at: next.at, rotation: next.rotation }, what === "at" ? `Move ${k.id}` : `Turn ${k.id}`);
@@ -705,6 +762,9 @@ export function useAssembly(o: AssemblyOptions) {
     check,
     handles,
     onHandle,
+    canDrag,
+    onDragObject,
+    beginDrag,
     views,
     scene,
     solve,

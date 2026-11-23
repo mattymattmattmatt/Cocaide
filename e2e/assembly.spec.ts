@@ -427,3 +427,61 @@ test("the mates tree: says what each mate is and joins, lights it up when hovere
   await page.getByTestId("asm-ctx-delete").click();
   await expect(page.getByTestId("assembly-tree")).toContainText("No components yet");
 });
+
+test("a part that isn't fixed is dragged in the view: free, it follows the mouse; mated, it slides only as its mates allow, and stops at a limit", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+  }
+  await expect(page.getByTestId("asm-component-bracket-2")).toBeVisible();
+  await page.waitForTimeout(1500);
+  const at = async () => ((await assembly(page))?.components[1].at ?? [0, 0, 0]) as number[];
+  const screen = (p: Vec3) => page.evaluate((p) => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project(p), p);
+  const drag = async (p: Vec3, dx: number, dy: number) => {
+    const [x, y] = await screen(p);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    for (let k = 1; k <= 8; k++) await page.mouse.move(x + (dx * k) / 8, y + (dy * k) / 8);
+    await page.mouse.up();
+  };
+  // A click on it still selects it (and drags nothing).
+  const before = await at();
+  await clickAt(page, [70, 10, 6]);
+  await expect(page.getByTestId("asm-component-props")).toContainText("bracket-2");
+  expect(await at()).toEqual(before);
+  // Free: dragged up the screen, it rises (and moves; nothing holds it).
+  await drag([70, 10, 6], 0, -60);
+  await expect.poll(async () => (await at())[2]).toBeGreaterThan(5);
+  // The fixed one won't drag: the press only selects it.
+  await drag([-20, 10, 6], 0, -60);
+  expect(((await assembly(page))?.components[0].at ?? [0, 0, 0])).toEqual([0, 0, 0]);
+  // Mated flush (tops coincident, aligned): dragged up the screen, it stays level and slides across.
+  await page.getByTestId("undo").click();
+  await expect.poll(async () => (await at())[2]).toBe(0);
+  await clickAt(page, [-20, 10, 6]);
+  await clickAt(page, [70, 10, 6], true);
+  await page.getByTestId("asm-mate-btn-coincident").click();
+  await expect.poll(async () => (await assembly(page))?.mates?.length).toBe(1);
+  const was = await at();
+  await drag([70, 10, 6], 40, -60);
+  await expect.poll(async () => JSON.stringify(await at())).not.toBe(JSON.stringify(was));
+  expect(Math.abs((await at())[2])).toBeLessThan(0.01);
+  // A distance limit of 0–20 between the tops instead: dragged far up, it stops at 20.
+  await page.getByTestId(`asm-mate-${(await assembly(page))!.mates![0].id}`).locator(".asm-row").click();
+  await page.getByTestId("asm-prop-mate-type").selectOption("distance");
+  await expect.poll(async () => (await assembly(page))?.mates?.[0].type).toBe("distance");
+  await page.getByTestId("asm-prop-mate-limit").check();
+  await expect.poll(async () => (await assembly(page))?.mates?.[0]).toMatchObject({ min: expect.any(Number), max: expect.any(Number) });
+  await page.getByTestId("asm-prop-mate-min").fill("0");
+  await page.getByTestId("asm-prop-mate-min").press("Enter");
+  await page.getByTestId("asm-prop-mate-max").fill("20");
+  await page.getByTestId("asm-prop-mate-max").press("Enter");
+  await expect.poll(async () => (await assembly(page))?.mates?.[0]).toMatchObject({ min: 0, max: 20 });
+  const z0 = (await at())[2];
+  const top = (await at()) as Vec3;
+  await drag([top[0] - 20, top[1] + 10, top[2] + 6], 0, -400);
+  await expect.poll(async () => (await at())[2]).toBeGreaterThan(z0 + 1);
+  expect((await at())[2]).toBeLessThanOrEqual(20.01);
+  expect((await at())[2]).toBeGreaterThan(19.9);
+});

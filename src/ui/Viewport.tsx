@@ -183,6 +183,13 @@ interface Props {
   /** Drag handles (direct manipulation), and what dragging one does: start, the value as it moves, end or cancel. */
   handles?: HandleSpec[];
   onHandle?(h: HandleSpec, phase: HandlePhase, value: HandleValue): void;
+  /** A press on this (an assembly's part that can move) and a drag moves it: whether it can. */
+  canDrag?(t: PickTarget): boolean;
+  /**
+   * Dragging a part: from the point pressed on it, to where the pointer is on the plane through that point facing
+   * the view (world mm). A press and release in place is still a click (it picks).
+   */
+  onDragObject?(phase: "start" | "move" | "end" | "cancel", from: Vec3, to: Vec3, pressed: PickTarget): void;
   /** A click on a handle's value: type one there. */
   onHandleLabel?(h: HandleSpec, clientX: number, clientY: number): void;
   /** The selection filter: only these kinds are picked (empty: anything). */
@@ -404,6 +411,8 @@ export function Viewport({
   onDimension,
   handles = NO_HANDLES,
   onHandle,
+  canDrag,
+  onDragObject,
   onHandleLabel,
   filter = NO_FILTER,
   onFilter,
@@ -433,8 +442,8 @@ export function Viewport({
   const photoPointRef = useRef(onPhotoPoint);
   photoPointRef.current = onPhotoPoint;
   // Read by the view's own listeners, which are made once: always the newest.
-  const live = useRef({ onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch });
-  live.current = { onHandle, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch };
+  const live = useRef({ onHandle, canDrag, onDragObject, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch });
+  live.current = { onHandle, canDrag, onDragObject, onHandleLabel, onDimension, onBox, onDoubleClick, memoryKey, onMessage, onSection, onSectionPanel, section, onArea: (on: boolean) => setAreaMode(on), onPinned: (on: boolean) => setPinned(on), sketch };
   const vrLive = useRef(vr);
   vrLive.current = vr;
   /** The VR walkthrough and the start marker, from inside the view's set-up. */
@@ -2391,11 +2400,61 @@ export function Viewport({
     };
     const handleEvent = (h: HandleSpec, phase: HandlePhase, value: HandleValue) => (h.kind === "section" ? dragSection(h, phase, value) : live.current.onHandle?.(h, phase, value));
 
+    // Dragging a part (an assembly's, not fixed): pressed on it, it waits to see a drag (a click still picks); then it
+    // follows the pointer across the plane through the point pressed, facing the view.
+    let objDrag: { t: PickTarget; x: number; y: number; id: number; from: THREE.Vector3; normal: THREE.Vector3; moving: boolean } | null = null;
+    const objPoint = (d: NonNullable<typeof objDrag>, clientX: number, clientY: number): Vec3 => {
+      aim(clientX, clientY);
+      const hit = raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(d.normal, d.from), new THREE.Vector3());
+      return (hit ?? d.from).toArray() as Vec3;
+    };
+    const objDown = (e: PointerEvent): boolean => {
+      const can = live.current.canDrag;
+      if (!can || e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || areaOn || draw3dRef.current || photoPointRef.current) return false;
+      const t = pickAt(e.clientX, e.clientY);
+      if (!t || t.kind !== "face" || !can(t)) return false;
+      e.stopPropagation();
+      e.preventDefault();
+      const forward = new THREE.Vector3();
+      eye().getWorldDirection(forward);
+      objDrag = { t, x: e.clientX, y: e.clientY, id: e.pointerId, from: new THREE.Vector3(...t.point), normal: forward, moving: false };
+      el.setPointerCapture?.(e.pointerId);
+      return true;
+    };
+    const objMove = (e: PointerEvent): boolean => {
+      const d = objDrag;
+      if (!d || e.pointerId !== d.id) return false;
+      e.stopPropagation();
+      if (!d.moving) {
+        if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return true;
+        d.moving = true;
+        finishGlide();
+        renderer.domElement.style.cursor = "grabbing";
+        hovered = null;
+        setHover(null);
+        live.current.onDragObject?.("start", d.t.point, d.t.point, d.t);
+      }
+      live.current.onDragObject?.("move", d.t.point, objPoint(d, e.clientX, e.clientY), d.t);
+      return true;
+    };
+    const objUp = (e: PointerEvent | KeyboardEvent, cancel = false): boolean => {
+      const d = objDrag;
+      if (!d || ("pointerId" in e && e.pointerId !== d.id)) return false;
+      objDrag = null;
+      if ("pointerId" in e && el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      renderer.domElement.style.cursor = "";
+      e.stopPropagation();
+      if (d.moving) live.current.onDragObject?.(cancel ? "cancel" : "end", d.t.point, "clientX" in e && !cancel ? objPoint(d, e.clientX, e.clientY) : d.t.point, d.t);
+      // Pressed and let go in place: a click, as ever.
+      else if (!cancel) pickRef.current(d.t, false);
+      return true;
+    };
+
     // Handles are grabbed before anything else sees the press (the controls would turn the view, a click would pick).
     const handleDown = (e: PointerEvent) => {
-      if (e.button !== 0 || !allHandles().length || areaOn) return;
+      if (e.button !== 0 || !allHandles().length || areaOn) return void objDown(e);
       const h = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
-      if (!h) return;
+      if (!h) return void objDown(e);
       e.stopPropagation();
       e.preventDefault();
       if (h.locked) {
@@ -2424,6 +2483,7 @@ export function Viewport({
       render();
     };
     const handleMove = (e: PointerEvent) => {
+      if (objMove(e)) return;
       if (!drag || e.pointerId !== drag.id) return;
       e.stopPropagation();
       aim(e.clientX, e.clientY);
@@ -2453,11 +2513,17 @@ export function Viewport({
         if (Math.hypot(e.clientX - f.x, e.clientY - f.y) < 5) handleEvent(f.h, "end", f.h.value);
         return;
       }
+      if (objUp(e)) return;
       if (!drag || e.pointerId !== drag.id) return;
       e.stopPropagation();
       endDrag(e, "end");
     };
     const handleKey = (e: KeyboardEvent) => {
+      if (objDrag && e.key === "Escape") {
+        e.preventDefault();
+        objUp(e, true);
+        return;
+      }
       if (drag && e.key === "Escape") {
         e.preventDefault();
         endDrag(e, "cancel");

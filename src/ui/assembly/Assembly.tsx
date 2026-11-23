@@ -359,6 +359,8 @@ export function AssemblyMain({
           peek={peek}
           handles={a.handles}
           onHandle={a.onHandle}
+          canDrag={a.canDrag}
+          onDragObject={a.onDragObject}
           memoryKey={`${typeof a.doc?.name === "string" ? a.doc.name : "part"}#assembly`}
           display={display}
           onDisplay={onDisplay}
