@@ -374,3 +374,74 @@ test("a part in VR is held to inspect: in front of you at true size; grabbed, it
   await page.evaluate("window.__cocaideViewport.exitVr()");
   await expect.poll(async () => (await vr(page)).active).toBe(false);
 });
+
+test("measuring faces in VR: point at a hole to read its size, click it and a post for the closest gap; two parallel faces give the gap square to them; A undoes", async ({ page }) => {
+  // On the slab: a Ø100 hole through it, a 200 square post, and a screen 1050 behind the post's front.
+  const doc = (await savedDocument(page)) as { features: unknown[] };
+  doc.features.push(
+    { id: "s4", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "c", type: "circle", center: [3000, 6000], radius: 50 }] },
+    { id: "hole", op: "cut", sketch: "s4", distance: 100 },
+    { id: "s5", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 100] }, entities: [{ id: "r", type: "rect", center: [4000, 6500], w: 200, h: 200 }] },
+    { id: "post", op: "extrude", sketch: "s5", distance: 800, newBody: "post" },
+    { id: "s6", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 100] }, entities: [{ id: "r", type: "rect", center: [2000, 7500], w: 1000, h: 100 }] },
+    { id: "screen", op: "extrude", sketch: "s6", distance: 1200, newBody: "screen" },
+  );
+  (doc as Record<string, unknown>).vr = { start: { at: [3000, 4500, 100], heading: 90 } };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await waitForRebuild(page);
+  type State = { menu: boolean; measureMode: string; cards: string[]; faceHover: string | null };
+  const st = () => page.evaluate("window.__cocaideViewport.vrState()") as Promise<State>;
+  const press = (id: string) => page.evaluate(`window.__cocaideViewport.vrPress(${JSON.stringify(id)})`);
+  const click = async (btn = "trigger") => {
+    await device(page, `d.controllers.right.updateButtonValue('${btn}', 1);`);
+    await page.waitForTimeout(250);
+    await device(page, `d.controllers.right.updateButtonValue('${btn}', 0);`);
+    await page.waitForTimeout(250);
+  };
+  /** The right controller pointed at a point of the model (mm). */
+  const aim = async (p: number[]) => {
+    const w = (await page.evaluate(`window.__cocaideViewport.vrWorldOf(${JSON.stringify(p)})`)) as number[];
+    const from = [0.3, 1.2, -0.3];
+    const d = w.map((v, i) => v - from[i]);
+    const l = Math.hypot(...d);
+    const b = d.map((v) => v / l);
+    const q = [b[1], -b[0], 0, 1 - b[2]];
+    const ql = Math.hypot(...q);
+    await device(page, `const c = d.controllers.right; c.position.set(${from.join(",")}); c.quaternion.set(${q.map((v) => v / ql).join(",")});`);
+    await page.waitForTimeout(200);
+  };
+  await page.getByTestId("view-vr").click();
+  await expect.poll(async () => (await vr(page)).active).toBe(true);
+  await press("measure:faces");
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
+  await page.waitForTimeout(100);
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  await expect.poll(async () => (await st()).menu).toBe(false);
+  expect((await st()).measureMode).toBe("faces");
+
+  // Pointed at the hole's far wall: lit up and named with its size, before any click.
+  await aim([3000, 6050, 70]);
+  await expect.poll(async () => (await st()).faceHover).toBe("Hole Ø100");
+  await click();
+  await expect.poll(async () => (await st()).cards).toEqual(["Hole Ø100"]);
+  // Then the post's front: the hole to the post, closest; the hover said so first.
+  await aim([4000, 6400, 500]);
+  await expect.poll(async () => (await st()).faceHover).toMatch(/^Closest .* · click$/);
+  await click();
+  await expect.poll(async () => (await st()).cards[0]).toMatch(/^Closest /);
+
+  // The post's front and the screen's: parallel, 1050 apart.
+  await click();
+  await expect.poll(async () => (await st()).cards.length).toBe(2);
+  expect((await st()).cards[1]).toBe("Flat face");
+  await aim([1800, 7450, 600]);
+  await click();
+  await expect.poll(async () => (await st()).cards[1]).toBe("Gap 1,050 mm (1.05 m)");
+  // A undoes the last measure; Points still measure point to point.
+  await click("a-button");
+  await expect.poll(async () => (await st()).cards.length).toBe(1);
+  await press("measure:points");
+  expect((await st()).measureMode).toBe("points");
+});

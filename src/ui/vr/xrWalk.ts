@@ -37,6 +37,9 @@ import { disposeSprite, Panel, textSprite } from "./vrText";
 import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "./inspect";
 import type { VrPrefs } from "./vrPrefs";
 import { RayIndex } from "./rayIndex";
+import { faceCard, faceName, pairCard, type FaceCard } from "./vrMeasure";
+import { meshClosest } from "../evaluate/meshDistance";
+import type { FaceInfo } from "../../kernel/topology";
 
 export interface XrHost {
   renderer: THREE.WebGLRenderer;
@@ -129,6 +132,8 @@ interface Measure {
   a: Vec3;
   b: Vec3;
   objs: THREE.Object3D[];
+  /** A Faces measure: its headline ("Hole Ø12", "Gap 245 mm"). */
+  text?: string;
 }
 interface Placed {
   item: VrItem;
@@ -176,10 +181,16 @@ export class XrWalk {
    */
   private draw: { from: THREE.Mesh; mesh: THREE.Mesh; at: Int32Array; index: Uint32Array } | null = null;
   /** The model's triangles in a tree for rays (src/ui/vr/rayIndex), built once a view; the triangles hidden in VR skipped. */
-  private rays: { view: RebuildView; index: RayIndex; skip: Uint8Array } | null = null;
+  private rays: { view: RebuildView; index: RayIndex; skip: Uint8Array; faceOf: Int32Array } | null = null;
   // Tools.
   tool: VrTool = "teleport";
   snap = true;
+  /** Measure: point to point (snapping), or faces (a face's size; two faces' gap, centres, closest points, angle). */
+  measureMode: "points" | "faces" = "points";
+  /** Faces: the first face picked, waiting for a second (its measure is the last one). */
+  private faceFirst: { index: number; face: FaceInfo } | null = null;
+  /** Faces: the face the ray is on now, lit up, with a label saying what it is (or what it is to the first). */
+  private faceHover: { index: number; objs: THREE.Object3D[]; label: THREE.Sprite; text: string } | null = null;
   pinTag: PinTag = "note";
   private items: VrItem[] = [];
   private placed = new Map<string, Placed>();
@@ -381,6 +392,8 @@ export class XrWalk {
     this.measures = [];
     if (this.measuring) for (const o of [this.measuring.marker, ...this.measuring.live]) o.removeFromParent();
     this.measuring = null;
+    this.faceFirst = null;
+    this.clearFaceHover();
     this.pins = [];
     this.undo = [];
     this.carry = null;
@@ -428,7 +441,7 @@ export class XrWalk {
       c.hint.removeFromParent();
       disposeSprite(c.hint);
     }
-    const tool = this.tool === "pin" ? `Pin: ${PIN_WORDS[this.pinTag]}` : this.tool[0].toUpperCase() + this.tool.slice(1);
+    const tool = this.tool === "pin" ? `Pin: ${PIN_WORDS[this.pinTag]}` : this.tool === "measure" ? `Measure ${this.measureMode}` : this.tool[0].toUpperCase() + this.tool.slice(1);
     const words = this.inspecting
       ? c.hand === "left"
         ? "Grip holds · X menu"
@@ -457,12 +470,15 @@ export class XrWalk {
   }
 
   /** The ray tree for the view on screen (built when the view changes). */
-  private rayTree(): { index: RayIndex; skip: Uint8Array } | null {
+  private rayTree(): { index: RayIndex; skip: Uint8Array; faceOf: Int32Array } | null {
     const view = this.host.view();
     if (!view?.mesh) return null;
     if (this.rays?.view !== view) {
       const index = new RayIndex(view.mesh.positions, view.mesh.indices);
-      this.rays = { view, index, skip: new Uint8Array(index.triangles) };
+      // Each triangle's face, for the Faces measure.
+      const faceOf = new Int32Array(index.triangles).fill(-1);
+      view.mesh.faceRanges.forEach((r, f) => faceOf.fill(f, r.start / 3, (r.start + r.count) / 3));
+      this.rays = { view, index, skip: new Uint8Array(index.triangles), faceOf };
       this.markHidden(this.hiddenNow);
     }
     return this.rays;
@@ -920,11 +936,15 @@ export class XrWalk {
   }
 
   /** A dimension: the line, its ends and its length. */
-  private dimension(a: Vec3, b: Vec3): THREE.Object3D[] {
+  private dimension(a: Vec3, b: Vec3, text?: string): THREE.Object3D[] {
     const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]), new THREE.LineBasicMaterial({ color: 0xffd400, depthTest: false }));
     line.renderOrder = 33;
     const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    const label = textSprite(lengthText(len), 260, { bg: "rgba(255,212,0,0.92)", fg: "#111" });
+    const words = text ?? lengthText(len);
+    const label = textSprite(words, Math.max(160, 15 * words.length), { bg: "rgba(255,212,0,0.92)", fg: "#111" });
+    label.userData.card = true;
+    label.material.depthTest = false;
+    label.renderOrder = 37;
     label.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 60 * this.noteScale());
     this.notesGroup.add(line, this.sized(label));
     return [line, label, this.dot(a), this.dot(b)];
@@ -961,6 +981,126 @@ export class XrWalk {
     for (const o of this.measuring.live) o.removeFromParent();
     const at = this.measurePoint(c);
     this.measuring.live = at ? this.dimension(this.measuring.a, at) : [];
+  }
+
+  // Faces: point at a face to see what it is; click it, then another, for what they are to each other.
+
+  /** The face of the model a controller points at, and where (model mm); null on nothing, the lawn or a moved piece. */
+  private faceAt(c: Controller): { index: number; face: FaceInfo; at: Vec3 } | { moved: true } | null {
+    const h = this.cast(c, true);
+    if (!h) return null;
+    if (h.object.userData.item) return { moved: true };
+    const view = this.host.view();
+    const tri = h.faceIndex;
+    const f = this.rays && h.object === this.host.mesh() && tri !== undefined && tri !== null ? this.rays.faceOf[tri] : -1;
+    if (!view || f < 0 || !view.faces[f]) return null;
+    return { index: f, face: view.faces[f], at: this.toModel(h.point) };
+  }
+
+  /** A face lit up: its triangles drawn over it in a see-through colour. */
+  private faceGlow(index: number, color: number, opacity: number): THREE.Mesh | null {
+    const view = this.host.view();
+    if (!view?.mesh) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(itemTriangles(view, { faces: [index] } as VrItem), 3));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
+    m.renderOrder = 32;
+    m.frustumCulled = false;
+    this.notesGroup.add(m);
+    return m;
+  }
+
+  /** A card of what was measured, above a point. */
+  private faceCardSprite(card: FaceCard, at: Vec3, bg = "rgba(255,212,0,0.94)"): THREE.Sprite {
+    const text = [card.title, ...card.lines];
+    // As wide as its longest line needs, so a long line doesn't shrink the writing.
+    const label = textSprite(text.join("\n"), Math.max(260, 13 * Math.max(...text.map((l) => l.length))), { bg, fg: "#111", size: 44 });
+    label.position.set(at[0], at[1], at[2] + 160 * this.noteScale());
+    label.userData.card = true;
+    label.material.depthTest = false;
+    label.renderOrder = 37;
+    this.notesGroup.add(this.sized(label));
+    return label;
+  }
+
+  private clearFaceHover(): void {
+    if (!this.faceHover) return;
+    for (const o of [...this.faceHover.objs, this.faceHover.label]) {
+      o.removeFromParent();
+      if ((o as THREE.Sprite).isSprite) disposeSprite(o as THREE.Sprite);
+      else (o as THREE.Mesh).geometry?.dispose();
+    }
+    this.faceHover = null;
+  }
+
+  /** While measuring faces: the face pointed at lit up, labelled with what it is, or what it is to the first face picked. */
+  private hoverFace(c: Controller): void {
+    const f = this.faceAt(c);
+    if (!f || "moved" in f) return this.clearFaceHover();
+    if (this.faceHover?.index !== f.index) {
+      this.clearFaceHover();
+      const first = this.faceFirst;
+      const view = this.host.view();
+      const text = first && first.index !== f.index && view?.mesh ? `${pairCard(first, f, meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index })).title} · click` : faceName(f.face);
+      const glow = this.faceGlow(f.index, 0x4fc3f7, 0.3);
+      const label = textSprite(text, 300, { bg: "rgba(79,195,247,0.92)", fg: "#111" });
+      label.renderOrder = 38;
+      label.material.depthTest = false;
+      label.userData.card = true;
+      this.notesGroup.add(this.sized(label));
+      this.faceHover = { index: f.index, objs: glow ? [glow] : [], label, text };
+    }
+    this.faceHover.label.position.set(f.at[0], f.at[1], f.at[2] + 90 * this.noteScale());
+  }
+
+  /** A click on a face: the first is measured on its own (and waits for a second); the second measures the two together. */
+  private pickFace(c: Controller): void {
+    const f = this.faceAt(c);
+    if (!f) return;
+    if ("moved" in f) return void this.say("A moved piece: measure it with Points");
+    const view = this.host.view()!;
+    const first = this.faceFirst;
+    this.pulse(c.hand, 0.25, 15);
+    if (!first || first.index === f.index) {
+      if (first) {
+        // The same face again: done with it; the next click starts afresh.
+        this.faceFirst = null;
+        return void this.say("Now click a face to start again");
+      }
+      const card = faceCard(f.face);
+      const glow = this.faceGlow(f.index, 0xffd400, 0.4);
+      const sprite = this.faceCardSprite(card, f.at);
+      this.measures.push({ a: f.at, b: f.at, objs: [...(glow ? [glow] : []), sprite], text: card.title });
+      this.undo.push({ kind: "measure" });
+      this.faceFirst = { index: f.index, face: f.face };
+      this.clearFaceHover();
+      return;
+    }
+    // The second: the first's card gives way to the two together, with the dimension drawn.
+    const closest = view.mesh ? meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index }) : null;
+    const card = pairCard(first, { index: f.index, face: f.face }, closest);
+    const m = this.measures.at(-1)!;
+    const old = m.objs.find((o) => (o as THREE.Sprite).isSprite);
+    if (old) {
+      old.removeFromParent();
+      disposeSprite(old as THREE.Sprite);
+    }
+    const glow = this.faceGlow(f.index, 0xffd400, 0.4);
+    const objs = m.objs.filter((o) => o !== old);
+    if (glow) objs.push(glow);
+    let at = f.at;
+    if (card.line) {
+      objs.push(...this.dimension(card.line.from, card.line.to, card.line.label));
+      at = card.line.from.map((v, i) => (v + card.line!.to[i]) / 2) as Vec3;
+      m.a = card.line.from;
+      m.b = card.line.to;
+    }
+    objs.push(this.faceCardSprite(card, [at[0], at[1], at[2] + 120 * this.noteScale()]));
+    m.objs = objs;
+    m.text = card.title;
+    this.faceFirst = null;
+    this.clearFaceHover();
+    this.say(card.title);
   }
 
   private drawPin(p: VrPin): void {
@@ -1001,6 +1141,7 @@ export class XrWalk {
     } else if (u.kind === "measure") {
       const m = this.measures.pop();
       for (const o of m?.objs ?? []) o.removeFromParent();
+      this.faceFirst = null;
       this.say("Measure taken back");
     } else {
       for (const [k, w] of u.was) {
@@ -1039,6 +1180,18 @@ export class XrWalk {
     o.userData.base = o.scale.clone();
     o.scale.multiplyScalar(this.noteScale());
     return o;
+  }
+  /** Measure cards keep a readable size however far away they are: as big as at 1.5 m, at least. */
+  private sizeCards(): void {
+    const head = this.head();
+    const f = this.noteScale();
+    const p = new THREE.Vector3();
+    for (const o of this.notesGroup.children) {
+      const base = o.userData.base as THREE.Vector3 | undefined;
+      if (!o.userData.card || !base) continue;
+      const d = o.getWorldPosition(p).distanceTo(head) / (this.inspecting ? this.heldPose().scale : 1);
+      o.scale.copy(base).multiplyScalar(f * Math.min(4, Math.max(1, d / 1.5)));
+    }
   }
   private sizeNotes(): void {
     const f = this.noteScale();
@@ -1243,8 +1396,7 @@ export class XrWalk {
       this.menu.buttons = [
         b("tool:measure", "Measure", 0.035, row(0.14), 0.455, this.tool === "measure"),
         b("tool:pin", "Pin", 0.51, row(0.14), 0.455, this.tool === "pin"),
-        b("snap", this.snap ? "Snap: corners, edges" : "Snap: off (free)", 0.035, row(0.27), 0.455, this.snap),
-        b("clearMeasures", `Clear measures (${this.measures.length})`, 0.51, row(0.27), 0.455),
+        ...this.measureButtons(b),
         ...PIN_TAGS.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
         b("oneToOne", `True size (now ${scaleText(s)})`, 0.035, row(0.53), 0.3, Math.abs(s - 1) < 0.005),
         b("bringBack", "Bring it back", 0.35, row(0.53), 0.3),
@@ -1281,8 +1433,7 @@ export class XrWalk {
     this.menu.title = "Cocaide VR";
     this.menu.buttons = [
       ...tools.map(([t, l], i) => b(`tool:${t}`, l, 0.035 + i * 0.235, row(0.14), 0.22, this.tool === t)),
-      b("snap", this.snap ? "Snap: corners, edges" : "Snap: off (free)", 0.035, row(0.27), 0.455, this.snap),
-      b("clearMeasures", `Clear measures (${this.measures.length})`, 0.51, row(0.27), 0.455),
+      ...this.measureButtons(b),
       ...tags.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
       b("showhide", this.hiddenGroups.size ? `Show / hide (${this.hiddenGroups.size} hidden)` : "Show / hide", 0.035, row(0.53), 0.3, this.hiddenGroups.size > 0),
       b("start", "Back to the start", 0.35, row(0.53), 0.3),
@@ -1297,6 +1448,17 @@ export class XrWalk {
       "Move: trigger picks pieces (green), grip moves them, handles turn 10° · A undo · B cut above · Y start",
     ];
     this.menu.draw();
+  }
+
+  /** The menu's measure row: Points or Faces, snapping (points), clear. */
+  private measureButtons(b: (id: string, label: string, x: number, y: number, w: number, on?: boolean) => { id: string; label: string; x: number; y: number; w: number; h: number }) {
+    const on = this.tool === "measure";
+    return [
+      b("measure:points", "Points", 0.035, 0.27, 0.22, on && this.measureMode === "points"),
+      b("measure:faces", "Faces · holes", 0.27, 0.27, 0.22, on && this.measureMode === "faces"),
+      b("snap", this.snap ? "Snap: on" : "Snap: off", 0.505, 0.27, 0.22, this.snap),
+      b("clearMeasures", `Clear (${this.measures.length})`, 0.74, 0.27, 0.225),
+    ];
   }
 
   private toggleMenu(): void {
@@ -1330,10 +1492,16 @@ export class XrWalk {
       this.hiddenGroups.clear();
       this.applyHidden();
     } else if (id.startsWith("show:")) this.toggleShown(id.slice(5));
-    else if (id === "snap") this.snap = !this.snap;
+    else if (id === "measure:points" || id === "measure:faces") {
+      this.measureMode = id === "measure:faces" ? "faces" : "points";
+      this.tool = "measure";
+      this.faceFirst = null;
+      this.say(this.measureMode === "faces" ? "Measure faces: point at one to see it, click two for the gap" : "Measure points: click two points");
+    } else if (id === "snap") this.snap = !this.snap;
     else if (id === "clearMeasures") {
       for (const m of this.measures) for (const o of m.objs) o.removeFromParent();
       this.measures = [];
+      this.faceFirst = null;
       this.undo = this.undo.filter((u) => u.kind !== "measure");
     } else if (id === "roof") this.setRoof(!this.roofOff);
     else if (id === "start") {
@@ -1529,7 +1697,9 @@ export class XrWalk {
           this.pulse(hand);
         }
       } else if (this.tool === "measure") {
-        if (tr === "press") this.measureDown(c);
+        if (this.measureMode === "faces") {
+          if (tr === "press") this.pickFace(c);
+        } else if (tr === "press") this.measureDown(c);
         else if (tr === "release") this.measureUp(c);
       } else if (this.tool === "pin") {
         if (tr === "press") this.dropPin(c);
@@ -1593,6 +1763,7 @@ export class XrWalk {
       if (this.spin && !this.grabs.left && !this.grabs.right) this.spinPart(dt);
       this.sizeNotes();
     }
+    if (this.measures.length || this.faceHover) this.sizeCards();
     // The arc while a trigger is held for teleporting.
     for (const c of this.controllers) if (!this.aiming || this.aiming.hand !== c.hand) c.arc.visible = false;
     if (this.aiming) {
@@ -1616,7 +1787,7 @@ export class XrWalk {
         const h = this.cast(r, this.tool === "move");
         if (h) {
           len = h.distance;
-          const snapAt = this.tool === "measure" ? this.measurePoint(r) : null;
+          const snapAt = this.tool === "measure" && this.measureMode === "points" ? this.measurePoint(r) : null;
           const p = snapAt ? new THREE.Vector3(...snapAt).applyMatrix4(this.zup.matrixWorld) : h.point;
           this.pointer.position.copy(p);
           this.pointer.visible = true;
@@ -1624,7 +1795,9 @@ export class XrWalk {
         }
       }
       r.ray.scale.z = len;
-      if (this.tool === "measure" && !this.menuOpen) this.liveMeasure(r);
+      if (this.tool === "measure" && !this.menuOpen && this.measureMode === "points") this.liveMeasure(r);
+      if (this.tool === "measure" && !this.menuOpen && this.measureMode === "faces") this.hoverFace(r);
+      else this.clearFaceHover();
     }
     // The comfort vignette while walking with the stick.
     if (prefs.vignette && walking > 0) {
@@ -1682,6 +1855,9 @@ export class XrWalk {
       hover: this.menu.hover,
       dollhouse: !!this.dollhouse,
       measures: this.measures.map((m) => Math.round(Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1], m.b[2] - m.a[2]))),
+      measureMode: this.measureMode,
+      cards: this.measures.filter((m) => m.text).map((m) => m.text),
+      faceHover: this.faceHover?.text ?? null,
       pins: this.pins.map((p) => ({ tag: p.tag, at: p.at })),
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
       carrying: this.carry?.key ?? null,
@@ -1704,6 +1880,11 @@ export class XrWalk {
     const { rotY, position } = rigFor(start);
     this.rig.rotation.set(0, rotY, 0);
     this.rig.position.copy(position);
+  }
+  /** For tests: where a point of the model (mm) is in the room (m), to aim a controller at. */
+  worldOf(p: Vec3): number[] {
+    this.zup.updateWorldMatrix(true, false);
+    return this.zup.localToWorld(new THREE.Vector3(...p)).toArray();
   }
   /** For tests: a menu button pressed, as the right trigger on it would. */
   press(id: string): void {

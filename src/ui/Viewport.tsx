@@ -2795,6 +2795,7 @@ export function Viewport({
         vrState: () => xr.state(),
         vrPress: (id: string) => xr.press(id),
         vrStandAt: (at: [number, number, number], heading: number) => xr.standAt({ at, heading }),
+        vrWorldOf: (p: [number, number, number]) => xr.worldOf(p),
         vrNotes: () => vrNotes.children.length,
         /** What is lit up for a moment (a row hovered in a tree): how many faces and edges. */
         peeked: () => ({ faces: peek.filter((t) => t.kind === "face").length, edges: peek.filter((t) => t.kind === "edge").length }),
