@@ -16,6 +16,7 @@ import type { RebuildView } from "../../worker/protocol";
 import { componentStates, facesAlign, floatingGroups, motionWords, partSize, partDocument, partDocuments, partName, placed, solveAssembly, type AssemblySolve } from "../../assembly/model";
 import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, type Clash, type MateSuggestion } from "../../assembly/features";
 import { stepPart } from "../files/plan";
+import { mateFlips, startingWay } from "../../assembly/flip";
 import { measurePick } from "../evaluate/measure";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
 import { asAppearance, PartAppearances } from "../../appearance";
@@ -45,6 +46,8 @@ interface Picked {
   kind: "plane" | "axis" | "other";
   normal?: Vec3;
   point?: Vec3;
+  /** A round face's radius. */
+  radius?: number;
 }
 
 export function useAssembly(o: AssemblyOptions) {
@@ -234,6 +237,29 @@ export function useAssembly(o: AssemblyOptions) {
     }
   };
 
+  /** A part in the file (not this one) replaced by a newer copy from a file: every component using it updates, where it is; mates find their faces again where they still exist. */
+  const replacePart = async (key: string) => {
+    if (key === SELF || !doc) return o.notice("That is this document's own part: change it on the Model tab.", "info");
+    const file = await pickFile(".json,.cocaide.json,application/json,.step,.stp,.STEP,.STP");
+    if (!file) return;
+    let part: Record<string, unknown>;
+    try {
+      const text = await file.text();
+      if (/\.(step|stp)$/i.test(file.name)) {
+        const made = stepPart(file.name, text);
+        if (typeof made === "string") return o.notice(made, "error");
+        part = made.doc as Record<string, unknown>;
+      } else part = JSON.parse(text);
+    } catch (e) {
+      return o.notice(`${file.name} couldn't be read as a part: ${(e as Error).message}`, "error");
+    }
+    const was = partName(doc as Record<string, unknown>, key);
+    const users = (asm?.components ?? []).filter((k) => k.part === key).map((k) => k.id);
+    const problem = o.dispatch({ type: "setAssemblyPart", key, part });
+    if (problem) return o.notice(`Not replaced: ${problem}`, "error");
+    o.notice(`Replaced ${was} with ${file.name}: ${users.join(", ")} ${users.length === 1 ? "updates" : "update"} where ${users.length === 1 ? "it is" : "they are"}. A mate whose face is gone shows red in the tree: pick its faces again.`);
+  };
+
   const insertExample = (name: string) => {
     const text = o.examples[name];
     if (text) insertDocument(JSON.parse(text));
@@ -254,7 +280,7 @@ export function useAssembly(o: AssemblyOptions) {
       const f = v.faces.find((x) => x.index === owner.local)!;
       const ref: MateRef = { component: k.id, face: syn.selector as MateRef["face"] };
       if (f.type === "plane" && f.normal) return { ref, kind: "plane", normal: rotate(P.R, f.normal), point: pointTo(P, f.point ?? f.centroid) };
-      if (f.cylinder) return { ref, kind: "axis", normal: rotate(P.R, f.cylinder.axis), point: pointTo(P, f.cylinder.origin) };
+      if (f.cylinder) return { ref, kind: "axis", normal: rotate(P.R, f.cylinder.axis), point: pointTo(P, f.cylinder.origin), radius: f.cylinder.radius };
       return { ref, kind: "other" };
     }
     const e = v.edges.find((x) => x.index === owner.local)!;
@@ -283,7 +309,7 @@ export function useAssembly(o: AssemblyOptions) {
 
   /** Which mates the selection can make (all of them want two things of two components). */
   const mateChoices = useMemo((): { type: MateType; ok: boolean; why?: string }[] => {
-    const types: MateType[] = ["coincident", "concentric", "distance", "parallel", "perpendicular", "angle"];
+    const types: MateType[] = ["coincident", "concentric", "distance", "parallel", "perpendicular", "angle", "tangent"];
     if (typeof picks === "string") return types.map((type) => ({ type, ok: false, why: picks }));
     if (picks.length !== 2) return types.map((type) => ({ type, ok: false, why: "Select two faces or edges, one on each of two components (Ctrl-click the second)" }));
     if (picks[0].ref.component === picks[1].ref.component) return types.map((type) => ({ type, ok: false, why: "Both are on one component: pick the second on another component" }));
@@ -291,9 +317,12 @@ export function useAssembly(o: AssemblyOptions) {
     const planes = a === "plane" && b === "plane";
     const axes = a === "axis" && b === "axis";
     const oriented = a !== "other" && b !== "other";
+    // Tangent: a round face (it has a radius) and a flat or round face.
+    const [ra, rb] = [picks[0].radius !== undefined, picks[1].radius !== undefined];
+    const tangent = (ra && rb) || (ra && b === "plane") || (rb && a === "plane");
     return types.map((type) => {
-      const ok = type === "concentric" ? axes : type === "coincident" || type === "distance" ? oriented : oriented;
-      return { type, ok, ...(ok ? {} : { why: type === "concentric" ? "Concentric takes two round faces or edges (or axes)" : "Pick flat or round faces, or straight or round edges" }) };
+      const ok = type === "concentric" ? axes : type === "tangent" ? tangent : oriented;
+      return { type, ok, ...(ok ? {} : { why: type === "concentric" ? "Concentric takes two round faces or edges (or axes)" : type === "tangent" ? "Tangent takes a round face and a flat or round face (faces, not edges)" : "Pick flat or round faces, or straight or round edges" }) };
     }).sort((x, y) => (planes ? 0 : 0) + Number(y.ok) - Number(x.ok) || 0);
   }, [picks]);
 
@@ -312,6 +341,8 @@ export function useAssembly(o: AssemblyOptions) {
     }
     // Planes facing the same way stay so; otherwise they meet face to face.
     if ((type === "coincident" || type === "distance") && a.kind === "plane" && b.kind === "plane" && facesAlign(a.normal, b.normal)) m.aligned = true;
+    // Directions (parallel, concentric, edges in line) the way they are now; a tangent on the side it is on.
+    Object.assign(m, startingWay(type, a, b));
     const next = { ...base(), mates: [...(base().mates ?? []), m] };
     if (!commit(next, `Mate ${m.id}`)) {
       setSelection(EMPTY_SELECTION);
@@ -324,6 +355,9 @@ export function useAssembly(o: AssemblyOptions) {
     const next = { ...a, components: a.components.map((k) => (k.id === id ? clean({ ...k, ...patch }) : k)) };
     commit(next, label, withSolve);
   };
+
+  /** A mate's flips (see src/assembly/flip), from how the solver holds it and where its components are. */
+  const flipsOf = (m: Mate) => mateFlips(m, solve?.held.find((h) => h.id === m.id), solve?.placements);
 
   const editMate = (id: string, patch: Partial<Mate>, label: string) => {
     const a = base();
@@ -625,9 +659,11 @@ export function useAssembly(o: AssemblyOptions) {
     insertSelf,
     insertFile,
     insertExample,
+    replacePart,
     mate,
     editComponent,
     editMate,
+    flipsOf,
     remove,
     resolve,
     interference,

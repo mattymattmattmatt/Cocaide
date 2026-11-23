@@ -273,3 +273,86 @@ test("measuring in the assembly: a face of one component, then the gap to a face
   await page.getByTestId("asm-measure").click();
   await expect(page.getByTestId("asm-measure-dock")).toHaveCount(0);
 });
+
+test("a part carried in the file: Edit part opens it on the Model tab, Done puts it back (Cancel doesn't, a reload keeps the edit); Replace from file swaps in a newer copy where it is", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-self").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-example-flange").click();
+  await expect(page.getByTestId("asm-component-flange-1")).toBeVisible();
+  const parts = async () => ((await savedDocument(page)).assembly as { parts: Record<string, { name: string; features: unknown[] }> }).parts;
+  await page.getByTestId("asm-component-flange-1").locator(".asm-row").click();
+  // Edit part: the flange on the Model tab, the bar saying so; renamed, then Done.
+  await page.getByTestId("asm-edit-part").click();
+  await expect(page.getByTestId("part-edit-bar")).toContainText("flange");
+  await expect(page.getByTestId("doc-name")).toHaveValue("flange");
+  await expect(page.getByTestId("mode-model")).toHaveAttribute("aria-selected", "true");
+  await page.getByTestId("doc-name").fill("flange-mk2");
+  await page.getByTestId("doc-name").press("Enter");
+  await page.getByTestId("part-edit-done").click();
+  await expect(page.getByTestId("part-edit-bar")).toHaveCount(0);
+  await expect(page.getByTestId("doc-name")).toHaveValue("bracket");
+  await expect(page.getByTestId("mode-assembly")).toHaveAttribute("aria-selected", "true");
+  await expect.poll(async () => (await parts()).flange.name).toBe("flange-mk2");
+  await expect(page.getByTestId("asm-bom")).toContainText("flange-mk2");
+  // Undo takes the edit back in one step.
+  await page.getByTestId("undo").click();
+  await expect.poll(async () => (await parts()).flange.name).toBe("flange");
+  await page.getByTestId("redo").click();
+  await expect.poll(async () => (await parts()).flange.name).toBe("flange-mk2");
+  // Edited again and Cancelled: nothing changes. Reloaded in the middle: still editing, the assembly kept aside.
+  await page.getByTestId("asm-component-flange-1").locator(".asm-row").click();
+  await page.getByTestId("asm-edit-part").click();
+  await page.getByTestId("doc-name").fill("scrap");
+  await page.getByTestId("doc-name").press("Enter");
+  await page.reload();
+  await expect(page.getByTestId("part-edit-bar")).toContainText("flange-mk2");
+  await expect(page.getByTestId("doc-name")).toHaveValue("scrap");
+  await page.getByTestId("part-edit-cancel").click();
+  await expect(page.getByTestId("doc-name")).toHaveValue("bracket");
+  await expect.poll(async () => (await parts()).flange.name).toBe("flange-mk2");
+  // Replace from file: a newer flange (renamed) in its place; the components stay where they are.
+  const before = ((await savedDocument(page)).assembly as Asm).components;
+  const newer = { ...(await parts()).flange, name: "flange-mk3" };
+  await page.getByTestId("asm-component-flange-1").locator(".asm-row").click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByTestId("asm-replace-part").click();
+  await (await chooser).setFiles({ name: "flange-mk3.cocaide.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(newer)) });
+  await expect.poll(async () => (await parts()).flange.name).toBe("flange-mk3");
+  await expect(page.getByTestId("notice")).toContainText("Replaced flange-mk2 with flange-mk3.cocaide.json");
+  expect(((await savedDocument(page)).assembly as Asm).components).toEqual(before);
+  // This part's own component: Edit part goes to the Model tab; no Replace.
+  await page.getByTestId("asm-component-bracket-1").locator(".asm-row").click();
+  await expect(page.getByTestId("asm-replace-part")).toHaveCount(0);
+  await page.getByTestId("asm-edit-part").click();
+  await expect(page.getByTestId("mode-model")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("part-edit-bar")).toHaveCount(0);
+});
+
+test("a parallel mate starts the way the faces sit (aligned) and Flip turns the second part over (anti-aligned)", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+  }
+  await expect(page.getByTestId("asm-component-bracket-2")).toBeVisible();
+  await page.waitForTimeout(1500);
+  await clickAt(page, [-20, 10, 6]);
+  await clickAt(page, [70, 10, 6], true);
+  await expect(page.getByTestId("asm-mate-btn-parallel")).toBeEnabled();
+  await expect(page.getByTestId("asm-mate-btn-tangent")).toBeDisabled();
+  await page.getByTestId("asm-mate-btn-parallel").click();
+  await expect.poll(async () => (await assembly(page))?.mates?.[0]).toMatchObject({ type: "parallel", aligned: true });
+  await expect(page.getByTestId("asm-prop-mate-way")).toHaveText("Aligned (the same way)");
+  await page.getByTestId("asm-prop-mate-flip").click();
+  await expect.poll(async () => (await assembly(page))?.mates?.[0]).toMatchObject({ type: "parallel", opposed: true });
+  await expect(page.getByTestId("asm-prop-mate-way")).toHaveText("Anti-aligned (opposite ways)");
+  // The second bracket is upside down now: turned half round about X or Y.
+  await expect.poll(async () => {
+    const r = (await assembly(page))?.components[1].rotation ?? [0, 0, 0];
+    return Math.round(Math.abs(Math.cos((r[0] * Math.PI) / 180) * Math.cos((r[1] * Math.PI) / 180)));
+  }).toBe(1);
+  const r = (await assembly(page))?.components[1].rotation ?? [0, 0, 0];
+  expect(Math.cos((r[0] * Math.PI) / 180) * Math.cos((r[1] * Math.PI) / 180)).toBeLessThan(-0.99);
+});

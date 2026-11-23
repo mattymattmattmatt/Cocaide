@@ -60,7 +60,7 @@ export function solveAssembly(asm: Assembly, views: Map<string, PartTopology>): 
       problems.push({ id: m.id, error: Infinity, ok: false, problem: typeof ga === "string" ? ga : (gb as string) });
       continue;
     }
-    solverMates.push({ id: m.id, type: m.type, a: { component: m.a.component, geom: ga }, b: { component: m.b.component, geom: gb }, ...(m.value !== undefined ? { value: m.value } : {}), ...(m.aligned ? { aligned: true } : {}) });
+    solverMates.push({ id: m.id, type: m.type, a: { component: m.a.component, geom: ga }, b: { component: m.b.component, geom: gb }, ...(m.value !== undefined ? { value: m.value } : {}), ...(m.aligned ? { aligned: true } : {}), ...(m.opposed ? { opposed: true } : {}), ...(m.flip ? { flip: true } : {}) });
   }
   // A group mated together but to nothing fixed keeps its first component where it is, so the rest come to it (none tilts the pair).
   if (!fixed.size && asm.components.length) fixed.add(asm.components[0].id);

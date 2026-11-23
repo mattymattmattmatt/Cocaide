@@ -32,6 +32,7 @@ const MATE_WORDS: Record<MateType, { label: string; icon: IconName; hint: string
   parallel: { label: "Parallel", icon: "parallel", hint: "Two faces or edges kept parallel" },
   perpendicular: { label: "Perpendicular", icon: "perpendicular", hint: "Two faces or edges kept square" },
   angle: { label: "Angle", icon: "angle", hint: "Two faces or edges at an angle" },
+  tangent: { label: "Tangent", icon: "tangent", hint: "A round face touching a flat one, or two round faces touching (side by side, or flipped: one inside the other)" },
 };
 
 export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing, section }: { a: AssemblyWorkspace; undo(): void; redo(): void; canUndo: boolean; canRedo: boolean; onDrawing?: () => void; section?: SectionControl }) {
@@ -146,8 +147,11 @@ export function AssemblyMain({
   section,
   sectionView,
   vr,
+  onEditPart,
 }: {
   a: AssemblyWorkspace;
+  /** Edit a part carried in the file (by its key) on the Model tab; "self" goes to the Model tab. */
+  onEditPart?: (key: string) => void;
   /** The VR walkthrough's start point and placing it. */
   vr?: VrViewProps;
   display?: Parameters<typeof Viewport>[0]["display"];
@@ -284,13 +288,13 @@ export function AssemblyMain({
             />
           </div>
         )}
-        <AssemblyProps a={a} />
+        <AssemblyProps a={a} onEditPart={onEditPart} />
       </SidePanel>
     </>
   );
 }
 
-function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
+function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (key: string) => void }) {
   const k = a.item?.kind === "component" ? a.asm?.components.find((x) => x.id === a.item!.id) : undefined;
   const m = a.item?.kind === "mate" ? a.asm?.mates?.find((x) => x.id === a.item!.id) : undefined;
   const st = m ? a.solve?.mates.find((x) => x.id === m.id) : undefined;
@@ -321,6 +325,18 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
         <Field label="Part">
           <span className="readout">{k.part === SELF ? `${a.partName(k.part)} (this part)` : a.partName(k.part)}</span>
         </Field>
+        <div className="asm-part-actions">
+          <button type="button" onClick={() => onEditPart?.(k.part)} title={k.part === SELF ? "This document's own part: on the Model tab" : "Open this part on the Model tab, change it with every tool, then Done puts it back here (every component using it updates)"} data-testid="asm-edit-part">
+            <Icon name="model" size={14} />
+            Edit part
+          </button>
+          {k.part !== SELF && (
+            <button type="button" onClick={() => void a.replacePart(k.part)} title="Put a newer copy of the part in from its file (.cocaide.json or STEP): every component using it updates, where it is; mates find their faces again where they still exist" data-testid="asm-replace-part">
+              <Icon name="open" size={14} />
+              Replace from file…
+            </button>
+          )}
+        </div>
         <label className="check">
           <input type="checkbox" checked={!!k.fixed} onChange={(e) => a.editComponent(k.id, { fixed: e.target.checked }, `${e.target.checked ? "Fix" : "Float"} ${k.id}`, false)} data-testid="asm-prop-fixed" />
           Fixed (mates move the others to it)
@@ -408,12 +424,40 @@ function AssemblyProps({ a }: { a: AssemblyWorkspace }) {
             <NumberInput value={m.value ?? 0} onCommit={(v) => a.editMate(m.id, { value: Number(v) }, `Edit ${m.id}`)} testId="asm-prop-mate-value" />
           </Field>
         )}
-        {(m.type === "coincident" || m.type === "distance") && (
-          <label className="check">
-            <input type="checkbox" checked={!!m.aligned} onChange={(e) => a.editMate(m.id, { aligned: e.target.checked }, `Flip ${m.id}`)} data-testid="asm-prop-mate-aligned" />
-            Aligned (faces the same way, not face to face)
-          </label>
-        )}
+        {(() => {
+          // The way round, and a flip (aligned or opposed, face to face or the same way, an angle the other way, a distance's side).
+          const f = a.flipsOf(m);
+          return (
+            <>
+              {f.flip && (
+                <Field label="Way round">
+                  <span className="asm-flip">
+                    <span className="readout" data-testid="asm-prop-mate-way">
+                      {f.flip.now}
+                    </span>
+                    <button type="button" onClick={() => a.editMate(m.id, f.flip!.patch, `Flip ${m.id}`)} title="The other way round" data-testid="asm-prop-mate-flip">
+                      <Icon name="mirror" size={14} />
+                      Flip
+                    </button>
+                  </span>
+                </Field>
+              )}
+              {f.side && (
+                <Field label="Side">
+                  <span className="asm-flip">
+                    <span className="readout" data-testid="asm-prop-mate-side">
+                      {f.side.now}
+                    </span>
+                    <button type="button" onClick={() => a.editMate(m.id, f.side!.patch, `Flip ${m.id} to the other side`)} title="To the other side of the first face" data-testid="asm-prop-mate-flip-side">
+                      <Icon name="mirror" size={14} />
+                      Flip side
+                    </button>
+                  </span>
+                </Field>
+              )}
+            </>
+          );
+        })()}
         <label className="check">
           <input type="checkbox" checked={!!m.suppressed} onChange={(e) => a.editMate(m.id, { suppressed: e.target.checked }, `${e.target.checked ? "Suppress" : "Unsuppress"} ${m.id}`)} data-testid="asm-prop-mate-suppressed" />
           Suppressed

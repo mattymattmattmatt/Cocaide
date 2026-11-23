@@ -34,7 +34,7 @@ export function mateGeometry(ref: MateRef, part: PartTopology | undefined): Mate
     if (r.matches.length !== 1) return `${ref.component}: the face selector matched ${r.matches.length} faces (wanted ${describeWanted(ref.face, 1)}): pick the face again`;
     const f = r.matches[0];
     if (f.type === "plane" && f.normal) return { kind: "plane", p: f.point ?? f.centroid, n: f.normal };
-    if (f.cylinder) return { kind: "axis", p: f.cylinder.origin, d: f.cylinder.axis };
+    if (f.cylinder) return { kind: "axis", p: f.cylinder.origin, d: f.cylinder.axis, r: f.cylinder.radius };
     return `${ref.component}: that face is neither flat nor round, so it has no plane or axis to mate`;
   }
   if (ref.edge) {

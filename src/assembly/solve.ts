@@ -8,7 +8,7 @@ import type { MateType, Vec3 } from "../doc/types";
 import { apply, mul, pointTo, rotationOf, type Placement } from "./transform";
 
 /** A thing a mate holds, in its part's frame: a plane (a point on it and its outward normal), an axis (a point and its direction) or a point. */
-export type MateGeom = { kind: "plane"; p: Vec3; n: Vec3 } | { kind: "axis"; p: Vec3; d: Vec3 } | { kind: "point"; p: Vec3 };
+export type MateGeom = { kind: "plane"; p: Vec3; n: Vec3 } | { kind: "axis"; p: Vec3; d: Vec3; /** A round face's radius (tangent mates). */ r?: number } | { kind: "point"; p: Vec3 };
 
 export interface SolverMate {
   id: string;
@@ -17,6 +17,8 @@ export interface SolverMate {
   b: { component: string; geom: MateGeom };
   value?: number;
   aligned?: boolean;
+  opposed?: boolean;
+  flip?: boolean;
 }
 
 export interface MateStatus {
@@ -51,7 +53,7 @@ const across = (v: Vec3, u: Vec3): Vec3 => sub(v, scale(u, dot(v, u)));
 /** The geometry in the assembly, as its component is placed. */
 function world(g: MateGeom, p: Placement): MateGeom {
   if (g.kind === "plane") return { kind: "plane", p: pointTo(p, g.p), n: unit(apply(p.R, g.n)) };
-  if (g.kind === "axis") return { kind: "axis", p: pointTo(p, g.p), d: unit(apply(p.R, g.d)) };
+  if (g.kind === "axis") return { kind: "axis", p: pointTo(p, g.p), d: unit(apply(p.R, g.d)), ...(g.r !== undefined ? { r: g.r } : {}) };
   return { kind: "point", p: pointTo(p, g.p) };
 }
 
@@ -63,7 +65,10 @@ const KIND = { plane: "a plane", axis: "an axis", point: "a point" } as const;
  * a and b are in the assembly.
  */
 export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | string {
-  const d = m.value ?? 0;
+  // Flipped: the other side of the first face.
+  const d = (m.value ?? 0) * (m.flip ? -1 : 1);
+  // Two directions: the same way (aligned), opposite (opposed), or either (cross: parallel).
+  const together = (u: Vec3, v: Vec3): number[] => (m.aligned ? sub(u, v) : m.opposed ? add(u, v) : cross(u, v));
   const type = m.type;
   // Put the plane first, then the axis, then the point, so each pair is one case.
   const order = { plane: 0, axis: 1, point: 2 };
@@ -88,29 +93,42 @@ export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | s
       if (pair === "plane-axis" && x.kind === "plane" && y.kind === "axis") return [dot(y.d, x.n), dot(sub(y.p, x.p), x.n) - d];
       if (pair === "plane-point" && x.kind === "plane" && y.kind === "point") return [dot(sub(y.p, x.p), x.n) - d];
       if (pair === "axis-axis" && x.kind === "axis" && y.kind === "axis") {
-        if (type === "distance") return [...cross(x.d, y.d), Math.hypot(...across(sub(y.p, x.p), x.d)) - d];
-        return [...cross(x.d, y.d), ...across(sub(y.p, x.p), x.d)];
+        if (type === "distance") return [...together(x.d, y.d), Math.hypot(...across(sub(y.p, x.p), x.d)) - Math.abs(d)];
+        return [...together(x.d, y.d), ...across(sub(y.p, x.p), x.d)];
       }
       if (pair === "axis-point" && x.kind === "axis" && y.kind === "point") {
         const off = across(sub(y.p, x.p), x.d);
-        return type === "distance" ? [Math.hypot(...off) - d] : off;
+        return type === "distance" ? [Math.hypot(...off) - Math.abs(d)] : off;
       }
       if (pair === "point-point" && x.kind === "point" && y.kind === "point") {
         const v = sub(y.p, x.p);
-        return type === "distance" ? [Math.hypot(...v) - d] : v;
+        return type === "distance" ? [Math.hypot(...v) - Math.abs(d)] : v;
       }
       return bad(type === "distance" ? "a distance apart" : "coincident");
     }
     case "concentric": {
       if (pair !== "axis-axis" || x.kind !== "axis" || y.kind !== "axis") return `concentric takes two axes (round faces, round edges, straight edges or axes): ${bad("concentric")}`;
-      return [...cross(x.d, y.d), ...across(sub(y.p, x.p), x.d)];
+      return [...together(x.d, y.d), ...across(sub(y.p, x.p), x.d)];
+    }
+    case "tangent": {
+      // A flat face touching a round one: the axis along the face, the radius in front of it (behind it, flipped).
+      if (pair === "plane-axis" && x.kind === "plane" && y.kind === "axis") {
+        if (y.r === undefined) return "tangent takes a round face (not an edge or axis) and a flat or round face";
+        return [dot(y.d, x.n), dot(sub(y.p, x.p), x.n) - (m.flip ? -y.r : y.r)];
+      }
+      // Two round faces touching: side by side (the radii apart), or one inside the other (flipped: their difference).
+      if (pair === "axis-axis" && x.kind === "axis" && y.kind === "axis") {
+        if (x.r === undefined || y.r === undefined) return "tangent takes round faces (not edges or axes)";
+        return [...cross(x.d, y.d), Math.hypot(...across(sub(y.p, x.p), x.d)) - (m.flip ? Math.abs(x.r - y.r) : x.r + y.r)];
+      }
+      return `tangent takes a round face and a flat or round face: ${bad("tangent")}`;
     }
     case "parallel": {
       const u = x.kind === "plane" ? x.n : x.kind === "axis" ? x.d : null;
       const v = y.kind === "plane" ? y.n : y.kind === "axis" ? y.d : null;
       if (!u || !v) return bad("parallel");
       // A plane and an axis are parallel when the axis lies along the plane.
-      return pair === "plane-axis" ? [dot(u, v)] : cross(u, v);
+      return pair === "plane-axis" ? [dot(u, v)] : together(u, v);
     }
     case "perpendicular": {
       const u = x.kind === "plane" ? x.n : x.kind === "axis" ? x.d : null;

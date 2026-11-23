@@ -2687,3 +2687,13 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
   height: 40px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font: inherit; font-weight: 600;
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.25); cursor: pointer;
 }
+.asm-flip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.asm-flip button { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; font-size: 12px; }
+.asm-flip button:hover { border-color: var(--accent); }
+.asm-part-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 6px; }
+.asm-part-actions button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; font-size: 12px; }
+.asm-part-actions button:hover { border-color: var(--accent); }
+.part-edit-bar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--info-bg); border-bottom: 1px solid var(--accent); font-size: 13px; }
+.part-edit-bar .sep { flex: 1; }
+.part-edit-bar button { height: 28px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; font: inherit; }
+.part-edit-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }

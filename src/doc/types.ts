@@ -96,7 +96,7 @@ export interface AssemblyComponent {
   appearance?: Appearance;
 }
 
-export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric"] as const;
+export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric", "tangent"] as const;
 export type MateType = (typeof MATE_TYPES)[number];
 
 /** What a mate holds on a component: one of its faces or edges (selectors, as features use, on the component's part), or one of its default planes or axes. */
@@ -115,8 +115,15 @@ export interface Mate {
   b: MateRef;
   /** distance: mm between them; angle: degrees. */
   value?: number;
-  /** Faces and planes face each other unless "aligned" (normals the same way); for parallel and concentric, either way holds. */
+  /**
+   * Which way round. Coincident and distance between flat faces: face to face unless "aligned" (normals the same way).
+   * Parallel, concentric, and coincident axes or edges: "aligned" (the same direction) or "opposed" (opposite); with
+   * neither, either way holds (as files from before the flip were).
+   */
   aligned?: boolean;
+  opposed?: boolean;
+  /** distance: on the other side of the first face; tangent: on the other side of the flat face, or two cylinders one inside the other. */
+  flip?: boolean;
   suppressed?: boolean;
 }
 

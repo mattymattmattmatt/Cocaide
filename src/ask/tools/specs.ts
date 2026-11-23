@@ -65,20 +65,22 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
   {
     name: "addMate",
     description:
-      'Mate two things of two components; the components that aren\'t fixed move until every mate holds. Refused (nothing changes) when the new mate can\'t hold, saying why. Types: "coincident" (flat faces against each other — facing unless "aligned": true; an edge or axis on a face; two axes in line), "distance" (value mm between faces), "concentric" (two round faces or edges on one axis: a pin in a hole), "parallel", "perpendicular", "angle" (value degrees). Take a and b from mateFeatures or suggestMates.',
+      'Mate two things of two components; the components that aren\'t fixed move until every mate holds. Refused (nothing changes) when the new mate can\'t hold, saying why. Types: "coincident" (flat faces against each other — facing unless "aligned": true; an edge or axis on a face; two axes in line), "distance" (value mm between faces), "concentric" (two round faces or edges on one axis: a pin in a hole), "parallel", "perpendicular", "angle" (value degrees), "tangent" (a round face on a flat one, or two round faces touching; "flip": true for the flat face\'s other side, or one round face inside the other). Which way round: "aligned": true (the same direction) or "opposed": true (opposite) for parallel, concentric and axes in line; "flip": true puts a distance on the other side of the first face. Take a and b from mateFeatures or suggestMates.',
     input: {
       type: z.string(),
       a: mateRefSpec,
       b: mateRefSpec,
       value: z.number().optional().describe("distance: mm; angle: degrees"),
-      aligned: z.boolean().optional().describe("coincident or distance between flat faces: the faces face the same way, not each other"),
+      aligned: z.boolean().optional().describe("coincident or distance between flat faces: the faces face the same way, not each other; parallel, concentric, axes in line: the same direction"),
+      opposed: z.boolean().optional().describe("parallel, concentric, axes in line: opposite directions (neither aligned nor opposed: either way)"),
+      flip: z.boolean().optional().describe("distance: the other side of the first face; tangent: the flat face's other side, or one round face inside the other"),
       id: z.string().optional(),
     },
     readOnly: false,
   },
   {
     name: "editMate",
-    description: 'Change a mate: { "id", "patch": { "type"?, "value"?, "aligned"?, "suppressed"?, "a"?, "b"? } } (flip a coincident by toggling aligned). Refused when it then can\'t hold.',
+    description: 'Change a mate: { "id", "patch": { "type"?, "value"?, "aligned"?, "opposed"?, "flip"?, "suppressed"?, "a"?, "b"? } } (flip flat faces by toggling aligned; directions by swapping aligned and opposed; an angle by 180 − value; a distance\'s side or a tangent by flip). Refused when it then can\'t hold.',
     input: { id: z.string(), patch: obj },
     readOnly: false,
   },

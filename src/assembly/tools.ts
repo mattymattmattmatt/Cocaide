@@ -217,7 +217,7 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       if (typeof rb === "string") return fail(rb);
       const id = typeof a.id === "string" && a.id ? a.id : nextMateId(base, String(a.type));
       if ((base.mates ?? []).some((m) => m.id === id)) return fail(`a mate "${id}" exists already`);
-      const m = { id, type: a.type, a: ra, b: rb, ...(a.value !== undefined ? { value: a.value } : {}), ...(a.aligned === true ? { aligned: true } : {}) } as Mate;
+      const m = { id, type: a.type, a: ra, b: rb, ...(a.value !== undefined ? { value: a.value } : {}), ...(a.aligned === true ? { aligned: true } : {}), ...(a.opposed === true ? { opposed: true } : {}), ...(a.flip === true ? { flip: true } : {}) } as Mate;
       const next = { ...base, mates: [...(base.mates ?? []), m] };
       const c = new Checker("document");
       validateAssembly(next, c);
@@ -228,9 +228,9 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
     case "editMate": {
       const m = (base.mates ?? []).find((x) => x.id === a.id);
       if (!m) return fail(`no mate "${String(a.id)}" (mates: ${(base.mates ?? []).map((x) => x.id).join(", ") || "none"})`);
-      if (!isObject(a.patch)) return fail('patch must be an object: { "type"?, "value"?, "aligned"?, "suppressed"?, "a"?, "b"? }');
+      if (!isObject(a.patch)) return fail('patch must be an object: { "type"?, "value"?, "aligned"?, "opposed"?, "flip"?, "suppressed"?, "a"?, "b"? }');
       const nm = { ...m, ...(a.patch as Partial<Mate>) } as Mate;
-      for (const key of ["aligned", "suppressed"] as const) if (!nm[key]) delete nm[key];
+      for (const key of ["aligned", "opposed", "flip", "suppressed"] as const) if (!nm[key]) delete nm[key];
       if (nm.value === null) delete nm.value;
       const next = { ...base, mates: (base.mates ?? []).map((x) => (x.id === m.id ? nm : x)) };
       const c = new Checker("document");

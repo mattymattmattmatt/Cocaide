@@ -65,7 +65,7 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
       raw.mates.forEach((x, i) => {
         const at = `assembly.mates[${i}]`;
         if (!isObject(x)) return c.fail(at, `must be a mate { "id", "type", "a", "b" } (got ${describe(x)})`);
-        c.keys(x, at, ["id", "type", "a", "b", "value", "aligned", "suppressed"]);
+        c.keys(x, at, ["id", "type", "a", "b", "value", "aligned", "opposed", "flip", "suppressed"]);
         if (typeof x.id !== "string" || !x.id) return c.fail(`${at}.id`, `must be a name (got ${describe(x.id)})`);
         if (mates.some((m) => m.id === x.id)) return c.fail(`${at}.id`, `"${x.id}" is another mate's id`);
         if (!MATE_TYPES.includes(x.type as never)) return c.fail(`${at}.type`, `must be ${MATE_TYPES.map((t) => `"${t}"`).join(", ")} (got ${describe(x.type)})`);
@@ -79,7 +79,8 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
         if (x.type === "angle" && ((x.value as number) < 0 || (x.value as number) > 180)) return c.fail(`${at}.value`, `must be 0 to 180 degrees (got ${x.value})`);
         const mate: Mate = { id: x.id, type: x.type as Mate["type"], a, b };
         if (needs) mate.value = x.value as number;
-        for (const k of ["aligned", "suppressed"] as const) {
+        if (x.aligned === true && x.opposed === true) return c.fail(at, "can't be both aligned and opposed: one way round or the other");
+        for (const k of ["aligned", "opposed", "flip", "suppressed"] as const) {
           if (x[k] === undefined) continue;
           if (typeof x[k] !== "boolean") c.fail(`${at}.${k}`, `must be true or false (got ${describe(x[k])})`);
           else if (x[k]) mate[k] = true;

@@ -2704,6 +2704,69 @@ export function App() {
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
   /** Share project: send the open project to another device by a code, or get one. */
   const [shareOpen, setShareOpen] = useState(false);
+
+  // ------------------------------------------------------------ editing a part carried in an assembly
+  /**
+   * A part of the assembly opened on the Model tab (Assembly > Edit part): the assembly as it was, kept aside (and in
+   * the browser, so a reload in the middle keeps it), until Done puts the part back (one undo step) or Cancel drops it.
+   */
+  const PART_EDIT_KEY = "cocaide.partEdit.v1";
+  const [partEdit, setPartEdit] = useState<{ key: string; name: string; assembly: string; outer: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem(PART_EDIT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+  const startPartEdit = (key: string) => {
+    if (key === "self") return setMode("model");
+    if (!parsed.ok) return setNotice({ kind: "error", text: `Fix the document first: ${parsed.error}` });
+    const outerDoc = parsed.value as Record<string, unknown>;
+    const part = ((outerDoc.assembly as { parts?: Record<string, Record<string, unknown>> } | undefined)?.parts ?? {})[key];
+    if (!part) return setNotice({ kind: "error", text: `There is no part "${key}" in the file.` });
+    const pe = { key, name: typeof part.name === "string" ? part.name : key, assembly: typeof outerDoc.name === "string" ? outerDoc.name : "assembly", outer: formatDocument(outerDoc) };
+    try {
+      localStorage.setItem(PART_EDIT_KEY, JSON.stringify(pe));
+    } catch {
+      /* private window: kept for this page only */
+    }
+    setPartEdit(pe);
+    needsFit.current = true;
+    d.load(formatDocument(part));
+    setSelectedFeature(null);
+    setSketch(null);
+    setMode("model");
+    setNotice({ kind: "info", text: `Editing ${pe.name}, a part of ${pe.assembly}: Done puts it back in the assembly.` });
+  };
+  const finishPartEdit = (keep: boolean) => {
+    const pe = partEdit;
+    if (!pe) return;
+    let next: RawDocument | null = null;
+    if (keep) {
+      if (!parsed.ok) return setNotice({ kind: "error", text: `Fix the part first: ${parsed.error}` });
+      const outer = parseDocumentText(pe.outer);
+      if (!outer.ok) return setNotice({ kind: "error", text: `The assembly kept aside can't be read: ${outer.error}` });
+      const o = structuredClone(outer.value) as Record<string, unknown>;
+      const asm = o.assembly as { parts?: Record<string, unknown> };
+      asm.parts = { ...(asm.parts ?? {}), [pe.key]: parsed.value };
+      next = o as RawDocument;
+    }
+    try {
+      localStorage.removeItem(PART_EDIT_KEY);
+    } catch {
+      /* private window */
+    }
+    setPartEdit(null);
+    needsFit.current = true;
+    d.load(pe.outer);
+    // Done: the part back in the assembly, as one undo step on top of the assembly as it was.
+    if (next) d.replaceDoc(next);
+    setSelectedFeature(null);
+    setSketch(null);
+    setMode("assembly");
+    setNotice({ kind: "info", text: keep ? `${pe.name} is back in ${pe.assembly}: every component using it updated (Ctrl+Z takes the change back).` : `Stopped editing ${pe.name}: ${pe.assembly} is as it was.` });
+  };
   /** The tab Settings opens on: the assistant's when an ask needs it set up, else Units. */
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
   const openSettings = (tab: SettingsTab) => {
@@ -3285,11 +3348,26 @@ export function App() {
         )}
 
         {noticeBar}
+        {partEdit && (
+          <div className="part-edit-bar" role="status" data-testid="part-edit-bar">
+            <Icon name="model" size={16} />
+            <span>
+              Editing <b>{partEdit.name}</b>, a part of the assembly <b>{partEdit.assembly}</b>
+            </span>
+            <span className="sep" />
+            <button onClick={() => finishPartEdit(false)} title="Leave the part as it was in the assembly" data-testid="part-edit-cancel">
+              Cancel
+            </button>
+            <button className="primary" onClick={() => finishPartEdit(true)} title="Put the part back in the assembly: every component using it updates" data-testid="part-edit-done">
+              Done
+            </button>
+          </div>
+        )}
 
 
         <main className={`workspace${leftHidden ? " no-left" : ""}${dockClass(dock)}`}>
           {mode === "assembly" && !sketch ? (
-            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} section={asmSectionCtl} sectionView={asmSectionView} vr={vrProps(true)} />
+            <AssemblyMain a={assemblyWs} display={display} onDisplay={setDisplay} section={asmSectionCtl} sectionView={asmSectionView} vr={vrProps(true)} onEditPart={startPartEdit} />
           ) : mode === "drawing" && !sketch ? (
             <DrawingMain
               ws={drawingWs}
