@@ -1,0 +1,879 @@
+{
+  "version": 1,
+  "units": "mm",
+  "name": "crankcase",
+  "properties": {
+    "description": "A single-cylinder engine and its intake manifold, assembled with every kind of mate: coincident, distance (with a limit on the piston's stroke), parallel, perpendicular, angle (turns the crank: change it and the piston follows), concentric (the piston's rotation locked), tangent (the pipe on its stand) and lock (the wrist pin to the piston)."
+  },
+  "appearance": { "color": "#8d9095", "finish": "matte" },
+  "features": [
+    {
+      "id": "sk1",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+      "entities": [
+        { "id": "r", "type": "rect", "center": [0, 0], "w": 120, "h": 80 }
+      ]
+    },
+    {
+      "id": "ext2",
+      "op": "extrude",
+      "sketch": "sk1",
+      "distance": 80
+    },
+    {
+      "id": "sk3",
+      "op": "sketch",
+      "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, 40, 0] },
+      "entities": [
+        { "id": "c", "type": "circle", "center": [0, 40], "radius": 10 }
+      ]
+    },
+    {
+      "id": "cut4",
+      "op": "cut",
+      "sketch": "sk3",
+      "distance": 80
+    }
+  ],
+  "assembly": {
+    "parts": {
+      "cylinder": {
+        "version": 1,
+        "units": "mm",
+        "name": "cylinder",
+        "properties": { "description": "Cylinder: Ø52 bore, two Ø8 head-bolt holes" },
+        "appearance": { "color": "#c9ccd1", "finish": "satin" },
+        "features": [
+          {
+            "id": "sk5",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 80] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [0, -62], "w": 70, "h": 70 }
+            ]
+          },
+          { "id": "ext6", "op": "extrude", "sketch": "sk5", "distance": 120 },
+          {
+            "id": "sk7",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 80] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, -62], "radius": 26 }
+            ]
+          },
+          { "id": "cut8", "op": "cut", "sketch": "sk7", "distance": 120 },
+          {
+            "id": "sk9",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 80] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [27, -89], "radius": 4 }
+            ]
+          },
+          { "id": "cut10", "op": "cut", "sketch": "sk9", "distance": 120 },
+          {
+            "id": "sk11",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 80] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [-27, -35], "radius": 4 }
+            ]
+          },
+          { "id": "cut12", "op": "cut", "sketch": "sk11", "distance": 120 }
+        ]
+      },
+      "crankshaft": {
+        "version": 1,
+        "units": "mm",
+        "name": "crankshaft",
+        "properties": { "description": "Crankshaft: Ø20 journal, web, Ø20 crankpin on a 25 throw" },
+        "appearance": { "color": "#4b4f56", "finish": "metallic" },
+        "features": [
+          {
+            "id": "sk13",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, 45, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 40], "radius": 10 }
+            ]
+          },
+          { "id": "ext14", "op": "extrude", "sketch": "sk13", "distance": 95 },
+          {
+            "id": "sk15",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 25] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [0, -50], "w": 30, "h": 10 }
+            ]
+          },
+          { "id": "ext16", "op": "extrude", "sketch": "sk15", "distance": 50 },
+          {
+            "id": "sk17",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -55, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 65], "radius": 10 }
+            ]
+          },
+          { "id": "ext18", "op": "extrude", "sketch": "sk17", "distance": 17 }
+        ]
+      },
+      "cylinder_head": {
+        "version": 1,
+        "units": "mm",
+        "name": "cylinder head",
+        "properties": { "description": "Cylinder head: 15 plate, two Ø8 bolt holes" },
+        "appearance": { "color": "#2f3237", "finish": "satin" },
+        "features": [
+          {
+            "id": "sk35",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 200] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [0, -62], "w": 70, "h": 70 }
+            ]
+          },
+          { "id": "ext36", "op": "extrude", "sketch": "sk35", "distance": 15 },
+          {
+            "id": "sk37",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 200] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [27, -89], "radius": 4 }
+            ]
+          },
+          { "id": "cut38", "op": "cut", "sketch": "sk37", "distance": 15 },
+          {
+            "id": "sk39",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 200] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [-27, -35], "radius": 4 }
+            ]
+          },
+          { "id": "cut40", "op": "cut", "sketch": "sk39", "distance": 15 }
+        ]
+      },
+      "head_bolt": {
+        "version": 1,
+        "units": "mm",
+        "name": "head bolt",
+        "properties": { "description": "Head bolt: Ø8 × 30 shank, Ø14 × 6 head" },
+        "appearance": { "color": "#c0a062", "finish": "metallic" },
+        "features": [
+          {
+            "id": "sk41",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, -30] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 0], "radius": 4 }
+            ]
+          },
+          { "id": "ext42", "op": "extrude", "sketch": "sk41", "distance": 30 },
+          {
+            "id": "sk43",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 0], "radius": 7 }
+            ]
+          },
+          { "id": "ext44", "op": "extrude", "sketch": "sk43", "distance": 6 }
+        ]
+      },
+      "piston": {
+        "version": 1,
+        "units": "mm",
+        "name": "piston",
+        "properties": { "description": "Piston: Ø50 × 40, slotted for the rod, Ø12 wrist-pin hole" },
+        "appearance": { "color": "#dfe2e6", "finish": "metallic" },
+        "features": [
+          {
+            "id": "sk29",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 155] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, -62], "radius": 25 }
+            ]
+          },
+          { "id": "ext30", "op": "extrude", "sketch": "sk29", "distance": 40 },
+          {
+            "id": "sk31",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 155] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [0, -62], "w": 52, "h": 10 }
+            ]
+          },
+          { "id": "cut32", "op": "cut", "sketch": "sk31", "distance": 33 },
+          {
+            "id": "sk33",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -37, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 175], "radius": 6 }
+            ]
+          },
+          { "id": "cut34", "op": "cut", "sketch": "sk33", "distance": 50 }
+        ]
+      },
+      "wrist_pin": {
+        "version": 1,
+        "units": "mm",
+        "name": "wrist pin",
+        "properties": { "description": "Wrist pin: Ø12 × 46" },
+        "appearance": { "color": "#b7bcc2", "finish": "metallic" },
+        "features": [
+          {
+            "id": "skp",
+            "op": "sketch",
+            "plane": {
+              "type": "datum",
+              "normal": [0, 1, 0],
+              "origin": [0, -85, 0],
+              "xDir": [1, 0, 0]
+            },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, -175], "radius": 6 }
+            ]
+          },
+          { "id": "pin", "op": "extrude", "sketch": "skp", "distance": 46 }
+        ]
+      },
+      "con_rod": {
+        "version": 1,
+        "units": "mm",
+        "name": "con rod",
+        "properties": {
+          "description": "Connecting rod: 110 centres, Ø20 big end, Ø12 small end, 8 thick"
+        },
+        "appearance": { "color": "#9aa3ad", "finish": "metallic" },
+        "features": [
+          {
+            "id": "sk19",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -58, 0] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [0, 120], "w": 16, "h": 110 }
+            ]
+          },
+          { "id": "ext20", "op": "extrude", "sketch": "sk19", "distance": 8 },
+          {
+            "id": "sk21",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -58, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 65], "radius": 16 }
+            ]
+          },
+          { "id": "ext22", "op": "extrude", "sketch": "sk21", "distance": 8 },
+          {
+            "id": "sk23",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -58, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 175], "radius": 12 }
+            ]
+          },
+          { "id": "ext24", "op": "extrude", "sketch": "sk23", "distance": 8 },
+          {
+            "id": "sk25",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -58, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 65], "radius": 10 }
+            ]
+          },
+          { "id": "cut26", "op": "cut", "sketch": "sk25", "distance": 8 },
+          {
+            "id": "sk27",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, -1, 0], "origin": [0, -58, 0] },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [0, 175], "radius": 6 }
+            ]
+          },
+          { "id": "cut28", "op": "cut", "sketch": "sk27", "distance": 8 }
+        ]
+      },
+      "intake_manifold": {
+        "version": 1,
+        "units": "mm",
+        "name": "intake manifold",
+        "properties": { "description": "Intake manifold: flange, Ø30 pipe bored Ø22" },
+        "appearance": { "color": "#d58a3a", "finish": "satin" },
+        "features": [
+          {
+            "id": "sk45",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 120] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [40, -62], "w": 10, "h": 50 }
+            ]
+          },
+          { "id": "ext46", "op": "extrude", "sketch": "sk45", "distance": 50 },
+          {
+            "id": "sk47",
+            "op": "sketch",
+            "plane": {
+              "type": "datum",
+              "normal": [1, 0, 0],
+              "origin": [45, 0, 0],
+              "xDir": [0, 1, 0]
+            },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [-62, 145], "radius": 15 }
+            ]
+          },
+          { "id": "ext48", "op": "extrude", "sketch": "sk47", "distance": 60 },
+          {
+            "id": "sk49",
+            "op": "sketch",
+            "plane": {
+              "type": "datum",
+              "normal": [1, 0, 0],
+              "origin": [35, 0, 0],
+              "xDir": [0, 1, 0]
+            },
+            "entities": [
+              { "id": "c", "type": "circle", "center": [-62, 145], "radius": 11 }
+            ]
+          },
+          { "id": "cut50", "op": "cut", "sketch": "sk49", "distance": 70 }
+        ]
+      },
+      "pipe_stand": {
+        "version": 1,
+        "units": "mm",
+        "name": "pipe stand",
+        "properties": { "description": "Pipe stand: the manifold's pipe rests on it" },
+        "appearance": { "color": "#3f6fb5", "finish": "satin" },
+        "features": [
+          {
+            "id": "sk51",
+            "op": "sketch",
+            "plane": { "type": "datum", "normal": [0, 0, 1], "origin": [0, 0, 0] },
+            "entities": [
+              { "id": "r", "type": "rect", "center": [90, -62], "w": 20, "h": 36 }
+            ]
+          },
+          { "id": "ext52", "op": "extrude", "sketch": "sk51", "distance": 130 }
+        ]
+      }
+    },
+    "components": [
+      { "id": "crankcase-1", "part": "self", "fixed": true },
+      { "id": "cylinder-1", "part": "cylinder", "transparent": true },
+      { "id": "crankshaft-1", "part": "crankshaft" },
+      { "id": "cylinder_head-1", "part": "cylinder_head" },
+      { "id": "head_bolt-1", "part": "head_bolt", "at": [27, -89, 215] },
+      { "id": "head_bolt-2", "part": "head_bolt", "at": [-27, -35, 215] },
+      { "id": "piston-1", "part": "piston" },
+      { "id": "wrist_pin-1", "part": "wrist_pin" },
+      { "id": "con_rod-1", "part": "con_rod" },
+      { "id": "intake_manifold-1", "part": "intake_manifold" },
+      { "id": "pipe_stand-1", "part": "pipe_stand" }
+    ],
+    "mates": [
+      {
+        "id": "coincident1",
+        "type": "coincident",
+        "a": {
+          "component": "crankcase-1",
+          "face": { "type": "planar", "normal": [0, 0, 1], "pick": "nearest", "near": [0, 0, 80] }
+        },
+        "b": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, -1],
+            "pick": "nearest",
+            "near": [0, -62, 80]
+          }
+        }
+      },
+      {
+        "id": "coincident2",
+        "type": "coincident",
+        "a": { "component": "crankcase-1", "datum": "Right" },
+        "b": { "component": "cylinder-1", "datum": "Right" },
+        "aligned": true
+      },
+      {
+        "id": "distance1",
+        "type": "distance",
+        "a": {
+          "component": "crankcase-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [0, -40, 40]
+          }
+        },
+        "b": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [0, -97, 140]
+          }
+        },
+        "value": 57,
+        "aligned": true
+      },
+      {
+        "id": "parallel1",
+        "type": "parallel",
+        "a": {
+          "component": "crankcase-1",
+          "face": { "type": "planar", "normal": [1, 0, 0], "pick": "nearest", "near": [60, 0, 40] }
+        },
+        "b": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [1, 0, 0],
+            "pick": "nearest",
+            "near": [35, -62, 140]
+          }
+        },
+        "aligned": true
+      },
+      {
+        "id": "concentric1",
+        "type": "concentric",
+        "a": {
+          "component": "crankcase-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 10, "near": [0, 0, 40] }
+        },
+        "b": {
+          "component": "crankshaft-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 10, "near": [0, 0, 40] }
+        },
+        "aligned": true
+      },
+      {
+        "id": "distance2",
+        "type": "distance",
+        "a": {
+          "component": "crankcase-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [0, -40, 40]
+          }
+        },
+        "b": {
+          "component": "crankshaft-1",
+          "face": { "type": "planar", "normal": [0, 1, 0], "pick": "nearest", "near": [0, -45, 50] }
+        },
+        "value": 5
+      },
+      {
+        "id": "angle1",
+        "type": "angle",
+        "a": {
+          "component": "crankcase-1",
+          "face": { "type": "planar", "normal": [0, 0, 1], "pick": "nearest", "near": [0, 0, 80] }
+        },
+        "b": {
+          "component": "crankshaft-1",
+          "face": {
+            "type": "planar",
+            "normal": [1, 0, 0],
+            "pick": "nearest",
+            "near": [15, -50, 50]
+          }
+        },
+        "value": 90
+      },
+      {
+        "id": "coincident3",
+        "type": "coincident",
+        "a": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 200]
+          }
+        },
+        "b": {
+          "component": "cylinder_head-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, -1],
+            "pick": "nearest",
+            "near": [0, -62, 200]
+          }
+        }
+      },
+      {
+        "id": "concentric2",
+        "type": "concentric",
+        "a": {
+          "component": "cylinder-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [27, -89, 140] }
+        },
+        "b": {
+          "component": "cylinder_head-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [27, -89, 207] }
+        },
+        "aligned": true
+      },
+      {
+        "id": "concentric3",
+        "type": "concentric",
+        "a": {
+          "component": "cylinder-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [-27, -35, 140] }
+        },
+        "b": {
+          "component": "cylinder_head-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [-27, -35, 207] }
+        },
+        "aligned": true
+      },
+      {
+        "id": "concentric4",
+        "type": "concentric",
+        "a": {
+          "component": "cylinder_head-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [27, -89, 207] }
+        },
+        "b": {
+          "component": "head_bolt-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [0, 0, -15] }
+        },
+        "aligned": true
+      },
+      {
+        "id": "coincident4",
+        "type": "coincident",
+        "a": {
+          "component": "cylinder_head-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 215]
+          }
+        },
+        "b": {
+          "component": "head_bolt-1",
+          "face": { "type": "planar", "normal": [0, 0, -1], "pick": "nearest", "near": [5.5, 0, 0] }
+        }
+      },
+      {
+        "id": "concentric5",
+        "type": "concentric",
+        "a": {
+          "component": "cylinder_head-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [-27, -35, 207] }
+        },
+        "b": {
+          "component": "head_bolt-2",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 4, "near": [0, 0, -15] }
+        },
+        "aligned": true
+      },
+      {
+        "id": "coincident5",
+        "type": "coincident",
+        "a": {
+          "component": "cylinder_head-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 215]
+          }
+        },
+        "b": {
+          "component": "head_bolt-2",
+          "face": { "type": "planar", "normal": [0, 0, -1], "pick": "nearest", "near": [5.5, 0, 0] }
+        }
+      },
+      {
+        "id": "lock1",
+        "type": "lock",
+        "a": {
+          "component": "piston-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 25, "near": [0, -62, 175] }
+        },
+        "b": {
+          "component": "wrist_pin-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 6, "near": [0, -62, 175] }
+        },
+        "relative": { "at": [0, 0, 0], "rotation": [0, 0, 0] }
+      },
+      {
+        "id": "concentric6",
+        "type": "concentric",
+        "a": {
+          "component": "cylinder-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 26, "near": [0, -62, 140] }
+        },
+        "b": {
+          "component": "piston-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 25, "near": [0, -62, 175] }
+        },
+        "relative": { "at": [0, 0, 30], "rotation": [0, 0, 0] },
+        "lockRotation": true,
+        "aligned": true
+      },
+      {
+        "id": "concentric7",
+        "type": "concentric",
+        "a": {
+          "component": "crankshaft-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 10, "near": [0, -63, 65] }
+        },
+        "b": {
+          "component": "con_rod-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 10, "near": [0, -62, 65] }
+        },
+        "aligned": true
+      },
+      {
+        "id": "distance3",
+        "type": "distance",
+        "a": {
+          "component": "crankshaft-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [0, -55, 50]
+          }
+        },
+        "b": {
+          "component": "con_rod-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 1, 0],
+            "pick": "nearest",
+            "near": [0, -58, 120]
+          }
+        },
+        "value": 3
+      },
+      {
+        "id": "concentric8",
+        "type": "concentric",
+        "a": {
+          "component": "wrist_pin-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 6, "near": [0, -62, 175] }
+        },
+        "b": {
+          "component": "con_rod-1",
+          "face": { "type": "cylindrical", "pick": "nearest", "radius": 6, "near": [0, -62, 175] }
+        },
+        "opposed": true
+      },
+      {
+        "id": "distance4",
+        "type": "distance",
+        "a": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 200]
+          }
+        },
+        "b": {
+          "component": "piston-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 195]
+          }
+        },
+        "value": 5,
+        "min": 0,
+        "max": 60,
+        "aligned": true,
+        "flip": true
+      },
+      {
+        "id": "coincident6",
+        "type": "coincident",
+        "a": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [1, 0, 0],
+            "pick": "nearest",
+            "near": [35, -62, 140]
+          }
+        },
+        "b": {
+          "component": "intake_manifold-1",
+          "face": {
+            "type": "planar",
+            "normal": [-1, 0, 0],
+            "pick": "nearest",
+            "near": [35, -62, 160]
+          }
+        }
+      },
+      {
+        "id": "distance5",
+        "type": "distance",
+        "a": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 200]
+          }
+        },
+        "b": {
+          "component": "intake_manifold-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [40, -62, 170]
+          }
+        },
+        "value": 30,
+        "aligned": true,
+        "flip": true
+      },
+      {
+        "id": "distance6",
+        "type": "distance",
+        "a": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [0, -97, 140]
+          }
+        },
+        "b": {
+          "component": "intake_manifold-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [40, -87, 145]
+          }
+        },
+        "value": 10,
+        "aligned": true,
+        "flip": true
+      },
+      {
+        "id": "perpendicular1",
+        "type": "perpendicular",
+        "a": {
+          "component": "cylinder-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [0, -62, 200]
+          }
+        },
+        "b": {
+          "component": "intake_manifold-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [40, -87, 145]
+          }
+        }
+      },
+      {
+        "id": "coincident7",
+        "type": "coincident",
+        "a": {
+          "component": "crankcase-1",
+          "face": { "type": "planar", "normal": [0, 0, -1], "pick": "nearest", "near": [0, 0, 0] }
+        },
+        "b": {
+          "component": "pipe_stand-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, -1],
+            "pick": "nearest",
+            "near": [90, -62, 0]
+          }
+        },
+        "aligned": true
+      },
+      {
+        "id": "distance7",
+        "type": "distance",
+        "a": {
+          "component": "crankcase-1",
+          "face": { "type": "planar", "normal": [1, 0, 0], "pick": "nearest", "near": [60, 0, 40] }
+        },
+        "b": {
+          "component": "pipe_stand-1",
+          "face": {
+            "type": "planar",
+            "normal": [-1, 0, 0],
+            "pick": "nearest",
+            "near": [80, -62, 65]
+          }
+        },
+        "value": 20
+      },
+      {
+        "id": "distance8",
+        "type": "distance",
+        "a": {
+          "component": "crankcase-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [0, -40, 40]
+          }
+        },
+        "b": {
+          "component": "pipe_stand-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, -1, 0],
+            "pick": "nearest",
+            "near": [90, -80, 65]
+          }
+        },
+        "value": 40,
+        "aligned": true
+      },
+      {
+        "id": "tangent1",
+        "type": "tangent",
+        "a": {
+          "component": "pipe_stand-1",
+          "face": {
+            "type": "planar",
+            "normal": [0, 0, 1],
+            "pick": "nearest",
+            "near": [90, -62, 130]
+          }
+        },
+        "b": {
+          "component": "intake_manifold-1",
+          "face": { "type": "cylindrical", "radius": 15, "pick": "nearest", "near": [75, -62, 145] }
+        }
+      }
+    ]
+  }
+}

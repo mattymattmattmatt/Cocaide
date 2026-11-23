@@ -527,3 +527,14 @@ test("dragging a part pulls the parts connected to it along, as far as their mat
   await page.getByTestId("undo").click();
   await expect.poll(async () => JSON.stringify(await comps())).toBe(JSON.stringify(before));
 });
+
+test("the engine example opens on its Assembly tab: eleven parts, every kind of mate, every mate holding", async ({ page }) => {
+  await page.locator("select").first().selectOption("engine (assembly)");
+  await expect(page.getByTestId("mode-assembly")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-testid^="asm-component-"]')).toHaveCount(11, { timeout: 120_000 });
+  const mates = page.locator(".asm-mate-row");
+  await expect.poll(async () => mates.count(), { timeout: 60_000 }).toBeGreaterThan(25);
+  // Built and solved: no mate shows as failing.
+  await expect.poll(async () => page.locator(".asm-mate-row.failed").count(), { timeout: 60_000 }).toBe(0);
+  for (const kind of ["Coincident", "Distance", "Parallel", "Perpendicular", "Angle", "Concentric, rotation locked", "Tangent", "Lock"]) await expect(page.getByTestId("assembly-tree")).toContainText(kind);
+});

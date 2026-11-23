@@ -12,6 +12,7 @@ import plateText from "../../examples/mounting-plate.cocaide.json?raw";
 import standText from "../../examples/stand.cocaide.json?raw";
 import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
+import engineText from "../../examples/engine.cocaide.json?raw";
 import type { DrawingGeometry } from "../ask/kernel";
 import type { ProjectedView } from "../kernel/drawingViews";
 import { featureKind, isDrawingTarget, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
@@ -165,7 +166,10 @@ const EXAMPLES: Record<string, string> = {
   "stand (two bodies)": standText,
   "members (weldment)": framingText,
   "table frame (weldment)": tableText,
+  "engine (assembly)": engineText,
 };
+/** The examples that are parts (an assembly can't go into another as a part). */
+const PART_EXAMPLES = Object.fromEntries(Object.entries(EXAMPLES).filter(([, t]) => !t.includes('"assembly"')));
 const STORAGE_KEY = "cocaide.document.v1";
 const REBUILD_DELAY_MS = 250;
 /** In the drawing, how long the model is still before the sheets not on screen are projected. */
@@ -276,7 +280,7 @@ export function App() {
     dispatch: d.dispatch,
     kernel,
     notice: (text, kind) => setNotice({ kind: kind ?? "info", text }),
-    examples: EXAMPLES,
+    examples: PART_EXAMPLES,
     active: mode === "assembly",
   });
   /** The views projected for the drawing, for the geometry and view directions in `key`. */
@@ -3277,7 +3281,11 @@ export function App() {
                 aria-label="Open an example"
                 value=""
                 onChange={(e) => {
-                  if (e.target.value) replaceDocument(EXAMPLES[e.target.value], `Opened example "${e.target.value}"`);
+                  if (e.target.value) {
+                    replaceDocument(EXAMPLES[e.target.value], `Opened example "${e.target.value}"`);
+                    // An assembly opens on its Assembly tab.
+                    if (EXAMPLES[e.target.value].includes('"assembly"')) setMode("assembly");
+                  }
                 }}
               >
                 <option value="">Examples</option>
