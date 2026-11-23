@@ -15,35 +15,32 @@ const cyl = (index: number, radius: number, origin: [number, number, number], co
 });
 
 describe("VR face measure", () => {
-  it("names a face with its size", () => {
-    expect(faceName(cyl(0, 6, [0, 0, 0]))).toBe("Hole Ø12");
-    expect(faceName(cyl(0, 20, [0, 0, 0], false))).toBe("Round Ø40");
-    expect(faceName(cyl(0, 5, [0, 0, 0], true, Math.PI / 2))).toBe("Fillet R5");
-    expect(faceName(plane(0, [0, 0, 1], [0, 0, 0]))).toBe("Flat face");
+  it("names a face short, with its size", () => {
+    expect(faceName(cyl(0, 6, [0, 0, 0]))).toBe("Ø12 hole");
+    expect(faceName(cyl(0, 20, [0, 0, 0], false))).toBe("Ø40 round");
+    expect(faceName(cyl(0, 5, [0, 0, 0], true, Math.PI / 2))).toBe("R5 fillet");
+    expect(faceName(plane(0, [0, 0, 1], [0, 0, 0]))).toBe("flat face");
   });
-  it("a hole: its diameter and depth; a flat face: its area and how it lies", () => {
-    expect(faceCard(cyl(0, 3.3, [0, 0, 0]))).toEqual({ title: "Hole Ø6.6", lines: ["Depth 30 mm · radius 3.3 mm"] });
-    expect(faceCard(plane(0, [0, 0, 1], [0, 0, 0], 3_200_000))).toEqual({ title: "Flat face", lines: ["Area 3.20 m²", "Level, facing up"] });
-    expect(faceCard(plane(0, [1, 0, 0], [0, 0, 0], 2500)).lines).toEqual(["Area 25 cm²", "Upright (plumb)"]);
+  it("a hole: its diameter big, its depth under it; a flat face: its area and how it lies", () => {
+    expect(faceCard(cyl(0, 3.3, [0, 0, 0]))).toEqual({ value: "Ø6.6", caption: "hole · 30 mm deep", title: "Ø6.6 hole · 30 mm deep" });
+    expect(faceCard(plane(0, [0, 0, 1], [0, 0, 0], 3_200_000))).toMatchObject({ value: "3.20 m²", caption: "flat · level" });
+    expect(faceCard(plane(0, [1, 0, 0], [0, 0, 0], 2500))).toMatchObject({ value: "25 cm²", caption: "flat · plumb" });
   });
   it("two parallel flat faces: the gap square to them, drawn", () => {
     const c = pairCard({ index: 0, face: plane(0, [0, 0, 1], [0, 0, 6]) }, { index: 1, face: plane(1, [0, 0, -1], [0, 0, 0]) }, { distance: 6, a: [0, 0, 6], b: [0, 0, 0] });
-    expect(c.title).toBe("Gap 6 mm");
-    expect(c.line?.label).toBe("6 mm");
-    expect(c.lines.at(-1)).toBe("Flat face → Flat face");
+    expect([c.value, c.caption]).toEqual(["6 mm", "gap"]);
+    expect(c.line).toBeDefined();
   });
   it("two holes: centre to centre, and wall to wall", () => {
     const c = pairCard({ index: 0, face: cyl(0, 3, [0, 0, 0]) }, { index: 1, face: cyl(1, 3, [50, 0, 0]) }, { distance: 44, a: [3, 0, 10], b: [47, 0, 10] });
-    expect(c.title).toBe("Centres 50 mm");
-    expect(c.lines).toContain("Wall to wall 44 mm");
+    expect([c.value, c.caption]).toEqual(["50 mm", "centres · 44 mm wall to wall"]);
   });
   it("faces at an angle: the closest points and the angle", () => {
     const c = pairCard({ index: 0, face: plane(0, [0, 0, 1], [0, 0, 0]) }, { index: 1, face: plane(1, [1, 0, 0], [100, 0, 50]) }, { distance: 1250, a: [0, 0, 0], b: [1250, 0, 0] });
-    expect(c.title).toBe("Closest 1,250 mm (1.25 m)");
-    expect(c.lines).toContain("Angle 90°");
-    expect(c.line).toEqual({ from: [0, 0, 0], to: [1250, 0, 0], label: "1,250 mm (1.25 m)" });
+    expect([c.value, c.caption]).toEqual(["1,250 mm", "closest · 90°"]);
+    expect(c.line).toEqual({ from: [0, 0, 0], to: [1250, 0, 0] });
   });
-  it("lengths: tenths under 100 mm, whole mm, then metres", () => {
-    expect([mm(6.25), mm(245.4), mm(2450)]).toEqual(["6.3 mm", "245 mm", "2,450 mm (2.45 m)"]);
+  it("lengths: tenths under 100 mm, whole mm, then metres from 10 m", () => {
+    expect([mm(6.25), mm(245.4), mm(2450), mm(12400)]).toEqual(["6.3 mm", "245 mm", "2,450 mm", "12.40 m"]);
   });
 });

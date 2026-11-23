@@ -8,20 +8,24 @@ import type { FaceInfo } from "../../kernel/topology";
 import { pairRows, type MeasureItem } from "../evaluate/measure";
 
 export interface FaceCard {
-  /** The headline: "Hole Ø12", "Gap 245 mm". */
+  /** The number, big: "Ø100", "1,050 mm", "2.50 m²". */
+  value: string;
+  /** A few words under it: "hole · 100 mm deep", "gap", "closest · 90°". */
+  caption: string;
+  /** Both on one line, as said or listed: "Ø100 hole · 100 mm deep". */
   title: string;
-  /** What else is worth knowing, a line each. */
-  lines: string[];
-  /** The dimension line to draw (model mm), with its label. */
-  line?: { from: Vec3; to: Vec3; label: string };
+  /** The dimension line to draw (model mm). */
+  line?: { from: Vec3; to: Vec3 };
 }
 
-/** A length as VR shows it: to a tenth of a millimetre under 100, whole millimetres up to a metre, then metres too. */
+const card = (value: string, caption: string, line?: FaceCard["line"]): FaceCard => ({ value, caption, title: `${value} ${caption}`, ...(line ? { line } : {}) });
+
+/** A length as VR shows it: tenths under 100 mm, whole millimetres under 10 m, then metres. */
 export function mm(v: number): string {
   const a = Math.abs(v);
   if (a < 100) return `${Math.round(v * 10) / 10 + 0} mm`;
-  const r = Math.round(v);
-  return a >= 1000 ? `${r.toLocaleString("en-AU")} mm (${(r / 1000).toFixed(2)} m)` : `${r} mm`;
+  if (a < 10_000) return `${Math.round(v).toLocaleString("en-AU")} mm`;
+  return `${(v / 1000).toFixed(2)} m`;
 }
 const dia = (r: number) => `Ø${Math.round(r * 20) / 10 + 0}`;
 const deg = (v: number) => `${Math.round(v * 10) / 10 + 0}°`;
@@ -30,42 +34,36 @@ function area(a: number): string {
   if (a >= 1000) return `${Math.round(a / 10) / 10 + 0} cm²`;
   return `${Math.round(a)} mm²`;
 }
+const full = (f: FaceInfo) => !!f.cylinder && f.cylinder.span > 2 * Math.PI - 1e-3;
 
-/** The face's kind in a word or two, with its size: "Hole Ø12", "Round Ø40", "Fillet R5", "Flat face". */
+/** What a face is, short, with its size: "Ø100 hole", "Ø40 round", "R5 fillet", "flat face". */
 export function faceName(f: FaceInfo): string {
   const c = f.cylinder;
-  if (c) {
-    const full = c.span > 2 * Math.PI - 1e-3;
-    if (!full) return `${c.concave ? "Fillet" : "Round edge"} R${Math.round(c.radius * 10) / 10 + 0}`;
-    return `${c.concave ? "Hole" : "Round"} ${dia(c.radius)}`;
-  }
-  if (f.type === "plane") return "Flat face";
-  if (f.type === "cone") return "Cone face";
-  return "Curved face";
+  if (c) return full(f) ? `${dia(c.radius)} ${c.concave ? "hole" : "round"}` : `R${Math.round(c.radius * 10) / 10 + 0} ${c.concave ? "fillet" : "round edge"}`;
+  return f.type === "plane" ? "flat face" : f.type === "cone" ? "cone" : "curved face";
 }
 
-/** One face on its own. */
+/** How a flat face lies: level, plumb or its slope. */
+function lie(n: Vec3): string {
+  const up = n[2];
+  if (Math.abs(up) > 0.999) return "level";
+  if (Math.abs(up) < 0.001) return "plumb";
+  return `${deg((Math.acos(Math.min(1, Math.abs(up))) * 180) / Math.PI)} slope`;
+}
+
+/** One face on its own: a hole's diameter and depth, a fillet's radius, a flat face's area and lie. */
 export function faceCard(f: FaceInfo): FaceCard {
   const c = f.cylinder;
-  const lines: string[] = [];
   if (c) {
-    const len = Math.abs(c.axial[1] - c.axial[0]);
-    const full = c.span > 2 * Math.PI - 1e-3;
-    if (full) {
-      lines.push(`${c.concave ? "Depth" : "Length"} ${mm(len)} · radius ${mm(c.radius)}`);
-    } else lines.push(`${dia(c.radius)} if it went all the way round · ${deg((c.span * 180) / Math.PI)} of it · ${mm(len)} long`);
-  } else if (f.type === "plane") {
-    lines.push(`Area ${area(f.area)}`);
-    if (f.normal) {
-      const n = f.normal;
-      const up = n[2];
-      lines.push(Math.abs(up) > 0.999 ? (up > 0 ? "Level, facing up" : "Level, facing down") : Math.abs(up) < 0.001 ? "Upright (plumb)" : `Sloping ${deg((Math.acos(Math.min(1, Math.abs(up))) * 180) / Math.PI)} from level`);
-    }
-  } else lines.push(`Area ${area(f.area)}`);
-  return { title: faceName(f), lines };
+    const len = mm(Math.abs(c.axial[1] - c.axial[0]));
+    if (full(f)) return card(dia(c.radius), c.concave ? `hole · ${len} deep` : `round · ${len} long`);
+    return card(`R${Math.round(c.radius * 10) / 10 + 0}`, c.concave ? "fillet" : "round edge");
+  }
+  if (f.type === "plane") return card(area(f.area), f.normal ? `flat · ${lie(f.normal)}` : "flat");
+  return card(area(f.area), f.type === "cone" ? "cone" : "curved face");
 }
 
-/** Two faces: the gap square to them when they are parallel, the centres for round ones, the closest points, the angle. */
+/** Two faces: the gap square to them when they are parallel, the centres for round ones, else the closest points. */
 export function pairCard(a: { index: number; face: FaceInfo }, b: { index: number; face: FaceInfo }, closest: Closest | null): FaceCard {
   const ia: MeasureItem = { kind: "face", index: a.index, face: a.face };
   const ib: MeasureItem = { kind: "face", index: b.index, face: b.face };
@@ -77,28 +75,14 @@ export function pairCard(a: { index: number; face: FaceInfo }, b: { index: numbe
   const angle = v("angle");
   const roundA = !!a.face.cylinder;
   const roundB = !!b.face.cylinder;
-  let title: string;
-  let drawn: FaceCard["line"];
-  const lines: string[] = [];
-  if (normal !== undefined) {
-    // Parallel flat faces: the gap square to them (a wall's thickness, a room's width).
-    title = `Gap ${mm(normal)}`;
-    drawn = line && { ...line, label: mm(normal) };
-    if (min !== undefined && Math.abs(min - normal) > 0.05) lines.push(`Closest ${mm(min)} (offset, not face on)`);
-  } else if (centre !== undefined && roundA && roundB) {
-    title = `Centres ${mm(centre)}`;
-    drawn = line && { ...line, label: `${mm(centre)} centres` };
-    if (min !== undefined) lines.push(`Wall to wall ${mm(min)}`);
-  } else if (min !== undefined) {
-    title = `Closest ${mm(min)}`;
-    drawn = closest && min > 1e-6 ? { from: closest.a, to: closest.b, label: mm(min) } : undefined;
-    if (centre !== undefined) lines.push(`${roundA || roundB ? "Hole centre" : "Centre"} to the face ${mm(centre)}`);
-  } else {
-    title = "Touching";
-  }
-  if (min !== undefined && min < 1e-3 && normal === undefined) title = "Touching";
-  // An angle between two flat faces that aren't parallel, or two round faces' axes (a hole's axis to a face reads oddly).
-  if (angle !== undefined && normal === undefined && ((a.face.type === "plane" && b.face.type === "plane") || (roundA && roundB))) lines.push(`Angle ${deg(angle)}`);
-  lines.push(`${faceName(a.face)} → ${faceName(b.face)}`);
-  return { title, lines, ...(drawn ? { line: drawn } : {}) };
+  const drawn = line && { from: line.from, to: line.to };
+  // Parallel flat faces: the gap square to them (a wall's thickness, a room's width).
+  if (normal !== undefined) return card(mm(normal), min !== undefined && Math.abs(min - normal) > 0.05 ? `gap · offset, closest ${mm(min)}` : "gap", drawn);
+  if (centre !== undefined && roundA && roundB) return card(mm(centre), min !== undefined ? `centres · ${mm(min)} wall to wall` : "centres", drawn);
+  if (min === undefined || min < 1e-3) return card("0 mm", "touching");
+  const extra: string[] = [];
+  if (centre !== undefined) extra.push(`centre ${mm(centre)}`);
+  // The angle between two flat faces that aren't parallel, or two round faces' axes.
+  if (angle !== undefined && ((a.face.type === "plane" && b.face.type === "plane") || (roundA && roundB))) extra.push(deg(angle));
+  return card(mm(min), ["closest", ...extra].join(" · "), closest ? { from: closest.a, to: closest.b } : undefined);
 }

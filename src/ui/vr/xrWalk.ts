@@ -33,11 +33,11 @@ import { niceName, PIN_COLORS, PIN_TAGS, PIN_WORDS, type PinTag, type VrMove, ty
 import type { Vec3 } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
 import { centreOf, itemOfFace, itemOfMove, itemsOf, itemTriangles, type VrItem } from "./items";
-import { disposeSprite, Panel, textSprite } from "./vrText";
+import { cardSprite, disposeSprite, Panel, textSprite, VR_COLORS } from "./vrText";
 import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "./inspect";
 import type { VrPrefs } from "./vrPrefs";
 import { RayIndex } from "./rayIndex";
-import { faceCard, faceName, pairCard, type FaceCard } from "./vrMeasure";
+import { faceCard, faceName, mm, pairCard, type FaceCard } from "./vrMeasure";
 import { meshClosest } from "../evaluate/meshDistance";
 import type { FaceInfo } from "../../kernel/topology";
 
@@ -258,7 +258,7 @@ export class XrWalk {
     this.vignette.renderOrder = 50;
     this.vignette.visible = false;
     // Where a tool's ray meets the model: a small dot (the snapped point when measuring).
-    this.pointer = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffd400, depthTest: false }));
+    this.pointer = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffc53d, depthTest: false }));
     this.pointer.renderOrder = 35;
     this.pointer.visible = false;
   }
@@ -453,7 +453,7 @@ export class XrWalk {
         : this.menuOpen
           ? "Point and click"
           : `${tool} · A undo`;
-    c.hint = textSprite(words, 0.11, { size: 40 });
+    c.hint = cardSprite(words, "", c.hand === "left" ? VR_COLORS.hover : VR_COLORS.measure, 0.00022);
     c.hint.position.set(0, 0.05, 0.02);
     c.grip.add(c.hint);
   }
@@ -597,7 +597,7 @@ export class XrWalk {
       this.host.scene.remove(this.toast);
       disposeSprite(this.toast);
     }
-    this.toast = textSprite(text, 0.42);
+    this.toast = cardSprite(text, "", VR_COLORS.hover, 0.0005);
     this.host.scene.add(this.toast);
     this.toastUntil = performance.now() + 1800;
   }
@@ -927,27 +927,37 @@ export class XrWalk {
     return snapPoint(at, [corner(h.face.a), corner(h.face.b), corner(h.face.c)], reach).at;
   }
 
-  private dot(at: Vec3, color = 0xffd400): THREE.Mesh {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(18, 12, 8), new THREE.MeshBasicMaterial({ color, depthTest: false }));
+  private dot(at: Vec3, color = 0xffc53d): THREE.Mesh {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(14, 12, 8), new THREE.MeshBasicMaterial({ color, depthTest: false }));
     m.position.set(...at);
     m.renderOrder = 34;
     this.notesGroup.add(this.sized(m));
     return m;
   }
 
-  /** A dimension: the line, its ends and its length. */
-  private dimension(a: Vec3, b: Vec3, text?: string): THREE.Object3D[] {
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]), new THREE.LineBasicMaterial({ color: 0xffd400, depthTest: false }));
+  /** A measure's card, in the model (mm): the same writing size everywhere; kept readable from afar (sizeCards). */
+  private card(value: string, caption: string, at: Vec3, accent: string = VR_COLORS.measure): THREE.Sprite {
+    const sp = cardSprite(value, caption, accent, 0.85);
+    // Hung just above its point, so the line or face under it stays in sight.
+    sp.center.set(0.5, -0.25);
+    sp.position.set(...at);
+    sp.userData.card = true;
+    this.notesGroup.add(this.sized(sp));
+    return sp;
+  }
+
+  /** A dimension: the line and its ends, with its length on a card at its middle (or `label` there; null: no card). */
+  private dimension(a: Vec3, b: Vec3, label?: { value: string; caption: string } | null): THREE.Object3D[] {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]), new THREE.LineBasicMaterial({ color: 0xffc53d, depthTest: false }));
     line.renderOrder = 33;
     const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-    const words = text ?? lengthText(len);
-    const label = textSprite(words, Math.max(160, 15 * words.length), { bg: "rgba(255,212,0,0.92)", fg: "#111" });
-    label.userData.card = true;
-    label.material.depthTest = false;
-    label.renderOrder = 37;
-    label.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 60 * this.noteScale());
-    this.notesGroup.add(line, this.sized(label));
-    return [line, label, this.dot(a), this.dot(b)];
+    const out: THREE.Object3D[] = [line, this.dot(a), this.dot(b)];
+    this.notesGroup.add(line);
+    if (label !== null) {
+      const l = label ?? { value: mm(len), caption: "" };
+      out.push(this.card(l.value, l.caption, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]));
+    }
+    return out;
   }
 
   private measureDown(c: Controller): void {
@@ -1011,16 +1021,8 @@ export class XrWalk {
   }
 
   /** A card of what was measured, above a point. */
-  private faceCardSprite(card: FaceCard, at: Vec3, bg = "rgba(255,212,0,0.94)"): THREE.Sprite {
-    const text = [card.title, ...card.lines];
-    // As wide as its longest line needs, so a long line doesn't shrink the writing.
-    const label = textSprite(text.join("\n"), Math.max(260, 13 * Math.max(...text.map((l) => l.length))), { bg, fg: "#111", size: 44 });
-    label.position.set(at[0], at[1], at[2] + 160 * this.noteScale());
-    label.userData.card = true;
-    label.material.depthTest = false;
-    label.renderOrder = 37;
-    this.notesGroup.add(this.sized(label));
-    return label;
+  private faceCardSprite(card: FaceCard, at: Vec3): THREE.Sprite {
+    return this.card(card.value, card.caption, at);
   }
 
   private clearFaceHover(): void {
@@ -1041,16 +1043,16 @@ export class XrWalk {
       this.clearFaceHover();
       const first = this.faceFirst;
       const view = this.host.view();
-      const text = first && first.index !== f.index && view?.mesh ? `${pairCard(first, f, meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index })).title} · click` : faceName(f.face);
-      const glow = this.faceGlow(f.index, 0x4fc3f7, 0.3);
-      const label = textSprite(text, 300, { bg: "rgba(79,195,247,0.92)", fg: "#111" });
+      // What it is; with a face picked, what the two are (before the click says so).
+      const pc = first && first.index !== f.index && view?.mesh ? pairCard(first, f, meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index })) : null;
+      const [value, caption] = pc ? [pc.value, `${pc.caption.split(" · ")[0]} · click`] : [faceName(f.face), ""];
+      const text = caption ? `${value} · ${caption}` : value;
+      const glow = this.faceGlow(f.index, 0x4fc3f7, 0.22);
+      const label = this.card(value, caption, f.at, VR_COLORS.hover);
       label.renderOrder = 38;
-      label.material.depthTest = false;
-      label.userData.card = true;
-      this.notesGroup.add(this.sized(label));
       this.faceHover = { index: f.index, objs: glow ? [glow] : [], label, text };
     }
-    this.faceHover.label.position.set(f.at[0], f.at[1], f.at[2] + 90 * this.noteScale());
+    this.faceHover.label.position.set(...f.at);
   }
 
   /** A click on a face: the first is measured on its own (and waits for a second); the second measures the two together. */
@@ -1068,7 +1070,7 @@ export class XrWalk {
         return void this.say("Now click a face to start again");
       }
       const card = faceCard(f.face);
-      const glow = this.faceGlow(f.index, 0xffd400, 0.4);
+      const glow = this.faceGlow(f.index, 0xffc53d, 0.3);
       const sprite = this.faceCardSprite(card, f.at);
       this.measures.push({ a: f.at, b: f.at, objs: [...(glow ? [glow] : []), sprite], text: card.title });
       this.undo.push({ kind: "measure" });
@@ -1085,17 +1087,15 @@ export class XrWalk {
       old.removeFromParent();
       disposeSprite(old as THREE.Sprite);
     }
-    const glow = this.faceGlow(f.index, 0xffd400, 0.4);
+    const glow = this.faceGlow(f.index, 0xffc53d, 0.3);
     const objs = m.objs.filter((o) => o !== old);
     if (glow) objs.push(glow);
-    let at = f.at;
+    // One card: on the dimension line when there is one, else at the face.
     if (card.line) {
-      objs.push(...this.dimension(card.line.from, card.line.to, card.line.label));
-      at = card.line.from.map((v, i) => (v + card.line!.to[i]) / 2) as Vec3;
+      objs.push(...this.dimension(card.line.from, card.line.to, { value: card.value, caption: card.caption }));
       m.a = card.line.from;
       m.b = card.line.to;
-    }
-    objs.push(this.faceCardSprite(card, [at[0], at[1], at[2] + 120 * this.noteScale()]));
+    } else objs.push(this.faceCardSprite(card, f.at));
     m.objs = objs;
     m.text = card.title;
     this.faceFirst = null;
@@ -1190,7 +1190,7 @@ export class XrWalk {
       const base = o.userData.base as THREE.Vector3 | undefined;
       if (!o.userData.card || !base) continue;
       const d = o.getWorldPosition(p).distanceTo(head) / (this.inspecting ? this.heldPose().scale : 1);
-      o.scale.copy(base).multiplyScalar(f * Math.min(4, Math.max(1, d / 1.5)));
+      o.scale.copy(base).multiplyScalar(f * Math.min(3, Math.max(1, d / 2)));
     }
   }
   private sizeNotes(): void {
@@ -1397,7 +1397,7 @@ export class XrWalk {
         b("tool:measure", "Measure", 0.035, row(0.14), 0.455, this.tool === "measure"),
         b("tool:pin", "Pin", 0.51, row(0.14), 0.455, this.tool === "pin"),
         ...this.measureButtons(b),
-        ...PIN_TAGS.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
+        ...PIN_TAGS.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t && this.tool === "pin", `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
         b("oneToOne", `True size (now ${scaleText(s)})`, 0.035, row(0.53), 0.3, Math.abs(s - 1) < 0.005),
         b("bringBack", "Bring it back", 0.35, row(0.53), 0.3),
         b("spin", this.spin ? "Stop spinning" : "Spin it", 0.665, row(0.53), 0.3, this.spin),
@@ -1405,7 +1405,7 @@ export class XrWalk {
         b("undo", "Undo", 0.35, row(0.66), 0.3),
         b("exit", "Leave VR", 0.665, row(0.66), 0.3, false),
       ];
-      this.menu.lines = [`Shown ${scaleText(s)}: measures are always true size. Let go and it stays where it is.`, "Grip holds it · both grips turn it, stretch to size it · stick pushes/pulls · A 1:1 · B bring back · Y undo"];
+      this.menu.lines = [`Shown ${scaleText(s)} · measures stay true size`, "Grip holds · both grips turn and size · A 1:1 · B bring back · Y undo"];
       this.menu.draw();
       return;
     }
@@ -1424,7 +1424,7 @@ export class XrWalk {
         b("roof", this.roofOff ? "Cut above: on" : "Cut above: off", 0.535, 0.68, 0.24, this.roofOff),
         b("show:back", "Back", 0.79, 0.68, 0.175),
       ];
-      this.menu.lines = ["Click to hide or show · rays and teleport go through what's hidden · B cuts away everything above head height"];
+      this.menu.lines = ["Click to hide or show · B cuts away above head height"];
       this.menu.draw();
       return;
     }
@@ -1434,7 +1434,7 @@ export class XrWalk {
     this.menu.buttons = [
       ...tools.map(([t, l], i) => b(`tool:${t}`, l, 0.035 + i * 0.235, row(0.14), 0.22, this.tool === t)),
       ...this.measureButtons(b),
-      ...tags.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
+      ...tags.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t && this.tool === "pin", `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
       b("showhide", this.hiddenGroups.size ? `Show / hide (${this.hiddenGroups.size} hidden)` : "Show / hide", 0.035, row(0.53), 0.3, this.hiddenGroups.size > 0),
       b("start", "Back to the start", 0.35, row(0.53), 0.3),
       this.host.canInspect?.() ? b("inspect", "Hold it", 0.665, row(0.53), 0.3) : b("dollhouse", this.dollhouse ? "Full size" : "Dollhouse", 0.665, row(0.53), 0.3, !!this.dollhouse),
@@ -1444,8 +1444,8 @@ export class XrWalk {
     ];
     const moved = [...this.placed.values()].filter((p) => Math.hypot(...p.move) > 0.5 || p.turn).length;
     this.menu.lines = [
-      `This visit: ${this.pins.length} pin${this.pins.length === 1 ? "" : "s"}, ${moved} piece${moved === 1 ? "" : "s"} moved; saved to the file as proposals when you leave VR.`,
-      "Move: trigger picks pieces (green), grip moves them, handles turn 10° · A undo · B cut above · Y start",
+      `${this.pins.length} pin${this.pins.length === 1 ? "" : "s"} · ${moved} moved · kept as proposals when you leave`,
+      "Trigger: the tool · Grip: carry · A undo · B cut above · Y start",
     ];
     this.menu.draw();
   }
@@ -1456,7 +1456,7 @@ export class XrWalk {
     return [
       b("measure:points", "Points", 0.035, 0.27, 0.22, on && this.measureMode === "points"),
       b("measure:faces", "Faces · holes", 0.27, 0.27, 0.22, on && this.measureMode === "faces"),
-      b("snap", this.snap ? "Snap: on" : "Snap: off", 0.505, 0.27, 0.22, this.snap),
+      b("snap", this.snap ? "Snap: on" : "Snap: off", 0.505, 0.27, 0.22, this.snap && on && this.measureMode === "points"),
       b("clearMeasures", `Clear (${this.measures.length})`, 0.74, 0.27, 0.225),
     ];
   }
@@ -1791,7 +1791,7 @@ export class XrWalk {
           const p = snapAt ? new THREE.Vector3(...snapAt).applyMatrix4(this.zup.matrixWorld) : h.point;
           this.pointer.position.copy(p);
           this.pointer.visible = true;
-          (this.pointer.material as THREE.MeshBasicMaterial).color.set(this.tool === "move" ? (this.handleAt(r) ? 0xffd400 : this.itemAt(h) ? 0x30a46c : 0xe5484d) : 0xffd400);
+          (this.pointer.material as THREE.MeshBasicMaterial).color.set(this.tool === "move" ? (this.handleAt(r) ? 0xffc53d : this.itemAt(h) ? 0x30a46c : 0xe5484d) : 0xffc53d);
         }
       }
       r.ray.scale.z = len;
