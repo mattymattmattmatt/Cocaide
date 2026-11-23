@@ -13,6 +13,7 @@ import { tessellate } from "./mesh";
 import { scoped, type OC } from "./oc";
 import type { FeatureStatus } from "./rebuild";
 import { selectEdges, selectFaces } from "./selectors";
+import { faceAppearances, hexToRgb } from "../appearance";
 import { describeEdges, describeFaces, type EdgeInfo, type FaceInfo } from "./topology";
 
 export function round6(x: number): number {
@@ -119,17 +120,21 @@ export interface ShotOptions {
   hiddenEdges?: boolean;
   /** Zoom to the highlighted faces and edges instead of the whole part. */
   frame?: boolean;
+  /** Each face's colour (FaceInfo.index order), from the part's appearances. */
+  faceColors?: (readonly [number, number, number] | null)[];
+  /** The solid's topology and mesh, when the caller has them already (several shots of one revision). */
+  cached?: { edges: EdgeInfo[]; mesh: ReturnType<typeof tessellate> };
 }
 
 /** A shaded view of the solid. Highlighted faces are also outlined over everything, so a hidden or edge-on face still shows. */
 export function shotOf(oc: OC, solid: TopoDS_Shape, opts: ShotOptions): Image {
-  const { edges } = topologyOf(oc, solid);
+  const edges = opts.cached?.edges ?? topologyOf(oc, solid).edges;
   let highlightEdges = opts.highlightEdges;
   if (opts.highlightFaces?.length) {
     const set = new Set(opts.highlightFaces);
     highlightEdges = [...(highlightEdges ?? []), ...edges.filter((e) => !e.seam && e.faces.some((f) => set.has(f))).map((e) => e.index)];
   }
-  return render(tessellate(oc, solid), {
+  return render(opts.cached?.mesh ?? tessellate(oc, solid), {
     camera: opts.camera,
     width: opts.width,
     height: opts.height,
@@ -137,6 +142,24 @@ export function shotOf(oc: OC, solid: TopoDS_Shape, opts: ShotOptions): Image {
     highlightEdges,
     hiddenEdges: opts.hiddenEdges,
     skipEdges: edges.filter((e) => e.seam).map((e) => e.index),
+    faceColors: opts.faceColors,
     frame: opts.frame ? { faces: opts.highlightFaces, edges: opts.highlightEdges } : undefined,
   });
+}
+
+/**
+ * What a shot of a rebuilt part draws: its edges, its mesh and each face's colour as the app shows it (from the
+ * document's appearances; see-through ones, glass, washed toward white). Keep it for more shots of the same rebuild.
+ */
+export function shotData(oc: OC, built: { solid: TopoDS_Shape | null; bodies: BodyRange[]; label(topo: { faces: FaceInfo[]; edges: EdgeInfo[] }): void }, doc: unknown): NonNullable<ShotOptions["cached"]> & { colors: ([number, number, number] | null)[] } {
+  const topo = topologyOf(oc, built.solid!, built.bodies);
+  built.label(topo);
+  const colors = faceAppearances(doc, topo.faces).map((look) => {
+    if (!look) return null;
+    const [r, g, b] = hexToRgb(look.color);
+    const o = look.opacity ?? 1;
+    const mix = (c: number) => Math.round((c * o + (1 - o) * 0.92) * 255);
+    return [mix(r), mix(g), mix(b)] as [number, number, number];
+  });
+  return { edges: topo.edges, mesh: tessellate(oc, built.solid!), colors };
 }

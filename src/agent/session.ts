@@ -53,7 +53,7 @@ import { deflateSync } from "node:zlib";
 import { allErrors, isObject, validateDocument } from "../doc/validate";
 import { sketchDof } from "../geom/solver";
 import { heapBytes, loadOC, rebuild, RECYCLE_HEAP_BYTES, recycleOC, tessellate, type OC, type RebuildResult } from "../kernel";
-import { edgeSummary, faceSummary, measurementSummary, newFailures, round6, selectOn, shotOf, type Picked } from "../kernel/inspect";
+import { edgeSummary, faceSummary, measurementSummary, newFailures, round6, selectOn, shotData, shotOf, type Picked } from "../kernel/inspect";
 import { encodePNG } from "../render/png";
 import { VIEWS, type Camera } from "../render/raster";
 import { encodeSTL } from "../render/stl";
@@ -1040,6 +1040,13 @@ export class AgentSession {
     return { result: { ok: true, file: path, bytes: bytes.length, sha256: sha256(bytes).slice(0, 12), revision: this.revision } };
   }
 
+  /** What a screenshot of this revision draws (kept for more shots of it). */
+  private shotCache: (ReturnType<typeof shotData> & { revision: number }) | null = null;
+  private shotData() {
+    if (this.shotCache?.revision !== this.revision) this.shotCache = { ...shotData(this.oc, this.built, this.doc), revision: this.revision };
+    return this.shotCache;
+  }
+
   private async screenshot(a: Record<string, unknown>): Promise<CallResult> {
     const solid = this.built.solid;
     if (!solid) return this.fail(`screenshot: there is no solid yet${this.built.errors.length ? ` (${this.built.errors.join("; ")})` : ""}`);
@@ -1067,7 +1074,10 @@ export class AgentSession {
       highlightEdges = picked.edges?.map((e) => e.index);
       highlighted = (picked.faces ?? picked.edges)!.length;
     }
+    const data = this.shotData();
     const img = shotOf(this.oc, solid, {
+      cached: data,
+      faceColors: data.colors,
       camera,
       width: size(a.width, 800),
       height: size(a.height, 600),

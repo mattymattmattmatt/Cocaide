@@ -154,11 +154,14 @@ export function useAssembly(o: AssemblyOptions) {
     else delete next.explode;
     commit(next, `Explode ${id}`, false);
   };
-  // The view fits the assembly when it first shows something, and again when a component comes in (so it is in view).
+  // The view fits the assembly when it first shows something; as more components come in (it loads one by one) it fits
+  // again only while the camera hasn't been moved (softly), so a view picked meanwhile stays.
   const shownCount = scene.view.bodies.length;
   const lastCount = useRef(0);
+  const [softFitToken, setSoftFitToken] = useState(0);
   useEffect(() => {
-    if (shownCount > lastCount.current) setFitToken((t) => t + 1);
+    if (shownCount > 0 && lastCount.current === 0) setFitToken((t) => t + 1);
+    else if (shownCount > lastCount.current) setSoftFitToken((t) => t + 1);
     lastCount.current = shownCount;
   }, [shownCount]);
 
@@ -869,6 +872,7 @@ export function useAssembly(o: AssemblyOptions) {
     item,
     setItem,
     fitToken,
+    softFitToken,
     fit: () => setFitToken((t) => t + 1),
     clashes,
     busy,

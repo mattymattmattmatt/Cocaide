@@ -136,6 +136,8 @@ interface Props {
   view: RebuildView | null;
   /** Bump to re-frame the camera on the current model. */
   fitToken: number;
+  /** Bump to re-frame only if the camera hasn't been moved since the last framing (more of an assembly coming in as it loads). */
+  softFitToken?: number;
   selection: Selection;
   /** A click on the part (target) or on empty space (null). `additive` when Ctrl, Shift or Cmd is held: the target goes in or out of the selection. */
   onPick(target: PickTarget | null, additive: boolean): void;
@@ -385,6 +387,7 @@ export function Viewport({
   vr,
   view,
   fitToken,
+  softFitToken = 0,
   selection,
   onPick,
   onContext,
@@ -477,6 +480,8 @@ export function Viewport({
   infoRef.current = { faces: view?.faces ?? [], edges: view?.edges ?? [], datums: view?.datums ?? {} };
   /** The camera as it is when the view mounts: none remembered, or the one this document's view was left at. */
   const restoredAtMount = useRef(false);
+  /** Has the user turned, panned, zoomed or picked a view since the camera was last framed for them? */
+  const cameraTouched = useRef(false);
 
   useEffect(() => {
     const el = host.current!;
@@ -1052,14 +1057,15 @@ export function Viewport({
 
     // The view cube (top right) and the orientation triad (bottom left), turning with the camera.
     const cube = new ViewCube(el, {
-      pick: (t) => look(t.dir, t.up),
-      turn: (kind) => cubeTurn(kind),
-      home: () => orient("iso"),
+      pick: (t) => { cameraTouched.current = true; look(t.dir, t.up); },
+      turn: (kind) => { cameraTouched.current = true; cubeTurn(kind); },
+      home: () => { cameraTouched.current = true; orient("iso"); },
       // Dragging the cube turns the view about the same centre a middle-drag would.
       drag: (phase, dx, dy) => (phase === "start" ? controls.beginDragTurn() : phase === "move" ? controls.dragTurn(dx, dy) : controls.endDragTurn()),
     });
     cube.setVisible(viewPrefs().viewCube);
     const triad = new Triad(el, (axis) => {
+      cameraTouched.current = true;
       const v = triadView(axis, camera.position.clone().sub(controls.target).toArray() as Vec3);
       look(v.dir, v.up);
     });
@@ -1082,7 +1088,10 @@ export function Viewport({
         render();
       },
       centre: centreNow,
-      interrupt: finishGlide,
+      interrupt: () => {
+        cameraTouched.current = true;
+        finishGlide();
+      },
       changed: render,
     });
     controls.orthographic = !perspective;
@@ -3239,9 +3248,17 @@ export function Viewport({
   const fitSeen = useRef(fitToken);
   useEffect(() => {
     // Not while a sketch is open (Phase P wave 2A): the sketch faces its plane, and the view goes back when it closes.
-    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current) && !sketchLatestOpen.current) api.current?.orient("iso", true);
+    if (fitToken > 0 && !(restoredAtMount.current && fitToken === fitSeen.current) && !sketchLatestOpen.current) {
+      api.current?.orient("iso", true);
+      cameraTouched.current = false;
+    }
     fitSeen.current = fitToken;
   }, [fitToken]);
+  // More of the model came in (an assembly loading component by component): framed again only if the camera is still as
+  // it was framed, so a view picked while it loads isn't taken back.
+  useEffect(() => {
+    if (softFitToken > 0 && !cameraTouched.current && !sketchLatestOpen.current) api.current?.orient("iso", true);
+  }, [softFitToken]);
 
   useEffect(() => {
     api.current?.setSketchesVisible(showSketches);
@@ -3355,7 +3372,10 @@ export function Viewport({
   }, [vp.viewCube]);
   const [viewMenu, setViewMenu] = useState<{ x: number; y: number; above?: boolean } | null>(null);
   const [styleMenu, setStyleMenu] = useState<{ x: number; y: number } | null>(null);
-  const orient = (name: ViewName) => api.current?.orient(name);
+  const orient = (name: ViewName) => {
+    cameraTouched.current = true;
+    api.current?.orient(name);
+  };
   /** The one flat face or plane selected, for Normal to. */
   const normalFace = (): Vec3 | null => {
     const only = selection.faces.length + selection.edges.length + (selection.vertices?.length ?? 0) + (selection.datums?.length ?? 0) === 1;

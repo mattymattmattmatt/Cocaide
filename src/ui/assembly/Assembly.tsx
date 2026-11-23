@@ -362,6 +362,7 @@ export function AssemblyMain({
         <Viewport
           view={a.scene.view}
           fitToken={a.fitToken}
+          softFitToken={a.softFitToken}
           selection={a.selection}
           onPick={a.pick}
           peek={peek}

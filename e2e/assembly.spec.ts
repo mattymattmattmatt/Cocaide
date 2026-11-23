@@ -580,3 +580,32 @@ test("each part put in is brought into view; Ctrl held, the handles' labels let 
   await expect(page.locator(".eval-label.arrow-label").first()).toContainText("bracket-1");
   await page.screenshot({ path: "out/mate-arrows.png" });
 });
+
+test("a view picked while an assembly is still loading stays: its parts coming in don't frame the view again", async ({ page }) => {
+  // A light part and a heavy one (200 boxes): the light one is drawn first, the heavy one comes in later.
+  const box = (i: number) => [
+    { id: `s${i}`, op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [(i % 20) * 120, Math.floor(i / 20) * 120], w: 100, h: 100 }] },
+    { id: `e${i}`, op: "extrude", sketch: `s${i}`, distance: 50 + (i % 7) * 10, newBody: `b${i}` },
+  ];
+  const heavy = { version: 1, units: "mm", name: "heavy", features: Array.from({ length: 200 }, (_, i) => box(i)).flat() };
+  const doc = { version: 1, units: "mm", name: "site", features: box(0), assembly: { parts: { heavy }, components: [{ id: "site", part: "self", fixed: true }, { id: "heavy-1", part: "heavy", at: [0, 500, 0], fixed: true }] } };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await page.getByTestId("mode-assembly").click();
+  const drawn = async () => ((await page.evaluate("window.__cocaideViewport.vrItems()")) as string[]).length;
+  await expect.poll(drawn, { timeout: 60_000, intervals: [100] }).toBeGreaterThan(0);
+  const atPress = await drawn();
+  await page.locator("canvas").first().click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Control+1");
+  const front = async () => {
+    const c = (await page.evaluate("window.__cocaideViewport.camera()")) as { position: number[]; target: number[] };
+    const d = c.position.map((v, i) => v - c.target[i]);
+    return Math.round((-d[1] / Math.hypot(...d)) * 100) / 100; // 1: looking north, from the front
+  };
+  await expect.poll(front).toBe(1);
+  // The heavy part in: still from the front.
+  await expect.poll(drawn, { timeout: 120_000 }).toBeGreaterThan(atPress + 100);
+  await page.waitForTimeout(1500);
+  expect(await front()).toBe(1);
+});

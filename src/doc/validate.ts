@@ -437,8 +437,9 @@ export function validateDocument(input: unknown, opts: ValidateOptions = {}): Va
   return result;
 }
 
-/** The longest a property may be: a title block or a CSV cell, not a document. */
+/** The longest a property may be: a title block or a CSV cell, not a document. A description may say more. */
 const PROPERTY_MAX = 500;
+const DESCRIPTION_MAX = 2000;
 
 /** The part's properties: each a string; "custom" an object of name: string. Errors say which field and what it must be. */
 function checkProperties(raw: unknown, c: Checker): PartProperties {
@@ -452,7 +453,8 @@ function checkProperties(raw: unknown, c: Checker): PartProperties {
   const text = (v: unknown, path: string): string | undefined => {
     if (typeof v !== "string") return void c.fail(path, `must be text (got ${describe(v)})`);
     if (v.trim() === "") return void c.fail(path, "is empty; leave it out instead");
-    if (v.length > PROPERTY_MAX) return void c.fail(path, `is ${v.length} characters long; keep it to ${PROPERTY_MAX}`);
+    const max = path === "properties.description" ? DESCRIPTION_MAX : PROPERTY_MAX;
+    if (v.length > max) return void c.fail(path, `is ${v.length} characters long; keep it to ${max}`);
     return v;
   };
   for (const k of PROPERTY_KEYS) {

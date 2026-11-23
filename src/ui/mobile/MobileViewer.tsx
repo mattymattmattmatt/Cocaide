@@ -30,6 +30,8 @@ export interface MobileViewerProps {
   status: string | null;
   view: RebuildView | null;
   fitToken: number;
+  /** Re-frame only if the camera hasn't been moved (an assembly loading). */
+  softFitToken?: number;
   /** The view's parts (an assembly's components, a part's bodies), each with its label. */
   parts: { id: string; label: string }[];
   /** "components" or "bodies". */
@@ -156,6 +158,7 @@ export function MobileViewer(p: MobileViewerProps) {
         <Viewport
           view={p.view}
           fitToken={p.fitToken}
+          softFitToken={p.softFitToken}
           selection={measuring ? selection : EMPTY_SELECTION}
           onPick={pick}
           memoryKey={`${p.memoryKey}#mobile`}

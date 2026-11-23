@@ -41,6 +41,8 @@ export interface RenderOptions {
   hiddenEdges?: boolean;
   /** Edges (by B-rep edge index) not to draw: seams, which are not feature edges. */
   skipEdges?: number[];
+  /** Each face's colour (by B-rep face index; null or missing: the default grey), as the part's appearances give them. */
+  faceColors?: (readonly [number, number, number] | null | undefined)[];
   /** Frame the view on these faces and edges (with the part around them), not on the whole part. */
   frame?: { faces?: number[]; edges?: number[] };
 }
@@ -148,6 +150,14 @@ export function render(mesh: MeshData, opts: RenderOptions): Image {
     const range = mesh.faceRanges[f];
     if (range) for (let t = range.start / 3; t < (range.start + range.count) / 3; t++) tinted[t] = 1;
   }
+  // Each triangle's colour, from its face's.
+  const triColor: (readonly [number, number, number] | undefined)[] = [];
+  if (opts.faceColors?.length) {
+    opts.faceColors.forEach((c, f) => {
+      const range = mesh.faceRanges[f];
+      if (c && range) for (let t = range.start / 3; t < (range.start + range.count) / 3; t++) triColor[t] = c;
+    });
+  }
   const N = mesh.normals;
   // Key light from the upper left of the screen, fill from the right; both in camera space.
   const key = normalize3([-0.35 * x[0] + 0.8 * y[0] + 0.6 * d[0], -0.35 * x[1] + 0.8 * y[1] + 0.6 * d[1], -0.35 * x[2] + 0.8 * y[2] + 0.6 * d[2]]);
@@ -172,7 +182,7 @@ export function render(mesh: MeshData, opts: RenderOptions): Image {
     const x1 = Math.min(w - 1, Math.ceil(Math.max(ax, bx, qx)));
     const y0 = Math.max(0, Math.floor(Math.min(ay, by, qy)));
     const y1 = Math.min(h - 1, Math.ceil(Math.max(ay, by, qy)));
-    const base = tinted[t] ? HIGHLIGHT : PART;
+    const base = tinted[t] ? HIGHLIGHT : (triColor[t] ?? PART);
     for (let py = y0; py <= y1; py++) {
       for (let px = x0; px <= x1; px++) {
         const sx = px + 0.5,

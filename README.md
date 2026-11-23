@@ -566,6 +566,7 @@ Phase O turns the modeller into a full parametric part modeller. Everything belo
   - **Lock notices.** A lock holds two parts as they are now. When one of them had no other mates, the notice says it was locked wherever it happened to be, so place it first and use "Lock here again". Lock rotation on a concentric says the same.
   - **Picking through labels.** With Ctrl, Shift or Cmd held, the handles' labels let the click through to the face under them.
   - **Fit on insert.** Each part put in is brought into view.
+  - **A view picked while it loads stays.** A big assembly comes in component by component; it is framed when it first shows, and again as more comes in only until you turn, pan, zoom or pick a view: then the view is yours.
   - **Sketch plane up (`yDir`).** A written-out sketch plane takes `"yDir"` (the sketch's up) instead of `xDir`. A plane facing +Y otherwise has its own y pointing down (−Z), so a sketch y of +10 lands 10 lower; the rebuild now warns when a written-out plane's up points down.
   - **Component names as said.** The assistant's mate tools accept a component named as it reads, with spaces or other case ("cylinder head-1" for `cylinder_head-1`), when only one matches.
 - **Dragging parts**: press on a part that isn't fixed and drag: it follows the mouse (across the view, at the depth you grabbed it), as far as its mates let it: mated flush it slides along the face, a pin slides along its hole, a limit stops it at its end; a part its mates hold every way doesn't move (and says so). The parts connected to it follow as their mates let them (a part locked or mated to another that is free brings it along; a linkage moves with the link dragged), while the fixed parts stay put; every part moved is one undo step. A click still selects it, Ctrl or Shift-click picks faces for a mate, and the fixed part doesn't drag. The selected part's arrows and turn handle move it the same way, live. Esc while dragging puts it back.
@@ -578,7 +579,7 @@ Phase O turns the modeller into a full parametric part modeller. Everything belo
 ### AI tools
 
 The right-click AI and the MCP server get the same new tools:
-- inspection: a part summary, faces, edges, a measurement between any two things, a sketch with its solved geometry, a face's plane, the datums, and a screenshot;
+- inspection: a part summary, faces, edges, a measurement between any two things, a sketch with its solved geometry, a face's plane, the datums, and a screenshot (in the part's colours, as the app shows them; more shots of the same revision reuse its mesh);
 - **batch**: several edits, all or nothing, with a dry run that reports the volume and what each step made;
 - helpers: **sketchProfile** (draws rectangles, circles, slots and polygons and dimensions them, keeping `=expressions`), **fullyDefine**, and **holes** (a bolt circle or grid as a hole and its pattern);
 - **plan** with a self-check after the build, and a bigger turn and token budget when the AI builds a part;

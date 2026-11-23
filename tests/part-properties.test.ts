@@ -222,3 +222,12 @@ describe("the MCP tools", () => {
     }
   });
 });
+
+describe("long descriptions", () => {
+  it("a description may run to 2000 characters; the other properties stay at 500", () => {
+    const long = "A".repeat(1999);
+    expect(errorsOf({ ...bracket, properties: { description: long } })).toEqual([]);
+    expect(errorsOf({ ...bracket, properties: { description: "A".repeat(2001) } })).toEqual(["document: properties.description: is 2001 characters long; keep it to 2000"]);
+    expect(errorsOf({ ...bracket, properties: { partNumber: "P".repeat(501) } })).toEqual(["document: properties.partNumber: is 501 characters long; keep it to 500"]);
+  });
+});

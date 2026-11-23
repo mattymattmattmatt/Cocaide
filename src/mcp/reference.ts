@@ -80,6 +80,9 @@ Entities (2D, in the sketch frame; "construction": true keeps one out of the pro
   { "id": "c1", "type": "circle", "center": [0,0], "radius": 5 }
   { "id": "l1", "type": "line", "start": [0,0], "end": [10,0] }
   { "id": "a1", "type": "arc", "center": [0,0], "start": [5,0], "end": [0,5], "clockwise": false }
+      (it runs counter-clockwise from start to end in the sketch's frame (x right, y up); "clockwise": true runs the other
+      way. So the arc above is the quarter through [3.5,3.5]; from [0,5] to [5,0] the same quarter needs "clockwise": true,
+      else it is the other three quarters. The short way is counter-clockwise when (start - center) x (end - center) > 0.)
   { "id": "s1", "type": "slot", "center1": [0,0], "center2": [20,0], "width": 6 }
   { "id": "p1", "type": "point", "at": [10,5] }     (a sketch point: a hole centre, a pattern place, an anchor; never profile)
   { "id": "el1", "type": "ellipse", "center": [0,0], "major": [30,0], "minor": 12 }

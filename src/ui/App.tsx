@@ -3187,6 +3187,7 @@ export function App() {
           status={kernelState.phase !== "ready" ? "Loading…" : asm ? (assemblyWs.built.done < assemblyWs.built.total ? `Building ${assemblyWs.built.done + 1} of ${assemblyWs.built.total}…` : null) : !view ? "Building…" : null}
           view={shownView}
           fitToken={asm ? assemblyWs.fitToken : fitToken}
+          softFitToken={asm ? assemblyWs.softFitToken : undefined}
           parts={asm ? comps.filter((k) => !k.hidden).map((k) => ({ id: k.id, label: label(k.id) })) : (view?.bodies.length ?? 0) > 1 ? view!.bodies.map((b) => ({ id: b.name, label: b.name })) : []}
           partsNoun={asm ? "components" : "bodies"}
           appearances={asm ? assemblyWs.appearances : appearances}

@@ -8,7 +8,7 @@ import type { SketchEntity } from "../doc/types";
 import type { Datum } from "../features/datum";
 import type { EdgeInfo, FaceInfo, FeatureStatus, Measurements } from "../kernel";
 import { specKey, type KeyCache, type ProjectedView, type ViewSpec } from "../kernel/drawingViews";
-import { measurementSummary, newFailures, selectOn, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
+import { measurementSummary, newFailures, selectOn, shotData, shotOf, topologyOf, type ShotOptions } from "../kernel/inspect";
 import { rebuild, type HoleRecord, type RebuildResult } from "../kernel/rebuild";
 import { inspectQuery, type InspectQuery, type InspectResult } from "../kernel/agentQueries";
 import { flatQuery, type FlatQuery, type FlatResult } from "../kernel/flat";
@@ -201,7 +201,8 @@ export class LocalKernel implements KernelPort {
   async screenshot(doc: unknown, opts: ShotOptions): Promise<Shot> {
     const r = this.built(doc);
     if (!r.solid) throw new Error("there is no solid to show");
-    const img = shotOf(this.oc(), r.solid, opts);
+    const data = shotData(this.oc(), r, doc);
+    const img = shotOf(this.oc(), r.solid, { ...opts, cached: data, faceColors: opts.faceColors ?? data.colors });
     return { png: await encodePNG(img), width: img.width, height: img.height };
   }
 }
