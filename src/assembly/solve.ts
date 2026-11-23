@@ -30,6 +30,8 @@ export interface SolverMate {
   /** lock: b's place in a's frame; "turn": only its turn (a concentric mate's locked rotation). */
   relative?: { R: [Vec3, Vec3, Vec3]; t: Vec3 };
   lockOnly?: "turn";
+  /** How much it counts (1: a mate; a drag's pull counts less, so the mates win). */
+  weight?: number;
 }
 
 export interface MateStatus {
@@ -263,6 +265,28 @@ function withFlips(placements: Map<string, Placement>, fixed: Set<string>, mates
   return best;
 }
 
+/**
+ * Dragging: `id` pulled toward `want` (its place where the pointer is) while every mate holds, the others that aren't
+ * fixed moving as their mates let them (a linkage follows the link dragged). The pull is soft, so the mates win: the
+ * dragged part goes as near the pointer as they allow; then everything settles exactly onto the mates.
+ */
+export function dragSolve(placements: Map<string, Placement>, fixed: Set<string>, mates: SolverMate[], id: string, want: Placement, opts: { iterations?: number } = {}): SolveResult {
+  const CURSOR = "\u0000pointer";
+  const start = new Map(placements);
+  start.set(id, want);
+  start.set(CURSOR, { R: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], t: [0, 0, 0] });
+  const frame: MateGeom = { kind: "frame", p: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0] };
+  const pull: SolverMate = { id: CURSOR, type: "lock", a: { component: CURSOR, geom: frame }, b: { component: id, geom: frame }, relative: { R: want.R as [Vec3, Vec3, Vec3], t: want.t }, weight: 0.05 };
+  const held = new Set([...fixed, CURSOR]);
+  held.delete(id);
+  const pulled = solveOnce(start, held, [...mates, pull], { iterations: opts.iterations ?? 60 });
+  pulled.placements.delete(CURSOR);
+  // Settled exactly onto the mates from there (the least move), the dragged part free too.
+  const fixedHere = new Set(fixed);
+  fixedHere.delete(id);
+  return solveOnce(pulled.placements, fixedHere, mates, { iterations: opts.iterations ?? 60 });
+}
+
 function solveOnce(placements: Map<string, Placement>, fixed: Set<string>, mates: SolverMate[], opts: { iterations?: number } = {}): SolveResult {
   const ids = [...placements.keys()];
   const held = new Set(fixed.size ? fixed : ids.slice(0, 1));
@@ -274,7 +298,7 @@ function solveOnce(placements: Map<string, Placement>, fixed: Set<string>, mates
   const all = (pl: Map<string, Placement>): number[] =>
     writable.flatMap((m) => {
       const r = residuals(m, world(m.a.geom, pl.get(m.a.component)!), world(m.b.geom, pl.get(m.b.component)!));
-      return typeof r === "string" ? [] : r;
+      return typeof r === "string" ? [] : m.weight !== undefined ? r.map((x) => x * m.weight!) : r;
     });
   // Each component's reach: how far its mated geometry is from its origin (a turn of θ moves it θ × that), so its
   // turns are counted in mm like its shifts and the least move is the least for both.

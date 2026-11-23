@@ -18,7 +18,7 @@ import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, t
 import { stepPart } from "../files/plan";
 import { mateFlips, startingWay } from "../../assembly/flip";
 import { selectEdges, selectFaces } from "../../kernel/selectors";
-import { freeMotions, measureNow, solveMates, world } from "../../assembly/solve";
+import { dragSolve, freeMotions, measureNow, solveMates, world } from "../../assembly/solve";
 import type { Placement } from "../../assembly/transform";
 import { mul, transpose, written } from "../../assembly/transform";
 import { measurePick } from "../evaluate/measure";
@@ -67,7 +67,7 @@ export function useAssembly(o: AssemblyOptions) {
   const [clashes, setClashes] = useState<Clash[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** A component being dragged by its handles: where it is shown meanwhile (the document changes when the drag ends). */
-  const [dragging, setDragging] = useState<{ id: string; at: Vec3; rotation: Vec3 } | null>(null);
+  const [dragging, setDragging] = useState<{ id: string; places: Record<string, { at: Vec3; rotation: Vec3 }> } | null>(null);
   /** Isolate: only these components drawn (a view state, not saved); null: all. */
   const [isolated, setIsolated] = useState<string[] | null>(null);
 
@@ -104,7 +104,7 @@ export function useAssembly(o: AssemblyOptions) {
     (): AssemblyScene =>
       composeScene(
         (asm?.components ?? []).map((k) => {
-          const P = placementOf(dragging?.id === k.id ? dragging : k);
+          const P = placementOf(dragging?.places[k.id] ?? k);
           const o = exploded ? offsets.get(k.id) : undefined;
           return { id: k.id, placement: o ? { R: P.R, t: [P.t[0] + o[0], P.t[1] + o[1], P.t[2] + o[2]] as Vec3 } : P, view: views.get(k.part), hidden: k.hidden };
         }),
@@ -568,9 +568,9 @@ export function useAssembly(o: AssemblyOptions) {
     // Its middle: the mean of its faces' centres, as the drag started (the handles stay put while it moves).
     const fs = scene.view.faces.slice(body.faces[0], body.faces[1]);
     const mid = [0, 1, 2].map((i) => fs.reduce((sum, f) => sum + f.centroid[i], 0) / fs.length) as Vec3;
-    const now = dragging?.id === k.id ? dragging : { at: (k.at ?? [0, 0, 0]) as Vec3, rotation: (k.rotation ?? [0, 0, 0]) as Vec3 };
+    const now = dragging?.places[k.id] ?? { at: (k.at ?? [0, 0, 0]) as Vec3, rotation: (k.rotation ?? [0, 0, 0]) as Vec3 };
     const base = (now.at as Vec3).slice() as Vec3;
-    const start = dragging?.id === k.id ? [mid[0] - (now.at[0] - (k.at?.[0] ?? 0)), mid[1] - (now.at[1] - (k.at?.[1] ?? 0)), mid[2] - (now.at[2] - (k.at?.[2] ?? 0))] as Vec3 : mid;
+    const start = dragging?.places[k.id] ? [mid[0] - (now.at[0] - (k.at?.[0] ?? 0)), mid[1] - (now.at[1] - (k.at?.[1] ?? 0)), mid[2] - (now.at[2] - (k.at?.[2] ?? 0))] as Vec3 : mid;
     const arrow = (axis: 0 | 1 | 2): HandleSpec => ({
       id: `${k.id}:move:${"xyz"[axis]}`,
       feature: k.id,
@@ -617,6 +617,36 @@ export function useAssembly(o: AssemblyOptions) {
     const r3 = (v: Vec3) => v.map((x) => Math.round(x * 1000) / 1000 + 0) as Vec3;
     return { at: r3(w.at), rotation: r3(w.rotation) };
   };
+  /**
+   * A component dragged toward `want`, the parts connected to it following as their mates let them (a linkage moves
+   * with the link dragged): every component that moves, where. Failing that, only it, on its own mates.
+   */
+  const follow = (id: string, want: { at: Vec3; rotation: Vec3 }): Record<string, { at: Vec3; rotation: Vec3 }> => {
+    const held = solve?.held ?? [];
+    if (!asm || !held.some((m) => m.a.component === id || m.b.component === id)) return { [id]: want };
+    const placements = new Map<string, Placement>(asm.components.map((k) => [k.id, placementOf(k)]));
+    // Held as the solve holds them: the fixed ones (the first, when none is), the first of each group mated to nothing fixed.
+    const fixed = new Set(asm.components.filter((k) => k.fixed).map((k) => k.id));
+    if (!fixed.size && asm.components.length) fixed.add(asm.components[0].id);
+    for (const g of floatingGroups(asm)) fixed.add(g[0]);
+    fixed.delete(id);
+    const r = dragSolve(placements, fixed, held, id, placementOf(want), { iterations: 50 });
+    if (!r.solved) return { [id]: constrained(id, want) };
+    const r3 = (v: Vec3) => v.map((x) => Math.round(x * 1000) / 1000 + 0) as Vec3;
+    const out: Record<string, { at: Vec3; rotation: Vec3 }> = {};
+    for (const k of asm.components) {
+      const w = written(r.placements.get(k.id)!);
+      const was = { at: (k.at ?? [0, 0, 0]) as Vec3, rotation: (k.rotation ?? [0, 0, 0]) as Vec3 };
+      const moved = [0, 1, 2].some((i) => Math.abs(w.at[i] - was.at[i]) > 1e-4 || Math.abs(w.rotation[i] - was.rotation[i]) > 1e-4);
+      if (moved || k.id === id) out[k.id] = { at: r3(w.at), rotation: r3(w.rotation) };
+    }
+    return out;
+  };
+  /** The parts moved by a drag, written: one undo step. */
+  const placeAll = (places: Record<string, { at: Vec3; rotation: Vec3 }>, label: string) => {
+    const a = base();
+    commit({ ...a, components: a.components.map((k) => (places[k.id] ? clean({ ...k, ...places[k.id] }) : k)) }, label);
+  };
   /** Can this face's part be dragged: a part that isn't fixed (not while measuring or exploded). */
   const canDrag = (t: PickTarget): boolean => {
     if (measuring || exploded || t.kind !== "face") return false;
@@ -636,15 +666,16 @@ export function useAssembly(o: AssemblyOptions) {
       return setDragging(null);
     }
     const want = { at: [s.at[0] + to[0] - from[0], s.at[1] + to[1] - from[1], s.at[2] + to[2] - from[2]] as Vec3, rotation: s.rotation };
-    const next = { id: s.id, ...constrained(s.id, want) };
+    const places = follow(s.id, want);
     if (phase === "end") {
       dragFrom.current = null;
       setDragging(null);
-      const moved = Math.hypot(next.at[0] - s.at[0], next.at[1] - s.at[1], next.at[2] - s.at[2]) > 1e-3 || next.rotation.some((v, i) => Math.abs(v - s.rotation[i]) > 1e-3);
-      if (moved) editComponent(s.id, { at: next.at, rotation: next.rotation }, `Move ${s.id}`);
+      const me = places[s.id];
+      const moved = Object.keys(places).length > 1 || Math.hypot(me.at[0] - s.at[0], me.at[1] - s.at[1], me.at[2] - s.at[2]) > 1e-3 || me.rotation.some((v, i) => Math.abs(v - s.rotation[i]) > 1e-3);
+      if (moved) placeAll(places, Object.keys(places).length > 1 ? `Move ${s.id} (and what follows it)` : `Move ${s.id}`);
       return;
     }
-    setDragging(next);
+    setDragging({ id: s.id, places });
   };
   /** A drag begun on a part: remember it and where it was (and say so when its mates hold it fully). */
   const beginDrag = (t: PickTarget) => {
@@ -667,13 +698,13 @@ export function useAssembly(o: AssemblyOptions) {
     const want = { at: start.at.slice() as Vec3, rotation: start.rotation.slice() as Vec3 };
     (what === "at" ? want.at : want.rotation)[Number(i)] = Math.round(value * 1000) / 1000;
     if (phase === "cancel") return setDragging(null);
-    const next = { id: k.id, ...constrained(k.id, want) };
+    const places = follow(k.id, want);
     if (phase === "end") {
       setDragging(null);
-      editComponent(k.id, { at: next.at, rotation: next.rotation }, what === "at" ? `Move ${k.id}` : `Turn ${k.id}`);
+      placeAll(places, what === "at" ? `Move ${k.id}` : `Turn ${k.id}`);
       return;
     }
-    setDragging(next);
+    setDragging({ id: k.id, places });
   };
 
   // The view's see-through components, and what isolate hides (components gone from the assembly drop out).

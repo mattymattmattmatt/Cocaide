@@ -485,3 +485,45 @@ test("a part that isn't fixed is dragged in the view: free, it follows the mouse
   expect((await at())[2]).toBeLessThanOrEqual(20.01);
   expect((await at())[2]).toBeGreaterThan(19.9);
 });
+
+test("dragging a part pulls the parts connected to it along, as far as their mates allow: a part locked to a slider brings the slider", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  for (let i = 0; i < 3; i++) {
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+  }
+  await expect(page.getByTestId("asm-component-bracket-3")).toBeVisible();
+  await page.waitForTimeout(1500);
+  await page.getByTestId("view-fit").click();
+  await page.waitForTimeout(800);
+  const comps = async () => ((await assembly(page))?.components ?? []).map((k) => (k.at ?? [0, 0, 0]) as number[]);
+  const x3 = (await comps())[2][0];
+  // bracket-2 flush on bracket-1 (it slides on it); bracket-3 locked to bracket-2.
+  await clickAt(page, [-20, 10, 6]);
+  await clickAt(page, [70, 10, 6], true);
+  await page.getByTestId("asm-mate-btn-coincident").click();
+  await expect.poll(async () => (await assembly(page))?.mates?.length).toBe(1);
+  await clickAt(page, [70, 10, 6]);
+  await clickAt(page, [x3 + 25, 5, 6], true);
+  await page.getByTestId("asm-mate-btn-lock").click();
+  await expect.poll(async () => (await assembly(page))?.mates?.length).toBe(2);
+  const before = await comps();
+  // Drag bracket-3 to the right: bracket-2 comes with it, both staying level (on bracket-1's top plane).
+  const [sx, sy] = await page.evaluate((p) => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project(p), [x3 + 25, 5, 6]);
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  for (let k = 1; k <= 10; k++) await page.mouse.move(sx + 8 * k, sy + 3 * k);
+  await page.mouse.up();
+  await expect.poll(async () => JSON.stringify((await comps())[2])).not.toBe(JSON.stringify(before[2]));
+  const after = await comps();
+  const moved3 = [0, 1, 2].map((i) => after[2][i] - before[2][i]);
+  const moved2 = [0, 1, 2].map((i) => after[1][i] - before[1][i]);
+  expect(Math.hypot(...moved3)).toBeGreaterThan(5);
+  // The two moved together (locked), and stayed level.
+  for (let i = 0; i < 3; i++) expect(Math.abs(moved2[i] - moved3[i])).toBeLessThan(0.01);
+  expect(Math.abs(after[1][2])).toBeLessThan(0.01);
+  expect(after[0]).toEqual([0, 0, 0]);
+  // One undo puts both back.
+  await page.getByTestId("undo").click();
+  await expect.poll(async () => JSON.stringify(await comps())).toBe(JSON.stringify(before));
+});

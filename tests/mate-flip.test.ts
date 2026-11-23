@@ -136,3 +136,47 @@ describe("lock, limits and a locked rotation", () => {
     expect(pointTo(p, [0, 0, 0])[2]).toBeCloseTo(20, 4);
   });
 });
+
+describe("dragging with the connected parts following", () => {
+  const frame: MateGeom = { kind: "frame", p: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0] };
+  const I: [Vec3, Vec3, Vec3] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const at = (p: Placement) => pointTo(p, [0, 0, 0]).map((v) => Math.round(v * 100) / 100 + 0);
+  it("a part locked to a slider: dragged, the slider comes along (on its face), and the locked part reaches the pointer", async () => {
+    const { dragSolve } = await import("../src/assembly/solve");
+    const pl = new Map<string, Placement>([["base", placementOf({})], ["slider", placementOf({ at: [0, 0, 10] })], ["arm", placementOf({ at: [100, 0, 10] })]]);
+    const mates: SolverMate[] = [
+      { id: "flush", type: "coincident", a: { component: "base", geom: plane([0, 0, 10], [0, 0, 1]) }, b: { component: "slider", geom: plane([0, 0, 0], [0, 0, -1]) } },
+      { id: "lock", type: "lock", a: { component: "slider", geom: frame }, b: { component: "arm", geom: frame }, relative: { R: I, t: [100, 0, 0] } },
+    ];
+    const r = dragSolve(pl, new Set(["base"]), mates, "arm", placementOf({ at: [300, 50, 10] }));
+    expect(r.solved).toBe(true);
+    expect(at(r.placements.get("arm")!)).toEqual([300, 50, 10]);
+    expect(at(r.placements.get("slider")!)).toEqual([200, 50, 10]);
+  });
+  it("a pin in a hole dragged sideways and up stays on the axis and slides up it", async () => {
+    const { dragSolve } = await import("../src/assembly/solve");
+    const hole = axis([0, 0, 0], [0, 0, 1]);
+    const pl = new Map<string, Placement>([["base", placementOf({})], ["pin", placementOf({})]]);
+    const r = dragSolve(pl, new Set(["base"]), [mate("concentric", hole, hole, { aligned: true })], "pin", placementOf({ at: [50, 0, 30] }));
+    expect(r.solved).toBe(true);
+    const p = at(r.placements.get("pin")!);
+    expect(Math.hypot(p[0], p[1])).toBeLessThan(0.01);
+    expect(p[2]).toBeCloseTo(30, 1);
+  });
+  it("past a limit, the partner is pulled along with it (a chain: base — slider — arm, the arm's distance limited to 0–30)", async () => {
+    const { dragSolve } = await import("../src/assembly/solve");
+    const pl = new Map<string, Placement>([["base", placementOf({})], ["slider", placementOf({ at: [0, 0, 10] })], ["arm", placementOf({ at: [20, 0, 10] })]]);
+    const mates: SolverMate[] = [
+      { id: "flush", type: "coincident", a: { component: "base", geom: plane([0, 0, 10], [0, 0, 1]) }, b: { component: "slider", geom: plane([0, 0, 0], [0, 0, -1]) } },
+      { id: "flush2", type: "coincident", a: { component: "base", geom: plane([0, 0, 10], [0, 0, 1]) }, b: { component: "arm", geom: plane([0, 0, 0], [0, 0, -1]) } },
+      { id: "par", type: "parallel", a: { component: "slider", geom: plane([0, 0, 0], [1, 0, 0]) }, b: { component: "arm", geom: plane([0, 0, 0], [1, 0, 0]) }, aligned: true },
+      { id: "gap", type: "distance", a: { component: "slider", geom: plane([0, 0, 0], [1, 0, 0]) }, b: { component: "arm", geom: plane([0, 0, 0], [1, 0, 0]) }, aligned: true, value: 20, min: 0, max: 30 },
+    ];
+    const r = dragSolve(pl, new Set(["base"]), mates, "arm", placementOf({ at: [200, 0, 10] }));
+    expect(r.solved).toBe(true);
+    const arm = at(r.placements.get("arm")!);
+    const slider = at(r.placements.get("slider")!);
+    expect(arm[0]).toBeGreaterThan(150);
+    expect(arm[0] - slider[0]).toBeLessThanOrEqual(30.01);
+  });
+});
