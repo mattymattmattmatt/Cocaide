@@ -1,6 +1,6 @@
 // The touch viewer on a phone (an emulated Pixel 7): it opens instead of the full app; Views, Measure (a tap on the
 // slab: its face and the piece's size), Section (a plan cut), Parts (hide a body), VR notes (accept a move), Share;
-// one finger turns the view, a two-finger pinch zooms; Full app and back. A computer gets the full app.
+// one finger turns the view, a two-finger pinch zooms, a twist rolls it with the fingers; Full app and back. A computer gets the full app.
 import { devices, expect, test, type Page } from "@playwright/test";
 
 const DOC = {
@@ -63,6 +63,28 @@ test.describe("on a phone", () => {
     for (let k = 1; k <= 6; k++) await touch("touchMove", [{ x: mid.x - 40 - k * 15, y: mid.y }, { x: mid.x + 40 + k * 15, y: mid.y }]);
     await touch("touchEnd", []);
     await expect.poll(async () => dist(await camera(page))).toBeLessThan(zoomedFrom * 0.7);
+    // Twist: two fingers turning clockwise turn the model clockwise with them (about the point between them).
+    await page.getByTestId("mv-view.top").tap();
+    await page.waitForTimeout(700);
+    const at = (await page.evaluate("window.__cocaideViewport.project([9000, 5000, 100])")) as [number, number];
+    const angleOf = (q: [number, number]) => Math.atan2(q[1] - mid.y, q[0] - mid.x);
+    const a0 = angleOf(at);
+    const r = 70;
+    const finger = (deg: number) => {
+      const t = (deg * Math.PI) / 180;
+      return [{ x: mid.x - r * Math.cos(t), y: mid.y - r * Math.sin(t) }, { x: mid.x + r * Math.cos(t), y: mid.y + r * Math.sin(t) }];
+    };
+    await touch("touchStart", finger(0));
+    for (let deg = 5; deg <= 45; deg += 5) await touch("touchMove", finger(deg));
+    await touch("touchEnd", []);
+    await page.waitForTimeout(300);
+    const a1 = angleOf((await page.evaluate("window.__cocaideViewport.project([9000, 5000, 100])")) as [number, number]);
+    // Screen y points down: clockwise is a growing angle; about 45° of it.
+    const turned = (((a1 - a0) * 180) / Math.PI + 540) % 360 - 180;
+    expect(turned).toBeGreaterThan(40);
+    expect(turned).toBeLessThan(50);
+    await page.getByTestId("mv-view.fit").tap();
+    await page.waitForTimeout(600);
     // The pinch selected nothing (it is not a tap).
     await page.getByTestId("mv-view.fit").tap();
     await page.waitForTimeout(600);

@@ -14,7 +14,8 @@
 // the speed in Settings > Mouse); "Keep Z up" makes it a turntable.
 //
 // Touch: one finger turns the view; two pinch to zoom (about the point between
-// them) and drag to pan; a double tap zooms in on the part where it lands (on
+// them), drag to pan and twist to roll (once past a few degrees, so a pinch
+// doesn't roll it by accident); a double tap zooms in on the part where it lands (on
 // empty space: fits the part). A tap after two fingers were down is not a click
 // (see multiTouch).
 
@@ -54,8 +55,8 @@ export class CadControls {
   private lastMiddleClick = 0;
   /** The fingers on the view, by pointer id. */
   private touches = new Map<number, { x: number; y: number }>();
-  /** Two fingers down: their spread and middle when last seen. */
-  private pinch: { dist: number; x: number; y: number } | null = null;
+  /** Two fingers down: their spread, middle and angle when last seen; the twist so far, and whether it rolls yet. */
+  private pinch: { dist: number; x: number; y: number; angle: number; twist: number; rolling: boolean } | null = null;
   /** Two fingers were down since the first went down: lifting them is not a tap (the view does not pick). */
   multiTouch = false;
   private lastTap = { t: 0, x: 0, y: 0 };
@@ -252,11 +253,23 @@ export class CadControls {
     return null;
   }
 
-  /** The first two fingers' spread and middle. */
-  private twoFingers(): { dist: number; x: number; y: number } | null {
+  /** The first two fingers' spread, middle and angle (radians, screen y down). */
+  private twoFingers(): { dist: number; x: number; y: number; angle: number } | null {
     const [a, b] = [...this.touches.values()];
     if (!a || !b) return null;
-    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, angle: Math.atan2(b.y - a.y, b.x - a.x) };
+  }
+
+  /** Rolls the view about the line of sight through the part under (clientX, clientY): that point stays under the fingers. */
+  private rollAt(angle: number, clientX: number, clientY: number) {
+    const at = this.pointUnder(clientX, clientY);
+    const from = this.pose();
+    const turn = new THREE.Quaternion().setFromAxisAngle(poseAxes(from).forward, angle);
+    // The camera turned about that line as a whole (eye, look-at point and up together), as the roll turns its up.
+    const p = this.rolled(angle, from);
+    p.position.sub(at).applyQuaternion(turn).add(at);
+    p.target.sub(at).applyQuaternion(turn).add(at);
+    this.setPose(p);
   }
 
   private onDown = (e: PointerEvent) => {
@@ -267,7 +280,8 @@ export class CadControls {
         // A second finger: the one-finger turn stops where it is, and the two pinch and pan.
         this.multiTouch = true;
         this.drag = null;
-        this.pinch = this.twoFingers();
+        const two = this.twoFingers();
+        this.pinch = two ? { ...two, twist: 0, rolling: false } : null;
         this.hooks.interrupt?.();
         (e.currentTarget as Element | null)?.setPointerCapture?.(e.pointerId);
         return;
@@ -288,7 +302,15 @@ export class CadControls {
         if (!now) return;
         this.zoom(now.dist / this.pinch.dist, now.x, now.y);
         this.pan(now.x - this.pinch.x, now.y - this.pinch.y);
-        this.pinch = now;
+        // The twist since last time (wrapped to ±π); it rolls the view once it has passed 8° in all.
+        let d = now.angle - this.pinch.angle;
+        if (d > Math.PI) d -= 2 * Math.PI;
+        if (d < -Math.PI) d += 2 * Math.PI;
+        const twist = this.pinch.twist + d;
+        const rolling = this.pinch.rolling || Math.abs(twist) > (8 * Math.PI) / 180;
+        // Fingers turning clockwise on the screen turn the model clockwise with them.
+        if (rolling) this.rollAt(this.pinch.rolling ? -d : -twist, now.x, now.y);
+        this.pinch = { ...now, twist, rolling };
         return;
       }
     }
