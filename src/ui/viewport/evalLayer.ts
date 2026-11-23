@@ -20,6 +20,8 @@ export interface EvalOverlay {
   centreOfMass?: { at: Vec3; label: string } | null;
   /** Where a broken reference was last seen (What's wrong, Re-pick): a red ring with its label. */
   ghosts?: { at: Vec3; label: string }[];
+  /** Arrows (which way a face faces or an axis runs: a mate's two things), each with its colour and a label at its tip. */
+  arrows?: { from: Vec3; dir: Vec3; length: number; color: number; label?: string }[];
 }
 
 interface Tag {
@@ -79,6 +81,10 @@ export class EvalLayer {
     this.labels = document.createElement("div");
     this.labels.className = "eval-labels";
     host.appendChild(this.labels);
+    // Ctrl, Shift or Cmd held: a click is a pick (another face for a mate, say), so the labels let it through to the model.
+    window.addEventListener("keydown", this.onModifier);
+    window.addEventListener("keyup", this.onModifier);
+    window.addEventListener("blur", this.onBlur);
     this.fat = [MEASURE_COLOR, DIM_COLOR].map((color) => new LineMaterial({ color, linewidth: 2.5, depthTest: false, transparent: true }));
   }
 
@@ -139,6 +145,26 @@ export class EvalLayer {
       ring.renderOrder = 8;
       this.overlayGroup.add(ring);
       this.tags.push({ el: this.tag(o.centreOfMass.label, "eval-label com-label", "com-label"), at: o.centreOfMass.at, dx: 10, dy: 6 });
+    }
+    for (const [i, a] of (o.arrows ?? []).entries()) {
+      // A shaft and a cone at its tip, over everything, in its own colour.
+      const d = new THREE.Vector3(...a.dir).normalize();
+      const from = new THREE.Vector3(...a.from);
+      const tip = from.clone().addScaledVector(d, a.length);
+      const head = a.length * 0.22;
+      const shaftG = new LineSegmentsGeometry();
+      const neck = tip.clone().addScaledVector(d, -head);
+      shaftG.setPositions([from.x, from.y, from.z, neck.x, neck.y, neck.z]);
+      const mat = new LineMaterial({ color: a.color, linewidth: 3, depthTest: false, transparent: true });
+      mat.resolution.copy(this.fat[0].resolution);
+      const shaft = new LineSegments2(shaftG, mat);
+      shaft.renderOrder = 11;
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(head * 0.42, head, 18), new THREE.MeshBasicMaterial({ color: a.color, depthTest: false, transparent: true }));
+      cone.position.copy(neck.clone().addScaledVector(d, head / 2));
+      cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+      cone.renderOrder = 11;
+      this.overlayGroup.add(shaft, cone);
+      if (a.label) this.tags.push({ el: this.tag(a.label, "eval-label arrow-label", `arrow-label-${i}`), at: tip.toArray() as Vec3, dx: 8, dy: -8 });
     }
     if (o.ghosts?.length) {
       // A broken reference's last-known place: a hollow red ring over everything, and what it was.
@@ -472,7 +498,13 @@ export class EvalLayer {
     this.rulerGroup.add(ruler);
   }
 
+  private onModifier = (e: KeyboardEvent) => this.labels.classList.toggle("pass-through", e.ctrlKey || e.shiftKey || e.metaKey);
+  private onBlur = () => this.labels.classList.remove("pass-through");
+
   dispose() {
+    window.removeEventListener("keydown", this.onModifier);
+    window.removeEventListener("keyup", this.onModifier);
+    window.removeEventListener("blur", this.onBlur);
     this.setHandles([], null);
     this.setDims([]);
     this.setOverlay(null);

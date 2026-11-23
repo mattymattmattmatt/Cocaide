@@ -13,7 +13,7 @@ import { MATE_TYPES } from "../doc/types";
 import { Checker } from "../doc/validate";
 import { copiesThatHold, linedHoles, mateFeatures, occupiedHoles, sortClashes, suggestMates, type Clash } from "./features";
 import { componentStates, floatingGroups, motionWords, partBox, partDocument, partDocuments, partName, partSize, placed, solveAssembly, type AssemblySolve } from "./model";
-import type { PartTopology } from "./resolve";
+import { mateGeometry, type PartTopology } from "./resolve";
 import { apply, mul, placementOf, pointTo, transpose, written } from "./transform";
 
 /** Where component b is now from a (b's place in a's frame): what a lock, or a concentric's locked rotation, keeps. */
@@ -143,8 +143,17 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
   const { asm, errors } = current(env.doc);
   if (errors.length && name !== "assembly") return fail(`the assembly has errors: ${errors.join("; ")}`);
   const base: Assembly = asm ?? { components: [] };
+  // A component by its id, or by its name as the user says it ("cylinder head-1" for cylinder_head-1): spaces and
+  // case don't matter when only one component matches that way.
+  const squash = (id: string) => id.trim().replace(/\s+/g, "_").toLowerCase();
+  const known = (id: unknown): string | undefined => {
+    if (typeof id !== "string") return undefined;
+    if (base.components.some((x) => x.id === id)) return id;
+    const like = base.components.filter((x) => squash(x.id) === squash(id));
+    return like.length === 1 ? like[0].id : undefined;
+  };
   const need = (id: unknown): AssemblyComponent | string => {
-    const k = base.components.find((x) => x.id === id);
+    const k = base.components.find((x) => x.id === known(id));
     return k ?? `no component "${String(id)}" (components: ${base.components.map((x) => x.id).join(", ") || "none: insertComponent first"})`;
   };
   switch (name) {
@@ -226,16 +235,40 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       const rb = mateRef(a.b, "b");
       if (typeof ra === "string") return fail(ra);
       if (typeof rb === "string") return fail(rb);
+      for (const r of [ra, rb]) r.component = known(r.component) ?? r.component;
       const id = typeof a.id === "string" && a.id ? a.id : nextMateId(base, String(a.type));
       if ((base.mates ?? []).some((m) => m.id === id)) return fail(`a mate "${id}" exists already`);
-      const m = { id, type: a.type, a: ra, b: rb, ...(a.value !== undefined ? { value: a.value } : {}), ...(a.aligned === true ? { aligned: true } : {}), ...(a.opposed === true ? { opposed: true } : {}), ...(a.flip === true ? { flip: true } : {}), ...(typeof a.min === "number" ? { min: a.min } : {}), ...(typeof a.max === "number" ? { max: a.max } : {}), ...(a.lockRotation === true ? { lockRotation: true } : {}) } as Mate;
+      const m = { id, type: a.type, a: ra, b: rb, ...(Array.isArray(a.about) ? { about: a.about } : {}), ...(a.value !== undefined ? { value: a.value } : {}), ...(a.aligned === true ? { aligned: true } : {}), ...(a.opposed === true ? { opposed: true } : {}), ...(a.flip === true ? { flip: true } : {}), ...(typeof a.min === "number" ? { min: a.min } : {}), ...(typeof a.max === "number" ? { max: a.max } : {}), ...(a.lockRotation === true ? { lockRotation: true } : {}) } as Mate;
       // A lock, or a concentric mate's locked rotation: kept as the parts are now.
       if (m.type === "lock" || m.lockRotation) m.relative = relativeOf(base, ra.component, rb.component);
+      // An angle is signed unless told not to ("signed": false): measured about the direction square to both as they
+      // are now (in a's frame), from a's to b's.
+      if (m.type === "angle" && !m.about && a.signed !== false) {
+        const { views } = await topologies(env, base);
+        const ka = base.components.find((k) => k.id === ra.component);
+        const kb = base.components.find((k) => k.id === rb.component);
+        const ga = ka ? mateGeometry(ra, views.get(ka.part)) : "";
+        const gb = kb ? mateGeometry(rb, views.get(kb.part)) : "";
+        const dirOf = (g: typeof ga) => (typeof g === "string" ? null : g.kind === "plane" ? g.n : g.kind === "axis" ? g.d : null);
+        const da = dirOf(ga);
+        const db = dirOf(gb);
+        if (ka && kb && da && db) {
+          const Ra = placementOf(ka).R;
+          const u = apply(Ra, da);
+          const v = apply(placementOf(kb).R, db);
+          const w: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+          const lw = Math.hypot(...w);
+          if (lw > 1e-6) m.about = apply(transpose(Ra), [w[0] / lw, w[1] / lw, w[2] / lw]).map((x) => Math.round(x * 1e6) / 1e6 + 0) as Vec3;
+        }
+      }
       const next = { ...base, mates: [...(base.mates ?? []), m] };
       const c = new Checker("document");
       validateAssembly(next, c);
       if (c.errors.length) return fail(c.errors.join("; "));
-      return commit(env, next, `Mate ${id}`, { strict: [id], extra: { mate: id } });
+      // A lock keeps where the parts are now: say so (and that a part not mated into place yet is locked where it lies).
+      const loose = m.type === "lock" || m.lockRotation ? [m.a.component, m.b.component].filter((c) => !base.components.find((k) => k.id === c)?.fixed && !(base.mates ?? []).some((x) => !x.suppressed && (x.a.component === c || x.b.component === c))) : [];
+      const note = m.type === "lock" || m.lockRotation ? { note: `locked as they are now (${m.b.component} at ${JSON.stringify(m.relative?.at)}, turned ${JSON.stringify(m.relative?.rotation)} from ${m.a.component})${loose.length ? `; ${loose.join(" and ")} had no other mates, so ${loose.length === 1 ? "it was" : "they were"} locked wherever ${loose.length === 1 ? "it was" : "they were"}: place ${loose.length === 1 ? "it" : "them"} first and lock again if that is wrong` : ""}` } : {};
+      return commit(env, next, `Mate ${id}`, { strict: [id], extra: { mate: id, ...note } });
     }
 
     case "editMate": {
@@ -243,6 +276,7 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       if (!m) return fail(`no mate "${String(a.id)}" (mates: ${(base.mates ?? []).map((x) => x.id).join(", ") || "none"})`);
       if (!isObject(a.patch)) return fail('patch must be an object: { "type"?, "value"?, "aligned"?, "opposed"?, "flip"?, "min"?, "max"?, "lockRotation"?, "suppressed"?, "a"?, "b"? }');
       const nm = { ...m, ...(a.patch as Partial<Mate>) } as Mate;
+      for (const side of ["a", "b"] as const) if (isObject(nm[side]) && typeof nm[side].component === "string") nm[side] = { ...nm[side], component: known(nm[side].component) ?? nm[side].component };
       for (const key of ["aligned", "opposed", "flip", "suppressed", "lockRotation"] as const) if (!nm[key]) delete nm[key];
       for (const key of ["min", "max"] as const) if (nm[key] === null || nm[key] === undefined) delete nm[key];
       // Locking (or locking a concentric's rotation) keeps the parts as they are now; unlocking drops it.

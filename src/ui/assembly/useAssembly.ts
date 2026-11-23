@@ -189,6 +189,14 @@ export function useAssembly(o: AssemblyOptions) {
     return [Math.ceil(max / 10) * 10 + 50, 0, 0];
   };
 
+  const fitWhenBuilt = useRef<string | null>(null);
+  useEffect(() => {
+    const p = fitWhenBuilt.current;
+    if (p && views.has(p)) {
+      fitWhenBuilt.current = null;
+      setFitToken((t) => t + 1);
+    }
+  }, [views]);
   const insert = (part: string, name: string, also?: (a: Assembly) => Assembly) => {
     const a = also ? also(base()) : base();
     const first = a.components.length === 0;
@@ -197,6 +205,9 @@ export function useAssembly(o: AssemblyOptions) {
     const next = { ...a, components: [...a.components, k] };
     if (!commit(next, `Insert ${id}`, false)) {
       setItem({ kind: "component", id });
+      // The view fits again once the new part has been built (it may land off screen, beside the others).
+      if (views.has(part)) requestAnimationFrame(() => setFitToken((t) => t + 1));
+      else fitWhenBuilt.current = part;
       o.notice(first ? `${id} is in, fixed at the origin: the next parts are mated to it.` : `${id} is in, beside the others: select a face of it and one of another, then pick a mate.`, "info");
     }
   };
@@ -341,8 +352,20 @@ export function useAssembly(o: AssemblyOptions) {
       m.value = value ?? (Math.round(now * 1000) / 1000 || 10);
     }
     if (type === "angle") {
-      const c = a.normal && b.normal ? Math.abs(a.normal[0] * b.normal[0] + a.normal[1] * b.normal[1] + a.normal[2] * b.normal[2]) : 1;
-      m.value = value ?? (Math.round((Math.acos(Math.min(1, c)) * 180) / Math.PI * 1000) / 1000 || 45);
+      // Signed: measured about the direction square to both as they are now (kept in a's frame), from a's to b's, so the
+      // angle turns one way, and Flip turns it the other. Two parallel directions have no such axis: unsigned then.
+      const u = a.normal;
+      const v = b.normal;
+      const w: Vec3 | null = u && v ? [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]] : null;
+      const lw = w ? Math.hypot(...w) : 0;
+      if (u && v && w && lw > 1e-6) {
+        const Ra = placementOf(base().components.find((k) => k.id === a.ref.component) ?? {}).R;
+        m.about = rotate(transpose(Ra), [w[0] / lw, w[1] / lw, w[2] / lw]).map((x) => Math.round(x * 1e6) / 1e6 + 0) as Vec3;
+        m.value = value ?? Math.round((Math.acos(Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1] + u[2] * v[2]))) * 180) / Math.PI * 1000) / 1000;
+      } else {
+        const c = u && v ? Math.abs(u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) : 1;
+        m.value = value ?? (Math.round((Math.acos(Math.min(1, c)) * 180) / Math.PI * 1000) / 1000 || 45);
+      }
     }
     // Planes facing the same way stay so; otherwise they meet face to face.
     if ((type === "coincident" || type === "distance") && a.kind === "plane" && b.kind === "plane" && facesAlign(a.normal, b.normal)) m.aligned = true;
@@ -354,6 +377,7 @@ export function useAssembly(o: AssemblyOptions) {
     if (!commit(next, `Mate ${m.id}`)) {
       setSelection(EMPTY_SELECTION);
       setItem({ kind: "mate", id: m.id });
+      if (type === "lock") o.notice(lockWords(m.a.component, m.b.component, m.id), "info");
     }
   };
 
@@ -372,6 +396,24 @@ export function useAssembly(o: AssemblyOptions) {
     const w = written({ R: mul(Rt, pb.R), t: rotate(Rt, [pb.t[0] - pa.t[0], pb.t[1] - pa.t[1], pb.t[2] - pa.t[2]]) });
     const r = (v: Vec3) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0) as Vec3;
     return { at: r(w.at), rotation: r(w.rotation) };
+  };
+  /** What a lock just did, in words, with a warning when a part it holds wasn't mated into place yet. */
+  const lockWords = (ida: string, idb: string, except: string): string => {
+    const a = base();
+    const loose = [ida, idb].filter((id) => {
+      const k = a.components.find((x) => x.id === id);
+      return k && !k.fixed && !(a.mates ?? []).some((m) => m.id !== except && !m.suppressed && (m.a.component === id || m.b.component === id));
+    });
+    return loose.length
+      ? `Locked ${ida} and ${idb} where they are now, but ${loose.join(" and ")} ${loose.length === 1 ? "isn't" : "aren't"} mated into place yet: if that's not where ${loose.length === 1 ? "it belongs" : "they belong"}, move ${loose.length === 1 ? "it" : "them"} there and press Lock here again (in the lock's properties).`
+      : `Locked ${ida} and ${idb} where they are now: they move as one. To keep a new position later, move them and press Lock here again.`;
+  };
+  /** A concentric mate's rotation locked (as it turns now) or freed. */
+  const lockRotation = (id: string, on: boolean) => {
+    const m = base().mates?.find((x) => x.id === id);
+    if (!m) return;
+    editMate(id, on ? { lockRotation: true, relative: relativeNow(m.a.component, m.b.component) } : { lockRotation: undefined, relative: undefined }, on ? `Lock ${id}'s rotation` : `Free ${id}'s rotation`);
+    if (on) o.notice(`${m.b.component}'s turn about the axis is locked as it is now: to keep another, turn it and press Lock here again.`, "info");
   };
   /** A lock (or a concentric mate's locked rotation) kept as the parts are now. */
   const lockHere = (id: string) => {
@@ -415,6 +457,27 @@ export function useAssembly(o: AssemblyOptions) {
           if (o?.component === k.id && local.includes(o.local) && e) out.push({ kind: "edge", index: i, point: e.mid ?? e.start });
         });
       } else whole(k.id);
+    }
+    return out;
+  };
+  /**
+   * Which way a mate's two things face or run, as arrows (a face's outward normal, an axis's direction) at where they
+   * are: blue for the first, orange for the second, so aligned, opposed and flips can be seen.
+   */
+  const mateArrows = (m: Mate): { from: Vec3; dir: Vec3; length: number; color: number; label: string }[] => {
+    if (m.type === "lock") return [];
+    const h = solve?.held.find((x) => x.id === m.id);
+    if (!h || !solve) return [];
+    const box = scene.view.measurements?.boundingBox;
+    const size = box ? Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]) : 200;
+    const length = Math.max(8, Math.min(80, size * 0.12));
+    const out: { from: Vec3; dir: Vec3; length: number; color: number; label: string }[] = [];
+    for (const [side, color] of [[h.a, 0x228be6], [h.b, 0xf08c00]] as const) {
+      const P = solve.placements.get(side.component);
+      if (!P) continue;
+      const g = world(side.geom, P);
+      if (g.kind === "plane") out.push({ from: g.p, dir: g.n, length, color, label: `${side.component} face` });
+      else if (g.kind === "axis") out.push({ from: g.p, dir: g.d, length, color, label: `${side.component} axis` });
     }
     return out;
   };
@@ -823,9 +886,11 @@ export function useAssembly(o: AssemblyOptions) {
     editMate,
     flipsOf,
     lockHere,
+    lockRotation,
     relativeNow,
     mateNow,
     mateTargets,
+    mateArrows,
     componentTargets,
     remove,
     resolve,

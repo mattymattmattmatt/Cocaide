@@ -2375,15 +2375,20 @@ export function validatePlane(v: unknown, path: string, c: Checker, earlier: Rea
     c.fail(`${path}.type`, `must be "datum" (written out) or "ref" (by reference) (got ${describe(v.type)})`);
     return undefined;
   }
-  c.keys(v, path, ["type", "normal", "origin", "xDir"]);
+  c.keys(v, path, ["type", "normal", "origin", "xDir", "yDir"]);
   const normal = c.unitVec(v, "normal", path);
   const origin = c.vec3(v, "origin", path);
   const xDir = v.xDir === undefined ? undefined : c.unitVec(v, "xDir", path);
+  const yDir = v.yDir === undefined ? undefined : c.unitVec(v, "yDir", path);
   if (normal && xDir && Math.abs(dot3(normalize3(normal), normalize3(xDir))) > 1 - 1e-9) {
     c.fail(`${path}.xDir`, "must not be parallel to the plane normal");
   }
+  if (normal && yDir && Math.abs(dot3(normalize3(normal), normalize3(yDir))) > 1 - 1e-9) {
+    c.fail(`${path}.yDir`, "must not be parallel to the plane normal");
+  }
+  if (xDir && yDir) c.fail(`${path}.yDir`, "give xDir or yDir, not both (one sets the other)");
   if (!normal || !origin || c.errors.length > before) return undefined;
-  return { type: "datum", normal, origin, ...(xDir ? { xDir } : {}) };
+  return { type: "datum", normal, origin, ...(xDir ? { xDir } : {}), ...(yDir ? { yDir } : {}) };
 }
 
 /**

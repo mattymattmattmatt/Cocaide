@@ -13,13 +13,14 @@ export interface Frame {
 }
 
 /**
- * x = xDir if given, else global X projected onto the plane (global Y when the
+ * x = xDir if given, else yDir × normal if an up (yDir) is given, else global X projected onto the plane (global Y when the
  * normal is parallel to X); y = z × x. Right-handed, so a counter-clockwise
  * loop in (x, y) winds counter-clockwise about the normal.
  */
-export function planeFrame(normal: Vec3, origin: Vec3, xDir?: Vec3): Frame {
+export function planeFrame(normal: Vec3, origin: Vec3, xDir?: Vec3, yDir?: Vec3): Frame {
   const z = normalize3(normal);
-  const ref: Vec3 = xDir ?? (Math.abs(z[0]) < 1 - 1e-9 ? [1, 0, 0] : [0, 1, 0]);
+  // A given up (yDir) stands for the x it makes: x = yDir × normal, so y = normal × x is yDir square to the normal.
+  const ref: Vec3 = xDir ?? (yDir ? cross3(yDir, z) : undefined) ?? (Math.abs(z[0]) < 1 - 1e-9 ? [1, 0, 0] : [0, 1, 0]);
   const x = normalize3(sub3(ref, scale3(z, dot3(ref, z))));
   const y = cross3(z, x);
   return { origin: [...origin], x, y, z };

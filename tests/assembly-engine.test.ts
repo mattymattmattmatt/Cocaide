@@ -81,7 +81,8 @@ export async function buildEngine(outDir: string) {
 
   // The head: on the cylinder (face to face), its bolt holes on the cylinder's (two concentrics).
   await ins("head", [10, 0, 60]);
-  await mate({ type: "coincident", a: ref("cylinder-1", flat([0, 0, 1], [0, -62, 200])), b: ref("cylinder_head-1", flat([0, 0, -1], [0, -62, 200])) });
+  // (Named as said, with a space: "cylinder head-1" finds cylinder_head-1.)
+  await mate({ type: "coincident", a: ref("cylinder-1", flat([0, 0, 1], [0, -62, 200])), b: ref("cylinder head-1", flat([0, 0, -1], [0, -62, 200])) });
   await concentric("cylinder-1", "cylinder", round(4, [27, -89, 140]), "cylinder_head-1", "head", round(4, [27, -89, 207]));
   await concentric("cylinder-1", "cylinder", round(4, [-27, -35, 140]), "cylinder_head-1", "head", round(4, [-27, -35, 207]));
 
@@ -169,5 +170,21 @@ describe("a single-cylinder engine and its intake manifold, assembled with every
       expect(Math.abs(piston.at[0])).toBeLessThan(0.01);
       expect(Math.abs(piston.at[1])).toBeLessThan(0.01);
     }
+    // Signed: 120° puts the piston where 60° does, the crank turned the other way (the web's side, +X at top dead
+    // centre, swings to the other side); −90° is bottom dead centre (an angle without a direction could never say it).
+    const webX = async () => {
+      const k = ((await call("assembly")).components as R[]).find((c) => c.id === "crankshaft-1")!;
+      return Math.sin(((k.rotation?.[1] ?? 0) * Math.PI) / 180);
+    };
+    expect(angle.about).toEqual([0, 1, 0]);
+    await call("editMate", { id: angle.id, patch: { value: 60 } });
+    const one = await webX();
+    await call("editMate", { id: angle.id, patch: { value: 120 } });
+    const other = await webX();
+    expect(Math.sign(one)).toBe(-Math.sign(other));
+    expect(Math.abs(one)).toBeGreaterThan(0.4);
+    expect(await call("editMate", { id: angle.id, patch: { value: -90 } })).toMatchObject({ ok: true });
+    const bdc = ((await call("assembly")).components as R[]).find((k) => k.id === "piston-1")!;
+    expect(bdc.at[2]).toBeCloseTo(ENGINE.crankZ - ENGINE.throw + ENGINE.rod - ENGINE.pinZ, 2);
   }, 600_000);
 });

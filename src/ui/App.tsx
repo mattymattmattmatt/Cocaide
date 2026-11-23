@@ -2854,7 +2854,7 @@ export function App() {
   const sketchSees = sketch ? (sketch.isNew ? view : before?.id === sketch.id ? before.view : null) : null;
   const sketchModel = useMemo(() => {
     if (!sketch) return EMPTY_MODEL;
-    const frame = planeFrame(sketch.plane.normal, sketch.plane.origin, sketch.plane.xDir);
+    const frame = planeFrame(sketch.plane.normal, sketch.plane.origin, sketch.plane.xDir, sketch.plane.yDir);
     // The other sketches it may reference are those in the part it sees (earlier ones), not itself.
     // A hidden sketch is not offered (show it, or select it in the tree, to reference it).
     const seen = sketchSees?.sketches && hiddenSketchIds.size ? { ...sketchSees, sketches: sketchSees.sketches.filter((k) => !hiddenSketchIds.has(k.id)) } : sketchSees;

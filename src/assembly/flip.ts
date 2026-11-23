@@ -57,7 +57,12 @@ export function mateFlips(m: Mate, held?: SolverMate, placements?: Map<string, P
       flip = directions();
       break;
     case "angle":
-      flip = { label: "Flip", now: `${m.value ?? 0}° (the other way: ${Math.round((180 - (m.value ?? 0)) * 1000) / 1000}°)`, patch: { value: Math.round((180 - (m.value ?? 0)) * 1000) / 1000 } };
+      // Signed (measured about a direction): the other way round is the turn the other way; else 180° less it.
+      if (m.about) {
+        const v = m.value ?? 0;
+        const lim = m.min !== undefined && m.max !== undefined ? { min: -m.max, max: -m.min } : {};
+        flip = { label: "Flip", now: `${v}° ${v >= 0 ? "anticlockwise" : "clockwise"} (the other way: ${-v}°)`, patch: { value: -v, ...lim } };
+      } else flip = { label: "Flip", now: `${m.value ?? 0}° (the other way: ${Math.round((180 - (m.value ?? 0)) * 1000) / 1000}°)`, patch: { value: Math.round((180 - (m.value ?? 0)) * 1000) / 1000 } };
       break;
     case "tangent":
       flip = { label: "Flip", now: axes ? (m.flip ? "One inside the other" : "Side by side") : m.flip ? "Behind the flat face" : "In front of the flat face", patch: { flip: m.flip ? undefined : true } };

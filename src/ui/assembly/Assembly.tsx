@@ -203,7 +203,7 @@ export function AssemblyMain({
     const title = items.length === 1 ? named(items[0]) : items.length === 2 ? `${named(items[0])} to ${named(items[1])}` : r.title;
     return { ...r, title: title.charAt(0).toUpperCase() + title.slice(1) };
   }, [a.measuring, a.selection, a.scene]);
-  const overlay = useMemo<EvalOverlay | null>(() => (measured && (measured.line || measured.points.length) ? { lines: measured.line ? [measured.line] : [], points: measured.points, centreOfMass: null } : null), [measured]);
+  const measureOverlay = useMemo<EvalOverlay | null>(() => (measured && (measured.line || measured.points.length) ? { lines: measured.line ? [measured.line] : [], points: measured.points, centreOfMass: null } : null), [measured]);
   // What lights up in the view: a mate or component hovered in the tree, else the one selected (a mate: the two
   // things it holds; a component: all of it), so it is plain which one it is.
   const [hover, setHover] = useState<{ kind: "mate" | "component"; id: string } | null>(null);
@@ -216,6 +216,14 @@ export function AssemblyMain({
   };
   const picking = a.selection.faces.length > 0 || a.selection.edges.length > 0;
   const peek: PickTarget[] | null = lit(hover) ?? (picking ? null : lit(a.item));
+  // A mate hovered (else selected): arrows for which way its two things face or run.
+  const arrowMate = hover?.kind === "mate" ? hover.id : !picking && a.item?.kind === "mate" ? a.item.id : null;
+  const arrows = useMemo(() => {
+    const m = arrowMate ? a.asm?.mates?.find((x) => x.id === arrowMate) : undefined;
+    return m ? a.mateArrows(m) : [];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrowMate, a.asm, a.solve]);
+  const overlay = useMemo<EvalOverlay | null>(() => (arrows.length ? { ...(measureOverlay ?? { lines: [], points: [] }), arrows } : measureOverlay), [measureOverlay, arrows]);
   // Delete (or Backspace) deletes what is selected in the tree; not while typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -607,7 +615,7 @@ function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (
             <input
               type="checkbox"
               checked={!!m.lockRotation}
-              onChange={(e) => a.editMate(m.id, e.target.checked ? { lockRotation: true, relative: a.relativeNow(m.a.component, m.b.component) } : { lockRotation: undefined, relative: undefined }, e.target.checked ? `Lock ${m.id}'s rotation` : `Free ${m.id}'s rotation`)}
+              onChange={(e) => a.lockRotation(m.id, e.target.checked)}
               data-testid="asm-prop-mate-lock-rotation"
             />
             Lock rotation (it can't spin about the axis)

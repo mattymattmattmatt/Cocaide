@@ -321,7 +321,7 @@ export function facePlane(normal: Vec3, pointOnPlane: Vec3): PlaneDatum {
 
 /** A written-out plane as a resolved one (its x by the datum-plane rule when it has none). */
 export function datumPlaneDatum(p: DatumPlane): PlaneDatum {
-  const frame = planeFrame(p.normal, p.origin, p.xDir);
+  const frame = planeFrame(p.normal, p.origin, p.xDir, p.yDir);
   return { kind: "plane", origin: frame.origin, normal: frame.z, xDir: frame.x };
 }
 

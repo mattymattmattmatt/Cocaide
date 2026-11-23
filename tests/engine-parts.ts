@@ -87,8 +87,8 @@ export function engineParts() {
     ]),
     // The wrist pin, drawn from its front end back (its axis runs +Y; the rod's eye runs −Y): a concentric the other way round.
     wristPin: part("wrist pin", "Wrist pin: Ø12 × 46", "#b7bcc2", "metallic", [
-      // (Facing +Y with X across, the sketch's own up is −Z.)
-      { id: "skp", op: "sketch", plane: { type: "datum", normal: [0, 1, 0], origin: [0, -85, 0], xDir: [1, 0, 0] }, entities: [{ id: "c", type: "circle", center: [0, -ENGINE.pinZ], radius: 6 }] },
+      // (Facing +Y, the sketch's own up would be −Z: "yDir" makes it +Z.)
+      { id: "skp", op: "sketch", plane: { type: "datum", normal: [0, 1, 0], origin: [0, -85, 0], yDir: [0, 0, 1] }, entities: [{ id: "c", type: "circle", center: [0, ENGINE.pinZ], radius: 6 }] },
       { id: "pin", op: "extrude", sketch: "skp", distance: 46 },
     ]),
     // The head: a plate on the cylinder, its two bolt holes over the cylinder's.

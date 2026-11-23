@@ -9,8 +9,8 @@ import { apply, mul, pointTo, rotationOf, type Placement } from "./transform";
 
 /** A thing a mate holds, in its part's frame: a plane (a point on it and its outward normal), an axis (a point and its direction) or a point. */
 export type MateGeom =
-  | { kind: "plane"; p: Vec3; n: Vec3 }
-  | { kind: "axis"; p: Vec3; d: Vec3; /** A round face's radius (tangent mates). */ r?: number }
+  | { kind: "plane"; p: Vec3; n: Vec3; /** A signed angle's direction it is measured about (an angle mate's first thing). */ ref?: Vec3 }
+  | { kind: "axis"; p: Vec3; d: Vec3; /** A round face's radius (tangent mates). */ r?: number; ref?: Vec3 }
   | { kind: "point"; p: Vec3 }
   /** A component's whole frame (lock mates): its origin and its x and y directions. */
   | { kind: "frame"; p: Vec3; x: Vec3; y: Vec3 };
@@ -65,14 +65,34 @@ const across = (v: Vec3, u: Vec3): Vec3 => sub(v, scale(u, dot(v, u)));
 
 /** The geometry in the assembly, as its component is placed. */
 export function world(g: MateGeom, p: Placement): MateGeom {
-  if (g.kind === "plane") return { kind: "plane", p: pointTo(p, g.p), n: unit(apply(p.R, g.n)) };
-  if (g.kind === "axis") return { kind: "axis", p: pointTo(p, g.p), d: unit(apply(p.R, g.d)), ...(g.r !== undefined ? { r: g.r } : {}) };
+  const ref = (g.kind === "plane" || g.kind === "axis") && g.ref ? { ref: unit(apply(p.R, g.ref)) } : {};
+  if (g.kind === "plane") return { kind: "plane", p: pointTo(p, g.p), n: unit(apply(p.R, g.n)), ...ref };
+  if (g.kind === "axis") return { kind: "axis", p: pointTo(p, g.p), d: unit(apply(p.R, g.d)), ...(g.r !== undefined ? { r: g.r } : {}), ...ref };
   if (g.kind === "frame") return { kind: "frame", p: pointTo(p, g.p), x: apply(p.R, g.x), y: apply(p.R, g.y) };
   return { kind: "point", p: pointTo(p, g.p) };
 }
 
 /** What two kinds a mate may join, in words, for a mate that can't be written. */
 const KIND = { plane: "a plane", axis: "an axis", point: "a point", frame: "a part" } as const;
+
+/**
+ * A signed angle mate's angle now: from a's direction to b's about a's `ref` (both seen square to it), and how far b's
+ * direction leans out of that plane as much as a's does (0 for two directions square to the axis), or null (no ref).
+ */
+function signedAngle(a: MateGeom, b: MateGeom): { angle: number; cos: number; sin: number; off: number[] } | null {
+  const w = (a.kind === "plane" || a.kind === "axis") && a.ref ? a.ref : null;
+  const u0 = a.kind === "plane" ? a.n : a.kind === "axis" ? a.d : null;
+  const v0 = b.kind === "plane" ? b.n : b.kind === "axis" ? b.d : null;
+  if (!w || !u0 || !v0) return null;
+  const u = across(u0, w);
+  const v = across(v0, w);
+  const lu = Math.hypot(...u) || 1;
+  const lv = Math.hypot(...v) || 1;
+  const cos = dot(u, v) / (lu * lv);
+  const sin = dot(cross(u, v), w) / (lu * lv);
+  // b's direction leans out of the turning plane as much as a's does: the turn is about the axis, nothing else.
+  return { angle: Math.atan2(sin, cos), cos, sin, off: [dot(v0, w) - dot(u0, w)] };
+}
 
 /** How far outside a limit (0 inside it): below min negative, above max positive. */
 const beyond = (v: number, min: number, max: number) => (v < min ? v - min : v > max ? v - max : 0);
@@ -174,6 +194,13 @@ export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | s
       const u = x.kind === "plane" ? x.n : x.kind === "axis" ? x.d : null;
       const v = y.kind === "plane" ? y.n : y.kind === "axis" ? y.d : null;
       if (!u || !v) return bad("at an angle");
+      // Signed: about a's direction, from a's to b's (a and b as the mate has them, not swapped).
+      const signedNow = signedAngle(a, b);
+      if (signedNow !== null) {
+        const target = ((m.value ?? 0) * Math.PI) / 180;
+        if (limited) return [(beyond((signedNow.angle * 180) / Math.PI, m.min!, m.max!) * Math.PI) / 180, ...signedNow.off];
+        return [signedNow.cos - Math.cos(target), signedNow.sin - Math.sin(target), ...signedNow.off];
+      }
       // A limit in radians (0 inside it); one angle as its cosine.
       if (limited) return [(beyond((Math.acos(Math.max(-1, Math.min(1, dot(u, v)))) * 180) / Math.PI, m.min!, m.max!) * Math.PI) / 180];
       return [dot(u, v) - Math.cos(((m.value ?? 0) * Math.PI) / 180)];
@@ -188,6 +215,8 @@ export function measureNow(m: SolverMate, a: MateGeom, b: MateGeom): number | nu
   const order = { plane: 0, axis: 1, point: 2, frame: 3 };
   const [x, y] = order[a.kind] <= order[b.kind] ? [a, b] : [b, a];
   if (m.type === "angle") {
+    const s = signedAngle(a, b);
+    if (s) return (s.angle * 180) / Math.PI;
     const u = x.kind === "plane" ? x.n : x.kind === "axis" ? x.d : null;
     const v = y.kind === "plane" ? y.n : y.kind === "axis" ? y.d : null;
     return u && v ? (Math.acos(Math.max(-1, Math.min(1, dot(u, v)))) * 180) / Math.PI : null;

@@ -46,7 +46,7 @@ export function resolveDatum(ctx: DatumContext, ref: DatumRef, want: DatumKind |
 
 /** A sketch's (or a mirror's, a split's) plane as a frame: written out, or resolved by reference with its offset, flip and xDir. */
 export function planeSpecFrame(ctx: DatumContext, spec: PlaneSpec, path = "plane"): Frame {
-  if (spec.type === "datum") return planeFrame(spec.normal, spec.origin, spec.xDir);
+  if (spec.type === "datum") return planeFrame(spec.normal, spec.origin, spec.xDir, spec.yDir);
   const plane = resolveDatum(ctx, spec.ref, "plane", `${path}.ref`);
   if (spec.xDir) {
     const problem = xDirProblem(plane.normal, spec.xDir);

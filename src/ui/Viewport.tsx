@@ -2452,7 +2452,8 @@ export function Viewport({
 
     // Handles are grabbed before anything else sees the press (the controls would turn the view, a click would pick).
     const handleDown = (e: PointerEvent) => {
-      if (e.button !== 0 || !allHandles().length || areaOn) return void objDown(e);
+      // Ctrl or Cmd: a pick (adding to the selection), never a handle's drag.
+      if (e.button !== 0 || !allHandles().length || areaOn || e.ctrlKey || e.metaKey) return void objDown(e);
       const h = evalLayer.hit(e.clientX, e.clientY, project, controls.worldPerPixel());
       if (!h) return void objDown(e);
       e.stopPropagation();

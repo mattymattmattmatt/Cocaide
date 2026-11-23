@@ -67,7 +67,9 @@ export function solveAssembly(asm: Assembly, views: Map<string, PartTopology>): 
     // A concentric mate with its rotation locked: and its turn kept, as a second (hidden) mate of the same id.
     if (m.type === "concentric" && m.lockRotation && m.relative)
       solverMates.push({ id: `${m.id}#turn`, type: "lock", lockOnly: "turn", a: { component: m.a.component, geom: FRAME }, b: { component: m.b.component, geom: FRAME }, relative: rel(m) });
-    const ga = mateGeometry(m.a, views.get(byId.get(m.a.component)?.part ?? ""));
+    const ga0 = mateGeometry(m.a, views.get(byId.get(m.a.component)?.part ?? ""));
+    // A signed angle is measured about a direction in a's frame: on a's geometry.
+    const ga = typeof ga0 !== "string" && m.type === "angle" && m.about && (ga0.kind === "plane" || ga0.kind === "axis") ? { ...ga0, ref: m.about } : ga0;
     const gb = mateGeometry(m.b, views.get(byId.get(m.b.component)?.part ?? ""));
     if (typeof ga === "string" || typeof gb === "string") {
       problems.push({ id: m.id, error: Infinity, ok: false, problem: typeof ga === "string" ? ga : (gb as string) });

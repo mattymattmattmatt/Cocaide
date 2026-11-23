@@ -2708,3 +2708,6 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .asm-list li:hover .asm-row-action, .asm-list li.selected .asm-row-action, .asm-row-action:focus-visible { opacity: 1; }
 .asm-list li.hidden-row .asm-name { color: var(--muted); }
 .asm-limits { display: flex; flex-direction: column; gap: 6px; }
+/* Ctrl, Shift or Cmd held: the view's labels let a click through to the model (a pick, not a value to type). */
+.eval-labels.pass-through, .eval-labels.pass-through * { pointer-events: none !important; }
+.eval-label.arrow-label { background: color-mix(in srgb, var(--panel) 92%, transparent); font-size: 11px; }

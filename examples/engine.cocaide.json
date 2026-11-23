@@ -232,10 +232,10 @@
               "type": "datum",
               "normal": [0, 1, 0],
               "origin": [0, -85, 0],
-              "xDir": [1, 0, 0]
+              "yDir": [0, 0, 1]
             },
             "entities": [
-              { "id": "c", "type": "circle", "center": [0, -175], "radius": 6 }
+              { "id": "c", "type": "circle", "center": [0, 175], "radius": 6 }
             ]
           },
           { "id": "pin", "op": "extrude", "sketch": "skp", "distance": 46 }
@@ -489,7 +489,8 @@
             "near": [15, -50, 50]
           }
         },
-        "value": 90
+        "value": 90,
+        "about": [0, 1, 0]
       },
       {
         "id": "coincident3",

@@ -84,6 +84,13 @@ describe("what Flip does", () => {
     expect(mateFlips(m({ type: "angle", value: 30 }), undefined).flip?.patch).toEqual({ value: 150 });
     expect(mateFlips(m({ type: "tangent" }), undefined).flip?.patch).toEqual({ flip: true });
   });
+  it("a signed angle flips to the turn the other way, its limits mirrored", () => {
+    const f = mateFlips(m({ type: "angle", value: 60, about: [0, 1, 0] }), undefined).flip;
+    expect(f?.patch).toEqual({ value: -60 });
+    expect(f?.now).toMatch(/anticlockwise/);
+    expect(mateFlips(m({ type: "angle", value: -60, about: [0, 1, 0] }), undefined).flip?.now).toMatch(/^-60° clockwise/);
+    expect(mateFlips(m({ type: "angle", value: 30, about: [0, 1, 0], min: 10, max: 80 }), undefined).flip?.patch).toEqual({ value: -30, min: -80, max: -10 });
+  });
   it("a new mate starts the way its things sit", () => {
     expect(startingWay("concentric", { kind: "axis", normal: [0, 0, 1] }, { kind: "axis", normal: [0, 0, -1] })).toEqual({ opposed: true });
     expect(startingWay("parallel", { kind: "plane", normal: [0, 0, 1] }, { kind: "plane", normal: [0, 0.1, 0.9] })).toEqual({ aligned: true });

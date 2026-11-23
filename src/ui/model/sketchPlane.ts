@@ -42,7 +42,7 @@ export function planeOfRef(ref: DatumRef, view: Pick<RebuildView, "faces" | "dat
 
 /** The frame a plane spec stands for in the last rebuild (with its offset, flip and xDir), or why there is none. */
 export function planeSpecFrameIn(spec: PlaneSpec, view: Pick<RebuildView, "faces" | "datums"> | null): Frame | string {
-  if (!isRefPlane(spec)) return planeFrame(spec.normal, spec.origin, spec.xDir);
+  if (!isRefPlane(spec)) return planeFrame(spec.normal, spec.origin, spec.xDir, spec.yDir);
   const plane = planeOfRef(spec.ref, view);
   if (typeof plane === "string") return plane;
   if (spec.xDir) {

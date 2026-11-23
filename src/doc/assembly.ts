@@ -65,7 +65,7 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
       raw.mates.forEach((x, i) => {
         const at = `assembly.mates[${i}]`;
         if (!isObject(x)) return c.fail(at, `must be a mate { "id", "type", "a", "b" } (got ${describe(x)})`);
-        c.keys(x, at, ["id", "type", "a", "b", "value", "aligned", "opposed", "flip", "suppressed", "min", "max", "lockRotation", "relative"]);
+        c.keys(x, at, ["id", "type", "a", "b", "value", "aligned", "opposed", "flip", "suppressed", "min", "max", "lockRotation", "relative", "about"]);
         if (typeof x.id !== "string" || !x.id) return c.fail(`${at}.id`, `must be a name (got ${describe(x.id)})`);
         if (mates.some((m) => m.id === x.id)) return c.fail(`${at}.id`, `"${x.id}" is another mate's id`);
         if (!MATE_TYPES.includes(x.type as never)) return c.fail(`${at}.type`, `must be ${MATE_TYPES.map((t) => `"${t}"`).join(", ")} (got ${describe(x.type)})`);
@@ -76,7 +76,12 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
         const needs = x.type === "distance" || x.type === "angle";
         if (needs && typeof x.value !== "number") return c.fail(`${at}.value`, `${x.type === "distance" ? "a distance mate needs the distance (mm)" : "an angle mate needs the angle (degrees)"} (got ${describe(x.value)})`);
         if (!needs && x.value !== undefined) return c.fail(`${at}.value`, `a ${x.type} mate takes no value`);
-        if (x.type === "angle" && ((x.value as number) < 0 || (x.value as number) > 180)) return c.fail(`${at}.value`, `must be 0 to 180 degrees (got ${x.value})`);
+        // A signed angle (measured about a direction) runs −360 to 360; one without a direction 0 to 180.
+        const signed = x.type === "angle" && x.about !== undefined;
+        if (x.about !== undefined && (x.type !== "angle" || !Array.isArray(x.about) || x.about.length !== 3 || !x.about.every((v) => typeof v === "number" && Number.isFinite(v)) || Math.hypot(...(x.about as number[])) < 1e-9))
+          return c.fail(`${at}.about`, x.type !== "angle" ? "only an angle mate is measured about a direction" : `must be a direction [x, y, z] (got ${describe(x.about)})`);
+        if (x.type === "angle" && !signed && ((x.value as number) < 0 || (x.value as number) > 180)) return c.fail(`${at}.value`, `must be 0 to 180 degrees (got ${x.value})`);
+        if (signed && Math.abs(x.value as number) > 360) return c.fail(`${at}.value`, `must be −360 to 360 degrees (got ${x.value})`);
         const mate: Mate = { id: x.id, type: x.type as Mate["type"], a, b };
         if (needs) mate.value = x.value as number;
         if (x.aligned === true && x.opposed === true) return c.fail(at, "can't be both aligned and opposed: one way round or the other");
@@ -85,7 +90,8 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
           if (!needs) return c.fail(at, `a ${x.type} mate takes no limits (min and max are for distance and angle mates)`);
           if (typeof x.min !== "number" || typeof x.max !== "number" || !Number.isFinite(x.min) || !Number.isFinite(x.max)) return c.fail(at, `a limit needs both min and max as numbers (got ${describe(x.min)}, ${describe(x.max)})`);
           if (x.min > x.max) return c.fail(at, `min (${x.min}) is more than max (${x.max})`);
-          if (x.type === "angle" && (x.min < 0 || x.max > 180)) return c.fail(at, `an angle's limits are 0 to 180 degrees (got ${x.min} to ${x.max})`);
+          if (x.type === "angle" && !signed && (x.min < 0 || x.max > 180)) return c.fail(at, `an angle's limits are 0 to 180 degrees (got ${x.min} to ${x.max})`);
+          if (signed && (x.min < -360 || x.max > 360)) return c.fail(at, `a signed angle's limits are −360 to 360 degrees (got ${x.min} to ${x.max})`);
           mate.min = x.min;
           mate.max = x.max;
         }
@@ -101,6 +107,11 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
             if (!mate.relative) return c.fail(`${at}.relative`, "a concentric mate with its rotation locked needs the turn it keeps (relative)");
             mate.lockRotation = true;
           }
+        }
+        if (signed) {
+          const v = x.about as number[];
+          const l = Math.hypot(v[0], v[1], v[2]);
+          mate.about = v.map((n) => n / l) as Vec3;
         }
         if (x.type === "lock" && !mate.relative) return c.fail(`${at}.relative`, "a lock mate needs where b is from a (relative: { at, rotation })");
         for (const k of ["aligned", "opposed", "flip", "suppressed"] as const) {

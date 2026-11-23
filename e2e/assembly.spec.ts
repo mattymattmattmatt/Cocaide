@@ -538,3 +538,45 @@ test("the engine example opens on its Assembly tab: eleven parts, every kind of 
   await expect.poll(async () => page.locator(".asm-mate-row.failed").count(), { timeout: 60_000 }).toBe(0);
   for (const kind of ["Coincident", "Distance", "Parallel", "Perpendicular", "Angle", "Concentric, rotation locked", "Tangent", "Lock"]) await expect(page.getByTestId("assembly-tree")).toContainText(kind);
 });
+
+test("each part put in is brought into view; Ctrl held, the handles' labels let clicks through; a mate hovered shows each side's direction", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  const cam = () => page.evaluate("window.__cocaideViewport.camera()") as Promise<{ position: number[] }>;
+  const inView = async (id: string) => {
+    const at = (await assembly(page))!.components.find((k) => k.id === id)!.at ?? [0, 0, 0];
+    const [x, y] = await page.evaluate((p) => (window as unknown as { __cocaideViewport: { project(p: number[]): [number, number] } }).__cocaideViewport.project(p), at);
+    const box = (await page.locator("canvas").first().boundingBox())!;
+    return x > box.x && x < box.x + box.width && y > box.y && y < box.y + box.height;
+  };
+  for (let i = 1; i <= 3; i++) {
+    const before = await cam();
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+    await expect(page.getByTestId(`asm-component-bracket-${i}`)).toBeVisible();
+    if (i > 1) await expect.poll(async () => (await cam()).position).not.toEqual(before.position);
+    await expect.poll(() => inView(`bracket-${i}`)).toBe(true);
+  }
+  // A part selected has its handles, labelled; with Ctrl down the labels take no clicks (a Ctrl-click picks what's under).
+  await page.getByTestId("asm-component-bracket-2").click();
+  await expect(page.locator(".eval-labels .eval-label").first()).toBeVisible();
+  await page.mouse.move(5, 5);
+  await page.keyboard.down("Control");
+  await expect(page.locator(".eval-labels")).toHaveClass(/pass-through/);
+  await page.keyboard.up("Control");
+  await expect(page.locator(".eval-labels")).not.toHaveClass(/pass-through/);
+  // A mate between two tops; hovered in the tree, an arrow for each side's direction, labelled.
+  await page.mouse.click(5, 5);
+  await page.waitForTimeout(800);
+  await clickAt(page, [-20, 10, 6]);
+  const b2 = (await assembly(page))!.components.find((k) => k.id === "bracket-2")!.at ?? [0, 0, 0];
+  await clickAt(page, [b2[0] - 20, b2[1] + 10, b2[2] + 6], true);
+  await expect(page.getByTestId("asm-mate-panel")).toBeVisible();
+  await page.getByTestId("asm-mate-btn-parallel").click();
+  await expect.poll(async () => ((await assembly(page))?.mates ?? []).length).toBe(1);
+  await page.mouse.click(5, 5);
+  const row = page.locator(".asm-mate-row").first();
+  await row.hover();
+  await expect(page.locator(".eval-label.arrow-label")).toHaveCount(2);
+  await expect(page.locator(".eval-label.arrow-label").first()).toContainText("bracket-1");
+  await page.screenshot({ path: "out/mate-arrows.png" });
+});

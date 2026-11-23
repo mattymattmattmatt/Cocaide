@@ -62,6 +62,10 @@ exact. exportSTEP and exportSTL refuse until the user confirms the scale and set
   "plane": { "type": "datum", "normal": [0,0,1], "origin": [0,0,0], "xDir": [1,0,0] (optional) },
   "entities": [ ... ], "constraints": [ ... ] (optional) }
 Sketch x axis: xDir if given, else global X projected onto the plane (global Y when the normal is along X); y = normal x xDir.
+Or give "yDir" (the sketch's up) instead of xDir: x = yDir x normal, so the sketch's +y is yDir. Not both.
+With neither, the sketch's axes by normal: [0,0,1] x=+X y=+Y; [0,0,-1] x=+X y=-Y; [0,1,0] x=+X y=-Z (upside down:
+a sketch y of +10 is 10 LOWER; give "yDir": [0,0,1]); [0,-1,0] x=+X y=+Z; [1,0,0] x=+Y y=+Z; [-1,0,0] x=+Y y=-Z.
+A rebuild warns when a written-out plane's own up points down.
 Or place it by reference, so it follows the model: "plane": { "type": "ref", "ref": <reference>, "offset": 5 (optional,
 mm along the plane's normal), "flip": true (optional: turned over), "xDir": [1,0,0] (optional) }.
   On a face: { "type": "ref", "ref": { "face": { "type": "planar", "normal": [0,0,1], "pick": "largest" } } } - the

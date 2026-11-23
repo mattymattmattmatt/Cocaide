@@ -127,6 +127,11 @@ export interface Mate {
   /** distance and angle: a range instead of one value (a limit mate): it holds anywhere from min to max (mm or degrees). */
   min?: number;
   max?: number;
+  /**
+   * angle: the direction it is measured about (in a's part frame): b's direction turned this many degrees from a's,
+   * counter-clockwise looking against it (a signed angle, −360 to 360). Without it the angle has no sense: 30° either way.
+   */
+  about?: Vec3;
   /** concentric: it doesn't turn in the hole either (it keeps the turn in `relative`). */
   lockRotation?: boolean;
   /** lock (and concentric with lockRotation): where b is from a, as it was locked (b's place in a's frame). */
@@ -1327,14 +1332,17 @@ export interface FeatureBase {
 
 /**
  * A datum plane. The sketch's 2D axes are derived from the normal:
- * x = xDir if given, else global X projected onto the plane (global Y when the
- * normal is parallel to X); y = normal × x.
+ * x = xDir if given, else yDir × normal if yDir (the sketch's up) is given, else
+ * global X projected onto the plane (global Y when the normal is parallel to X);
+ * y = normal × x. At most one of xDir and yDir.
  */
 export interface DatumPlane {
   type: "datum";
   normal: Vec3;
   origin: Vec3;
   xDir?: Vec3;
+  /** The sketch's up (its +y), instead of xDir. */
+  yDir?: Vec3;
 }
 
 /**

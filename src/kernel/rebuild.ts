@@ -528,6 +528,8 @@ function rebuildTraced(input: unknown, oc: OC, opts: RebuildOptions, trace: Prov
           profiles.set(raw.id, null);
           // On a face or a reference plane, the sketch is where that is now.
           const frame = planeOf(raw.plane);
+          // A written-out plane whose own up points down (a plane facing +Y has its y along −Z): easy to sketch upside down.
+          if (raw.plane.type === "datum" && !raw.plane.xDir && !raw.plane.yDir && frame.y[2] < -0.5) notes.push(`this sketch's own y (up) points down, along [${frame.y.map((v) => Math.round(v * 1000) / 1000 || 0).join(", ")}]: a sketch y of +10 is 10 lower in the model. Give the plane "yDir": [0, 0, 1] to sketch with y up`);
           const shown = overlay(raw, frame);
           sketches.push(shown);
           // Its references to the model projected as the part stands now, and its geometry solved around them.
