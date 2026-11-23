@@ -238,3 +238,100 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await expect(page.getByTestId("status")).toContainText("Rebuilt");
   await expect(page.getByTestId("vr-review-chip")).toContainText("VR notes: 1 pin");
 });
+
+test("a part in VR is held to inspect: in front of you at true size; grabbed, it follows the hand and stays when let go; two hands stretch it; a measure stays true; A back to 1:1", async ({ page }) => {
+  // A 200 × 100 × 50 block, no start point: VR holds it.
+  const doc = { version: 1, units: "mm", name: "block", features: [
+    { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [100, 50], w: 200, h: 100 }] },
+    { id: "block", op: "extrude", sketch: "s1", distance: 50, newBody: "block" },
+  ] };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await waitForRebuild(page);
+  type Held = { scale: number; centre: number[]; holding: string[] };
+  type State = { mode: string; tool: string; measures: number[]; menu: boolean; held: Held };
+  const st = () => page.evaluate("window.__cocaideViewport.vrState()") as Promise<State>;
+  const press = (id: string) => page.evaluate(`window.__cocaideViewport.vrPress(${JSON.stringify(id)})`);
+  await page.getByTestId("view-vr").click();
+  await expect.poll(async () => (await st()).mode).toBe("inspect");
+  // In front of you (the emulated head at 0, 1.6, 0 looking along −Z), a little below the eyes, at true size.
+  await expect.poll(async () => (await st()).held.centre[2]).toBeLessThan(-300);
+  let s = await st();
+  expect(s.held.scale).toBe(1);
+  expect(s.tool).toBe("measure");
+  const c0 = s.held.centre;
+  expect(Math.abs(c0[0])).toBeLessThan(20);
+  expect(c0[1]).toBeGreaterThan(1200);
+  expect(c0[1]).toBeLessThan(1500);
+  const at = (hand: string, p: number[], q = [0, 0, 0, 1]) => device(page, `const c = d.controllers.${hand}; c.position.set(${p.map((v) => v / 1000).join(",")}); c.quaternion.set(${q.join(",")});`);
+  const grip = async (hand: string, v: number) => {
+    await device(page, `d.controllers.${hand}.updateButtonValue('squeeze', ${v});`);
+    await page.waitForTimeout(150);
+  };
+  // One hand in it, gripped, moved 200 mm right and 100 up: the part goes with it, and stays when let go.
+  await at("right", c0);
+  await page.waitForTimeout(100);
+  await grip("right", 1);
+  expect((await st()).held.holding).toEqual(["right"]);
+  await at("right", [c0[0] + 200, c0[1] + 100, c0[2]]);
+  await page.waitForTimeout(200);
+  await grip("right", 0);
+  s = await st();
+  expect(s.held.holding).toEqual([]);
+  expect(Math.abs(s.held.centre[0] - (c0[0] + 200))).toBeLessThan(5);
+  expect(Math.abs(s.held.centre[1] - (c0[1] + 100))).toBeLessThan(5);
+  await at("right", [500, 500, 500]);
+  await page.waitForTimeout(300);
+  expect(Math.abs((await st()).held.centre[0] - (c0[0] + 200))).toBeLessThan(5);
+  // Two hands either side of it, spread to twice as far apart: twice the size, about the same middle.
+  const c1 = (await st()).held.centre;
+  await at("left", [c1[0] - 80, c1[1], c1[2]]);
+  await at("right", [c1[0] + 80, c1[1], c1[2]]);
+  await page.waitForTimeout(100);
+  await grip("left", 1);
+  await grip("right", 1);
+  expect((await st()).held.holding).toEqual(["left", "right"]);
+  await at("left", [c1[0] - 160, c1[1], c1[2]]);
+  await at("right", [c1[0] + 160, c1[1], c1[2]]);
+  await page.waitForTimeout(200);
+  await grip("left", 0);
+  await grip("right", 0);
+  s = await st();
+  expect(s.held.scale).toBeCloseTo(2, 1);
+  expect(Math.abs(s.held.centre[0] - c1[0])).toBeLessThan(5);
+  // A measure along its top at twice the size: 200 mm, as it is. (Straight down onto points near each end's edge: they snap to it.)
+  const scale = s.held.scale;
+  const world = (p: number[]) => [s.held.centre[0] + (p[0] - 100) * scale, s.held.centre[1] + (p[2] - 25) * scale, s.held.centre[2] - (p[1] - 50) * scale];
+  const down = [-0.7071068, 0, 0, 0.7071068];
+  const click = async () => {
+    await device(page, "d.controllers.right.updateButtonValue('trigger', 1);");
+    await page.waitForTimeout(250);
+    await device(page, "d.controllers.right.updateButtonValue('trigger', 0);");
+    await page.waitForTimeout(250);
+  };
+  for (const p of [[2, 50, 50], [198, 50, 50]]) {
+    const w = world(p);
+    await at("right", [w[0], w[1] + 250, w[2]], down);
+    await page.waitForTimeout(150);
+    await click();
+  }
+  await expect.poll(async () => (await st()).measures).toEqual([200]);
+  // A: back to true size where it is; B: brought back in front of you.
+  await device(page, "d.controllers.right.updateButtonValue('a-button', 1);");
+  await page.waitForTimeout(150);
+  await device(page, "d.controllers.right.updateButtonValue('a-button', 0);");
+  await expect.poll(async () => (await st()).held.scale).toBe(1);
+  await device(page, "d.controllers.right.updateButtonValue('b-button', 1);");
+  await page.waitForTimeout(150);
+  await device(page, "d.controllers.right.updateButtonValue('b-button', 0);");
+  await expect.poll(async () => Math.abs((await st()).held.centre[0] - c0[0])).toBeLessThan(20);
+  // Walk in it, and hold it again (the menu).
+  await press("walk");
+  expect((await st()).mode).toBe("walk");
+  expect((await st()).held.scale).toBe(1);
+  await press("inspect");
+  expect((await st()).mode).toBe("inspect");
+  await page.evaluate("window.__cocaideViewport.exitVr()");
+  await expect.poll(async () => (await vr(page)).active).toBe(false);
+});

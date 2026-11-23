@@ -910,7 +910,8 @@ export function App() {
     />
   );
   const vrReview = vrReviewOf();
-  const vrProps = (placingHere: boolean): VrViewProps => ({
+  const vrProps = (placingHere: boolean, inspect = false): VrViewProps => ({
+    inspect,
     start: vrStart,
     showStart: vrPrefsNow.showStart,
     placing: vrPlacing && placingHere,
@@ -3402,7 +3403,7 @@ export function App() {
               <section className={`center${sketch ? " sketch-center" : ""}`}>
                 {sketch && <div className="sketch-top" ref={setSketchTop} />}
                 <Viewport
-                  vr={vrProps(mode === "model")}
+                  vr={vrProps(mode === "model", true)}
                   // In a feature session: the part as it stands before the feature, its active field's items lit up, and the preview over it.
                   view={(!previewDoc && pickView) || view}
                   fitToken={fitToken}

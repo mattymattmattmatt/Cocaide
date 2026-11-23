@@ -32,6 +32,7 @@ import type { Vec3 } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
 import { centreOf, itemOfFace, itemOfMove, itemsOf, itemTriangles, type VrItem } from "./items";
 import { disposeSprite, Panel, textSprite } from "./vrText";
+import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "./inspect";
 import type { VrPrefs } from "./vrPrefs";
 
 export interface XrHost {
@@ -53,6 +54,10 @@ export interface XrHost {
   onChange(inVr: boolean): void;
   /** What was added in VR (pins, and moves on top of the document's), when you leave. */
   onDone(pins: VrPin[], moves: VrMove[]): void;
+  /** A part (the Model tab): it can be held and inspected. */
+  canInspect?(): boolean;
+  /** Start by holding it (a part with no start point to stand at); else walk through it. */
+  startInspecting?(): boolean;
 }
 
 export type VrTool = "teleport" | "measure" | "pin" | "move";
@@ -83,14 +88,14 @@ export function lengthText(mm: number): string {
   return r >= 1000 ? `${s} mm (${(r / 1000).toFixed(2)} m)` : `${s} mm`;
 }
 
-/** The point of a triangle a measure snaps to near p: a corner within 60 mm, else the nearest point of an edge within 40 mm, else p. */
-export function snapPoint(p: Vec3, tri: [Vec3, Vec3, Vec3]): { at: Vec3; kind: "corner" | "edge" | "surface" } {
+/** The point of a triangle a measure snaps to near p: a corner within 60 mm, else the nearest point of an edge within 40 mm, else p (other reaches: a part held small or large). */
+export function snapPoint(p: Vec3, tri: [Vec3, Vec3, Vec3], reach: { corner: number; edge: number } = { corner: 60, edge: 40 }): { at: Vec3; kind: "corner" | "edge" | "surface" } {
   const d = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
   let best: Vec3 | null = null;
-  let bd = 60;
+  let bd = reach.corner;
   for (const v of tri) if (d(p, v) < bd) [best, bd] = [v, d(p, v)];
   if (best) return { at: [...best] as Vec3, kind: "corner" };
-  bd = 40;
+  bd = reach.edge;
   for (let i = 0; i < 3; i++) {
     const a = tri[i];
     const b = tri[(i + 1) % 3];
@@ -180,12 +185,30 @@ export class XrWalk {
   private dollhouse: { rot: number; pos: THREE.Vector3 } | null = null;
   private vignette: THREE.Mesh;
   private pointer: THREE.Mesh;
+  // Inspecting a part (src/ui/vr/inspect): held in the air, turned and scaled, instead of walked through.
+  private inspecting = false;
+  /** What holds the model: moved, turned and scaled while inspecting; as it is (nothing) while walking. */
+  private hold = new THREE.Group();
+  /** The floor while inspecting: a lawn and a metre grid at your feet (the model's own floor is wherever it is held). */
+  private floor = new THREE.Group();
+  private needsPlace = false;
+  /** Each hand holding the part: where the part is from the hand. */
+  private grabs: Partial<Record<"left" | "right", THREE.Matrix4>> = {};
+  /** Both hands holding: where they gripped, and the part's pose then. */
+  private two: { a0: THREE.Vector3; b0: THREE.Vector3; from: HeldPose } | null = null;
+  private spin = false;
 
   constructor(private host: XrHost) {
     this.zup.rotation.x = -Math.PI / 2;
     this.zup.scale.setScalar(0.001);
     this.zup.add(this.notesGroup);
-    this.rig.add(this.zup);
+    this.hold.add(this.zup);
+    this.rig.add(this.hold);
+    const lawn = new THREE.Mesh(new THREE.CircleGeometry(400, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x8aa66a }));
+    lawn.name = "xr-floor";
+    const grid = new THREE.GridHelper(20, 20, 0x3f5a2f, 0x55703f);
+    grid.position.y = 0.002;
+    this.floor.add(lawn, grid);
     this.rig.name = "xr-rig";
     const sun = new THREE.DirectionalLight(0xffffff, 1.6);
     sun.position.set(30, 50, 20);
@@ -243,12 +266,12 @@ export class XrWalk {
       }
     });
     this.ground.position.set(0, 0, box.isEmpty() ? -5 : box.min.z - 5);
-    this.zup.add(this.ground);
     scene.add(this.rig, this.lights, this.target, this.vignette, this.pointer);
     this.background = scene.background;
     scene.background = new THREE.Color(0xbfd9ef);
     this.startNow = this.host.start() ?? defaultStart(box);
-    this.goStart();
+    if (this.host.startInspecting?.()) this.toInspect(false);
+    else this.toWalk(false);
     // What can be picked up, and what was moved and pinned before (drawn where they were proposed).
     this.items = itemsOf(this.host.view());
     const notes = this.host.notes();
@@ -263,7 +286,7 @@ export class XrWalk {
     this.last = performance.now();
     renderer.setAnimationLoop((t) => this.frame(t));
     this.host.onChange(true);
-    this.say("Welcome: X for the menu");
+    this.say(this.inspecting ? "Grip to hold it · both grips: turn it, stretch to size it · A: true size" : "Welcome: X for the menu");
   }
 
   exit(): void {
@@ -299,6 +322,14 @@ export class XrWalk {
     for (const o of this.culled) o.frustumCulled = true;
     this.culled = [];
     this.zup.remove(this.ground);
+    this.rig.remove(this.floor);
+    this.inspecting = false;
+    this.grabs = {};
+    this.two = null;
+    this.spin = false;
+    this.hold.position.set(0, 0, 0);
+    this.hold.quaternion.identity();
+    this.hold.scale.setScalar(1);
     scene.remove(this.rig, this.lights, this.target, this.vignette, this.pointer, this.menu.mesh);
     this.menuOpen = false;
     this.dollhouse = null;
@@ -370,7 +401,18 @@ export class XrWalk {
       c.hint.removeFromParent();
       disposeSprite(c.hint);
     }
-    const words = c.hand === "left" ? "Teleport · X menu" : this.menuOpen ? "Point and click" : `${this.tool === "pin" ? `Pin: ${PIN_WORDS[this.pinTag]}` : this.tool[0].toUpperCase() + this.tool.slice(1)} · A undo`;
+    const tool = this.tool === "pin" ? `Pin: ${PIN_WORDS[this.pinTag]}` : this.tool[0].toUpperCase() + this.tool.slice(1);
+    const words = this.inspecting
+      ? c.hand === "left"
+        ? "Grip holds · X menu"
+        : this.menuOpen
+          ? "Point and click"
+          : `${tool} · grip holds · A 1:1`
+      : c.hand === "left"
+        ? "Teleport · X menu"
+        : this.menuOpen
+          ? "Point and click"
+          : `${tool} · A undo`;
     c.hint = textSprite(words, 0.11, { size: 40 });
     c.hint.position.set(0, 0.05, 0.02);
     c.grip.add(c.hint);
@@ -386,7 +428,7 @@ export class XrWalk {
     const m = this.host.mesh();
     if (m) out.push(m);
     for (const p of this.placed.values()) out.push(p.ghost);
-    return noGround ? out : [...out, this.ground];
+    return noGround ? out : [...out, this.inspecting ? this.floor.children[0] : this.ground];
   }
 
   /** A controller's straight ray into the model: the nearest hit. */
@@ -602,20 +644,23 @@ export class XrWalk {
     const h = this.cast(c);
     if (!h) return null;
     const at = this.toModel(h.point);
-    if (!this.snap || !h.face || h.object === this.ground) return at.map((v) => Math.round(v)) as Vec3;
+    if (!this.snap || !h.face || h.object === this.ground || h.object === this.floor.children[0]) return at.map((v) => Math.round(v)) as Vec3;
     const pos = (h.object as THREE.Mesh).geometry.getAttribute("position");
     const corner = (i: number): Vec3 => {
       const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(h.object.matrixWorld);
       return this.toModel(v);
     };
-    return snapPoint(at, [corner(h.face.a), corner(h.face.b), corner(h.face.c)]).at;
+    // Held small or large, the snap reaches as far as it looks: about a centimetre and a half of what you see.
+    const k = this.inspecting ? this.heldPose().scale : 1;
+    const reach = this.inspecting ? { corner: 15 / k, edge: 10 / k } : undefined;
+    return snapPoint(at, [corner(h.face.a), corner(h.face.b), corner(h.face.c)], reach).at;
   }
 
   private dot(at: Vec3, color = 0xffd400): THREE.Mesh {
     const m = new THREE.Mesh(new THREE.SphereGeometry(18, 12, 8), new THREE.MeshBasicMaterial({ color, depthTest: false }));
     m.position.set(...at);
     m.renderOrder = 34;
-    this.notesGroup.add(m);
+    this.notesGroup.add(this.sized(m));
     return m;
   }
 
@@ -625,8 +670,8 @@ export class XrWalk {
     line.renderOrder = 33;
     const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
     const label = textSprite(lengthText(len), 260, { bg: "rgba(255,212,0,0.92)", fg: "#111" });
-    label.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 60);
-    this.notesGroup.add(line, label);
+    label.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + 60 * this.noteScale());
+    this.notesGroup.add(line, this.sized(label));
     return [line, label, this.dot(a), this.dot(b)];
   }
 
@@ -665,14 +710,18 @@ export class XrWalk {
 
   private drawPin(p: VrPin): void {
     const color = PIN_COLORS[p.tag];
+    // One group at the point, so a held part's pins can be sized as one (see sized).
+    const g = new THREE.Group();
+    g.position.set(...p.at);
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 450, 8).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x444444 }));
-    stick.position.set(p.at[0], p.at[1], p.at[2] + 225);
+    stick.position.set(0, 0, 225);
     const head = new THREE.Mesh(new THREE.SphereGeometry(55, 16, 12), new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.35 }));
-    head.position.set(p.at[0], p.at[1], p.at[2] + 470);
+    head.position.set(0, 0, 470);
     const label = textSprite(p.text ? `${PIN_WORDS[p.tag]}\n${p.text}` : PIN_WORDS[p.tag], 380, { bg: `#${color.toString(16).padStart(6, "0")}ee` });
-    label.position.set(p.at[0], p.at[1], p.at[2] + 640);
-    this.notesGroup.add(stick, head, label);
-    this.pinObjs.set(p.id, [stick, head, label]);
+    label.position.set(0, 0, 640);
+    g.add(stick, head, label);
+    this.notesGroup.add(this.sized(g));
+    this.pinObjs.set(p.id, [g]);
   }
 
   private dropPin(c: Controller): void {
@@ -729,6 +778,176 @@ export class XrWalk {
     this.say(`${PIN_WORDS[p.tag]}${p.text ? `: ${p.text}` : ""} (${this.pinCursor + 1} of ${all.length})`);
   }
 
+  // ------------------------------------------------------------------ inspecting a part
+
+  /** How big notes (dots, lengths, pins) are drawn: as made for walking about a house, or a hand's size whatever the held part's scale. */
+  private noteScale(): number {
+    return this.inspecting ? 0.25 / this.heldPose().scale : 1;
+  }
+  /** A note's own size remembered, then drawn at the note scale (again each frame: see sizeNotes). */
+  private sized<T extends THREE.Object3D>(o: T): T {
+    o.userData.base = o.scale.clone();
+    o.scale.multiplyScalar(this.noteScale());
+    return o;
+  }
+  private sizeNotes(): void {
+    const f = this.noteScale();
+    for (const o of this.notesGroup.children) {
+      const base = o.userData.base as THREE.Vector3 | undefined;
+      if (base) o.scale.copy(base).multiplyScalar(f);
+    }
+  }
+  /** The part as held: where it is in the world, its turn, how big it is shown. */
+  private heldPose(): HeldPose {
+    this.hold.updateMatrixWorld(true);
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
+    this.hold.matrixWorld.decompose(pos, quat, sc);
+    return { pos, quat, scale: sc.x };
+  }
+  private setHeld(p: HeldPose): void {
+    this.setHeldMatrix(new THREE.Matrix4().compose(p.pos, p.quat, new THREE.Vector3(p.scale, p.scale, p.scale)));
+  }
+  /** The part's place in the world (the holder's matrix there), set in the rig. */
+  private setHeldMatrix(world: THREE.Matrix4): void {
+    this.rig.updateMatrixWorld(true);
+    new THREE.Matrix4().copy(this.rig.matrixWorld).invert().multiply(world).decompose(this.hold.position, this.hold.quaternion, this.hold.scale);
+    this.hold.updateMatrixWorld(true);
+  }
+  /** The part's box in its own frame (mm). */
+  private partBox(): THREE.Box3 {
+    const mesh = this.host.mesh();
+    const box = new THREE.Box3();
+    if (mesh) {
+      mesh.geometry.computeBoundingBox();
+      box.copy(mesh.geometry.boundingBox!);
+    }
+    return box;
+  }
+  /** The part's middle, in the world. */
+  private heldCentre(): THREE.Vector3 {
+    this.hold.updateMatrixWorld(true);
+    return this.zup.localToWorld(this.partBox().getCenter(new THREE.Vector3()));
+  }
+  /** The part in front of you, as it is drawn (Z up), its front to you, at its starting size (true size up to 1.2 m). */
+  private bringBack(): void {
+    const box = this.partBox();
+    if (box.isEmpty()) return;
+    const size = box.getSize(new THREE.Vector3());
+    const s = startScale(Math.max(size.x, size.y, size.z));
+    const span = (Math.max(size.x, size.y, size.z) / 1000) * s;
+    const head = this.head();
+    const yaw = this.headYaw();
+    const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(UP, yaw);
+    // Half a metre away (further for a big one), a little below your eyes, clear of the floor.
+    const at = head.clone().addScaledVector(fwd, Math.max(0.45, span * 0.7 + 0.25));
+    at.y = Math.max(head.y - 0.25, (size.z / 1000) * s * 0.5 + 0.1);
+    const quat = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
+    const mid = toXr(box.getCenter(new THREE.Vector3()).toArray() as Vec3).multiplyScalar(s).applyQuaternion(quat);
+    this.grabs = {};
+    this.two = null;
+    this.setHeld({ pos: at.sub(mid), quat, scale: s });
+  }
+  /** Back to true size, about its middle (where it is). */
+  private oneToOne(): void {
+    this.setHeld(scaledAbout(this.heldPose(), this.heldCentre(), 1));
+    this.say("True size (1:1)");
+  }
+  /** Hold the part: the floor at your feet, the part in front of you. */
+  private toInspect(announce = true): void {
+    this.inspecting = true;
+    this.zup.remove(this.ground);
+    this.rig.add(this.floor);
+    this.setRoof(false);
+    this.dollhouse = null;
+    this.rig.scale.setScalar(1);
+    this.rig.position.set(0, 0, 0);
+    this.rig.rotation.set(0, 0, 0);
+    this.tool = "measure";
+    this.needsPlace = true;
+    this.sizeNotes();
+    if (announce) this.say("Holding it: grip to pick it up");
+  }
+  /** Walk through it: at full size on its floor, at the start. */
+  private toWalk(announce = true): void {
+    this.inspecting = false;
+    this.grabs = {};
+    this.two = null;
+    this.spin = false;
+    this.hold.position.set(0, 0, 0);
+    this.hold.quaternion.identity();
+    this.hold.scale.setScalar(1);
+    this.rig.remove(this.floor);
+    this.zup.add(this.ground);
+    if (this.tool === "measure" && announce) this.tool = "teleport";
+    this.goStart();
+    this.sizeNotes();
+    if (announce) this.say("Walking: full size, at the start");
+  }
+  /** Is a hand within reach of the part (inside its box, give or take 5 cm)? */
+  private handNear(c: Controller): boolean {
+    const box = this.partBox();
+    if (box.isEmpty()) return false;
+    this.hold.updateMatrixWorld(true);
+    const local = this.zup.worldToLocal(new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld));
+    return box.clone().expandByScalar(50 / this.heldPose().scale).containsPoint(local);
+  }
+  private handAt(hand: "left" | "right"): THREE.Vector3 {
+    const c = this.controller(hand);
+    return c ? new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld) : new THREE.Vector3();
+  }
+  /** A grip pressed: the part taken by that hand (pointed at, or within reach), or by both. */
+  private grabPart(hand: "left" | "right"): void {
+    const c = this.controller(hand);
+    if (!c) return;
+    const other = hand === "left" ? "right" : "left";
+    this.hold.updateMatrixWorld(true);
+    const rel = new THREE.Matrix4().copy(c.grip.matrixWorld).invert().multiply(this.hold.matrixWorld);
+    if (this.grabs[other]) {
+      this.grabs[hand] = rel;
+      this.two = { a0: this.handAt("left"), b0: this.handAt("right"), from: this.heldPose() };
+      this.pulse(hand, 0.5, 30);
+      return;
+    }
+    if (!this.cast(c, true) && !this.handNear(c)) return void this.say("Point at the part (or reach into it), then grip");
+    this.grabs[hand] = rel;
+    this.spin = false;
+    this.pulse(hand, 0.5, 30);
+  }
+  /** A grip let go: the part stays where it is; the other hand, if it still holds, carries on alone. */
+  private releasePart(hand: "left" | "right"): void {
+    if (!this.grabs[hand]) return;
+    delete this.grabs[hand];
+    if (this.two) {
+      const s = this.heldPose().scale;
+      if (Math.abs(s - this.two.from.scale) > 0.01) this.say(`Shown ${scaleText(s)}: measures stay true size · A: 1:1`);
+      this.two = null;
+      const other = hand === "left" ? "right" : "left";
+      const c = this.controller(other);
+      if (c && this.grabs[other]) {
+        this.hold.updateMatrixWorld(true);
+        this.grabs[other] = new THREE.Matrix4().copy(c.grip.matrixWorld).invert().multiply(this.hold.matrixWorld);
+      }
+    }
+  }
+  /** Each frame while held: with the hand (as gripped), or between both. */
+  private dragPart(): void {
+    const { left, right } = this.grabs;
+    if (this.two && left && right) return this.setHeld(twoHandPose(this.two.a0, this.two.b0, this.two.from, this.handAt("left"), this.handAt("right")));
+    const hand = left ? "left" : right ? "right" : null;
+    const c = hand && this.controller(hand);
+    if (!hand || !c) return;
+    this.setHeldMatrix(new THREE.Matrix4().copy(c.grip.matrixWorld).multiply(this.grabs[hand]!));
+  }
+  /** Spinning: a slow turn about the vertical through its middle (a turntable). */
+  private spinPart(dt: number): void {
+    const p = this.heldPose();
+    const c = this.heldCentre();
+    const q = new THREE.Quaternion().setFromAxisAngle(UP, dt * 0.5);
+    this.setHeld({ pos: p.pos.sub(c).applyQuaternion(q).add(c), quat: q.multiply(p.quat), scale: p.scale });
+  }
+
   // ------------------------------------------------------------------ dollhouse
 
   private toggleDollhouse(): void {
@@ -768,6 +987,26 @@ export class XrWalk {
     const n = this.host.notes();
     const b = (id: string, label: string, x: number, y: number, w: number, on?: boolean, color?: string) => ({ id, label, x, y, w, h: 0.1, ...(on ? { on } : {}), ...(color ? { color } : {}) });
     const row = (y: number) => y;
+    if (this.inspecting) {
+      const s = this.heldPose().scale;
+      this.menu.title = "Cocaide VR · holding the part";
+      this.menu.buttons = [
+        b("tool:measure", "Measure", 0.035, row(0.14), 0.455, this.tool === "measure"),
+        b("tool:pin", "Pin", 0.51, row(0.14), 0.455, this.tool === "pin"),
+        b("snap", this.snap ? "Snap: corners, edges" : "Snap: off (free)", 0.035, row(0.27), 0.455, this.snap),
+        b("clearMeasures", `Clear measures (${this.measures.length})`, 0.51, row(0.27), 0.455),
+        ...PIN_TAGS.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
+        b("oneToOne", `True size (now ${scaleText(s)})`, 0.035, row(0.53), 0.3, Math.abs(s - 1) < 0.005),
+        b("bringBack", "Bring it back", 0.35, row(0.53), 0.3),
+        b("spin", this.spin ? "Stop spinning" : "Spin it", 0.665, row(0.53), 0.3, this.spin),
+        b("walk", "Walk in it", 0.035, row(0.66), 0.3),
+        b("undo", "Undo", 0.35, row(0.66), 0.3),
+        b("exit", "Leave VR", 0.665, row(0.66), 0.3, false),
+      ];
+      this.menu.lines = [`Shown ${scaleText(s)}: measures are always true size. Let go and it stays where it is.`, "Grip holds it · both grips turn it, stretch to size it · stick pushes/pulls · A 1:1 · B bring back · Y undo"];
+      this.menu.draw();
+      return;
+    }
     const tools: [VrTool, string][] = [["teleport", "Teleport"], ["measure", "Measure"], ["pin", "Pin"], ["move", "Move"]];
     const tags = PIN_TAGS;
     this.menu.title = "Cocaide VR";
@@ -778,7 +1017,7 @@ export class XrWalk {
       ...tags.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
       b("roof", this.roofOff ? "Roof on" : "Roof off", 0.035, row(0.53), 0.3, this.roofOff),
       b("start", "Back to the start", 0.35, row(0.53), 0.3),
-      b("dollhouse", this.dollhouse ? "Full size" : "Dollhouse", 0.665, row(0.53), 0.3, !!this.dollhouse),
+      this.host.canInspect?.() ? b("inspect", "Hold it", 0.665, row(0.53), 0.3) : b("dollhouse", this.dollhouse ? "Full size" : "Dollhouse", 0.665, row(0.53), 0.3, !!this.dollhouse),
       b("nextPin", `Next pin (${n.pins.length + this.pins.length})`, 0.035, row(0.66), 0.3),
       b("undo", "Undo", 0.35, row(0.66), 0.3),
       b("exit", "Leave VR", 0.665, row(0.66), 0.3, false),
@@ -821,6 +1060,11 @@ export class XrWalk {
       this.goStart();
       this.say("Back to the start");
     } else if (id === "dollhouse") this.toggleDollhouse();
+    else if (id === "oneToOne") this.oneToOne();
+    else if (id === "bringBack") this.bringBack();
+    else if (id === "spin") this.spin = !this.spin;
+    else if (id === "walk") this.toWalk();
+    else if (id === "inspect") this.toInspect();
     else if (id === "nextPin") this.nextPin();
     else if (id === "undo") this.undoLast();
     else if (id === "exit") return this.exit();
@@ -947,6 +1191,11 @@ export class XrWalk {
       this.buildDraw();
       this.applyHidden();
     } else if (this.draw?.from.visible) this.draw.from.visible = false;
+    // Holding a part: it goes in front of you once the headset knows where you are.
+    if (this.inspecting && this.needsPlace && this.head().lengthSq() > 0.01) {
+      this.needsPlace = false;
+      this.bringBack();
+    }
     const prefs = this.host.prefs();
     const sources = this.session ? [...this.session.inputSources] : [];
     let walking = 0;
@@ -963,10 +1212,15 @@ export class XrWalk {
       if (!c) continue;
       const btn = (b: number) => !!gp.buttons[b]?.pressed;
       const [sx, sy] = [gp.axes[2] ?? 0, gp.axes[3] ?? 0];
-      // Grip: pick up and put down furniture.
+      // Grip: hold the part (inspecting), or pick up and put down furniture.
       const g = this.edge(hand, BUTTONS.squeeze, btn(BUTTONS.squeeze));
-      if (g === "press") this.grab(hand);
-      else if (g === "release" && this.carry?.hand === hand) this.drop();
+      if (g === "press") {
+        if (this.inspecting) this.grabPart(hand);
+        else this.grab(hand);
+      } else if (g === "release") {
+        if (this.inspecting) this.releasePart(hand);
+        else if (this.carry?.hand === hand) this.drop();
+      }
       // Trigger.
       const tr = this.edge(hand, BUTTONS.trigger, btn(BUTTONS.trigger));
       if (hand === "right" && this.menuOpen) {
@@ -989,8 +1243,11 @@ export class XrWalk {
         if (tr === "press") this.grab(hand);
         else if (tr === "release" && this.carry?.hand === hand) this.drop();
       }
+      // Holding the part in one hand: that hand's stick pushes it away or pulls it in, along the hand.
+      const holding = this.inspecting && !!this.grabs[hand] && !this.two;
+      if (holding && Math.abs(sy) > 0.2) this.grabs[hand]!.premultiply(new THREE.Matrix4().makeTranslation(0, 0, sy * dt * 0.8));
       // Sticks: the right turns you (or what you carry), the left walks.
-      if (hand === "right" || (this.carry && this.carry.hand === hand)) {
+      if (!holding && (hand === "right" || (this.carry && this.carry.hand === hand))) {
         if (Math.abs(sx) > 0.7 && !this.turned[hand]) {
           this.turned[hand] = true;
           if (this.carry) {
@@ -1004,29 +1261,41 @@ export class XrWalk {
           }
         } else if (Math.abs(sx) < 0.3) this.turned[hand] = false;
       }
-      if (hand === "left" && prefs.smooth && !this.dollhouse && Math.hypot(sx, sy) > 0.15 && !(this.carry?.hand === "left")) {
+      if (hand === "left" && prefs.smooth && !this.dollhouse && Math.hypot(sx, sy) > 0.15 && !(this.carry?.hand === "left") && !holding) {
         // Walk the way you look (level), the world sliding the other way; the floor followed up a step or a stair.
         const yaw = this.headYaw();
         const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(UP, yaw);
         const right = new THREE.Vector3().crossVectors(fwd, UP);
         const move = fwd.multiplyScalar(-sy).add(right.multiplyScalar(sx)).multiplyScalar(prefs.speed * dt);
         this.rig.position.sub(move);
-        this.followFloor();
+        if (!this.inspecting) this.followFloor();
         walking = Math.min(1, Math.hypot(sx, sy));
       }
-      // Buttons: X menu, Y start (left); A undo, B roof (right).
+      // Buttons: X menu, Y start (left); A undo, B roof (right). Holding a part: Y undo; A true size, B bring it back.
       if (this.edge(hand, BUTTONS.a, btn(BUTTONS.a)) === "press") {
         if (hand === "left") this.toggleMenu();
+        else if (this.inspecting) this.oneToOne();
         else this.undoLast();
       }
       if (this.edge(hand, BUTTONS.b, btn(BUTTONS.b)) === "press") {
         if (hand === "left") {
-          this.goStart();
-          this.say("Back to the start");
+          if (this.inspecting) this.undoLast();
+          else {
+            this.goStart();
+            this.say("Back to the start");
+          }
+        } else if (this.inspecting) {
+          this.bringBack();
+          this.say("Brought back in front of you");
         } else this.setRoof(!this.roofOff);
       }
     }
     if (this.carry) this.drag();
+    if (this.inspecting) {
+      this.dragPart();
+      if (this.spin && !this.grabs.left && !this.grabs.right) this.spinPart(dt);
+      this.sizeNotes();
+    }
     // The arc while a trigger is held for teleporting.
     for (const c of this.controllers) if (!this.aiming || this.aiming.hand !== c.hand) c.arc.visible = false;
     if (this.aiming) {
@@ -1120,6 +1389,12 @@ export class XrWalk {
       pins: this.pins.map((p) => ({ tag: p.tag, at: p.at })),
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
       carrying: this.carry?.key ?? null,
+      mode: this.inspecting ? "inspect" : "walk",
+      held: (() => {
+        const p = this.heldPose();
+        const c = this.heldCentre();
+        return { scale: Math.round(p.scale * 1000) / 1000, centre: c.toArray().map((v) => Math.round(v * 1000)), holding: (["left", "right"] as const).filter((h) => !!this.grabs[h]) };
+      })(),
     };
   }
   /** For tests: stand at a point (model mm), facing a heading, full size. */

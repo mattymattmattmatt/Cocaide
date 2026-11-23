@@ -190,6 +190,7 @@ function VrTab({ vr }: { vr?: Props["vr"] }) {
         <strong>VR</strong> button appears in the view&apos;s bar at the bottom; on a computer it stays hidden. To get a project onto the headset, use <strong>Share</strong> in the top bar: get a code on your computer, type it on the headset.
       </p>
       <ul className="muted small vr-help">
+        <li>A part (the Model tab) is held to inspect: grip to pick it up (point at it, or reach into it); let go and it stays in the air; both grips turn it and stretch it bigger or smaller (measures stay true size); A back to true size, B bring it back, Y undo; the menu&apos;s Walk in it stands you in it instead (as a part with a start point does). An assembly is walked through:</li>
         <li>Left trigger: aim the arc, let go to teleport (onto floors). Left stick: walk. Right stick: turn.</li>
         <li>X: the menu (point with the right hand, pull the trigger): tools, snapping, the kind of pin, roof off, the dollhouse, the next pin, leave VR.</li>
         <li>Right trigger: the tool in use. Measure: point to point (snaps to corners and edges unless switched off). Pin: a note where you point. Move: drag furniture along the floor.</li>

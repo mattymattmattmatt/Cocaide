@@ -18,4 +18,6 @@ export interface VrViewProps {
   notesHidden?: boolean;
   /** What was added in a visit to VR, when you leave it. */
   onNotes?(pins: VrPin[], moves: VrMove[]): void;
+  /** A part (the Model tab): VR holds it to inspect (unless a start point says where to stand), and can switch to walking through it. */
+  inspect?: boolean;
 }

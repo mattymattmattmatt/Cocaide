@@ -2529,6 +2529,8 @@ export function Viewport({
       notes: () => ({ pins: vrLive.current?.pins ?? [], moves: vrLive.current?.moves ?? [] }),
       onChange: (on) => vrLive.current?.onVr?.(on),
       onDone: (pins, moves) => vrLive.current?.onNotes?.(pins, moves),
+      canInspect: () => !!vrLive.current?.inspect,
+      startInspecting: () => !!vrLive.current?.inspect && !vrLive.current?.start,
     });
     // The VR notes on the desktop: each moved piece as a ghost where it was put (onion skin), each pin with its note.
     const vrNotes = new THREE.Group();
