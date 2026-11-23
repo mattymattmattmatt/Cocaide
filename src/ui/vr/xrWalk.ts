@@ -8,9 +8,11 @@
 //   Right hand: trigger: the tool in use (the menu picks it): Teleport, Measure
 //               (point to point; it snaps to corners and edges unless that's
 //               switched off), Pin (a note where you point: "too tight here"),
-//               Move (drag furniture along the floor); stick: snap turn, or
+//               Move (the trigger picks pieces of furniture, green, and lets
+//               them go: a group; on the ring's knobs it turns them 10° a
+//               click, or sweep a knob round); stick: snap turn, or
 //               turn what you carry; A: undo; B: roof off.
-//   Either grip: pick up a piece of furniture you point at, put it down where
+//   Either grip: carry what is picked (or the piece you point at), put it down where
 //               you let go.
 //   Menu: tools, snapping, the pin's kind, roof, back to the start, the
 //   dollhouse (the model small on a table in front of you: point at a floor
@@ -34,6 +36,7 @@ import { centreOf, itemOfFace, itemOfMove, itemsOf, itemTriangles, type VrItem }
 import { disposeSprite, Panel, textSprite } from "./vrText";
 import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "./inspect";
 import type { VrPrefs } from "./vrPrefs";
+import { RayIndex } from "./rayIndex";
 
 export interface XrHost {
   renderer: THREE.WebGLRenderer;
@@ -136,7 +139,12 @@ interface Placed {
   centre: Vec3;
   ghost: THREE.Mesh;
 }
-type Undo = { kind: "pin"; id: string } | { kind: "measure" } | { kind: "move"; key: string; move: Vec3; turn: number };
+type Undo = { kind: "pin"; id: string } | { kind: "measure" } | { kind: "move"; was: Map<string, { move: Vec3; turn: number }> };
+/** Each selected piece's move and turn when a drag or a turn began. */
+type Starts = Map<string, { move: Vec3; turn: number }>;
+const SELECTED = 0x30a46c;
+/** A turn handle's step (degrees). */
+const TURN_STEP = 10;
 
 export class XrWalk {
   private session: XRSession | null = null;
@@ -167,13 +175,27 @@ export class XrWalk {
    * for pointing at; `at` is each of its triangles' place in the copy.
    */
   private draw: { from: THREE.Mesh; mesh: THREE.Mesh; at: Int32Array; index: Uint32Array } | null = null;
+  /** The model's triangles in a tree for rays (src/ui/vr/rayIndex), built once a view; the triangles hidden in VR skipped. */
+  private rays: { view: RebuildView; index: RayIndex; skip: Uint8Array } | null = null;
   // Tools.
   tool: VrTool = "teleport";
   snap = true;
   pinTag: PinTag = "note";
   private items: VrItem[] = [];
   private placed = new Map<string, Placed>();
-  private carry: { key: string; hand: "left" | "right"; grab: Vec3; height: number; startMove: Vec3; startTurn: number } | null = null;
+  /** The pieces picked (green): moved together by a grip, turned together by the handles. */
+  private selected = new Set<string>();
+  /** Carrying the selection with a grip: where the ray met the floor they stand on, and each piece's place then. */
+  private carry: { key: string; hand: "left" | "right"; grab: Vec3; height: number; starts: Starts } | null = null;
+  /** Turning the selection by a handle: the trigger held on it. */
+  private turning: { hand: "left" | "right"; dir: 1 | -1; a0: number; centre: Vec3; starts: Starts; by: number; swept: boolean } | null = null;
+  /** The turn handles round the selection (in the model's frame): a ring on the floor and a knob each way. */
+  private gizmo = new THREE.Group();
+  /** Show / hide: what is hidden in VR (components in an assembly, bodies in a part), and the menu's page of it. */
+  private hiddenGroups = new Set<string>();
+  private page: "main" | "show" = "main";
+  private showPage = 0;
+  private greenMat = new THREE.MeshLambertMaterial({ color: SELECTED, emissive: SELECTED, emissiveIntensity: 0.35 });
   private pins: VrPin[] = [];
   private pinObjs = new Map<string, THREE.Object3D[]>();
   private measures: Measure[] = [];
@@ -318,6 +340,7 @@ export class XrWalk {
     this.clearNotes();
     this.hide(null);
     this.dropDraw();
+    this.rays = null;
     scene.add(model);
     for (const o of this.culled) o.frustumCulled = true;
     this.culled = [];
@@ -361,6 +384,10 @@ export class XrWalk {
     this.pins = [];
     this.undo = [];
     this.carry = null;
+    this.turning = null;
+    this.selected.clear();
+    this.hiddenGroups.clear();
+    this.placeGizmo();
   }
 
   /** The rig placed so the start is under your feet, facing its way. */
@@ -422,21 +449,57 @@ export class XrWalk {
     return this.controllers.find((c) => c.hand === hand);
   }
 
-  /** The model's surfaces (and what was moved), for rays to land on; the lawn too unless `noGround`. */
+  /** What else rays land on besides the model (whose triangles go through the ray tree): what was moved, the handles, the lawn unless `noGround`. */
   private targets(noGround = false): THREE.Object3D[] {
     const out: THREE.Object3D[] = [];
-    const m = this.host.mesh();
-    if (m) out.push(m);
-    for (const p of this.placed.values()) out.push(p.ghost);
+    for (const p of this.placed.values()) if (p.ghost.visible) out.push(p.ghost);
     return noGround ? out : [...out, this.inspecting ? this.floor.children[0] : this.ground];
+  }
+
+  /** The ray tree for the view on screen (built when the view changes). */
+  private rayTree(): { index: RayIndex; skip: Uint8Array } | null {
+    const view = this.host.view();
+    if (!view?.mesh) return null;
+    if (this.rays?.view !== view) {
+      const index = new RayIndex(view.mesh.positions, view.mesh.indices);
+      this.rays = { view, index, skip: new Uint8Array(index.triangles) };
+      this.markHidden(this.hiddenNow);
+    }
+    return this.rays;
+  }
+
+  /** The nearest thing a ray (world, unit direction) meets within `far` (m): the model, through its tree, or anything else. */
+  private rayHit(o: THREE.Vector3, d: THREE.Vector3, far: number, noGround = false, near = 0): THREE.Intersection | null {
+    let best: THREE.Intersection | null = null;
+    const m = this.host.mesh();
+    const tree = m ? this.rayTree() : null;
+    if (m && tree) {
+      m.updateWorldMatrix(true, false);
+      const inv = new THREE.Matrix4().copy(m.matrixWorld).invert();
+      const lo = o.clone().applyMatrix4(inv);
+      const le = o.clone().addScaledVector(d, far).applyMatrix4(inv);
+      const ld = le.clone().sub(lo);
+      const h = tree.index.cast([lo.x, lo.y, lo.z], [ld.x, ld.y, ld.z], 1, tree.skip);
+      if (h && h.t * far >= near) {
+        const I = this.rays!.view.mesh!.indices;
+        const face = { a: I[h.tri * 3], b: I[h.tri * 3 + 1], c: I[h.tri * 3 + 2], normal: new THREE.Vector3(...h.normal), materialIndex: 0 };
+        best = { distance: h.t * far, point: o.clone().addScaledVector(d, h.t * far), object: m, face, faceIndex: h.tri } as THREE.Intersection;
+      }
+    }
+    const others = this.targets(noGround);
+    if (others.length) {
+      const ray = new THREE.Raycaster(o, d, near, best ? best.distance : far);
+      const h = ray.intersectObjects(others, false)[0];
+      if (h && (!best || h.distance < best.distance)) best = h;
+    }
+    return best;
   }
 
   /** A controller's straight ray into the model: the nearest hit. */
   private cast(c: Controller, noGround = false): THREE.Intersection | null {
     const o = new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld);
     const d = new THREE.Vector3(0, 0, -1).transformDirection(c.grip.matrixWorld);
-    const ray = new THREE.Raycaster(o, d, 0.01, 60);
-    return ray.intersectObjects(this.targets(noGround), false)[0] ?? null;
+    return this.rayHit(o, d, 60, noGround, 0.01);
   }
 
   /** A world point in the model's frame (mm, Z up). */
@@ -454,8 +517,6 @@ export class XrWalk {
     const v = d.multiplyScalar(small ? 40 : 7);
     const g = small ? 0 : 9.8;
     const pts = [o.clone()];
-    const ray = new THREE.Raycaster();
-    const targets = this.targets(small);
     this.hit = null;
     let p = o.clone();
     for (let k = 0; k < 60; k++) {
@@ -463,9 +524,7 @@ export class XrWalk {
       const q = p.clone().add(v.clone().multiplyScalar(dt));
       v.y -= g * dt;
       const seg = q.clone().sub(p);
-      ray.set(p, seg.clone().normalize());
-      ray.far = seg.length();
-      const h = ray.intersectObjects(targets, false)[0];
+      const h = this.rayHit(p, seg.clone().normalize(), seg.length(), small);
       if (h) {
         pts.push(h.point.clone());
         const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : UP;
@@ -573,8 +632,26 @@ export class XrWalk {
   }
 
   private applyHidden(): void {
+    // The model's own drawing of what was moved (its copy is drawn instead), and everything hidden from the list.
     const faces = [...this.placed.values()].flatMap((p) => p.item.faces);
+    for (const it of this.items) if (this.hiddenGroups.has(it.body)) faces.push(...it.faces);
+    for (const p of this.placed.values()) p.ghost.visible = !this.hiddenGroups.has(p.item.body);
     this.hide(faces.length ? faces : null);
+  }
+
+  /** What the show / hide list lists: the components of an assembly, or the bodies of a part, by name. */
+  private showList(): string[] {
+    return [...new Set(this.items.map((it) => it.body))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
+
+  private toggleShown(name: string): void {
+    if (this.hiddenGroups.has(name)) this.hiddenGroups.delete(name);
+    else this.hiddenGroups.add(name);
+    // Something hidden can't stay picked.
+    for (const k of [...this.selected]) if (this.hiddenGroups.has(this.placed.get(k)?.item.body ?? "")) this.selected.delete(k);
+    this.applyHidden();
+    this.paintSelection();
+    this.placeGizmo();
   }
 
   /** The movable item a ray hits (the model's own mesh, or a moved copy). */
@@ -590,51 +667,229 @@ export class XrWalk {
     return it?.movable ? it : null;
   }
 
-  private grab(hand: "left" | "right"): void {
+  // Picking: the trigger on a piece selects it (green) or, selected, lets it go; the selection is a group.
+  private toggleSelect(hand: "left" | "right"): void {
     const c = this.controller(hand);
-    if (!c || this.carry) return;
+    if (!c) return;
     const h = this.cast(c, true);
     const it = this.itemAt(h);
-    if (!h || !it) return void this.say(h ? "Only furniture moves" : "Point at a piece of furniture");
-    const p = this.placed.get(it.key) ?? this.place(it, [0, 0, 0], 0);
-    this.applyHidden();
-    const at = this.toModel(h.point);
-    this.carry = { key: it.key, hand, grab: at, height: at[2], startMove: [...p.move] as Vec3, startTurn: p.turn };
+    if (!it) return void this.say(this.selected.size ? (h ? "Only furniture moves · click a green piece to let it go" : "Point at a piece of furniture") : h ? "Only furniture moves" : "Point at a piece of furniture");
+    if (this.selected.has(it.key)) this.selected.delete(it.key);
+    else {
+      if (!this.placed.has(it.key)) {
+        this.place(it, [0, 0, 0], 0);
+        this.applyHidden();
+      }
+      this.selected.add(it.key);
+    }
+    this.paintSelection();
+    this.placeGizmo();
+    this.pulse(hand, 0.4, 25);
+    const n = this.selected.size;
+    this.say(n ? `${n === 1 ? niceName([...this.selected].map((k) => this.placed.get(k)!.item).map((i) => i.partBody ?? i.body)[0]) : `${n} pieces`} selected · grip moves · handles turn ${TURN_STEP}°` : "Nothing selected");
+  }
+
+  /** The selected pieces drawn green; the others as they are. */
+  private paintSelection(): void {
+    for (const [key, p] of this.placed) {
+      if (p.ghost.userData.own === undefined) p.ghost.userData.own = p.ghost.material;
+      p.ghost.material = this.selected.has(key) ? this.greenMat : (p.ghost.userData.own as THREE.Material);
+    }
+  }
+
+  private starts(): Starts {
+    const out: Starts = new Map();
+    for (const k of this.selected) {
+      const p = this.placed.get(k);
+      if (p) out.set(k, { move: [...p.move] as Vec3, turn: p.turn });
+    }
+    return out;
+  }
+
+  /** The selection's middle now, and the floor it stands on (the lowest of its pieces), in the model's frame. */
+  private selectionFrame(): { centre: Vec3; floor: number; reach: number } | null {
+    const ps = [...this.selected].map((k) => this.placed.get(k)).filter((p): p is Placed => !!p);
+    if (!ps.length) return null;
+    const at = ps.map((p) => [p.centre[0] + p.move[0], p.centre[1] + p.move[1]]);
+    const centre: Vec3 = [at.reduce((a, q) => a + q[0], 0) / at.length, at.reduce((a, q) => a + q[1], 0) / at.length, 0];
+    const floor = Math.min(...ps.map((p) => p.item.min[2] + p.move[2]));
+    centre[2] = floor;
+    const reach = Math.max(...ps.map((p, i) => Math.hypot(at[i][0] - centre[0], at[i][1] - centre[1]) + Math.hypot(p.item.max[0] - p.item.min[0], p.item.max[1] - p.item.min[1]) / 2));
+    return { centre, floor, reach };
+  }
+
+  /** The turn handles put round the selection: a ring on its floor and a knob each way, on the sides you see. */
+  private placeGizmo(): void {
+    for (const o of [...this.gizmo.children]) {
+      o.removeFromParent();
+      if ((o as THREE.Sprite).isSprite) disposeSprite(o as THREE.Sprite);
+      else (o as THREE.Mesh).geometry?.dispose();
+    }
+    const f = this.selectionFrame();
+    if (!f) {
+      this.gizmo.removeFromParent();
+      return;
+    }
+    const r = f.reach + 150;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 10, 8, 96), new THREE.MeshBasicMaterial({ color: SELECTED, transparent: true, opacity: 0.8, depthTest: false }));
+    ring.renderOrder = 30;
+    this.gizmo.add(ring);
+    // The knobs square to where you look from, so both are in front of you.
+    const head = this.toModel(this.head());
+    const look = Math.atan2(head[1] - f.centre[1], head[0] - f.centre[0]);
+    for (const dir of [1, -1] as const) {
+      const a = look - dir * (Math.PI / 2.6);
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(70, 16, 12), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: SELECTED, emissiveIntensity: 0.6, depthTest: false }));
+      knob.renderOrder = 31;
+      knob.position.set(Math.cos(a) * r, Math.sin(a) * r, 0);
+      knob.userData.turn = dir;
+      const label = textSprite(dir > 0 ? `⟲ ${TURN_STEP}°` : `⟳ ${TURN_STEP}°`, 260);
+      label.position.set(Math.cos(a) * r, Math.sin(a) * r, 190);
+      this.gizmo.add(knob, label);
+    }
+    this.gizmo.position.set(f.centre[0], f.centre[1], f.floor + 20);
+    if (!this.gizmo.parent) this.notesGroup.add(this.gizmo);
+  }
+
+  /** The turn handle a controller points at (+1 anticlockwise, −1 clockwise), if any. */
+  private handleAt(c: Controller): 1 | -1 | null {
+    if (!this.gizmo.parent || !this.selected.size) return null;
+    const o = new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld);
+    const d = new THREE.Vector3(0, 0, -1).transformDirection(c.grip.matrixWorld);
+    const knobs = this.gizmo.children.filter((k) => k.userData.turn !== undefined);
+    const h = new THREE.Raycaster(o, d, 0, 60).intersectObjects(knobs, false)[0];
+    return h ? (h.object.userData.turn as 1 | -1) : null;
+  }
+
+  /** Where a controller's ray meets the level `z` (model frame), or null. */
+  private onLevel(c: Controller, z: number): Vec3 | null {
+    const o = new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld);
+    const d = new THREE.Vector3(0, 0, -1).transformDirection(c.grip.matrixWorld);
+    const lvl = this.zup.localToWorld(new THREE.Vector3(0, 0, z));
+    if (Math.abs(d.y) < 1e-4) return null;
+    const t = (lvl.y - o.y) / d.y;
+    if (t <= 0 || t > 40) return null;
+    return this.toModel(o.add(d.multiplyScalar(t)));
+  }
+
+  /** The selection turned by `deg` about `centre` from where each piece was (`starts`). */
+  private turnSelection(starts: Starts, centre: Vec3, deg: number): void {
+    const a = (deg * Math.PI) / 180;
+    for (const [k, st] of starts) {
+      const p = this.placed.get(k);
+      if (!p) continue;
+      const x = p.centre[0] + st.move[0] - centre[0];
+      const y = p.centre[1] + st.move[1] - centre[1];
+      const nx = centre[0] + x * Math.cos(a) - y * Math.sin(a);
+      const ny = centre[1] + x * Math.sin(a) + y * Math.cos(a);
+      this.place(p.item, [Math.round(nx - p.centre[0]), Math.round(ny - p.centre[1]), st.move[2]], st.turn + deg);
+    }
+  }
+
+  private startTurn(hand: "left" | "right", dir: 1 | -1): void {
+    const c = this.controller(hand);
+    const f = this.selectionFrame();
+    if (!c || !f) return;
+    const q = this.onLevel(c, f.floor) ?? f.centre;
+    this.turning = { hand, dir, a0: Math.atan2(q[1] - f.centre[1], q[0] - f.centre[0]), centre: f.centre, starts: this.starts(), by: 0, swept: false };
+    this.pulse(hand, 0.4, 20);
+  }
+
+  /** Turning: the knob swept round the ring turns the selection with it, in 10° steps. */
+  private dragTurn(): void {
+    const tn = this.turning;
+    const c = tn && this.controller(tn.hand);
+    if (!tn || !c) return;
+    const q = this.onLevel(c, tn.centre[2]);
+    if (!q) return;
+    let da = ((Math.atan2(q[1] - tn.centre[1], q[0] - tn.centre[0]) - tn.a0) * 180) / Math.PI;
+    da = ((da + 540) % 360) - 180;
+    const by = Math.round(da / TURN_STEP) * TURN_STEP;
+    if (by !== 0) tn.swept = true;
+    if (by !== tn.by) {
+      tn.by = by;
+      this.turnSelection(tn.starts, tn.centre, by);
+      this.gizmo.rotation.z = (by * Math.PI) / 180;
+      this.pulse(tn.hand, 0.25, 12);
+    }
+  }
+
+  private endTurn(): void {
+    const tn = this.turning;
+    if (!tn) return;
+    this.turning = null;
+    // A click on a knob (no sweep): one step its way.
+    if (!tn.swept) this.turnSelection(tn.starts, tn.centre, tn.dir * TURN_STEP);
+    this.gizmo.rotation.z = 0;
+    const by = tn.swept ? tn.by : tn.dir * TURN_STEP;
+    if (by) {
+      this.undo.push({ kind: "move", was: tn.starts });
+      this.say(`Turned ${by > 0 ? `${by}° anticlockwise` : `${-by}° clockwise`}`);
+    }
+    this.placeGizmo();
+  }
+
+  /** A grip: carry the selection (or, with nothing selected, the piece pointed at, selected first). */
+  private grab(hand: "left" | "right"): void {
+    const c = this.controller(hand);
+    if (!c || this.carry || this.turning) return;
+    if (!this.selected.size) {
+      const it = this.itemAt(this.cast(c, true));
+      if (!it) return void this.say("Point at a piece of furniture, or click pieces with the trigger first");
+      if (!this.placed.has(it.key)) this.place(it, [0, 0, 0], 0);
+      this.applyHidden();
+      this.selected.add(it.key);
+      this.paintSelection();
+      this.placeGizmo();
+    }
+    const f = this.selectionFrame()!;
+    const at = this.onLevel(c, f.floor) ?? f.centre;
+    this.carry = { key: [...this.selected][0], hand, grab: at, height: f.floor, starts: this.starts() };
     this.pulse(hand, 0.5, 30);
   }
 
-  /** Carrying: the piece slides along the floor under where the ray meets the level it was picked up at. */
+  /** Carrying: the selection slides along the floor it stands on, following where the ray meets that floor (10 mm steps). */
   private drag(): void {
     if (!this.carry) return;
     const c = this.controller(this.carry.hand);
-    const p = this.placed.get(this.carry.key);
-    if (!c || !p) return;
-    const o = new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld);
-    const d = new THREE.Vector3(0, 0, -1).transformDirection(c.grip.matrixWorld);
-    // The level picked up at, in the world.
-    const lvl = new THREE.Vector3(0, 0, this.carry.height);
-    this.zup.localToWorld(lvl);
-    const hitY = lvl.y;
-    if (Math.abs(d.y) < 1e-4) return;
-    const t = (hitY - o.y) / d.y;
-    if (t <= 0 || t > 40) return;
-    const q = this.toModel(o.clone().add(d.multiplyScalar(t)));
-    const dm: Vec3 = [q[0] - this.carry.grab[0], q[1] - this.carry.grab[1], 0];
-    // 10 mm steps.
-    const s = this.carry.startMove;
-    this.place(p.item, [Math.round((s[0] + dm[0]) / 10) * 10, Math.round((s[1] + dm[1]) / 10) * 10, s[2]], p.turn);
+    if (!c) return;
+    const q = this.onLevel(c, this.carry.height);
+    if (!q) return;
+    const dm = [Math.round((q[0] - this.carry.grab[0]) / 10) * 10, Math.round((q[1] - this.carry.grab[1]) / 10) * 10];
+    for (const [k, st] of this.carry.starts) {
+      const p = this.placed.get(k);
+      if (p) this.place(p.item, [st.move[0] + dm[0], st.move[1] + dm[1], st.move[2]], p.turn);
+    }
+    const f = this.selectionFrame();
+    if (f) this.gizmo.position.set(f.centre[0], f.centre[1], f.floor + 20);
   }
 
   private drop(): void {
     if (!this.carry) return;
+    const first = this.carry.starts.get(this.carry.key);
     const p = this.placed.get(this.carry.key);
-    if (p) {
-      this.undo.push({ kind: "move", key: this.carry.key, move: this.carry.startMove, turn: this.carry.startTurn });
-      const moved = Math.hypot(p.move[0] - this.carry.startMove[0], p.move[1] - this.carry.startMove[1]);
-      if (moved > 5 || p.turn !== this.carry.startTurn) this.say(`${niceName(p.item.partBody ?? p.item.body)}: moved ${lengthText(moved)}${p.turn !== this.carry.startTurn ? `, turned ${Math.round(p.turn - this.carry.startTurn)}°` : ""}`);
+    if (p && first) {
+      this.undo.push({ kind: "move", was: this.carry.starts });
+      const moved = Math.hypot(p.move[0] - first.move[0], p.move[1] - first.move[1]);
+      const turned = p.turn - first.turn;
+      const what = this.carry.starts.size > 1 ? `${this.carry.starts.size} pieces` : niceName(p.item.partBody ?? p.item.body);
+      if (moved > 5 || turned) this.say(`${what}: moved ${lengthText(moved)}${turned ? `, turned ${Math.round(turned)}°` : ""}`);
     }
     this.pulse(this.carry.hand, 0.3, 20);
     this.carry = null;
+    this.placeGizmo();
+  }
+
+  /** The stick while carrying: the selection turned 10° about its middle. */
+  private stickTurn(deg: number): void {
+    const f = this.selectionFrame();
+    if (!f || !this.carry) return;
+    this.turnSelection(this.starts(), f.centre, deg);
+    // Carrying on from here.
+    const c = this.controller(this.carry.hand);
+    const at = c ? this.onLevel(c, this.carry.height) : null;
+    this.carry.starts = new Map([...this.carry.starts].map(([k]) => [k, { move: [...this.placed.get(k)!.move] as Vec3, turn: this.placed.get(k)!.turn }]));
+    if (at) this.carry.grab = at;
   }
 
   // ------------------------------------------------------------------ measure and pins
@@ -748,16 +1003,11 @@ export class XrWalk {
       for (const o of m?.objs ?? []) o.removeFromParent();
       this.say("Measure taken back");
     } else {
-      const p = this.placed.get(u.key);
-      if (p) {
-        this.place(p.item, u.move, u.turn);
-        if (Math.hypot(...p.move) < 1 && !p.turn && !Math.hypot(...p.base.move) && !p.base.turn) {
-          p.ghost.geometry.dispose();
-          p.ghost.removeFromParent();
-          this.placed.delete(u.key);
-          this.applyHidden();
-        }
+      for (const [k, w] of u.was) {
+        const p = this.placed.get(k);
+        if (p) this.place(p.item, w.move, w.turn);
       }
+      this.placeGizmo();
       this.say("Move taken back");
     }
   }
@@ -1007,6 +1257,25 @@ export class XrWalk {
       this.menu.draw();
       return;
     }
+    if (this.page === "show") {
+      const names = this.showList();
+      const per = 12;
+      const pages = Math.max(1, Math.ceil(names.length / per));
+      this.showPage = Math.min(this.showPage, pages - 1);
+      const shown = names.slice(this.showPage * per, this.showPage * per + per);
+      this.menu.title = `Show / hide (${names.length - [...this.hiddenGroups].filter((n) => names.includes(n)).length} of ${names.length} shown)`;
+      this.menu.buttons = [
+        ...shown.map((n, i) => ({ ...b(`show:${n}`, `${this.hiddenGroups.has(n) ? "○" : "●"} ${niceName(n)}`.slice(0, 30), 0.035 + (i % 2) * 0.475, 0.13 + Math.floor(i / 2) * 0.088, 0.455, !this.hiddenGroups.has(n)), h: 0.078 })),
+        b("show:prev", "◀", 0.035, 0.68, 0.1),
+        b("show:next", `▶ ${this.showPage + 1}/${pages}`, 0.145, 0.68, 0.16),
+        b("show:all", "Show all", 0.32, 0.68, 0.2),
+        b("roof", this.roofOff ? "Cut above: on" : "Cut above: off", 0.535, 0.68, 0.24, this.roofOff),
+        b("show:back", "Back", 0.79, 0.68, 0.175),
+      ];
+      this.menu.lines = ["Click to hide or show · rays and teleport go through what's hidden · B cuts away everything above head height"];
+      this.menu.draw();
+      return;
+    }
     const tools: [VrTool, string][] = [["teleport", "Teleport"], ["measure", "Measure"], ["pin", "Pin"], ["move", "Move"]];
     const tags = PIN_TAGS;
     this.menu.title = "Cocaide VR";
@@ -1015,7 +1284,7 @@ export class XrWalk {
       b("snap", this.snap ? "Snap: corners, edges" : "Snap: off (free)", 0.035, row(0.27), 0.455, this.snap),
       b("clearMeasures", `Clear measures (${this.measures.length})`, 0.51, row(0.27), 0.455),
       ...tags.map((t, i) => b(`tag:${t}`, PIN_WORDS[t], 0.035 + i * 0.188, row(0.4), 0.178, this.pinTag === t, `#${PIN_COLORS[t].toString(16).padStart(6, "0")}`)),
-      b("roof", this.roofOff ? "Roof on" : "Roof off", 0.035, row(0.53), 0.3, this.roofOff),
+      b("showhide", this.hiddenGroups.size ? `Show / hide (${this.hiddenGroups.size} hidden)` : "Show / hide", 0.035, row(0.53), 0.3, this.hiddenGroups.size > 0),
       b("start", "Back to the start", 0.35, row(0.53), 0.3),
       this.host.canInspect?.() ? b("inspect", "Hold it", 0.665, row(0.53), 0.3) : b("dollhouse", this.dollhouse ? "Full size" : "Dollhouse", 0.665, row(0.53), 0.3, !!this.dollhouse),
       b("nextPin", `Next pin (${n.pins.length + this.pins.length})`, 0.035, row(0.66), 0.3),
@@ -1025,13 +1294,14 @@ export class XrWalk {
     const moved = [...this.placed.values()].filter((p) => Math.hypot(...p.move) > 0.5 || p.turn).length;
     this.menu.lines = [
       `This visit: ${this.pins.length} pin${this.pins.length === 1 ? "" : "s"}, ${moved} piece${moved === 1 ? "" : "s"} moved; saved to the file as proposals when you leave VR.`,
-      "Left trigger teleports · grip picks up furniture (right stick turns it) · A undo · B roof · Y start",
+      "Move: trigger picks pieces (green), grip moves them, handles turn 10° · A undo · B cut above · Y start",
     ];
     this.menu.draw();
   }
 
   private toggleMenu(): void {
     this.menuOpen = !this.menuOpen;
+    this.page = "main";
     if (this.menuOpen) {
       this.layoutMenu();
       const head = this.head();
@@ -1050,7 +1320,17 @@ export class XrWalk {
     } else if (id.startsWith("tag:")) {
       this.pinTag = id.slice(4) as PinTag;
       this.tool = "pin";
-    } else if (id === "snap") this.snap = !this.snap;
+    } else if (id === "showhide") {
+      this.page = "show";
+      this.showPage = 0;
+    } else if (id === "show:back") this.page = "main";
+    else if (id === "show:prev") this.showPage = Math.max(0, this.showPage - 1);
+    else if (id === "show:next") this.showPage = (this.showPage + 1) % Math.max(1, Math.ceil(this.showList().length / 12));
+    else if (id === "show:all") {
+      this.hiddenGroups.clear();
+      this.applyHidden();
+    } else if (id.startsWith("show:")) this.toggleShown(id.slice(5));
+    else if (id === "snap") this.snap = !this.snap;
     else if (id === "clearMeasures") {
       for (const m of this.measures) for (const o of m.objs) o.removeFromParent();
       this.measures = [];
@@ -1161,7 +1441,21 @@ export class XrWalk {
     this.draw = null;
   }
   /** Faces hidden (what is being carried) from the model and from what VR draws of it; null shows them all again. */
+  private hiddenNow: number[] | null = null;
+  /** The ray tree skips these faces' triangles (null: none). */
+  private markHidden(faces: number[] | null): void {
+    const r = this.rays;
+    if (!r) return;
+    r.skip.fill(0);
+    const ranges = r.view.mesh?.faceRanges ?? [];
+    for (const f of faces ?? []) {
+      const g = ranges[f];
+      if (g) r.skip.fill(1, g.start / 3, (g.start + g.count) / 3);
+    }
+  }
   private hide(faces: number[] | null): void {
+    this.hiddenNow = faces;
+    this.markHidden(faces);
     this.host.hideFaces(faces);
     const d = this.draw;
     if (!d) return;
@@ -1240,8 +1534,12 @@ export class XrWalk {
       } else if (this.tool === "pin") {
         if (tr === "press") this.dropPin(c);
       } else if (this.tool === "move") {
-        if (tr === "press") this.grab(hand);
-        else if (tr === "release" && this.carry?.hand === hand) this.drop();
+        // The trigger picks pieces (and lets them go), or turns the selection on a handle; the grip moves it.
+        if (tr === "press") {
+          const knob = this.handleAt(c);
+          if (knob) this.startTurn(hand, knob);
+          else this.toggleSelect(hand);
+        } else if (tr === "release" && this.turning?.hand === hand) this.endTurn();
       }
       // Holding the part in one hand: that hand's stick pushes it away or pulls it in, along the hand.
       const holding = this.inspecting && !!this.grabs[hand] && !this.two;
@@ -1250,10 +1548,8 @@ export class XrWalk {
       if (!holding && (hand === "right" || (this.carry && this.carry.hand === hand))) {
         if (Math.abs(sx) > 0.7 && !this.turned[hand]) {
           this.turned[hand] = true;
-          if (this.carry) {
-            const p = this.placed.get(this.carry.key);
-            if (p) this.place(p.item, p.move, p.turn + (sx > 0 ? -15 : 15));
-          } else if (hand === "right") {
+          if (this.carry) this.stickTurn(sx > 0 ? -TURN_STEP : TURN_STEP);
+          else if (hand === "right") {
             const head = this.head();
             const a = ((sx > 0 ? 1 : -1) * prefs.snapTurn * Math.PI) / 180;
             this.rig.position.sub(head).applyAxisAngle(UP, a).add(head);
@@ -1291,6 +1587,7 @@ export class XrWalk {
       }
     }
     if (this.carry) this.drag();
+    if (this.turning) this.dragTurn();
     if (this.inspecting) {
       this.dragPart();
       if (this.spin && !this.grabs.left && !this.grabs.right) this.spinPart(dt);
@@ -1323,7 +1620,7 @@ export class XrWalk {
           const p = snapAt ? new THREE.Vector3(...snapAt).applyMatrix4(this.zup.matrixWorld) : h.point;
           this.pointer.position.copy(p);
           this.pointer.visible = true;
-          (this.pointer.material as THREE.MeshBasicMaterial).color.set(this.tool === "move" ? (this.itemAt(h) ? 0x30a46c : 0xe5484d) : 0xffd400);
+          (this.pointer.material as THREE.MeshBasicMaterial).color.set(this.tool === "move" ? (this.handleAt(r) ? 0xffd400 : this.itemAt(h) ? 0x30a46c : 0xe5484d) : 0xffd400);
         }
       }
       r.ray.scale.z = len;
@@ -1354,8 +1651,7 @@ export class XrWalk {
   /** Walking: a floor up to 400 below or above your feet becomes the floor you stand on (steps, stairs, a deck). */
   private followFloor(): void {
     const head = this.head();
-    const ray = new THREE.Raycaster(new THREE.Vector3(head.x, 0.45, head.z), new THREE.Vector3(0, -1, 0), 0, 0.9);
-    const h = ray.intersectObjects(this.targets(), false)[0];
+    const h = this.rayHit(new THREE.Vector3(head.x, 0.45, head.z), new THREE.Vector3(0, -1, 0), 0.9);
     if (!h) return;
     const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : UP;
     if (n.dot(UP) > 0.7 && Math.abs(h.point.y) > 0.005) this.rig.position.y -= h.point.y;
@@ -1389,6 +1685,10 @@ export class XrWalk {
       pins: this.pins.map((p) => ({ tag: p.tag, at: p.at })),
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
       carrying: this.carry?.key ?? null,
+      selected: [...this.selected],
+      knobs: this.gizmo.parent ? this.gizmo.children.filter((k) => k.userData.turn !== undefined).map((k) => ({ turn: k.userData.turn as number, at: new THREE.Vector3().setFromMatrixPosition(k.matrixWorld).toArray() })) : [],
+      hidden: [...this.hiddenGroups],
+      showList: this.showList(),
       mode: this.inspecting ? "inspect" : "walk",
       held: (() => {
         const p = this.heldPose();

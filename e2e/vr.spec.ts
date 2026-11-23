@@ -129,7 +129,7 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
   await page.reload();
   await waitForRebuild(page);
-  type State = { tool: string; snap: boolean; pinTag: string; menu: boolean; dollhouse: boolean; measures: number[]; pins: { tag: string }[]; moved: { key: string; move: number[]; turn: number }[]; carrying: string | null };
+  type State = { tool: string; snap: boolean; pinTag: string; menu: boolean; dollhouse: boolean; measures: number[]; pins: { tag: string }[]; moved: { key: string; move: number[]; turn: number }[]; carrying: string | null; selected: string[]; hidden: string[]; showList: string[]; knobs: { turn: number; at: number[] }[] };
   const st = () => page.evaluate("window.__cocaideViewport.vrState()") as Promise<State>;
   const press = (id: string) => page.evaluate(`window.__cocaideViewport.vrPress(${JSON.stringify(id)})`);
   await page.getByTestId("view-vr").click();
@@ -192,7 +192,7 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   let moved = (await st()).moved;
   expect(moved.length).toBe(1);
   expect(moved[0].move[0]).toBeLessThan(-100);
-  expect(moved[0].turn).toBe(15);
+  expect(moved[0].turn).toBe(10);
   // A second carry, then A undoes it: back to where the first left it.
   const first = moved[0];
   await device(page, "d.controllers.right.quaternion.set(-0.2588, 0, 0, 0.9659);");
@@ -204,6 +204,45 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await expect.poll(async () => (await st()).moved[0].move[0]).not.toBe(first.move[0]);
   await click("a-button");
   await expect.poll(async () => (await st()).moved[0].move[0]).toBe(first.move[0]);
+
+  // The Move tool: the trigger on the sofa lets it go (it stayed picked after the carry), again picks it (green).
+  await press("tool:move");
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
+  await page.waitForTimeout(100);
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  await expect.poll(async () => (await st()).menu).toBe(false);
+  expect((await st()).selected).toEqual(["sofa"]);
+  await device(page, "d.controllers.right.quaternion.set(-0.2588, 0, 0, 0.9659);");
+  await click();
+  await expect.poll(async () => (await st()).selected).toEqual([]);
+  expect((await st()).knobs).toEqual([]);
+  await click();
+  await expect.poll(async () => (await st()).selected).toEqual(["sofa"]);
+  // A knob of the ring clicked: the sofa turns 10° its way; A undoes it.
+  const knob = (await st()).knobs[0];
+  expect((await st()).knobs.length).toBe(2);
+  const from = [0, 1.2, -0.3];
+  const dir = knob.at.map((v, i) => v - from[i]);
+  const len = Math.hypot(...dir);
+  const b = dir.map((v) => v / len);
+  // The turn taking the controller's forward (0, 0, −1) onto the knob.
+  const q = [b[1], -b[0], 0, 1 - b[2]];
+  const ql = Math.hypot(...q);
+  await device(page, `d.controllers.right.quaternion.set(${q.map((v) => v / ql).join(",")});`);
+  await page.waitForTimeout(150);
+  await click();
+  await expect.poll(async () => (await st()).moved[0].turn).toBe(first.turn + 10 * knob.turn);
+  await click("a-button");
+  await expect.poll(async () => (await st()).moved[0].turn).toBe(first.turn);
+
+  // Show / hide in the menu: the sofa hidden (and no longer picked), then everything shown again.
+  await press("showhide");
+  expect((await st()).showList).toContain("sofa");
+  await press("show:sofa");
+  await expect.poll(async () => (await st()).hidden).toEqual(["sofa"]);
+  expect((await st()).selected).toEqual([]);
+  await press("show:all");
+  await expect.poll(async () => (await st()).hidden).toEqual([]);
 
   // The dollhouse: the model small in front of you; the left trigger on its floor puts you there, full size.
   await press("dollhouse");
@@ -222,7 +261,7 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await expect.poll(async () => (await vr(page)).active).toBe(false);
   const saved = (await savedDocument(page)) as { vr: { pins: { tag: string; id: string }[]; moves: { id: string; body: string; turn?: number }[] } };
   expect(saved.vr.pins.map((p) => p.tag)).toEqual(["tight"]);
-  expect(saved.vr.moves.map((m) => [m.body, m.turn])).toEqual([["sofa", 15]]);
+  expect(saved.vr.moves.map((m) => [m.body, m.turn])).toEqual([["sofa", 10]]);
   await expect(page.getByTestId("vr-review-chip")).toContainText("VR notes: 1 move, 1 pin");
   expect(await page.evaluate("window.__cocaideViewport.vrNotes()")).toBeGreaterThan(3);
   await page.getByTestId("vr-review-chip").click();
