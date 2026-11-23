@@ -38,7 +38,7 @@ import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "
 import type { VrPrefs } from "./vrPrefs";
 import { RayIndex } from "./rayIndex";
 import { faceCard, faceName, mm, pairCard, type FaceCard } from "./vrMeasure";
-import { meshClosest } from "../evaluate/meshDistance";
+import { closestOnTriangle, meshClosest, primitives } from "../evaluate/meshDistance";
 import type { FaceInfo } from "../../kernel/topology";
 
 export interface XrHost {
@@ -188,7 +188,7 @@ export class XrWalk {
   /** Measure: point to point (snapping), or faces (a face's size; two faces' gap, centres, closest points, angle). */
   measureMode: "points" | "faces" = "points";
   /** Faces: the first face picked, waiting for a second (its measure is the last one). */
-  private faceFirst: { index: number; face: FaceInfo } | null = null;
+  private faceFirst: { index: number; face: FaceInfo; at: Vec3 } | null = null;
   /** Faces: the face the ray is on now, lit up, with a label saying what it is (or what it is to the first). */
   private faceHover: { index: number; objs: THREE.Object3D[]; label: THREE.Sprite; text: string } | null = null;
   pinTag: PinTag = "note";
@@ -383,6 +383,7 @@ export class XrWalk {
   private clearNotes(): void {
     for (const p of this.placed.values()) {
       p.ghost.geometry.dispose();
+      for (const c of p.ghost.children) (c as THREE.LineSegments).geometry?.dispose();
       p.ghost.removeFromParent();
     }
     this.placed.clear();
@@ -619,6 +620,10 @@ export class XrWalk {
       g.setAttribute("position", new THREE.BufferAttribute(itemTriangles(view, item), 3));
       g.computeVertexNormals();
       const ghost = new THREE.Mesh(g, this.materialOf(item));
+      // Its edges in black, as the model draws them.
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x1d1e20 }));
+      edges.raycast = () => {};
+      ghost.add(edges);
       ghost.matrixAutoUpdate = false;
       ghost.frustumCulled = false;
       ghost.userData.item = item.key;
@@ -1007,6 +1012,21 @@ export class XrWalk {
     return { index: f, face: view.faces[f], at: this.toModel(h.point) };
   }
 
+  /** The point of a face nearest a point (model mm), from the view's mesh. */
+  private nearestOnFace(index: number, p: Vec3): Vec3 | null {
+    const mesh = this.host.view()?.mesh;
+    if (!mesh) return null;
+    let best: Vec3 | null = null;
+    let bd = Infinity;
+    for (const pr of primitives(mesh, { kind: "face", index })) {
+      if (!pr.tri) continue;
+      const q = closestOnTriangle(p, pr.tri);
+      const d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 + (q[2] - p[2]) ** 2;
+      if (d < bd) { bd = d; best = q; }
+    }
+    return best;
+  }
+
   /** A face lit up: its triangles drawn over it in a see-through colour. */
   private faceGlow(index: number, color: number, opacity: number): THREE.Mesh | null {
     const view = this.host.view();
@@ -1044,7 +1064,7 @@ export class XrWalk {
       const first = this.faceFirst;
       const view = this.host.view();
       // What it is; with a face picked, what the two are (before the click says so).
-      const pc = first && first.index !== f.index && view?.mesh ? pairCard(first, f, meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index })) : null;
+      const pc = first && first.index !== f.index && view?.mesh ? pairCard(first, f, meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index }), { at: first.at, onB: this.nearestOnFace(f.index, first.at) }) : null;
       const [value, caption] = pc ? [pc.value, `${pc.caption.split(" · ")[0]} · click`] : [faceName(f.face), ""];
       const text = caption ? `${value} · ${caption}` : value;
       const glow = this.faceGlow(f.index, 0x4fc3f7, 0.22);
@@ -1074,13 +1094,13 @@ export class XrWalk {
       const sprite = this.faceCardSprite(card, f.at);
       this.measures.push({ a: f.at, b: f.at, objs: [...(glow ? [glow] : []), sprite], text: card.title });
       this.undo.push({ kind: "measure" });
-      this.faceFirst = { index: f.index, face: f.face };
+      this.faceFirst = { index: f.index, face: f.face, at: f.at };
       this.clearFaceHover();
       return;
     }
     // The second: the first's card gives way to the two together, with the dimension drawn.
     const closest = view.mesh ? meshClosest(view.mesh, { kind: "face", index: first.index }, { kind: "face", index: f.index }) : null;
-    const card = pairCard(first, { index: f.index, face: f.face }, closest);
+    const card = pairCard(first, { index: f.index, face: f.face }, closest, { at: first.at, onB: this.nearestOnFace(f.index, first.at) });
     const m = this.measures.at(-1)!;
     const old = m.objs.find((o) => (o as THREE.Sprite).isSprite);
     if (old) {

@@ -428,9 +428,9 @@ test("measuring faces in VR: point at a hole to read its size, click it and a po
   await expect.poll(async () => (await st()).cards).toEqual(["Ø100 hole · 100 mm deep"]);
   // Then the post's front: the hole to the post, closest; the hover said so first.
   await aim([4000, 6400, 500]);
-  await expect.poll(async () => (await st()).faceHover).toMatch(/^[\d,.]+ mm · closest · click$/);
+  await expect.poll(async () => (await st()).faceHover).toMatch(/^[\d,.]+ mm · (closest|from here) · click$/);
   await click();
-  await expect.poll(async () => (await st()).cards[0]).toMatch(/^[\d,.]+ mm closest/);
+  await expect.poll(async () => (await st()).cards[0]).toMatch(/^[\d,.]+ mm (closest|from here)/);
 
   // The post's front and the screen's: parallel, 1050 apart.
   await click();

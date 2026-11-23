@@ -40,6 +40,19 @@ describe("VR face measure", () => {
     expect([c.value, c.caption]).toEqual(["1,250 mm", "closest · 90°"]);
     expect(c.line).toEqual({ from: [0, 0, 0], to: [1250, 0, 0] });
   });
+  it("drawn from the point clicked on the first face, not wherever the two come closest", () => {
+    // Parallel walls 1000 apart: from the click straight across.
+    const g = pairCard({ index: 0, face: plane(0, [0, 1, 0], [0, 0, 0]) }, { index: 1, face: plane(1, [0, -1, 0], [0, 1000, 0]) }, { distance: 1000, a: [5000, 0, 100], b: [5000, 1000, 100] }, { at: [200, 0, 1400] });
+    expect(g.value).toBe("1,000 mm");
+    expect(g.line).toEqual({ from: [200, 0, 1400], to: [200, 1000, 1400] });
+    // Two holes: across from the first axis, level with the click.
+    const h = pairCard({ index: 0, face: cyl(0, 3, [0, 0, 0]) }, { index: 1, face: cyl(1, 3, [50, 0, 0]) }, { distance: 44, a: [3, 0, 0], b: [47, 0, 0] }, { at: [3, 0, 22] });
+    expect(h.line).toEqual({ from: [0, 0, 22], to: [50, 0, 22] });
+    // Faces at an angle: from the click to the second face's nearest point, the closest of all said too.
+    const c = pairCard({ index: 0, face: plane(0, [0, 0, 1], [0, 0, 0]) }, { index: 1, face: plane(1, [1, 0, 0], [100, 0, 50]) }, { distance: 100, a: [0, 0, 0], b: [100, 0, 0] }, { at: [-400, 0, 0], onB: [100, 0, 0] });
+    expect([c.value, c.caption]).toEqual(["500 mm", "from here · closest 100 mm · 90°"]);
+    expect(c.line).toEqual({ from: [-400, 0, 0], to: [100, 0, 0] });
+  });
   it("lengths: tenths under 100 mm, whole mm, then metres from 10 m", () => {
     expect([mm(6.25), mm(245.4), mm(2450), mm(12400)]).toEqual(["6.3 mm", "245 mm", "2,450 mm", "12.40 m"]);
   });
