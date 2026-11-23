@@ -91,3 +91,48 @@ describe("what Flip does", () => {
     expect(startingWay("tangent", { kind: "axis", normal: [0, 0, 1], point: [0, 0, 0], radius: 30 }, { kind: "axis", normal: [0, 0, 1], point: [21, 0, 0], radius: 10 })).toEqual({ flip: true });
   });
 });
+
+describe("lock, limits and a locked rotation", () => {
+  const frame: MateGeom = { kind: "frame", p: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0] };
+  const rel = (t: Vec3, R: [Vec3, Vec3, Vec3] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) => ({ R, t });
+  it("a lock puts the second part where it was from the first, turn and all", () => {
+    // Locked 100 along X from the base, turned a quarter about Z.
+    const R: [Vec3, Vec3, Vec3] = [[0, -1, 0], [1, 0, 0], [0, 0, 1]];
+    const r = solveMates(start(), new Set(["base"]), [{ id: "l", type: "lock", a: { component: "base", geom: frame }, b: { component: "pin", geom: frame }, relative: rel([100, 0, 0], R) }]);
+    expect(r.solved).toBe(true);
+    const p = r.placements.get("pin")!;
+    expect(pointTo(p, [0, 0, 0]).map((v) => Math.round(v * 1e4) / 1e4 + 0)).toEqual([100, 0, 0]);
+    expect(apply(p.R, [1, 0, 0]).map((v) => Math.round(v * 1e4) / 1e4 + 0)).toEqual([0, 1, 0]);
+  });
+  it("a distance limit holds anywhere in its range and pulls back to the nearer end outside it", () => {
+    const top = plane([0, 0, 10], [0, 0, 1]);
+    const bottom = plane([0, 0, 0], [0, 0, -1]);
+    const at = (z: number) => new Map<string, Placement>([["base", placementOf({})], ["pin", placementOf({ at: [0, 0, z] })]]);
+    const lim = (z: number) => solveMates(at(z), new Set(["base"]), [mate("distance", top, bottom, { value: 20, min: 10, max: 50 })]);
+    // 30 above the top (z = 40): inside 10–50, nothing moves.
+    expect(pointTo(lim(40).placements.get("pin")!, [0, 0, 0])[2]).toBeCloseTo(40, 6);
+    // 80 above: back to 50; 2 above: up to 10.
+    expect(pointTo(lim(90).placements.get("pin")!, [0, 0, 0])[2]).toBeCloseTo(60, 4);
+    expect(pointTo(lim(12).placements.get("pin")!, [0, 0, 0])[2]).toBeCloseTo(20, 4);
+  });
+  it("an angle limit: 60° with a limit of 0–30° comes back to 30°", () => {
+    const pl = new Map<string, Placement>([["base", placementOf({})], ["pin", placementOf({ rotation: [60, 0, 0] })]]);
+    const r = solveMates(pl, new Set(["base"]), [mate("angle", plane([0, 0, 0], [0, 0, 1]), plane([0, 0, 0], [0, 0, 1]), { value: 10, min: 0, max: 30 })]);
+    expect(r.solved).toBe(true);
+    const n = apply(r.placements.get("pin")!.R, [0, 0, 1]);
+    expect((Math.acos(n[2]) * 180) / Math.PI).toBeCloseTo(30, 3);
+  });
+  it("a concentric mate's locked rotation stops it turning about the axis", () => {
+    const hole = axis([0, 0, 0], [0, 0, 1]);
+    const turned = new Map<string, Placement>([["base", placementOf({})], ["pin", placementOf({ at: [5, 5, 20], rotation: [0, 0, 40] })]]);
+    const r = solveMates(turned, new Set(["base"]), [
+      mate("concentric", hole, hole, { aligned: true }),
+      { id: "m#turn", type: "lock", lockOnly: "turn", a: { component: "base", geom: frame }, b: { component: "pin", geom: frame }, relative: rel([0, 0, 0]) },
+    ]);
+    expect(r.solved).toBe(true);
+    // Back to no turn about Z, on the axis, and free to slide along it (it stays at its height).
+    const p = r.placements.get("pin")!;
+    expect(apply(p.R, [1, 0, 0]).map((v) => Math.round(v * 1e4) / 1e4 + 0)).toEqual([1, 0, 0]);
+    expect(pointTo(p, [0, 0, 0])[2]).toBeCloseTo(20, 4);
+  });
+});

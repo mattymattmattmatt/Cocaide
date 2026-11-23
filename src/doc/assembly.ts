@@ -65,7 +65,7 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
       raw.mates.forEach((x, i) => {
         const at = `assembly.mates[${i}]`;
         if (!isObject(x)) return c.fail(at, `must be a mate { "id", "type", "a", "b" } (got ${describe(x)})`);
-        c.keys(x, at, ["id", "type", "a", "b", "value", "aligned", "opposed", "flip", "suppressed"]);
+        c.keys(x, at, ["id", "type", "a", "b", "value", "aligned", "opposed", "flip", "suppressed", "min", "max", "lockRotation", "relative"]);
         if (typeof x.id !== "string" || !x.id) return c.fail(`${at}.id`, `must be a name (got ${describe(x.id)})`);
         if (mates.some((m) => m.id === x.id)) return c.fail(`${at}.id`, `"${x.id}" is another mate's id`);
         if (!MATE_TYPES.includes(x.type as never)) return c.fail(`${at}.type`, `must be ${MATE_TYPES.map((t) => `"${t}"`).join(", ")} (got ${describe(x.type)})`);
@@ -80,6 +80,29 @@ export function validateAssembly(raw: unknown, c: Checker): Assembly | null {
         const mate: Mate = { id: x.id, type: x.type as Mate["type"], a, b };
         if (needs) mate.value = x.value as number;
         if (x.aligned === true && x.opposed === true) return c.fail(at, "can't be both aligned and opposed: one way round or the other");
+        // A limit: a range for a distance or an angle.
+        if (x.min !== undefined || x.max !== undefined) {
+          if (!needs) return c.fail(at, `a ${x.type} mate takes no limits (min and max are for distance and angle mates)`);
+          if (typeof x.min !== "number" || typeof x.max !== "number" || !Number.isFinite(x.min) || !Number.isFinite(x.max)) return c.fail(at, `a limit needs both min and max as numbers (got ${describe(x.min)}, ${describe(x.max)})`);
+          if (x.min > x.max) return c.fail(at, `min (${x.min}) is more than max (${x.max})`);
+          if (x.type === "angle" && (x.min < 0 || x.max > 180)) return c.fail(at, `an angle's limits are 0 to 180 degrees (got ${x.min} to ${x.max})`);
+          mate.min = x.min;
+          mate.max = x.max;
+        }
+        // Where b was locked to a (lock; concentric with its rotation locked).
+        const vec = (v: unknown) => Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === "number" && Number.isFinite(n));
+        if (x.relative !== undefined) {
+          if (!isObject(x.relative) || !vec(x.relative.at) || !vec(x.relative.rotation)) return c.fail(`${at}.relative`, `must be { "at": [x, y, z], "rotation": [x, y, z] }: b's place from a (got ${describe(x.relative)})`);
+          mate.relative = { at: x.relative.at as Vec3, rotation: x.relative.rotation as Vec3 };
+        }
+        if (x.lockRotation !== undefined) {
+          if (x.type !== "concentric") return c.fail(`${at}.lockRotation`, "only a concentric mate locks its rotation");
+          if (x.lockRotation === true) {
+            if (!mate.relative) return c.fail(`${at}.relative`, "a concentric mate with its rotation locked needs the turn it keeps (relative)");
+            mate.lockRotation = true;
+          }
+        }
+        if (x.type === "lock" && !mate.relative) return c.fail(`${at}.relative`, "a lock mate needs where b is from a (relative: { at, rotation })");
         for (const k of ["aligned", "opposed", "flip", "suppressed"] as const) {
           if (x[k] === undefined) continue;
           if (typeof x[k] !== "boolean") c.fail(`${at}.${k}`, `must be true or false (got ${describe(x[k])})`);

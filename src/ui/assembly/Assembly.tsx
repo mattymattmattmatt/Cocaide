@@ -3,7 +3,9 @@
 // component's place, a mate's type and value, the mates the selection can
 // make, interference, the parts list).
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ContextMenu, type ContextMenuState } from "../ContextMenu";
+import type { Mate, MateRef } from "../../doc/types";
 import { SELF } from "../../doc/assembly";
 import { MATE_TYPES } from "../../doc/types";
 import type { MateType, Vec3 } from "../../doc/types";
@@ -33,7 +35,30 @@ const MATE_WORDS: Record<MateType, { label: string; icon: IconName; hint: string
   perpendicular: { label: "Perpendicular", icon: "perpendicular", hint: "Two faces or edges kept square" },
   angle: { label: "Angle", icon: "angle", hint: "Two faces or edges at an angle" },
   tangent: { label: "Tangent", icon: "tangent", hint: "A round face touching a flat one, or two round faces touching (side by side, or flipped: one inside the other)" },
+  lock: { label: "Lock", icon: "lock", hint: "Hold two parts together as they are now: pick anything on each; they move as one" },
 };
+
+const num = (v: number) => (Math.round(v * 100) / 100).toLocaleString("en-AU");
+/** What a mate holds of a component, in words: "flat face", "round face Ø6", "edge", "Top plane". */
+function refWords(r: MateRef): string {
+  if (r.datum) return r.datum === "Origin" ? "origin" : ["X", "Y", "Z"].includes(r.datum) ? `${r.datum} axis` : `${r.datum} plane`;
+  if (r.face) return r.face.type === "cylindrical" ? `round face${r.face.radius ? ` Ø${num(r.face.radius * 2)}` : ""}` : "flat face";
+  if (r.edge) return r.edge.kind === "circle" ? `round edge${r.edge.radius ? ` Ø${num(r.edge.radius * 2)}` : ""}` : "edge";
+  return "part";
+}
+/** A mate's name in the tree: its kind, with its value or limits ("Distance 20 mm", "Angle 0–110°", "Concentric, rotation locked"). */
+export function mateTitle(m: Mate): string {
+  const words = MATE_WORDS[m.type].label;
+  const limited = m.min !== undefined && m.max !== undefined;
+  if (m.type === "distance") return limited ? `${words} ${num(m.min!)}–${num(m.max!)} mm` : `${words} ${num(m.value ?? 0)} mm`;
+  if (m.type === "angle") return limited ? `${words} ${num(m.min!)}–${num(m.max!)}°` : `${words} ${num(m.value ?? 0)}°`;
+  if (m.type === "concentric" && m.lockRotation) return `${words}, rotation locked`;
+  return words;
+}
+/** What it joins: "pin-1 round face Ø6 ↔ plate-1 flat face"; a lock: the two parts. */
+export function mateJoins(m: Mate): string {
+  return m.type === "lock" ? `${m.a.component} ↔ ${m.b.component}` : `${m.a.component} ${refWords(m.a)} ↔ ${m.b.component} ${refWords(m.b)}`;
+}
 
 export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing, section }: { a: AssemblyWorkspace; undo(): void; redo(): void; canUndo: boolean; canRedo: boolean; onDrawing?: () => void; section?: SectionControl }) {
   const has = !!a.asm?.components.length;
@@ -179,10 +204,64 @@ export function AssemblyMain({
     return { ...r, title: title.charAt(0).toUpperCase() + title.slice(1) };
   }, [a.measuring, a.selection, a.scene]);
   const overlay = useMemo<EvalOverlay | null>(() => (measured && (measured.line || measured.points.length) ? { lines: measured.line ? [measured.line] : [], points: measured.points, centreOfMass: null } : null), [measured]);
-  // The selected component's faces light up, so it is plain which one it is.
-  const selectedId = a.item?.kind === "component" ? a.item.id : null;
-  const body = selectedId ? a.scene.view.bodies.find((b) => b.name === selectedId) : undefined;
-  const peek: PickTarget[] | null = body && !a.selection.faces.length && !a.selection.edges.length ? a.scene.view.faces.slice(body.faces[0], body.faces[1]).map((f) => ({ kind: "face", index: f.index, point: f.centroid })) : null;
+  // What lights up in the view: a mate or component hovered in the tree, else the one selected (a mate: the two
+  // things it holds; a component: all of it), so it is plain which one it is.
+  const [hover, setHover] = useState<{ kind: "mate" | "component"; id: string } | null>(null);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const lit = (it: { kind: "mate" | "component"; id: string } | null): PickTarget[] | null => {
+    if (!it) return null;
+    if (it.kind === "component") return a.componentTargets(it.id);
+    const m = a.asm?.mates?.find((x) => x.id === it.id);
+    return m ? a.mateTargets(m) : null;
+  };
+  const picking = a.selection.faces.length > 0 || a.selection.edges.length > 0;
+  const peek: PickTarget[] | null = lit(hover) ?? (picking ? null : lit(a.item));
+  // Delete (or Backspace) deletes what is selected in the tree; not while typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (!a.item) return;
+      e.preventDefault();
+      a.remove(a.item);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [a]);
+  const mateMenu = (m: Mate, x: number, y: number) => {
+    const f = a.flipsOf(m);
+    setMenu({
+      x,
+      y,
+      title: `${mateTitle(m)} (${m.id})`,
+      items: [
+        ...(f.flip ? [{ label: "Flip", icon: "mirror" as const, hint: f.flip.now, onClick: () => a.editMate(m.id, f.flip!.patch, `Flip ${m.id}`), testId: "asm-ctx-flip" }] : []),
+        ...(f.side ? [{ label: "Flip side", icon: "mirror" as const, onClick: () => a.editMate(m.id, f.side!.patch, `Flip ${m.id} to the other side`) }] : []),
+        { label: m.suppressed ? "Unsuppress" : "Suppress", icon: "suppress" as const, hint: m.suppressed ? "Hold again" : "Keep it, holding nothing", onClick: () => a.editMate(m.id, { suppressed: !m.suppressed }, `${m.suppressed ? "Unsuppress" : "Suppress"} ${m.id}`), testId: "asm-ctx-suppress" },
+        "sep",
+        { label: "Delete", icon: "trash" as const, shortcut: "Del", onClick: () => a.remove({ kind: "mate", id: m.id }), testId: "asm-ctx-delete" },
+      ],
+    });
+  };
+  const componentMenu = (id: string, x: number, y: number) => {
+    const k = a.asm?.components.find((c) => c.id === id);
+    if (!k) return;
+    setMenu({
+      x,
+      y,
+      title: `${k.id} (${a.partName(k.part)})`,
+      items: [
+        { label: k.hidden ? "Show" : "Hide", icon: k.hidden ? "eye" : "eyeOff", onClick: () => a.editComponent(k.id, { hidden: !k.hidden }, `${k.hidden ? "Show" : "Hide"} ${k.id}`, false) },
+        { label: k.fixed ? "Float" : "Fix", icon: "fix", onClick: () => a.editComponent(k.id, { fixed: !k.fixed }, `${k.fixed ? "Float" : "Fix"} ${k.id}`, false) },
+        { label: "Isolate", icon: "isolate", onClick: () => a.setIsolated([k.id]) },
+        ...(onEditPart ? [{ label: "Edit part", icon: "model" as const, onClick: () => onEditPart(k.part) }] : []),
+        ...(k.part !== SELF ? [{ label: "Replace from file…", icon: "open" as const, onClick: () => void a.replacePart(k.part) }] : []),
+        "sep",
+        { label: "Delete", icon: "trash", shortcut: "Del", hint: "With its mates", onClick: () => a.remove({ kind: "component", id: k.id }), testId: "asm-ctx-delete" },
+      ],
+    });
+  };
   return (
     <>
       <aside className="side left assembly-tree" data-testid="assembly-tree">
@@ -194,7 +273,18 @@ export function AssemblyMain({
             <div className="asm-heading">Components</div>
             <ul className="asm-list">
               {comps.map((k) => (
-                <li key={k.id} className={a.item?.kind === "component" && a.item.id === k.id ? "selected" : ""} data-testid={`asm-component-${k.id}`}>
+                <li
+                  key={k.id}
+                  className={`${a.item?.kind === "component" && a.item.id === k.id ? "selected" : ""}${k.hidden ? " hidden-row" : ""}`}
+                  data-testid={`asm-component-${k.id}`}
+                  onMouseEnter={() => setHover({ kind: "component", id: k.id })}
+                  onMouseLeave={() => setHover(null)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    a.setItem({ kind: "component", id: k.id });
+                    componentMenu(k.id, e.clientX, e.clientY);
+                  }}
+                >
                   <button className="asm-row" onClick={() => a.setItem({ kind: "component", id: k.id })}>
                     {(() => {
                       // Its colour as the view shows it: a glance ties the row to the part on screen.
@@ -208,6 +298,9 @@ export function AssemblyMain({
                   <button className="asm-eye" title={k.hidden ? "Show" : "Hide"} onClick={() => a.editComponent(k.id, { hidden: !k.hidden }, `${k.hidden ? "Show" : "Hide"} ${k.id}`, false)} data-testid={`asm-eye-${k.id}`}>
                     <Icon name={k.hidden ? "eyeOff" : "eye"} size={14} />
                   </button>
+                  <button className="asm-eye asm-row-action" title="Delete (with its mates)" onClick={() => a.remove({ kind: "component", id: k.id })} data-testid={`asm-delete-${k.id}`}>
+                    <Icon name="trash" size={14} />
+                  </button>
                 </li>
               ))}
             </ul>
@@ -220,13 +313,33 @@ export function AssemblyMain({
                   const st = status.get(m.id);
                   const bad = m.suppressed ? false : st ? !st.ok : false;
                   return (
-                    <li key={m.id} className={`${a.item?.kind === "mate" && a.item.id === m.id ? "selected" : ""}${bad ? " failed" : ""}${m.suppressed ? " suppressed" : ""}`} data-testid={`asm-mate-${m.id}`}>
-                      <button className="asm-row" onClick={() => a.setItem({ kind: "mate", id: m.id })} title={st?.problem ?? (bad ? "Doesn't hold: Solve, or check the mates fighting it" : undefined)}>
-                        <Icon name={bad ? "alert" : MATE_WORDS[m.type].icon} size={14} />
-                        <span className="asm-name">{m.id}</span>
-                        <span className="muted small">
-                          {m.a.component} ↔ {m.b.component}
+                    <li
+                      key={m.id}
+                      className={`asm-mate-row${a.item?.kind === "mate" && a.item.id === m.id ? " selected" : ""}${bad ? " failed" : ""}${m.suppressed ? " suppressed" : ""}`}
+                      data-testid={`asm-mate-${m.id}`}
+                      onMouseEnter={() => setHover({ kind: "mate", id: m.id })}
+                      onMouseLeave={() => setHover(null)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        a.setItem({ kind: "mate", id: m.id });
+                        mateMenu(m, e.clientX, e.clientY);
+                      }}
+                    >
+                      <button className="asm-row" onClick={() => a.setItem({ kind: "mate", id: m.id })} title={st?.problem ?? (bad ? "Doesn't hold: Solve, or check the mates fighting it" : `${mateTitle(m)}: ${mateJoins(m)} (${m.id})`)}>
+                        <Icon name={bad ? "alert" : m.suppressed ? "suppress" : MATE_WORDS[m.type].icon} size={14} />
+                        <span className="asm-mate-text">
+                          <span className="asm-name" data-testid={`asm-mate-title-${m.id}`}>
+                            {mateTitle(m)}
+                            {m.suppressed ? " (suppressed)" : ""}
+                          </span>
+                          <span className="muted small asm-joins">{mateJoins(m)}</span>
                         </span>
+                      </button>
+                      <button className="asm-eye asm-row-action" title={m.suppressed ? "Unsuppress: hold again" : "Suppress: keep it, holding nothing"} onClick={() => a.editMate(m.id, { suppressed: !m.suppressed }, `${m.suppressed ? "Unsuppress" : "Suppress"} ${m.id}`)} data-testid={`asm-suppress-${m.id}`}>
+                        <Icon name="suppress" size={14} />
+                      </button>
+                      <button className="asm-eye asm-row-action" title="Delete the mate" onClick={() => a.remove({ kind: "mate", id: m.id })} data-testid={`asm-delete-${m.id}`}>
+                        <Icon name="trash" size={14} />
                       </button>
                     </li>
                   );
@@ -235,6 +348,7 @@ export function AssemblyMain({
             )}
           </>
         )}
+        {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       </aside>
       <section className="center">
         <Viewport
@@ -409,9 +523,29 @@ function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (
   if (m) {
     sections.push(
       <section key="m" className="asm-section" data-testid="asm-mate-props">
-        <h3>{m.id}</h3>
+        <h3>
+          {mateTitle(m)} <span className="muted small">{m.id}</span>
+        </h3>
         <Field label="Type">
-          <select value={m.type} onChange={(e) => a.editMate(m.id, { type: e.target.value as MateType, ...(e.target.value === "distance" ? { value: m.value ?? 10 } : e.target.value === "angle" ? { value: m.value ?? 45 } : { value: undefined }) }, `Edit ${m.id}`)} data-testid="asm-prop-mate-type">
+          <select
+            value={m.type}
+            onChange={(e) => {
+              const t = e.target.value as MateType;
+              const ranged = t === "distance" || t === "angle";
+              // Only what the new kind takes: a value (distance, angle), a lock's place, a concentric's locked rotation.
+              a.editMate(
+                m.id,
+                {
+                  type: t,
+                  value: t === "distance" ? (m.value ?? 10) : t === "angle" ? Math.min(180, m.value ?? 45) : undefined,
+                  ...(ranged ? {} : { min: undefined, max: undefined }),
+                  ...(t === "lock" ? { relative: a.relativeNow(m.a.component, m.b.component), lockRotation: undefined } : t === "concentric" && m.lockRotation ? {} : { relative: undefined, lockRotation: undefined }),
+                },
+                `Make ${m.id} ${MATE_WORDS[t].label.toLowerCase()}`,
+              );
+            }}
+            data-testid="asm-prop-mate-type"
+          >
             {MATE_TYPES.map((t) => (
               <option key={t} value={t}>
                 {MATE_WORDS[t].label}
@@ -419,10 +553,72 @@ function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (
             ))}
           </select>
         </Field>
-        {(m.type === "distance" || m.type === "angle") && (
-          <Field label={m.type === "distance" ? "Distance" : "Angle"} unit={m.type === "distance" ? "mm" : "°"}>
-            <NumberInput value={m.value ?? 0} onCommit={(v) => a.editMate(m.id, { value: Number(v) }, `Edit ${m.id}`)} testId="asm-prop-mate-value" />
-          </Field>
+        {(m.type === "distance" || m.type === "angle") && (() => {
+          // One value, or a limit: a range it holds anywhere in (min to max), with where it is now.
+          const unit = m.type === "distance" ? "mm" : "°";
+          const limited = m.min !== undefined && m.max !== undefined;
+          const now = a.mateNow(m);
+          const step = m.type === "distance" ? 10 : 15;
+          return (
+            <>
+              {!limited && (
+                <Field label={m.type === "distance" ? "Distance" : "Angle"} unit={unit}>
+                  <NumberInput value={m.value ?? 0} onCommit={(v) => a.editMate(m.id, { value: Number(v) }, `Edit ${m.id}`)} testId="asm-prop-mate-value" />
+                </Field>
+              )}
+              <label className="check" title="A range instead of one value: the parts can be anywhere from min to max (a slide that stops, a hinge that opens so far); dragging a part stops at the limits">
+                <input
+                  type="checkbox"
+                  checked={limited}
+                  onChange={(e) => {
+                    const v = m.value ?? 0;
+                    const lo = m.type === "angle" ? Math.max(0, v - step) : v - step;
+                    const hi = m.type === "angle" ? Math.min(180, v + step) : v + step;
+                    a.editMate(m.id, e.target.checked ? { min: Math.round(lo * 100) / 100, max: Math.round(hi * 100) / 100 } : { min: undefined, max: undefined }, e.target.checked ? `Limit ${m.id}` : `${m.id}: one value`);
+                  }}
+                  data-testid="asm-prop-mate-limit"
+                />
+                Limit: a range (min to max) instead of one value
+              </label>
+              {limited && (
+                <>
+                  <div className="asm-limits">
+                    <Field label="Min" unit={unit}>
+                      <NumberInput value={m.min!} onCommit={(v) => a.editMate(m.id, { min: Math.min(Number(v), m.max!) }, `Edit ${m.id}`)} testId="asm-prop-mate-min" />
+                    </Field>
+                    <Field label="Max" unit={unit}>
+                      <NumberInput value={m.max!} onCommit={(v) => a.editMate(m.id, { max: Math.max(Number(v), m.min!) }, `Edit ${m.id}`)} testId="asm-prop-mate-max" />
+                    </Field>
+                  </div>
+                  {now !== null && (
+                    <p className="muted small" data-testid="asm-prop-mate-now">
+                      Now {num(now)} {unit}: {now < m.min! - 1e-6 || now > m.max! + 1e-6 ? "outside the limits (Solve brings it in)" : "inside the limits; drag the part to move it within them"}
+                    </p>
+                  )}
+                </>
+              )}
+            </>
+          );
+        })()}
+        {m.type === "concentric" && (
+          <label className="check" title="It doesn't turn in the hole either: kept at the turn it has now (a part held this way is fully placed)">
+            <input
+              type="checkbox"
+              checked={!!m.lockRotation}
+              onChange={(e) => a.editMate(m.id, e.target.checked ? { lockRotation: true, relative: a.relativeNow(m.a.component, m.b.component) } : { lockRotation: undefined, relative: undefined }, e.target.checked ? `Lock ${m.id}'s rotation` : `Free ${m.id}'s rotation`)}
+              data-testid="asm-prop-mate-lock-rotation"
+            />
+            Lock rotation (it can't spin about the axis)
+          </label>
+        )}
+        {(m.type === "lock" || (m.type === "concentric" && m.lockRotation)) && (
+          <div className="asm-flip">
+            <span className="muted small">{m.type === "lock" ? "The two parts are held together as they were when locked." : "The turn is kept as it was when locked."}</span>
+            <button type="button" onClick={() => a.lockHere(m.id)} title="Keep them as they are now instead" data-testid="asm-prop-mate-relock">
+              <Icon name="lock" size={14} />
+              Lock here again
+            </button>
+          </div>
         )}
         {(() => {
           // The way round, and a flip (aligned or opposed, face to face or the same way, an angle the other way, a distance's side).
@@ -463,8 +659,8 @@ function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (
           Suppressed
         </label>
         <Field label="Between">
-          <span className="readout">
-            {m.a.component} ↔ {m.b.component}
+          <span className="readout" data-testid="asm-prop-mate-joins">
+            {mateJoins(m)}
           </span>
         </Field>
         <p className={`small ${st && !st.ok ? "error-text" : "muted"}`} data-testid="asm-prop-mate-status">

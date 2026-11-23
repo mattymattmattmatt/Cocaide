@@ -2729,6 +2729,8 @@ export function Viewport({
         vrPress: (id: string) => xr.press(id),
         vrStandAt: (at: [number, number, number], heading: number) => xr.standAt({ at, heading }),
         vrNotes: () => vrNotes.children.length,
+        /** What is lit up for a moment (a row hovered in a tree): how many faces and edges. */
+        peeked: () => ({ faces: peek.filter((t) => t.kind === "face").length, edges: peek.filter((t) => t.kind === "edge").length }),
         vrItems: () => itemsOf(shownView).map((i) => `${i.key}:${i.movable}`),
         exitVr: () => xr.exit(),
         /** Where the camera is, what it looks at, and which way is up. */

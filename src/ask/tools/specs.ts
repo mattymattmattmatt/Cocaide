@@ -65,7 +65,7 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
   {
     name: "addMate",
     description:
-      'Mate two things of two components; the components that aren\'t fixed move until every mate holds. Refused (nothing changes) when the new mate can\'t hold, saying why. Types: "coincident" (flat faces against each other — facing unless "aligned": true; an edge or axis on a face; two axes in line), "distance" (value mm between faces), "concentric" (two round faces or edges on one axis: a pin in a hole), "parallel", "perpendicular", "angle" (value degrees), "tangent" (a round face on a flat one, or two round faces touching; "flip": true for the flat face\'s other side, or one round face inside the other). Which way round: "aligned": true (the same direction) or "opposed": true (opposite) for parallel, concentric and axes in line; "flip": true puts a distance on the other side of the first face. Take a and b from mateFeatures or suggestMates.',
+      'Mate two things of two components; the components that aren\'t fixed move until every mate holds. Refused (nothing changes) when the new mate can\'t hold, saying why. Types: "coincident" (flat faces against each other — facing unless "aligned": true; an edge or axis on a face; two axes in line), "distance" (value mm between faces), "concentric" (two round faces or edges on one axis: a pin in a hole), "parallel", "perpendicular", "angle" (value degrees), "tangent" (a round face on a flat one, or two round faces touching; "flip": true for the flat face\'s other side, or one round face inside the other), "lock" (two parts held together as they are now: a and b any face of each). A limit: "min" and "max" on a distance or angle (it holds anywhere in the range). "lockRotation": true on a concentric stops it spinning. Which way round: "aligned": true (the same direction) or "opposed": true (opposite) for parallel, concentric and axes in line; "flip": true puts a distance on the other side of the first face. Take a and b from mateFeatures or suggestMates.',
     input: {
       type: z.string(),
       a: mateRefSpec,
@@ -74,6 +74,9 @@ const ASSEMBLY_SPECS: ToolSpec[] = [
       aligned: z.boolean().optional().describe("coincident or distance between flat faces: the faces face the same way, not each other; parallel, concentric, axes in line: the same direction"),
       opposed: z.boolean().optional().describe("parallel, concentric, axes in line: opposite directions (neither aligned nor opposed: either way)"),
       flip: z.boolean().optional().describe("distance: the other side of the first face; tangent: the flat face's other side, or one round face inside the other"),
+      min: z.number().optional().describe("distance or angle: a limit mate holds anywhere from min to max (give both; value is then where it starts)"),
+      max: z.number().optional(),
+      lockRotation: z.boolean().optional().describe("concentric: it can't spin about the axis either (kept as it is now)"),
       id: z.string().optional(),
     },
     readOnly: false,

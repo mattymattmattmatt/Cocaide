@@ -17,6 +17,9 @@ import { componentStates, facesAlign, floatingGroups, motionWords, partSize, par
 import { copiesThatHold, linedHoles, occupiedHoles, sortClashes, suggestMates, type Clash, type MateSuggestion } from "../../assembly/features";
 import { stepPart } from "../files/plan";
 import { mateFlips, startingWay } from "../../assembly/flip";
+import { selectEdges, selectFaces } from "../../kernel/selectors";
+import { measureNow, world } from "../../assembly/solve";
+import { mul, transpose, written } from "../../assembly/transform";
 import { measurePick } from "../evaluate/measure";
 import { composeScene, type AssemblyScene, type Owner } from "../../assembly/scene";
 import { asAppearance, PartAppearances } from "../../appearance";
@@ -309,7 +312,7 @@ export function useAssembly(o: AssemblyOptions) {
 
   /** Which mates the selection can make (all of them want two things of two components). */
   const mateChoices = useMemo((): { type: MateType; ok: boolean; why?: string }[] => {
-    const types: MateType[] = ["coincident", "concentric", "distance", "parallel", "perpendicular", "angle", "tangent"];
+    const types: MateType[] = ["coincident", "concentric", "distance", "parallel", "perpendicular", "angle", "tangent", "lock"];
     if (typeof picks === "string") return types.map((type) => ({ type, ok: false, why: picks }));
     if (picks.length !== 2) return types.map((type) => ({ type, ok: false, why: "Select two faces or edges, one on each of two components (Ctrl-click the second)" }));
     if (picks[0].ref.component === picks[1].ref.component) return types.map((type) => ({ type, ok: false, why: "Both are on one component: pick the second on another component" }));
@@ -321,7 +324,8 @@ export function useAssembly(o: AssemblyOptions) {
     const [ra, rb] = [picks[0].radius !== undefined, picks[1].radius !== undefined];
     const tangent = (ra && rb) || (ra && b === "plane") || (rb && a === "plane");
     return types.map((type) => {
-      const ok = type === "concentric" ? axes : type === "tangent" ? tangent : oriented;
+      // Lock takes anything of each: it holds the parts, not what was picked.
+      const ok = type === "lock" ? true : type === "concentric" ? axes : type === "tangent" ? tangent : oriented;
       return { type, ok, ...(ok ? {} : { why: type === "concentric" ? "Concentric takes two round faces or edges (or axes)" : type === "tangent" ? "Tangent takes a round face and a flat or round face (faces, not edges)" : "Pick flat or round faces, or straight or round edges" }) };
     }).sort((x, y) => (planes ? 0 : 0) + Number(y.ok) - Number(x.ok) || 0);
   }, [picks]);
@@ -343,6 +347,8 @@ export function useAssembly(o: AssemblyOptions) {
     if ((type === "coincident" || type === "distance") && a.kind === "plane" && b.kind === "plane" && facesAlign(a.normal, b.normal)) m.aligned = true;
     // Directions (parallel, concentric, edges in line) the way they are now; a tangent on the side it is on.
     Object.assign(m, startingWay(type, a, b));
+    // A lock: the second part where it is now from the first.
+    if (type === "lock") m.relative = relativeNow(a.ref.component, b.ref.component);
     const next = { ...base(), mates: [...(base().mates ?? []), m] };
     if (!commit(next, `Mate ${m.id}`)) {
       setSelection(EMPTY_SELECTION);
@@ -356,6 +362,67 @@ export function useAssembly(o: AssemblyOptions) {
     commit(next, label, withSolve);
   };
 
+  /** Where component b is now from a (b's place in a's frame): what a lock keeps. */
+  const relativeNow = (ida: string, idb: string): { at: Vec3; rotation: Vec3 } => {
+    const P = (id: string) => placementOf(base().components.find((k) => k.id === id) ?? {});
+    const pa = P(ida);
+    const pb = P(idb);
+    const Rt = transpose(pa.R);
+    const w = written({ R: mul(Rt, pb.R), t: rotate(Rt, [pb.t[0] - pa.t[0], pb.t[1] - pa.t[1], pb.t[2] - pa.t[2]]) });
+    const r = (v: Vec3) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0) as Vec3;
+    return { at: r(w.at), rotation: r(w.rotation) };
+  };
+  /** A lock (or a concentric mate's locked rotation) kept as the parts are now. */
+  const lockHere = (id: string) => {
+    const m = base().mates?.find((x) => x.id === id);
+    if (m) editMate(id, { relative: relativeNow(m.a.component, m.b.component) }, `Lock ${id} here`);
+  };
+  /** A distance or angle mate's value as the parts are now (what a limit mate shows). */
+  const mateNow = (m: Mate): number | null => {
+    const h = solve?.held.find((x) => x.id === m.id);
+    const pa = h && solve?.placements.get(h.a.component);
+    const pb = h && solve?.placements.get(h.b.component);
+    return h && pa && pb ? measureNow(h, world(h.a.geom, pa), world(h.b.geom, pb)) : null;
+  };
+  /** What a mate holds, lit up in the view: its two faces or edges (a lock: both parts). */
+  const mateTargets = (m: Mate): PickTarget[] => {
+    const v = scene.view;
+    const out: PickTarget[] = [];
+    const whole = (id: string) => {
+      const b = v.bodies.find((x) => x.name === id);
+      if (b) for (const f of v.faces.slice(b.faces[0], b.faces[1])) out.push({ kind: "face", index: f.index, point: f.centroid });
+    };
+    if (m.type === "lock") {
+      whole(m.a.component);
+      whole(m.b.component);
+      return out;
+    }
+    for (const ref of [m.a, m.b]) {
+      const k = asm?.components.find((x) => x.id === ref.component);
+      const part = k ? views.get(k.part) : undefined;
+      if (!k || !part) continue;
+      if (ref.face) {
+        const local = selectFaces(part.faces, ref.face).matches.map((f) => f.index);
+        scene.faceOwner.forEach((o, i) => {
+          if (o?.component === k.id && local.includes(o.local)) out.push({ kind: "face", index: i, point: v.faces[i].centroid });
+        });
+      } else if (ref.edge) {
+        const r = selectEdges(part.edges, part.faces, ref.edge);
+        const local = r.error ? [] : r.matches.map((e) => e.index);
+        scene.edgeOwner.forEach((o, i) => {
+          const e = v.edges[i];
+          if (o?.component === k.id && local.includes(o.local) && e) out.push({ kind: "edge", index: i, point: e.mid ?? e.start });
+        });
+      } else whole(k.id);
+    }
+    return out;
+  };
+  /** A component lit up in the view: all its faces. */
+  const componentTargets = (id: string): PickTarget[] => {
+    const v = scene.view;
+    const b = v.bodies.find((x) => x.name === id);
+    return b ? v.faces.slice(b.faces[0], b.faces[1]).map((f) => ({ kind: "face" as const, index: f.index, point: f.centroid })) : [];
+  };
   /** A mate's flips (see src/assembly/flip), from how the solver holds it and where its components are. */
   const flipsOf = (m: Mate) => mateFlips(m, solve?.held.find((h) => h.id === m.id), solve?.placements);
 
@@ -664,6 +731,11 @@ export function useAssembly(o: AssemblyOptions) {
     editComponent,
     editMate,
     flipsOf,
+    lockHere,
+    relativeNow,
+    mateNow,
+    mateTargets,
+    componentTargets,
     remove,
     resolve,
     interference,

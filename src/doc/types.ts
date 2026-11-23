@@ -96,7 +96,7 @@ export interface AssemblyComponent {
   appearance?: Appearance;
 }
 
-export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric", "tangent"] as const;
+export const MATE_TYPES = ["coincident", "distance", "parallel", "perpendicular", "angle", "concentric", "tangent", "lock"] as const;
 export type MateType = (typeof MATE_TYPES)[number];
 
 /** What a mate holds on a component: one of its faces or edges (selectors, as features use, on the component's part), or one of its default planes or axes. */
@@ -124,6 +124,13 @@ export interface Mate {
   opposed?: boolean;
   /** distance: on the other side of the first face; tangent: on the other side of the flat face, or two cylinders one inside the other. */
   flip?: boolean;
+  /** distance and angle: a range instead of one value (a limit mate): it holds anywhere from min to max (mm or degrees). */
+  min?: number;
+  max?: number;
+  /** concentric: it doesn't turn in the hole either (it keeps the turn in `relative`). */
+  lockRotation?: boolean;
+  /** lock (and concentric with lockRotation): where b is from a, as it was locked (b's place in a's frame). */
+  relative?: { at: Vec3; rotation: Vec3 };
   suppressed?: boolean;
 }
 

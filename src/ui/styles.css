@@ -2697,3 +2697,14 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 .part-edit-bar .sep { flex: 1; }
 .part-edit-bar button { height: 28px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; font: inherit; }
 .part-edit-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+/* The mates tree: each mate's kind and value, then what it joins; row actions show on hover or when selected. */
+.asm-mate-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.asm-mate-text .asm-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asm-row .asm-joins { margin-left: 0; font-size: 11px; }
+.asm-list li.asm-mate-row .asm-row { align-items: flex-start; }
+.asm-list li.asm-mate-row .asm-row .icon { margin-top: 2px; }
+.asm-list li:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.asm-row-action { opacity: 0; }
+.asm-list li:hover .asm-row-action, .asm-list li.selected .asm-row-action, .asm-row-action:focus-visible { opacity: 1; }
+.asm-list li.hidden-row .asm-name { color: var(--muted); }
+.asm-limits { display: flex; flex-direction: column; gap: 6px; }

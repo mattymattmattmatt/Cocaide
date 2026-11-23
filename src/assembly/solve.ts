@@ -8,7 +8,12 @@ import type { MateType, Vec3 } from "../doc/types";
 import { apply, mul, pointTo, rotationOf, type Placement } from "./transform";
 
 /** A thing a mate holds, in its part's frame: a plane (a point on it and its outward normal), an axis (a point and its direction) or a point. */
-export type MateGeom = { kind: "plane"; p: Vec3; n: Vec3 } | { kind: "axis"; p: Vec3; d: Vec3; /** A round face's radius (tangent mates). */ r?: number } | { kind: "point"; p: Vec3 };
+export type MateGeom =
+  | { kind: "plane"; p: Vec3; n: Vec3 }
+  | { kind: "axis"; p: Vec3; d: Vec3; /** A round face's radius (tangent mates). */ r?: number }
+  | { kind: "point"; p: Vec3 }
+  /** A component's whole frame (lock mates): its origin and its x and y directions. */
+  | { kind: "frame"; p: Vec3; x: Vec3; y: Vec3 };
 
 export interface SolverMate {
   id: string;
@@ -19,6 +24,12 @@ export interface SolverMate {
   aligned?: boolean;
   opposed?: boolean;
   flip?: boolean;
+  /** A limit: anywhere from min to max (mm, degrees) holds. */
+  min?: number;
+  max?: number;
+  /** lock: b's place in a's frame; "turn": only its turn (a concentric mate's locked rotation). */
+  relative?: { R: [Vec3, Vec3, Vec3]; t: Vec3 };
+  lockOnly?: "turn";
 }
 
 export interface MateStatus {
@@ -51,14 +62,18 @@ const unit = (a: Vec3): Vec3 => {
 const across = (v: Vec3, u: Vec3): Vec3 => sub(v, scale(u, dot(v, u)));
 
 /** The geometry in the assembly, as its component is placed. */
-function world(g: MateGeom, p: Placement): MateGeom {
+export function world(g: MateGeom, p: Placement): MateGeom {
   if (g.kind === "plane") return { kind: "plane", p: pointTo(p, g.p), n: unit(apply(p.R, g.n)) };
   if (g.kind === "axis") return { kind: "axis", p: pointTo(p, g.p), d: unit(apply(p.R, g.d)), ...(g.r !== undefined ? { r: g.r } : {}) };
+  if (g.kind === "frame") return { kind: "frame", p: pointTo(p, g.p), x: apply(p.R, g.x), y: apply(p.R, g.y) };
   return { kind: "point", p: pointTo(p, g.p) };
 }
 
 /** What two kinds a mate may join, in words, for a mate that can't be written. */
-const KIND = { plane: "a plane", axis: "an axis", point: "a point" } as const;
+const KIND = { plane: "a plane", axis: "an axis", point: "a point", frame: "a part" } as const;
+
+/** How far outside a limit (0 inside it): below min negative, above max positive. */
+const beyond = (v: number, min: number, max: number) => (v < min ? v - min : v > max ? v - max : 0);
 
 /**
  * The mate's residuals (each 0 when it holds), or why it can't be written.
@@ -70,8 +85,21 @@ export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | s
   // Two directions: the same way (aligned), opposite (opposed), or either (cross: parallel).
   const together = (u: Vec3, v: Vec3): number[] => (m.aligned ? sub(u, v) : m.opposed ? add(u, v) : cross(u, v));
   const type = m.type;
+  // Lock: b where it was from a (its frame), or only turned as it was.
+  if (type === "lock") {
+    if (a.kind !== "frame" || b.kind !== "frame" || !m.relative) return "a lock holds two parts' frames";
+    const az = cross(a.x, a.y);
+    const inA = (v: Vec3): Vec3 => add(add(scale(a.x, v[0]), scale(a.y, v[1])), scale(az, v[2]));
+    const R = m.relative.R;
+    // The relative turn's columns: where b's x and y point, in a's frame.
+    const ex: Vec3 = [R[0][0], R[1][0], R[2][0]];
+    const ey: Vec3 = [R[0][1], R[1][1], R[2][1]];
+    const L = 100;
+    const turn = [...scale(sub(b.x, inA(ex)), L), ...scale(sub(b.y, inA(ey)), L)];
+    return m.lockOnly === "turn" ? turn : [...sub(b.p, add(a.p, inA(m.relative.t))), ...turn];
+  }
   // Put the plane first, then the axis, then the point, so each pair is one case.
-  const order = { plane: 0, axis: 1, point: 2 };
+  const order = { plane: 0, axis: 1, point: 2, frame: 3 };
   let [x, y] = [a, b];
   let swapped = false;
   if (order[x.kind] > order[y.kind]) {
@@ -79,6 +107,9 @@ export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | s
     swapped = true;
   }
   const pair = `${x.kind}-${y.kind}`;
+  // A limit mate holds anywhere in its range; a plain one at its value.
+  const limited = m.min !== undefined && m.max !== undefined;
+  const off = (now: number, target: number) => (limited ? beyond(now, m.min!, m.max!) : now - target);
   const bad = (what: string) => `${KIND[a.kind]} and ${KIND[b.kind]} can't be ${what}`;
   switch (type) {
     case "coincident":
@@ -88,21 +119,22 @@ export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | s
         const turn = m.aligned ? sub(x.n, y.n) : add(x.n, y.n);
         const first = swapped ? y : x;
         const second = swapped ? x : y;
-        return [...turn, dot(sub(second.p, first.p), first.n) - d];
+        const now = dot(sub(second.p, first.p), first.n) * (m.flip ? -1 : 1);
+        return [...turn, type === "distance" ? off(now, Math.abs(d)) * (m.flip ? -1 : 1) : now - d];
       }
-      if (pair === "plane-axis" && x.kind === "plane" && y.kind === "axis") return [dot(y.d, x.n), dot(sub(y.p, x.p), x.n) - d];
-      if (pair === "plane-point" && x.kind === "plane" && y.kind === "point") return [dot(sub(y.p, x.p), x.n) - d];
+      if (pair === "plane-axis" && x.kind === "plane" && y.kind === "axis") return [dot(y.d, x.n), type === "distance" ? off(dot(sub(y.p, x.p), x.n) * (m.flip ? -1 : 1), Math.abs(d)) : dot(sub(y.p, x.p), x.n) - d];
+      if (pair === "plane-point" && x.kind === "plane" && y.kind === "point") return [type === "distance" ? off(dot(sub(y.p, x.p), x.n) * (m.flip ? -1 : 1), Math.abs(d)) : dot(sub(y.p, x.p), x.n) - d];
       if (pair === "axis-axis" && x.kind === "axis" && y.kind === "axis") {
-        if (type === "distance") return [...together(x.d, y.d), Math.hypot(...across(sub(y.p, x.p), x.d)) - Math.abs(d)];
+        if (type === "distance") return [...together(x.d, y.d), off(Math.hypot(...across(sub(y.p, x.p), x.d)), Math.abs(d))];
         return [...together(x.d, y.d), ...across(sub(y.p, x.p), x.d)];
       }
       if (pair === "axis-point" && x.kind === "axis" && y.kind === "point") {
-        const off = across(sub(y.p, x.p), x.d);
-        return type === "distance" ? [Math.hypot(...off) - Math.abs(d)] : off;
+        const side = across(sub(y.p, x.p), x.d);
+        return type === "distance" ? [off(Math.hypot(...side), Math.abs(d))] : side;
       }
       if (pair === "point-point" && x.kind === "point" && y.kind === "point") {
         const v = sub(y.p, x.p);
-        return type === "distance" ? [Math.hypot(...v) - Math.abs(d)] : v;
+        return type === "distance" ? [off(Math.hypot(...v), Math.abs(d))] : v;
       }
       return bad(type === "distance" ? "a distance apart" : "coincident");
     }
@@ -140,12 +172,35 @@ export function residuals(m: SolverMate, a: MateGeom, b: MateGeom): number[] | s
       const u = x.kind === "plane" ? x.n : x.kind === "axis" ? x.d : null;
       const v = y.kind === "plane" ? y.n : y.kind === "axis" ? y.d : null;
       if (!u || !v) return bad("at an angle");
+      // A limit in radians (0 inside it); one angle as its cosine.
+      if (limited) return [(beyond((Math.acos(Math.max(-1, Math.min(1, dot(u, v)))) * 180) / Math.PI, m.min!, m.max!) * Math.PI) / 180];
       return [dot(u, v) - Math.cos(((m.value ?? 0) * Math.PI) / 180)];
     }
   }
 }
 
 const norm = (r: number[]) => Math.sqrt(r.reduce((s, x) => s + x * x, 0));
+
+/** A distance or angle mate's value as its two things are now (mm, as the mate measures it; degrees), or null. */
+export function measureNow(m: SolverMate, a: MateGeom, b: MateGeom): number | null {
+  const order = { plane: 0, axis: 1, point: 2, frame: 3 };
+  const [x, y] = order[a.kind] <= order[b.kind] ? [a, b] : [b, a];
+  if (m.type === "angle") {
+    const u = x.kind === "plane" ? x.n : x.kind === "axis" ? x.d : null;
+    const v = y.kind === "plane" ? y.n : y.kind === "axis" ? y.d : null;
+    return u && v ? (Math.acos(Math.max(-1, Math.min(1, dot(u, v)))) * 180) / Math.PI : null;
+  }
+  if (m.type !== "distance") return null;
+  const s = m.flip ? -1 : 1;
+  if (x.kind === "plane" && y.kind === "plane") {
+    const [first, second] = order[a.kind] <= order[b.kind] ? [a as typeof x, b as typeof y] : [b as typeof x, a as typeof y];
+    return dot(sub(second.p, first.p), first.n) * s;
+  }
+  if (x.kind === "plane" && (y.kind === "axis" || y.kind === "point")) return dot(sub(y.p, x.p), x.n) * s;
+  if (x.kind === "axis" && (y.kind === "axis" || y.kind === "point")) return Math.hypot(...across(sub(y.p, x.p), x.d));
+  if (x.kind === "point" && y.kind === "point") return Math.hypot(...sub(y.p, x.p));
+  return null;
+}
 
 /**
  * Solves the mates. `placements`: every component's place now; `fixed`: the

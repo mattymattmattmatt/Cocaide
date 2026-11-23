@@ -5,7 +5,7 @@
 import { SELF } from "../doc/assembly";
 import type { Assembly, AssemblyComponent, Mate, Vec3 } from "../doc/types";
 import { mateGeometry, type PartTopology } from "./resolve";
-import { freeMotions, solveMates, type FreeMotion, type MateStatus, type SolverMate } from "./solve";
+import { freeMotions, solveMates, type FreeMotion, type MateGeom, type MateStatus, type SolverMate } from "./solve";
 import { placementOf, written, type Placement } from "./transform";
 
 /** The part document a component uses: this document's own part (without its drawing and assembly), or one the assembly carries. */
@@ -52,22 +52,43 @@ export function solveAssembly(asm: Assembly, views: Map<string, PartTopology>): 
   const byId = new Map(asm.components.map((k) => [k.id, k]));
   const solverMates: SolverMate[] = [];
   const problems: MateStatus[] = [];
+  const FRAME: MateGeom = { kind: "frame", p: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0] };
+  const rel = (m: Mate) => {
+    const P = placementOf(m.relative ?? {});
+    return { R: P.R as [Vec3, Vec3, Vec3], t: P.t };
+  };
   for (const m of asm.mates ?? []) {
     if (m.suppressed) continue;
+    // A lock holds the two parts' whole frames as they were locked.
+    if (m.type === "lock") {
+      solverMates.push({ id: m.id, type: "lock", a: { component: m.a.component, geom: FRAME }, b: { component: m.b.component, geom: FRAME }, relative: rel(m) });
+      continue;
+    }
+    // A concentric mate with its rotation locked: and its turn kept, as a second (hidden) mate of the same id.
+    if (m.type === "concentric" && m.lockRotation && m.relative)
+      solverMates.push({ id: `${m.id}#turn`, type: "lock", lockOnly: "turn", a: { component: m.a.component, geom: FRAME }, b: { component: m.b.component, geom: FRAME }, relative: rel(m) });
     const ga = mateGeometry(m.a, views.get(byId.get(m.a.component)?.part ?? ""));
     const gb = mateGeometry(m.b, views.get(byId.get(m.b.component)?.part ?? ""));
     if (typeof ga === "string" || typeof gb === "string") {
       problems.push({ id: m.id, error: Infinity, ok: false, problem: typeof ga === "string" ? ga : (gb as string) });
       continue;
     }
-    solverMates.push({ id: m.id, type: m.type, a: { component: m.a.component, geom: ga }, b: { component: m.b.component, geom: gb }, ...(m.value !== undefined ? { value: m.value } : {}), ...(m.aligned ? { aligned: true } : {}), ...(m.opposed ? { opposed: true } : {}), ...(m.flip ? { flip: true } : {}) });
+    solverMates.push({ id: m.id, type: m.type, a: { component: m.a.component, geom: ga }, b: { component: m.b.component, geom: gb }, ...(m.value !== undefined ? { value: m.value } : {}), ...(m.aligned ? { aligned: true } : {}), ...(m.opposed ? { opposed: true } : {}), ...(m.flip ? { flip: true } : {}), ...(m.min !== undefined && m.max !== undefined ? { min: m.min, max: m.max } : {}) });
   }
   // A group mated together but to nothing fixed keeps its first component where it is, so the rest come to it (none tilts the pair).
   if (!fixed.size && asm.components.length) fixed.add(asm.components[0].id);
   for (const g of floatingGroups(asm)) fixed.add(g[0]);
   const r = solveMates(placements, fixed, solverMates);
   const order = new Map((asm.mates ?? []).map((m, i) => [m.id, i]));
-  const mates = [...r.mates, ...problems].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  // A locked rotation's hidden mate counts toward its concentric mate.
+  const turns = new Map(r.mates.filter((s) => s.id.endsWith("#turn")).map((s) => [s.id.slice(0, -5), s]));
+  const merged = r.mates
+    .filter((s) => !s.id.endsWith("#turn"))
+    .map((s) => {
+      const t = turns.get(s.id);
+      return t && !t.ok ? { ...s, ok: false, error: Math.max(s.error, t.error), ...(s.problem ? {} : { problem: "its rotation is locked, and another mate turns it" }) } : s;
+    });
+  const mates = [...merged, ...problems].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   return { placements: r.placements, mates, solved: mates.every((m) => m.ok), held: solverMates };
 }
 

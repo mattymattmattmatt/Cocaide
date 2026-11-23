@@ -51,7 +51,7 @@ export function autoExplode(asm: Assembly, partOf: (componentId: string) => Part
     if (!base) continue;
     const p = byId.get(base.other.component)!;
     const g = mateGeometry(base.other, partOf(p.id));
-    if (typeof g === "string" || g.kind === "point") continue;
+    if (typeof g === "string" || g.kind === "point" || g.kind === "frame") continue;
     const P = placementOf(p);
     let dir = apply(P.R, g.kind === "plane" ? g.n : g.d);
     const mine = corners(k, partOf(k.id));

@@ -417,8 +417,9 @@ Assembling, step by step:
    "parallel", "perpendicular", "angle", "tangent" (a round face on a flat one, two round faces touching). Which way
    round: parallel, concentric and axes in line take "aligned" (the same direction) or "opposed" (opposite; neither:
    either way); "flip" puts a distance on the other side of the first face, a tangent on the flat face's other side
-   or one round face inside the other; an angle the other way is 180 − value. A mate that can't hold is refused with
-   the reason.
+   or one round face inside the other; an angle the other way is 180 − value. "lock" holds two parts together as they
+   are now (a and b any face of each). A limit: "min" and "max" on a distance or angle (it holds anywhere between).
+   "lockRotation": true on a concentric stops it spinning. A mate that can't hold is refused with the reason.
 4. checkAssembly: mates that don't hold, components held by nothing, what each can still do (a pin in a hole can
    still turn about its axis — fine — but a plate that can still slide needs another mate), and overlaps.
 5. A bolt or pin in one hole: copyToHoles { "id" } copies it into every other free hole of that size on that part,

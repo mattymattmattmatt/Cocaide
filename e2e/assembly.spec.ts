@@ -17,7 +17,7 @@ test.afterEach(async ({ page }) => {
   expect((page as unknown as { problems: string[] }).problems).toEqual([]);
 });
 
-type Asm = { components: { id: string; part: string; at?: number[]; rotation?: number[]; fixed?: boolean; hidden?: boolean; transparent?: boolean }[]; mates?: { id: string; type: string; value?: number; aligned?: boolean }[] };
+type Asm = { components: { id: string; part: string; at?: number[]; rotation?: number[]; fixed?: boolean; hidden?: boolean; transparent?: boolean }[]; mates?: { id: string; type: string; value?: number; aligned?: boolean; suppressed?: boolean; min?: number; max?: number }[] };
 const assembly = async (page: Page) => (await savedDocument(page)).assembly as Asm | undefined;
 
 async function clickAt(page: Page, p: Vec3, ctrl = false) {
@@ -355,4 +355,75 @@ test("a parallel mate starts the way the faces sit (aligned) and Flip turns the 
   }).toBe(1);
   const r = (await assembly(page))?.components[1].rotation ?? [0, 0, 0];
   expect(Math.cos((r[0] * Math.PI) / 180) * Math.cos((r[1] * Math.PI) / 180)).toBeLessThan(-0.99);
+});
+
+test("the mates tree: says what each mate is and joins, lights it up when hovered, suppresses and deletes from its row, its menu and the Delete key; lock and limit mates", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  for (let i = 0; i < 2; i++) {
+    await page.getByTestId("asm-insert").click();
+    await page.getByTestId("asm-insert-self").click();
+  }
+  await expect(page.getByTestId("asm-component-bracket-2")).toBeVisible();
+  await page.waitForTimeout(1500);
+  const peeked = () => page.evaluate("window.__cocaideViewport.peeked()") as Promise<{ faces: number; edges: number }>;
+  const pickTops = async () => {
+    await clickAt(page, [-20, 10, 6]);
+    await clickAt(page, [70, 10, 6], true);
+    await expect(page.getByTestId("asm-mate-panel")).toBeVisible();
+  };
+  await pickTops();
+  await page.getByTestId("asm-mate-btn-distance").click();
+  const mates = async () => (await assembly(page))?.mates ?? [];
+  await expect.poll(async () => (await mates()).length).toBe(1);
+  // The row: what it is, with its value, and what it joins.
+  await expect(page.getByTestId("asm-mate-title-distance1")).toHaveText("Distance 10 mm");
+  await expect(page.getByTestId("asm-mate-distance1")).toContainText("bracket-1 flat face ↔ bracket-2 flat face");
+  // Hovered: its two faces light up; a component hovered: all of it.
+  await page.mouse.click(5, 5);
+  await page.getByTestId("asm-mate-distance1").hover();
+  await expect.poll(async () => (await peeked()).faces).toBe(2);
+  await page.getByTestId("asm-component-bracket-2").hover();
+  await expect.poll(async () => (await peeked()).faces).toBeGreaterThan(5);
+  // A limit: a range (min to max) instead of one value; the row says it.
+  await page.getByTestId("asm-mate-distance1").locator(".asm-row").click();
+  await page.getByTestId("asm-prop-mate-limit").check();
+  await expect.poll(async () => (await mates())[0]).toMatchObject({ min: 0, max: 20 });
+  await expect(page.getByTestId("asm-mate-title-distance1")).toHaveText("Distance 0–20 mm");
+  await expect(page.getByTestId("asm-prop-mate-now")).toContainText("inside the limits");
+  await page.getByTestId("asm-prop-mate-max").fill("40");
+  await page.getByTestId("asm-prop-mate-max").press("Enter");
+  await expect(page.getByTestId("asm-mate-title-distance1")).toHaveText("Distance 0–40 mm");
+  // Suppress from its row; back again from its menu (right-click).
+  await page.getByTestId("asm-mate-distance1").hover();
+  await page.getByTestId("asm-suppress-distance1").click();
+  await expect.poll(async () => (await mates())[0].suppressed).toBe(true);
+  await expect(page.getByTestId("asm-mate-title-distance1")).toContainText("(suppressed)");
+  await page.getByTestId("asm-mate-distance1").click({ button: "right" });
+  await page.getByTestId("asm-ctx-suppress").click();
+  await expect.poll(async () => (await mates())[0].suppressed).toBeUndefined();
+  // Delete from its row.
+  await page.getByTestId("asm-mate-distance1").hover();
+  await page.getByTestId("asm-delete-distance1").click();
+  await expect.poll(async () => (await mates()).length).toBe(0);
+  // A lock: anything of each; the row names the two parts; hovered, both light up; the Delete key deletes it.
+  await pickTops();
+  await page.getByTestId("asm-mate-btn-lock").click();
+  await expect.poll(async () => (await mates())[0]).toMatchObject({ type: "lock", relative: { at: expect.any(Array), rotation: expect.any(Array) } });
+  const lock = (await mates())[0] as unknown as { id: string };
+  await expect(page.getByTestId(`asm-mate-title-${lock.id}`)).toHaveText("Lock");
+  await expect(page.getByTestId(`asm-mate-${lock.id}`)).toContainText("bracket-1 ↔ bracket-2");
+  await page.getByTestId(`asm-mate-${lock.id}`).hover();
+  await expect.poll(async () => (await peeked()).faces).toBeGreaterThan(10);
+  await page.getByTestId(`asm-mate-${lock.id}`).locator(".asm-row").click();
+  await expect(page.getByTestId("asm-prop-mate-relock")).toBeVisible();
+  await page.keyboard.press("Delete");
+  await expect.poll(async () => (await mates()).length).toBe(0);
+  // A component deleted from its row, and from its menu.
+  await page.getByTestId("asm-component-bracket-2").hover();
+  await page.getByTestId("asm-delete-bracket-2").click();
+  await expect(page.getByTestId("asm-component-bracket-2")).toHaveCount(0);
+  await page.getByTestId("asm-component-bracket-1").click({ button: "right" });
+  await expect(page.getByTestId("context-menu")).toContainText("Edit part");
+  await page.getByTestId("asm-ctx-delete").click();
+  await expect(page.getByTestId("assembly-tree")).toContainText("No components yet");
 });

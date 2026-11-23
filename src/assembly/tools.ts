@@ -14,7 +14,18 @@ import { Checker } from "../doc/validate";
 import { copiesThatHold, linedHoles, mateFeatures, occupiedHoles, sortClashes, suggestMates, type Clash } from "./features";
 import { componentStates, floatingGroups, motionWords, partBox, partDocument, partDocuments, partName, partSize, placed, solveAssembly, type AssemblySolve } from "./model";
 import type { PartTopology } from "./resolve";
-import { placementOf, pointTo } from "./transform";
+import { apply, mul, placementOf, pointTo, transpose, written } from "./transform";
+
+/** Where component b is now from a (b's place in a's frame): what a lock, or a concentric's locked rotation, keeps. */
+function relativeOf(asm: Assembly, ida: string, idb: string): { at: Vec3; rotation: Vec3 } {
+  const P = (id: string) => placementOf(asm.components.find((k) => k.id === id) ?? {});
+  const pa = P(ida);
+  const pb = P(idb);
+  const Rt = transpose(pa.R);
+  const w = written({ R: mul(Rt, pb.R), t: apply(Rt, [pb.t[0] - pa.t[0], pb.t[1] - pa.t[1], pb.t[2] - pa.t[2]]) });
+  const r = (v: Vec3) => v.map((x) => Math.round(x * 1e6) / 1e6 + 0) as Vec3;
+  return { at: r(w.at), rotation: r(w.rotation) };
+}
 
 type Raw = Record<string, unknown>;
 const isObject = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -217,7 +228,9 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
       if (typeof rb === "string") return fail(rb);
       const id = typeof a.id === "string" && a.id ? a.id : nextMateId(base, String(a.type));
       if ((base.mates ?? []).some((m) => m.id === id)) return fail(`a mate "${id}" exists already`);
-      const m = { id, type: a.type, a: ra, b: rb, ...(a.value !== undefined ? { value: a.value } : {}), ...(a.aligned === true ? { aligned: true } : {}), ...(a.opposed === true ? { opposed: true } : {}), ...(a.flip === true ? { flip: true } : {}) } as Mate;
+      const m = { id, type: a.type, a: ra, b: rb, ...(a.value !== undefined ? { value: a.value } : {}), ...(a.aligned === true ? { aligned: true } : {}), ...(a.opposed === true ? { opposed: true } : {}), ...(a.flip === true ? { flip: true } : {}), ...(typeof a.min === "number" ? { min: a.min } : {}), ...(typeof a.max === "number" ? { max: a.max } : {}), ...(a.lockRotation === true ? { lockRotation: true } : {}) } as Mate;
+      // A lock, or a concentric mate's locked rotation: kept as the parts are now.
+      if (m.type === "lock" || m.lockRotation) m.relative = relativeOf(base, ra.component, rb.component);
       const next = { ...base, mates: [...(base.mates ?? []), m] };
       const c = new Checker("document");
       validateAssembly(next, c);
@@ -228,9 +241,13 @@ export async function runAssemblyTool(name: string, input: unknown, env: Assembl
     case "editMate": {
       const m = (base.mates ?? []).find((x) => x.id === a.id);
       if (!m) return fail(`no mate "${String(a.id)}" (mates: ${(base.mates ?? []).map((x) => x.id).join(", ") || "none"})`);
-      if (!isObject(a.patch)) return fail('patch must be an object: { "type"?, "value"?, "aligned"?, "opposed"?, "flip"?, "suppressed"?, "a"?, "b"? }');
+      if (!isObject(a.patch)) return fail('patch must be an object: { "type"?, "value"?, "aligned"?, "opposed"?, "flip"?, "min"?, "max"?, "lockRotation"?, "suppressed"?, "a"?, "b"? }');
       const nm = { ...m, ...(a.patch as Partial<Mate>) } as Mate;
-      for (const key of ["aligned", "opposed", "flip", "suppressed"] as const) if (!nm[key]) delete nm[key];
+      for (const key of ["aligned", "opposed", "flip", "suppressed", "lockRotation"] as const) if (!nm[key]) delete nm[key];
+      for (const key of ["min", "max"] as const) if (nm[key] === null || nm[key] === undefined) delete nm[key];
+      // Locking (or locking a concentric's rotation) keeps the parts as they are now; unlocking drops it.
+      if ((nm.type === "lock" || nm.lockRotation) && (!nm.relative || (a.patch as Record<string, unknown>).lockRotation === true)) nm.relative = relativeOf(base, nm.a.component, nm.b.component);
+      if (nm.type !== "lock" && !nm.lockRotation) delete nm.relative;
       if (nm.value === null) delete nm.value;
       const next = { ...base, mates: (base.mates ?? []).map((x) => (x.id === m.id ? nm : x)) };
       const c = new Checker("document");
