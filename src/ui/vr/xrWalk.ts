@@ -15,9 +15,9 @@
 //   Either grip: carry what is picked (or the piece you point at), put it down where
 //               you let go.
 //   Menu: tools, snapping, the pin's kind, roof, back to the start, the
-//   dollhouse (the model small on a table in front of you: point at a floor
-//   in it and let go of the trigger to stand there), the next pin, undo,
-//   leave VR.
+//   dollhouse (the model small in front of you, to hold like a part: grip to
+//   pick it up, both grips to turn and size it; point at a floor in it and
+//   let go of the trigger to stand there), the next pin, undo, leave VR.
 //
 // Pins and moved furniture are proposals: they are handed to the document
 // when you leave VR (src/doc/vr.ts), drawn on the desktop as notes and onion
@@ -406,8 +406,7 @@ export class XrWalk {
 
   /** The rig placed so the start is under your feet, facing its way. */
   private goStart(): void {
-    this.dollhouse = null;
-    this.rig.scale.setScalar(1);
+    this.leaveDollhouse();
     const { rotY, position } = rigFor(this.startNow);
     this.rig.rotation.set(0, rotY, 0);
     this.rig.position.copy(position);
@@ -558,13 +557,15 @@ export class XrWalk {
     const t = this.hit;
     if (!t) return;
     if (this.dollhouse) {
-      // From the dollhouse: stand at the spot pointed at, full size, facing the way the model faces you now.
+      // From the dollhouse: stand at the spot pointed at, full size, facing the way the model faces you now (however
+      // it has been turned in your hands).
       const at = this.toModel(t);
-      this.dollhouse = null;
-      this.rig.scale.setScalar(1);
+      const yaw = this.heldYaw();
+      this.leaveDollhouse();
+      this.rig.rotation.set(0, yaw, 0);
       this.rig.updateMatrixWorld(true);
       const head = this.head();
-      const p = toXr(at).applyAxisAngle(UP, this.rig.rotation.y);
+      const p = toXr(at).applyAxisAngle(UP, yaw);
       this.rig.position.set(head.x - p.x, -p.y, head.z - p.z);
       this.say("Full size");
       return;
@@ -603,10 +604,22 @@ export class XrWalk {
     this.toastUntil = performance.now() + 1800;
   }
 
-  private setRoof(off: boolean): void {
+  private setRoof(off: boolean, quiet = false): void {
     this.roofOff = off;
-    this.host.renderer.clippingPlanes = off ? [new THREE.Plane(new THREE.Vector3(0, -1, 0), this.host.prefs().cutAbove / 1000)] : [];
-    this.say(off ? "Roof off" : "Roof on");
+    this.host.renderer.clippingPlanes = off ? [this.roofPlane()] : [];
+    if (!quiet) this.say(off ? "Roof off" : "Roof on");
+  }
+  /**
+   * Where the roof is cut: the cut height above the floor you stand on; in the dollhouse, that far above the start's
+   * floor in the model, wherever it is held and however it is turned.
+   */
+  private roofPlane(): THREE.Plane {
+    const cut = this.host.prefs().cutAbove;
+    if (!this.dollhouse) return new THREE.Plane(new THREE.Vector3(0, -1, 0), cut / 1000);
+    this.zup.updateWorldMatrix(true, false);
+    const up = new THREE.Vector3(0, 0, 1).transformDirection(this.zup.matrixWorld);
+    const at = this.zup.localToWorld(new THREE.Vector3(this.startNow.at[0], this.startNow.at[1], this.startNow.at[2] + cut));
+    return new THREE.Plane().setFromNormalAndCoplanarPoint(up.negate(), at);
   }
 
   // ------------------------------------------------------------------ furniture
@@ -1179,8 +1192,7 @@ export class XrWalk {
     if (!all.length) return void this.say("No pins yet");
     this.pinCursor = (this.pinCursor + 1) % all.length;
     const p = all[this.pinCursor];
-    this.dollhouse = null;
-    this.rig.scale.setScalar(1);
+    this.leaveDollhouse();
     const head = this.head();
     const yaw = this.rig.rotation.y;
     const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(UP, this.headYaw());
@@ -1279,6 +1291,7 @@ export class XrWalk {
   }
   /** Hold the part: the floor at your feet, the part in front of you. */
   private toInspect(announce = true): void {
+    this.leaveDollhouse();
     this.inspecting = true;
     this.zup.remove(this.ground);
     this.rig.add(this.floor);
@@ -1333,7 +1346,7 @@ export class XrWalk {
       this.pulse(hand, 0.5, 30);
       return;
     }
-    if (!this.cast(c, true) && !this.handNear(c)) return void this.say("Point at the part (or reach into it), then grip");
+    if (!this.cast(c, true) && !this.handNear(c)) return void this.say(`Point at the ${this.dollhouse ? "model" : "part"} (or reach into it), then grip`);
     this.grabs[hand] = rel;
     this.spin = false;
     this.pulse(hand, 0.5, 30);
@@ -1373,35 +1386,62 @@ export class XrWalk {
 
   // ------------------------------------------------------------------ dollhouse
 
+  /**
+   * The dollhouse: the model small in front of you (its longest side 1.2 m, its floor at table height), held like a
+   * part (the inspect mode's grips: one hand carries and turns it, both turn and size it), your own floor under you.
+   * Point at a floor in it and let go of the trigger to stand there, full size.
+   */
   private toggleDollhouse(): void {
     if (this.dollhouse) {
-      this.rig.scale.setScalar(1);
-      this.rig.rotation.y = this.dollhouse.rot;
-      this.rig.position.copy(this.dollhouse.pos);
-      this.dollhouse = null;
+      const back = this.dollhouse;
+      this.leaveDollhouse();
+      this.rig.rotation.y = back.rot;
+      this.rig.position.copy(back.pos);
       return void this.say("Full size");
     }
-    this.dollhouse = { rot: this.rig.rotation.y, pos: this.rig.position.clone() };
-    // The model's box in its own frame (mm): from the mesh's points (the model sits in the rig, so a world box would be in metres).
-    const mesh = this.host.mesh();
-    const box = new THREE.Box3();
-    if (mesh) {
-      mesh.geometry.computeBoundingBox();
-      box.copy(mesh.geometry.boundingBox!);
-    }
+    // The model's box in its own frame (mm), from the mesh's points.
+    const box = this.partBox();
     if (box.isEmpty()) return void this.say("Nothing to make small");
+    this.dollhouse = { rot: this.rig.rotation.y, pos: this.rig.position.clone() };
     const size = box.getSize(new THREE.Vector3());
-    const span = Math.max(size.x, size.y, size.z, 1) / 1000;
-    const k = Math.min(1, 1.2 / span);
-    // The model's middle 0.9 m in front of you at table height (0.8 m), the same way round as you face it.
-    const mid = toXr(box.getCenter(new THREE.Vector3()).toArray() as Vec3);
+    const k = Math.min(1, 1.2 / (Math.max(size.x, size.y, size.z, 1) / 1000));
+    // Your own floor at your feet (the rig back at the room's origin), the model held instead.
+    this.zup.remove(this.ground);
+    this.rig.add(this.floor);
+    this.rig.scale.setScalar(1);
+    this.rig.position.set(0, 0, 0);
+    this.rig.rotation.set(0, 0, 0);
+    this.rig.updateMatrixWorld(true);
+    // The model's middle 0.9 m in front of you, its floor at table height (0.8 m), the same way round as you faced it.
+    const quat = new THREE.Quaternion().setFromAxisAngle(UP, this.dollhouse.rot);
+    const mid = toXr(box.getCenter(new THREE.Vector3()).toArray() as Vec3).multiplyScalar(k).applyQuaternion(quat);
     const head = this.head();
-    const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(UP, this.headYaw()).multiplyScalar(0.9);
-    this.rig.scale.setScalar(k);
-    const m = mid.clone().applyAxisAngle(UP, this.rig.rotation.y).multiplyScalar(k);
-    const minY = (toXr([0, 0, box.min.z]).y) * k;
-    this.rig.position.set(head.x + fwd.x - m.x, 0.8 - minY, head.z + fwd.z - m.z);
-    this.say("Dollhouse: point at a floor and let go of the trigger to stand there");
+    const at = head.clone().add(new THREE.Vector3(0, 0, -0.9).applyAxisAngle(UP, this.headYaw()));
+    const pos = new THREE.Vector3(at.x - mid.x, 0.8 - toXr([0, 0, box.min.z]).y * k, at.z - mid.z);
+    this.grabs = {};
+    this.two = null;
+    this.setHeld({ pos, quat, scale: k });
+    if (this.roofOff) this.setRoof(true, true);
+    this.say("Dollhouse: grip to pick it up, both grips to turn and size it · trigger on a floor to stand there");
+  }
+  /** Out of the dollhouse (if in it): the model back at full size in the rig, the ground back under it. */
+  private leaveDollhouse(): void {
+    if (!this.dollhouse) return;
+    this.dollhouse = null;
+    this.grabs = {};
+    this.two = null;
+    this.hold.position.set(0, 0, 0);
+    this.hold.quaternion.identity();
+    this.hold.scale.setScalar(1);
+    this.rig.remove(this.floor);
+    if (!this.inspecting) this.zup.add(this.ground);
+    this.rig.scale.setScalar(1);
+    if (this.roofOff) this.setRoof(true, true);
+  }
+  /** Which way the held model faces, about the vertical: the turn the rig takes to face it the same way at full size. */
+  private heldYaw(): number {
+    const v = new THREE.Vector3(1, 0, 0).applyQuaternion(this.heldPose().quat);
+    return Math.atan2(-v.z, v.x);
   }
 
   // ------------------------------------------------------------------ menu
@@ -1465,7 +1505,7 @@ export class XrWalk {
     const moved = [...this.placed.values()].filter((p) => Math.hypot(...p.move) > 0.5 || p.turn).length;
     this.menu.lines = [
       `${this.pins.length} pin${this.pins.length === 1 ? "" : "s"} · ${moved} moved · kept as proposals when you leave`,
-      "Trigger: the tool · Grip: carry · A undo · B cut above · Y start",
+      this.dollhouse ? "Dollhouse: grip holds it · both grips turn and size it · trigger on a floor: stand there" : "Trigger: the tool · Grip: carry · A undo · B cut above · Y start",
     ];
     this.menu.draw();
   }
@@ -1697,10 +1737,10 @@ export class XrWalk {
       // Grip: hold the part (inspecting), or pick up and put down furniture.
       const g = this.edge(hand, BUTTONS.squeeze, btn(BUTTONS.squeeze));
       if (g === "press") {
-        if (this.inspecting) this.grabPart(hand);
+        if (this.inspecting || this.dollhouse) this.grabPart(hand);
         else this.grab(hand);
       } else if (g === "release") {
-        if (this.inspecting) this.releasePart(hand);
+        if (this.inspecting || this.dollhouse) this.releasePart(hand);
         else if (this.carry?.hand === hand) this.drop();
       }
       // Trigger.
@@ -1732,7 +1772,7 @@ export class XrWalk {
         } else if (tr === "release" && this.turning?.hand === hand) this.endTurn();
       }
       // Holding the part in one hand: that hand's stick pushes it away or pulls it in, along the hand.
-      const holding = this.inspecting && !!this.grabs[hand] && !this.two;
+      const holding = (this.inspecting || !!this.dollhouse) && !!this.grabs[hand] && !this.two;
       if (holding && Math.abs(sy) > 0.2) this.grabs[hand]!.premultiply(new THREE.Matrix4().makeTranslation(0, 0, sy * dt * 0.8));
       // Sticks: the right turns you (or what you carry), the left walks.
       if (!holding && (hand === "right" || (this.carry && this.carry.hand === hand))) {
@@ -1782,6 +1822,9 @@ export class XrWalk {
       this.dragPart();
       if (this.spin && !this.grabs.left && !this.grabs.right) this.spinPart(dt);
       this.sizeNotes();
+    } else if (this.dollhouse) {
+      this.dragPart();
+      if (this.roofOff && this.host.renderer.clippingPlanes[0]) this.host.renderer.clippingPlanes[0].copy(this.roofPlane());
     }
     if (this.measures.length || this.faceHover) this.sizeCards();
     // The arc while a trigger is held for teleporting.
@@ -1895,8 +1938,7 @@ export class XrWalk {
   }
   /** For tests: stand at a point (model mm), facing a heading, full size. */
   standAt(start: VrStart): void {
-    this.dollhouse = null;
-    this.rig.scale.setScalar(1);
+    this.leaveDollhouse();
     const { rotY, position } = rigFor(start);
     this.rig.rotation.set(0, rotY, 0);
     this.rig.position.copy(position);

@@ -117,7 +117,7 @@ test("no VR button where the browser can't do VR", async ({ page }) => {
   await page2.close();
 });
 
-test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the dollhouse; then the notes reviewed at the desk", async ({ page }) => {
+test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the dollhouse (stood in, then held and sized); then the notes reviewed at the desk", async ({ page }) => {
   // A sofa 1.5 m in front of the start, on the slab.
   const doc = (await savedDocument(page)) as { features: unknown[] };
   doc.features.push(
@@ -255,6 +255,51 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await page.waitForTimeout(250);
   await device(page, "d.controllers.left.updateButtonValue('trigger', 0);");
   await expect.poll(async () => (await st()).dollhouse).toBe(false);
+
+  // The dollhouse held like a part: a grip in it picks it up and carries it; both grips spread size it up.
+  await press("dollhouse");
+  type Held = { dollhouse: boolean; held: { scale: number; centre: number[]; holding: string[] } };
+  const hs = () => page.evaluate("window.__cocaideViewport.vrState()") as Promise<Held>;
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
+  await page.waitForTimeout(100);
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  let h = await hs();
+  expect(h.dollhouse).toBe(true);
+  const k0 = h.held.scale;
+  expect(k0).toBeLessThan(1);
+  const d0 = h.held.centre;
+  const hand = (side: string, p: number[]) => device(page, `const c = d.controllers.${side}; c.position.set(${p.map((v) => v / 1000).join(",")}); c.quaternion.set(0, 0, 0, 1);`);
+  const squeeze = async (side: string, v: number) => {
+    await device(page, `d.controllers.${side}.updateButtonValue('squeeze', ${v});`);
+    await page.waitForTimeout(150);
+  };
+  await hand("right", d0);
+  await page.waitForTimeout(100);
+  await squeeze("right", 1);
+  expect((await hs()).held.holding).toEqual(["right"]);
+  await hand("right", [d0[0] + 150, d0[1] + 100, d0[2]]);
+  await page.waitForTimeout(200);
+  await squeeze("right", 0);
+  h = await hs();
+  expect(h.held.holding).toEqual([]);
+  expect(Math.abs(h.held.centre[0] - (d0[0] + 150))).toBeLessThan(5);
+  expect(Math.abs(h.held.centre[1] - (d0[1] + 100))).toBeLessThan(5);
+  const d1 = h.held.centre;
+  await hand("left", [d1[0] - 80, d1[1], d1[2]]);
+  await hand("right", [d1[0] + 80, d1[1], d1[2]]);
+  await page.waitForTimeout(100);
+  await squeeze("left", 1);
+  await squeeze("right", 1);
+  await hand("left", [d1[0] - 160, d1[1], d1[2]]);
+  await hand("right", [d1[0] + 160, d1[1], d1[2]]);
+  await page.waitForTimeout(200);
+  await squeeze("left", 0);
+  await squeeze("right", 0);
+  expect((await hs()).held.scale / k0).toBeCloseTo(2, 1);
+  // Full size again: the model back in place, not held.
+  await press("dollhouse");
+  await expect.poll(async () => (await hs()).dollhouse).toBe(false);
+  expect((await hs()).held.scale).toBe(1);
 
   // Out of VR: the pin and the move are in the file as proposals; the desktop shows the notes.
   await page.evaluate("window.__cocaideViewport.exitVr()");

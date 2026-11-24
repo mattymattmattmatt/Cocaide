@@ -13,6 +13,7 @@ import standText from "../../examples/stand.cocaide.json?raw";
 import framingText from "../../examples/frame-members.cocaide.json?raw";
 import tableText from "../../examples/table-frame.cocaide.json?raw";
 import engineText from "../../examples/engine.cocaide.json?raw";
+import timberShedText from "../../examples/timber-shed.cocaide.json?raw";
 import type { DrawingGeometry } from "../ask/kernel";
 import type { ProjectedView } from "../kernel/drawingViews";
 import { featureKind, isDrawingTarget, targetLabel, type AskTarget, type PacketKind } from "../ask/packet";
@@ -169,6 +170,7 @@ const EXAMPLES: Record<string, string> = {
   "members (weldment)": framingText,
   "table frame (weldment)": tableText,
   "engine (assembly)": engineText,
+  "timber shed (assembly)": timberShedText,
 };
 /** The examples that are parts (an assembly can't go into another as a part). */
 const PART_EXAMPLES = Object.fromEntries(Object.entries(EXAMPLES).filter(([, t]) => !t.includes('"assembly"')));

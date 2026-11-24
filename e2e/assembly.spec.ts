@@ -539,6 +539,15 @@ test("the engine example opens on its Assembly tab: eleven parts, every kind of 
   for (const kind of ["Coincident", "Distance", "Parallel", "Perpendicular", "Angle", "Concentric, rotation locked", "Tangent", "Lock"]) await expect(page.getByTestId("assembly-tree")).toContainText(kind);
 });
 
+test("the timber shed example opens on its Assembly tab with all 64 components built", async ({ page }) => {
+  await page.locator("select").first().selectOption("timber shed (assembly)");
+  await expect(page.getByTestId("mode-assembly")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-testid^="asm-component-"]')).toHaveCount(64, { timeout: 120_000 });
+  // Every part built: the load bar fills and goes.
+  await expect(page.getByTestId("load-bar")).toBeHidden({ timeout: 180_000 });
+  await expect(page.getByTestId("status")).not.toHaveClass(/bad/);
+});
+
 test("each part put in is brought into view; Ctrl held, the handles' labels let clicks through; a mate hovered shows each side's direction", async ({ page }) => {
   await page.getByTestId("mode-assembly").click();
   const cam = () => page.evaluate("window.__cocaideViewport.camera()") as Promise<{ position: number[] }>;
