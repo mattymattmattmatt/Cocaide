@@ -142,6 +142,23 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
   await expect.poll(async () => (await st()).menu).toBe(true);
   await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  // Pointed at the menu (in front of you, below your eyes): the ray stops on the panel, with a ball where it lands.
+  {
+    const from = [0.1, 1.2, -0.1];
+    const to = [0, 1.4, -0.55];
+    const d = to.map((v, i) => v - from[i]);
+    const l = Math.hypot(...d);
+    const b = d.map((v) => v / l);
+    // The turn taking straight ahead (−Z) onto that way: axis (−Z × b), angle between them.
+    const q = [b[1], -b[0], 0, 1 - b[2]];
+    const ql = Math.hypot(...q);
+    await device(page, `const c = d.controllers.right; c.position.set(${from.join(",")}); c.quaternion.set(${q.map((v) => v / ql).join(",")});`);
+    type Dot = { menuDot: number[] | null; rayLength: number };
+    await expect.poll(async () => ((await st()) as unknown as Dot).menuDot).not.toBeNull();
+    const m = (await st()) as unknown as Dot;
+    expect(Math.abs(m.menuDot![2] - -550)).toBeLessThan(80);
+    expect(Math.abs(m.rayLength - l * 1000)).toBeLessThan(80);
+  }
   await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
   await expect.poll(async () => (await st()).menu).toBe(false);
   await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");

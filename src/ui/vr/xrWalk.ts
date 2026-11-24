@@ -221,6 +221,8 @@ export class XrWalk {
   private dollhouse: { rot: number; pos: THREE.Vector3 } | null = null;
   private vignette: THREE.Mesh;
   private pointer: THREE.Mesh;
+  /** Where the right hand's ray meets the menu: a small ball on the panel, drawn over it. */
+  private menuDot: THREE.Mesh;
   // Inspecting a part (src/ui/vr/inspect): held in the air, turned and scaled, instead of walked through.
   private inspecting = false;
   /** What holds the model: moved, turned and scaled while inspecting; as it is (nothing) while walking. */
@@ -265,6 +267,9 @@ export class XrWalk {
     // Where a tool's ray meets the model: a small dot (the snapped point when measuring).
     this.pointer = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffc53d, depthTest: false }));
     this.pointer.renderOrder = 35;
+    this.menuDot = new THREE.Mesh(new THREE.SphereGeometry(0.007, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }));
+    this.menuDot.renderOrder = 46;
+    this.menuDot.visible = false;
     this.pointer.visible = false;
   }
 
@@ -304,7 +309,7 @@ export class XrWalk {
       }
     });
     this.ground.position.set(0, 0, box.isEmpty() ? -5 : box.min.z - 5);
-    scene.add(this.rig, this.lights, this.target, this.vignette, this.pointer);
+    scene.add(this.rig, this.lights, this.target, this.vignette, this.pointer, this.menuDot);
     this.background = scene.background;
     scene.background = new THREE.Color(0xbfd9ef);
     this.startNow = this.host.start() ?? defaultStart(box);
@@ -369,7 +374,7 @@ export class XrWalk {
     this.hold.position.set(0, 0, 0);
     this.hold.quaternion.identity();
     this.hold.scale.setScalar(1);
-    scene.remove(this.rig, this.lights, this.target, this.vignette, this.pointer, this.menu.mesh);
+    scene.remove(this.rig, this.lights, this.target, this.vignette, this.pointer, this.menuDot, this.menu.mesh);
     this.menuOpen = false;
     this.dollhouse = null;
     this.rig.scale.setScalar(1);
@@ -1609,12 +1614,16 @@ export class XrWalk {
   }
 
   /** The menu button the right ray points at. */
-  private menuHover(): string | null {
+  /** Where the right hand's ray meets the open menu, if it does. */
+  private menuHit(): THREE.Intersection | null {
     const c = this.controller("right");
     if (!c || !this.menuOpen) return null;
     const o = new THREE.Vector3().setFromMatrixPosition(c.grip.matrixWorld);
     const d = new THREE.Vector3(0, 0, -1).transformDirection(c.grip.matrixWorld);
-    const h = new THREE.Raycaster(o, d, 0, 5).intersectObject(this.menu.mesh, false)[0];
+    return new THREE.Raycaster(o, d, 0, 5).intersectObject(this.menu.mesh, false)[0] ?? null;
+  }
+  private menuHover(): string | null {
+    const h = this.menuHit();
     return h?.uv ? (this.menu.at(h.uv)?.id ?? null) : null;
   }
 
@@ -1873,9 +1882,23 @@ export class XrWalk {
     // The right hand's ray: long when it points at the menu or a tool needs it, with a dot where it lands.
     const r = this.controller("right");
     this.pointer.visible = false;
+    this.menuDot.visible = false;
     if (r) {
       const tooled = !this.menuOpen && this.tool !== "teleport";
       let len = this.menuOpen ? 2 : 0.6;
+      // On the menu: the ray stops at the panel and is drawn over it, a ball where it lands (lit over a button), as
+      // menus in VR games do; else drawn among the model as usual.
+      const onMenu = this.menuHit();
+      const rayMat = r.ray.material as THREE.LineBasicMaterial;
+      rayMat.depthTest = !this.menuOpen;
+      rayMat.opacity = onMenu ? 0.9 : 0.55;
+      r.ray.renderOrder = this.menuOpen ? 45 : 0;
+      if (onMenu) {
+        len = onMenu.distance;
+        this.menuDot.position.copy(onMenu.point);
+        (this.menuDot.material as THREE.MeshBasicMaterial).color.set(this.menu.hover ? VR_COLORS.hover : 0xffffff);
+        this.menuDot.visible = true;
+      }
       if (tooled) {
         const h = this.cast(r, this.tool === "move");
         if (h) {
@@ -1953,6 +1976,9 @@ export class XrWalk {
       menu: this.menuOpen,
       menuButtons: this.menuOpen ? this.menu.buttons.map((b) => b.id) : [],
       hover: this.menu.hover,
+      /** The ball where the right ray meets the menu (null: not on it), and how long the ray is drawn (m). */
+      menuDot: this.menuDot.visible ? this.menuDot.position.toArray().map((v) => Math.round(v * 1000)) : null,
+      rayLength: Math.round((this.controller("right")?.ray.scale.z ?? 0) * 1000),
       dollhouse: !!this.dollhouse,
       measures: this.measures.map((m) => Math.round(Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1], m.b[2] - m.a[2]))),
       measureMode: this.measureMode,
