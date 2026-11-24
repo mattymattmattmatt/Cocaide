@@ -157,6 +157,8 @@ import { setDraw, useDraw } from "./sketch3d/drawState";
 import type { CornerMark, Draw3d } from "./Viewport";
 import { ShareDialog } from "./ShareDialog";
 import { MobileViewer } from "./mobile/MobileViewer";
+import { LoadBar } from "./LoadBar";
+import { loadProgress } from "./loadProgress";
 import { phoneBrowser, setLayout, useLayout } from "./mobile/layout";
 
 const EXAMPLES: Record<string, string> = {
@@ -232,6 +234,8 @@ export function App() {
   viewRef.current = view;
   const [rebuildMs, setRebuildMs] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  /** A file coming in from an ?open= link (the load bar shows it). */
+  const [fetching, setFetching] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   /** The Member command, while it is open: its size, picks and settings (null: closed). */
   const [memberCmd, setMemberCmd] = useState<MemberCommandState | null>(null);
@@ -938,10 +942,12 @@ export function App() {
     const url = new URLSearchParams(window.location.search).get("open");
     if (!url) return;
     setNotice({ kind: "info", text: `Opening ${url}…` });
+    setFetching(true);
     fetch(url)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status} ${r.statusText}`))))
       .then((text) => replaceDocument(text, `Opened ${decodeURIComponent(url.split("/").pop() ?? "the link")}`))
-      .catch((e: Error) => setNotice({ kind: "error", text: `Could not open ${url}: ${e.message} (the file's host must allow it to be read from another site, as GitHub's raw files and many file hosts do).` }));
+      .catch((e: Error) => setNotice({ kind: "error", text: `Could not open ${url}: ${e.message} (the file's host must allow it to be read from another site, as GitHub's raw files and many file hosts do).` }))
+      .finally(() => setFetching(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = () => {
@@ -3160,8 +3166,17 @@ export function App() {
       </button>
     </div>
   );
+  // The thin bar along the top while the model loads: the link's file, the kernel, the part, an assembly's parts.
+  const asmShown = mode === "assembly" && docHasAssembly;
+  const load = loadProgress({
+    fetching,
+    kernelLoading: kernelState.phase === "loading",
+    building: busy || (parsed.ok && !view && kernelState.phase === "ready"),
+    parts: asmShown ? assemblyWs.built : null,
+  });
+  const loadBar = <LoadBar progress={load} />;
   if (viewer) {
-    const asm = mode === "assembly" && docHasAssembly;
+    const asm = asmShown;
     const comps = assemblyWs.asm?.components ?? [];
     const label = (id: string) => {
       const w = id.replace(/-\d+$/, "").replace(/[-_]+/g, " ").trim() || id;
@@ -3170,6 +3185,7 @@ export function App() {
     const shownView = asm ? assemblyWs.scene.view : view;
     return (
       <>
+        {loadBar}
         {shareDialog}
         <input
           ref={fileInput}
@@ -3214,6 +3230,7 @@ export function App() {
   return (
     <ParametersContext.Provider value={params}>
       <ValueMenuContext.Provider value={sketch ? null : valueMenu}>
+      {loadBar}
       {phoneBrowser() && (
         // On a phone (the full app asked for): back to the touch viewer, out of the crowded top bar's way.
         <button className="layout-viewer-fab" onClick={() => setLayout("viewer")} title="The touch viewer: views, measure, section, parts" data-testid="layout-viewer">

@@ -2711,3 +2711,12 @@ button.look-button:focus-visible { outline: 2px solid var(--accent); outline-off
 /* Ctrl, Shift or Cmd held: the view's labels let a click through to the model (a pick, not a value to type). */
 .eval-labels.pass-through, .eval-labels.pass-through * { pointer-events: none !important; }
 .eval-label.arrow-label { background: color-mix(in srgb, var(--panel) 92%, transparent); font-size: 11px; }
+
+/* ------------------------------------------------------------- load bar */
+/* A thin bar along the top edge while the model loads (LoadBar). */
+.load-bar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 10000; pointer-events: none; background: color-mix(in srgb, var(--accent) 18%, transparent); overflow: hidden; transition: opacity 0.3s ease 0.35s; }
+.load-bar-fill { height: 100%; width: 0; background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); transition: width 0.4s ease; }
+.load-bar.indeterminate .load-bar-fill { width: 30%; animation: load-bar-slide 1.3s ease-in-out infinite; }
+.load-bar.done { opacity: 0; }
+@keyframes load-bar-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .load-bar.indeterminate .load-bar-fill { animation: none; width: 100%; opacity: 0.5; } }
