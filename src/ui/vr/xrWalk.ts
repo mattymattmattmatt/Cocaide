@@ -33,7 +33,7 @@ import { niceName, PIN_COLORS, PIN_TAGS, PIN_WORDS, type PinTag, type VrMove, ty
 import type { Vec3 } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
 import { centreOf, itemOfFace, itemOfMove, itemsOf, itemTriangles, type VrItem } from "./items";
-import { cardSprite, disposeSprite, Panel, textSprite, VR_COLORS } from "./vrText";
+import { cardSprite, disposeSprite, Panel, pinSprite, textSprite, VR_COLORS } from "./vrText";
 import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "./inspect";
 import type { VrPrefs } from "./vrPrefs";
 import { RayIndex } from "./rayIndex";
@@ -151,6 +151,8 @@ const SELECTED = 0x30a46c;
 /** A turn handle's step (degrees). */
 /** How far below your feet walking looks for a floor to come down to (m), and the most it drops a frame. */
 const FALL_REACH = 6;
+/** The longest note typed on a pin (the file allows 500). */
+const NOTE_MAX = 200;
 const FALL_STEP = 0.12;
 const TURN_STEP = 10;
 
@@ -207,7 +209,9 @@ export class XrWalk {
   private gizmo = new THREE.Group();
   /** Show / hide: what is hidden in VR (components in an assembly, bodies in a part), and the menu's page of it. */
   private hiddenGroups = new Set<string>();
-  private page: "main" | "show" = "main";
+  private page: "main" | "show" | "keys" = "main";
+  /** Typing a note's words (the menu shows a keyboard): the pin, what is typed so far, shift for the next letter. */
+  private typing: { pin: string; text: string; shift: boolean } | null = null;
   private showPage = 0;
   private greenMat = new THREE.MeshLambertMaterial({ color: SELECTED, emissive: SELECTED, emissiveIntensity: 0.35 });
   private pins: VrPin[] = [];
@@ -351,6 +355,13 @@ export class XrWalk {
       const it = p.item;
       moves.push({ id: newId("move"), body: it.partBody ?? it.body, ...(it.partBody !== undefined ? { component: it.body } : {}), move: dm.map((v) => Math.round(v)) as Vec3, ...(dt ? { turn: Math.round(dt * 10) / 10 } : {}), centre: p.centre.map((v) => Math.round(v)) as Vec3, made: stamp() });
     }
+    // A note still being typed when you leave: its words kept on its pin.
+    if (this.typing) {
+      const t = this.typing;
+      const p = this.pins.find((x) => x.id === t.pin);
+      if (p && t.text.trim()) p.text = t.text.trim();
+      this.typing = null;
+    }
     const pins = this.pins;
     for (const c of this.controllers) {
       c.grip.removeFromParent();
@@ -457,7 +468,7 @@ export class XrWalk {
         ? "Grip holds · X menu"
         : this.menuOpen
           ? "Point and click"
-          : `${tool} · grip holds · A 1:1`
+          : `${tool} · A undo · B 1:1`
       : c.hand === "left"
         ? "Teleport · X menu"
         : this.menuOpen
@@ -1172,8 +1183,10 @@ export class XrWalk {
     stick.position.set(0, 0, 225);
     const head = new THREE.Mesh(new THREE.SphereGeometry(55, 16, 12), new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.35 }));
     head.position.set(0, 0, 470);
-    const label = textSprite(p.text ? `${PIN_WORDS[p.tag]}\n${p.text}` : PIN_WORDS[p.tag], 380, { bg: `#${color.toString(16).padStart(6, "0")}ee` });
-    label.position.set(0, 0, 640);
+    // The label sits on the head and grows upward with what it says (wrapped and sized to it).
+    const label = pinSprite(PIN_WORDS[p.tag], p.text ?? "", `#${color.toString(16).padStart(6, "0")}ee`, 1.1);
+    label.center.set(0.5, 0);
+    label.position.set(0, 0, 540);
     g.add(stick, head, label);
     this.notesGroup.add(this.sized(g));
     this.pinObjs.set(p.id, [g]);
@@ -1186,8 +1199,54 @@ export class XrWalk {
     this.pins.push(pin);
     this.drawPin(pin);
     this.undo.push({ kind: "pin", id: pin.id });
-    this.say(`Pinned: ${PIN_WORDS[pin.tag]}`);
     this.pulse(c.hand, 0.4, 30);
+    if (pin.tag === "note") this.startTyping(pin.id);
+    else this.say(`Pinned: ${PIN_WORDS[pin.tag]}`);
+  }
+
+  // ------------------------------------------------------------------ typing a note
+
+  /** A note pin's words: the menu becomes a keyboard (point and pull the trigger on the keys), Done puts them on the pin. */
+  private startTyping(pin: string): void {
+    const p = this.pins.find((x) => x.id === pin);
+    this.typing = { pin, text: p?.text ?? "", shift: false };
+    if (this.menuOpen) this.toggleMenu();
+    this.toggleMenu("keys");
+    this.say("Type the note · Done puts it on the pin");
+  }
+  /** A key pressed: a letter (capitalised at the start of a sentence, or after shift), space, backspace, shift. */
+  private typeKey(key: string): void {
+    const t = this.typing;
+    if (!t) return;
+    if (key === "shift") t.shift = !t.shift;
+    else if (key === "back") t.text = t.text.slice(0, -1);
+    else if (key === "space") {
+      if (t.text && !t.text.endsWith(" ")) t.text += " ";
+    } else if (key === "clear") t.text = "";
+    else if (t.text.length < NOTE_MAX) {
+      // A new sentence starts with a capital; shift does the next letter the other way.
+      const start = !t.text.trim() || /[.!?]\s$/.test(t.text);
+      const upper = start !== t.shift;
+      t.text += upper ? key.toUpperCase() : key;
+      t.shift = false;
+    }
+    this.layoutMenu();
+  }
+  /** Done: the words on the pin (none: just "Note"), the keyboard put away. */
+  private finishTyping(keep = true): void {
+    const t = this.typing;
+    if (!t) return;
+    this.typing = null;
+    const p = this.pins.find((x) => x.id === t.pin);
+    if (p && keep) {
+      const text = t.text.trim();
+      if (text) p.text = text;
+      else delete p.text;
+      for (const o of this.pinObjs.get(p.id) ?? []) o.removeFromParent();
+      this.drawPin(p);
+      this.say(text ? `Note: ${text.length > 40 ? `${text.slice(0, 40)}…` : text}` : "Pinned: Note");
+    }
+    if (this.menuOpen) this.toggleMenu();
   }
 
   private undoLast(): void {
@@ -1477,6 +1536,26 @@ export class XrWalk {
     const n = this.host.notes();
     const b = (id: string, label: string, x: number, y: number, w: number, on?: boolean, color?: string) => ({ id, label, x, y, w, h: 0.1, ...(on ? { on } : {}), ...(color ? { color } : {}) });
     const row = (y: number) => y;
+    if (this.page === "keys" && this.typing) {
+      const t = this.typing;
+      const upperNext = (!t.text.trim() || /[.!?]\s$/.test(t.text)) !== t.shift;
+      this.menu.title = "Note on the pin";
+      this.menu.field = t.text;
+      const k = (id: string, label: string, x: number, y: number, w: number, on?: boolean) => ({ ...b(id, label, x, y, w, on), h: 0.1 });
+      const rows = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.?"];
+      this.menu.buttons = [
+        ...rows.flatMap((r, j) => [...r].map((ch, i) => k(`key:${ch}`, upperNext ? ch.toUpperCase() : ch, 0.035 + i * 0.094, 0.24 + j * 0.118, 0.086))),
+        k("key:shift", "⇧ Shift", 0.035, 0.715, 0.17, t.shift),
+        k("key:space", "Space", 0.215, 0.715, 0.36),
+        k("key:back", "⌫", 0.585, 0.715, 0.12),
+        k("key:clear", "Clear", 0.715, 0.715, 0.12),
+        k("key:done", "Done", 0.845, 0.715, 0.12, true),
+      ];
+      this.menu.lines = [`${t.text.length} / ${NOTE_MAX} · point and pull the trigger · X or Done when finished`];
+      this.menu.draw();
+      return;
+    }
+    this.menu.field = null;
     if (this.inspecting) {
       const s = this.heldPose().scale;
       this.menu.title = "Cocaide VR · holding the part";
@@ -1492,7 +1571,7 @@ export class XrWalk {
         b("undo", "Undo", 0.35, row(0.66), 0.3),
         b("exit", "Leave VR", 0.665, row(0.66), 0.3, false),
       ];
-      this.menu.lines = [`Shown ${scaleText(s)} · measures stay true size`, "Grip holds · both grips turn and size · A 1:1 · B bring back · Y undo"];
+      this.menu.lines = [`Shown ${scaleText(s)} · measures stay true size`, "Grip holds · both grips turn and size · A undo · B 1:1 · Y bring back"];
       this.menu.draw();
       return;
     }
@@ -1548,9 +1627,11 @@ export class XrWalk {
     ];
   }
 
-  private toggleMenu(): void {
+  private toggleMenu(page: "main" | "keys" = "main"): void {
+    // Closing the keyboard (X) keeps what was typed.
+    if (this.menuOpen && this.typing && page === "main") return this.finishTyping();
     this.menuOpen = !this.menuOpen;
-    this.page = "main";
+    this.page = page;
     if (this.menuOpen) {
       this.layoutMenu();
       const head = this.head();
@@ -1563,6 +1644,8 @@ export class XrWalk {
   }
 
   private menuPick(id: string): void {
+    if (id === "key:done") return this.finishTyping();
+    if (id.startsWith("key:")) return this.typeKey(id.slice(4));
     if (id.startsWith("tool:")) {
       this.tool = id.slice(5) as VrTool;
       // Out of Move: nothing stays picked (green), so the grip can't carry it from another tool.
@@ -1838,20 +1921,19 @@ export class XrWalk {
       // Buttons: X menu, Y start (left); A undo, B roof (right). Holding a part: Y undo; A true size, B bring it back.
       if (this.edge(hand, BUTTONS.a, btn(BUTTONS.a)) === "press") {
         if (hand === "left") this.toggleMenu();
-        else if (this.inspecting) this.oneToOne();
         else this.undoLast();
       }
       if (this.edge(hand, BUTTONS.b, btn(BUTTONS.b)) === "press") {
         if (hand === "left") {
-          if (this.inspecting) this.undoLast();
-          else {
+          if (this.inspecting) {
+            this.bringBack();
+            this.say("Brought back in front of you");
+          } else {
             this.goStart();
             this.say("Back to the start");
           }
-        } else if (this.inspecting) {
-          this.bringBack();
-          this.say("Brought back in front of you");
-        } else this.setRoof(!this.roofOff);
+        } else if (this.inspecting) this.oneToOne();
+        else this.setRoof(!this.roofOff);
       }
     }
     if (this.falling && !walking && !this.inspecting && !this.dollhouse) this.followFloor();
@@ -1984,7 +2066,8 @@ export class XrWalk {
       measureMode: this.measureMode,
       cards: this.measures.filter((m) => m.text).map((m) => m.text),
       faceHover: this.faceHover?.text ?? null,
-      pins: this.pins.map((p) => ({ tag: p.tag, at: p.at })),
+      pins: this.pins.map((p) => ({ tag: p.tag, at: p.at, ...(p.text ? { text: p.text } : {}) })),
+      typing: this.typing?.text ?? null,
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
       /** How many colours each moved piece's copy is drawn in. */
       colours: Object.fromEntries([...this.placed].map(([k, p]) => [k, new Set(p.ghost.geometry.groups.map((g) => g.materialIndex)).size || 1])),

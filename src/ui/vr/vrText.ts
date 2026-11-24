@@ -2,6 +2,7 @@
 // note), and the menu panel, both drawn on a canvas. Browser only.
 
 import * as THREE from "three";
+import { noteWidth, wrapText } from "./wrap";
 
 /** A label facing you: `w` wide in the units of whatever holds it (its height follows the text). */
 export function textSprite(text: string, w: number, opts: { bg?: string; fg?: string; size?: number } = {}): THREE.Sprite {
@@ -87,6 +88,58 @@ export function cardSprite(value: string, caption: string, accent: string, unit:
   return s;
 }
 
+/**
+ * A pin's label: its kind (Note, Too tight...) on the pin's colour, and under it what was written, wrapped to a tidy
+ * block and sized to it (a word or two on one line; a longer note a few lines; at most eight, then "…"). `unit` is how
+ * big a pixel of the canvas is in whatever holds it, so every label's writing is the same size.
+ */
+export function pinSprite(kind: string, text: string, color: string, unit: number): THREE.Sprite {
+  const c = document.createElement("canvas");
+  const g = c.getContext("2d")!;
+  const head = 46;
+  const body = 52;
+  const pad = 26;
+  const lineH = body * 1.22;
+  const hf = `700 ${head}px system-ui, sans-serif`;
+  const bf = `500 ${body}px system-ui, sans-serif`;
+  g.font = bf;
+  const measure = (t: string) => g.measureText(t).width;
+  const note = text.trim();
+  const lines = note ? wrapText(note, noteWidth(note, measure, lineH, 860, 300), measure, 8) : [];
+  const bodyW = lines.length ? Math.max(...lines.map(measure)) : 0;
+  g.font = hf;
+  const headW = g.measureText(kind).width;
+  c.width = Math.ceil(pad * 2 + Math.max(headW, bodyW));
+  c.height = Math.ceil(pad * 2 + head * 1.1 + (lines.length ? pad * 0.4 + lines.length * lineH : 0));
+  g.fillStyle = color;
+  g.beginPath();
+  g.roundRect(0, 0, c.width, c.height, 24);
+  g.fill();
+  g.textBaseline = "alphabetic";
+  g.font = hf;
+  g.fillStyle = "#ffffff";
+  g.fillText(kind, pad, pad + head * 0.85);
+  if (lines.length) {
+    // What was written: on a darker band, so a long note reads as its own block under the kind.
+    const top = pad + head * 1.1 + pad * 0.2;
+    g.fillStyle = "rgba(0,0,0,0.28)";
+    g.beginPath();
+    g.roundRect(pad * 0.5, top, c.width - pad, c.height - top - pad * 0.5, 16);
+    g.fill();
+    g.font = bf;
+    g.fillStyle = "#ffffff";
+    lines.forEach((l, i) => g.fillText(l, pad, top + pad * 0.2 + lineH * (i + 0.8)));
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  s.scale.set(c.width * unit, c.height * unit, 1);
+  s.renderOrder = 30;
+  s.userData.lines = lines.length;
+  return s;
+}
+
 export function disposeSprite(s: THREE.Sprite): void {
   s.material.map?.dispose();
   s.material.dispose();
@@ -114,6 +167,8 @@ export class Panel {
   hover: string | null = null;
   title = "";
   lines: string[] = [];
+  /** A text box under the title (typing a note), with a caret at its end; null: none. */
+  field: string | null = null;
 
   constructor(widthM: number, heightM: number) {
     this.canvas.width = 1024;
@@ -143,6 +198,29 @@ export class Panel {
     g.fillText(this.title, 36, 46);
     g.fillStyle = "rgba(255,255,255,0.08)";
     g.fillRect(36, 80, W - 72, 2);
+    if (this.field !== null) {
+      // The box, and the end of what is typed in it (the start runs off to the left, after "…").
+      const [x, y, w, h] = [36, 96, W - 72, 64];
+      g.fillStyle = "#0b0d12";
+      g.beginPath();
+      g.roundRect(x, y, w, h, 14);
+      g.fill();
+      g.strokeStyle = "#2f81f7";
+      g.lineWidth = 3;
+      g.stroke();
+      g.font = "500 32px system-ui, sans-serif";
+      g.fillStyle = this.field ? "#f4f6fa" : "#6b7480";
+      let t = this.field || "Type your note…";
+      const room = w - 40;
+      if (this.field && g.measureText(t).width > room) {
+        while (t.length > 1 && g.measureText(`…${t}`).width > room) t = t.slice(1);
+        t = `…${t}`;
+      }
+      g.fillText(t, x + 18, y + h / 2 + 1);
+      const cx = x + 18 + (this.field ? g.measureText(t).width + 4 : 0);
+      g.fillStyle = "#4fc3f7";
+      g.fillRect(cx, y + 14, 3, h - 28);
+    }
     for (const b of this.buttons) {
       const [x, y, w, h] = [b.x * W, b.y * H, b.w * W, b.h * H];
       g.fillStyle = b.on ? (b.color ?? "#2f81f7") : this.hover === b.id ? "#303644" : "#222631";

@@ -197,6 +197,33 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await click();
   await expect.poll(async () => (await st()).pins).toEqual([{ tag: "tight", at: expect.anything() }]);
 
+  // A note pin: dropping it opens a keyboard on the menu; what is typed (a capital to start each sentence) goes on the pin.
+  await press("tag:note");
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
+  await page.waitForTimeout(100);
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  await expect.poll(async () => (await st()).menu).toBe(false);
+  await click();
+  type Typing = { typing: string | null; menu: boolean; menuButtons: string[]; pins: { tag: string; text?: string }[] };
+  const ts = () => st() as unknown as Promise<Typing>;
+  await expect.poll(async () => (await ts()).typing).toBe("");
+  expect((await ts()).menu).toBe(true);
+  expect((await ts()).menuButtons).toEqual(expect.arrayContaining(["key:q", "key:space", "key:back", "key:done"]));
+  for (const k of [..."door sticks."].map((c) => (c === " " ? "space" : c)).concat(["space", ..."fixx", "back"])) await press(`key:${k}`);
+  expect((await ts()).typing).toBe("Door sticks. Fix");
+  await press("key:done");
+  await expect.poll(async () => (await ts()).menu).toBe(false);
+  expect((await ts()).typing).toBe(null);
+  expect((await ts()).pins).toEqual([{ tag: "tight", at: expect.anything() }, { tag: "note", at: expect.anything(), text: "Door sticks. Fix" }]);
+  // A takes the note pin back (the rest goes on with the one pin).
+  await click("a-button");
+  await expect.poll(async () => (await ts()).pins.length).toBe(1);
+  await press("tag:tight");
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
+  await page.waitForTimeout(100);
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  await expect.poll(async () => (await st()).menu).toBe(false);
+
   // The grip carries furniture only in Move: in Pin, gripping the sofa does nothing.
   await device(page, "const c = d.controllers.right; c.position.set(0, 1.2, -0.3); c.quaternion.set(-0.2588, 0, 0, 0.9659);");
   await device(page, "d.controllers.right.updateButtonValue('squeeze', 1);");
@@ -358,7 +385,7 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await expect(page.getByTestId("vr-review-chip")).toContainText("VR notes: 1 pin");
 });
 
-test("a part in VR is held to inspect: in front of you at true size; grabbed, it follows the hand and stays when let go; two hands stretch it; a measure stays true; A back to 1:1", async ({ page }) => {
+test("a part in VR is held to inspect: in front of you at true size; grabbed, it follows the hand and stays when let go; two hands stretch it; a measure stays true; A undoes it, B back to 1:1, Y brings it back", async ({ page }) => {
   // A 200 × 100 × 50 block, no start point: VR holds it.
   const doc = { version: 1, units: "mm", name: "block", features: [
     { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [100, 50], w: 200, h: 100 }] },
@@ -436,14 +463,19 @@ test("a part in VR is held to inspect: in front of you at true size; grabbed, it
     await click();
   }
   await expect.poll(async () => (await st()).measures).toEqual([200]);
-  // A: back to true size where it is; B: brought back in front of you.
+  // A undoes the last measure (only that one); B: back to true size where it is; Y: brought back in front of you.
   await device(page, "d.controllers.right.updateButtonValue('a-button', 1);");
   await page.waitForTimeout(150);
   await device(page, "d.controllers.right.updateButtonValue('a-button', 0);");
-  await expect.poll(async () => (await st()).held.scale).toBe(1);
+  await expect.poll(async () => (await st()).measures).toEqual([]);
+  expect((await st()).held.scale).toBeCloseTo(2, 1);
   await device(page, "d.controllers.right.updateButtonValue('b-button', 1);");
   await page.waitForTimeout(150);
   await device(page, "d.controllers.right.updateButtonValue('b-button', 0);");
+  await expect.poll(async () => (await st()).held.scale).toBe(1);
+  await device(page, "d.controllers.left.updateButtonValue('y-button', 1);");
+  await page.waitForTimeout(150);
+  await device(page, "d.controllers.left.updateButtonValue('y-button', 0);");
   await expect.poll(async () => Math.abs((await st()).held.centre[0] - c0[0])).toBeLessThan(20);
   // Walk in it, and hold it again (the menu).
   await press("walk");
