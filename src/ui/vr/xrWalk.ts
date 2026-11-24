@@ -12,8 +12,8 @@
 //               them go: a group; on the ring's knobs it turns them 10° a
 //               click, or sweep a knob round); stick: snap turn, or
 //               turn what you carry; A: undo; B: roof off.
-//   Either grip: carry what is picked (or the piece you point at), put it down where
-//               you let go.
+//   Either grip: in Move, carry what is picked (or the piece you point at), put it
+//               down where you let go.
 //   Menu: tools, snapping, the pin's kind, roof, back to the start, the
 //   dollhouse (the model small in front of you, to hold like a part: grip to
 //   pick it up, both grips to turn and size it; point at a floor in it and
@@ -149,6 +149,9 @@ type Undo = { kind: "pin"; id: string } | { kind: "measure" } | { kind: "move"; 
 type Starts = Map<string, { move: Vec3; turn: number }>;
 const SELECTED = 0x30a46c;
 /** A turn handle's step (degrees). */
+/** How far below your feet walking looks for a floor to come down to (m), and the most it drops a frame. */
+const FALL_REACH = 6;
+const FALL_STEP = 0.12;
 const TURN_STEP = 10;
 
 export class XrWalk {
@@ -230,6 +233,8 @@ export class XrWalk {
   /** Both hands holding: where they gripped, and the part's pose then. */
   private two: { a0: THREE.Vector3; b0: THREE.Vector3; from: HeldPose } | null = null;
   private spin = false;
+  /** Coming down off something, a frame at a time, until the floor is under you. */
+  private falling = false;
 
   constructor(private host: XrHost) {
     this.zup.rotation.x = -Math.PI / 2;
@@ -632,7 +637,10 @@ export class XrWalk {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(itemTriangles(view, item), 3));
       g.computeVertexNormals();
-      const ghost = new THREE.Mesh(g, this.materialOf(item));
+      // Each face in the colour the model draws it (a chair's frame and its cushion), in runs of one material.
+      const { materials, groups } = this.materialsOf(item);
+      for (const gr of groups) g.addGroup(gr.start, gr.count, gr.index);
+      const ghost = new THREE.Mesh(g, materials);
       // Its edges in black, as the model draws them.
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x1d1e20 }));
       edges.raycast = () => {};
@@ -655,14 +663,28 @@ export class XrWalk {
     return p;
   }
 
-  /** The material the model draws an item's first face with. */
-  private materialOf(item: VrItem): THREE.Material {
+  /**
+   * The materials the model draws an item's faces with, and the runs of its copy's points (as itemTriangles lays them
+   * out, face after face) each drawn with one of them.
+   */
+  private materialsOf(item: VrItem): { materials: THREE.Material[]; groups: { start: number; count: number; index: number }[] } {
     const mesh = this.host.mesh();
     const view = this.host.view();
     const mats = mesh ? [mesh.material].flat() : [];
-    const r = view?.mesh?.faceRanges[item.faces[0]];
-    const g = mesh && r ? mesh.geometry.groups.find((gr) => r.start >= gr.start && r.start < gr.start + gr.count) : undefined;
-    return (g ? mats[g.materialIndex ?? 0] : mats[0]) ?? new THREE.MeshLambertMaterial({ color: 0x999999 });
+    const materials = mats.length ? mats : [new THREE.MeshLambertMaterial({ color: 0x999999 })];
+    const groups: { start: number; count: number; index: number }[] = [];
+    let at = 0;
+    for (const i of item.faces) {
+      const r = view?.mesh?.faceRanges[i];
+      if (!r) continue;
+      const g = mesh?.geometry.groups.find((gr) => r.start >= gr.start && r.start < gr.start + gr.count);
+      const index = Math.min(g?.materialIndex ?? 0, materials.length - 1);
+      const last = groups[groups.length - 1];
+      if (last && last.index === index && last.start + last.count === at) last.count += r.count;
+      else groups.push({ start: at, count: r.count, index });
+      at += r.count;
+    }
+    return { materials, groups };
   }
 
   private applyHidden(): void {
@@ -1538,6 +1560,12 @@ export class XrWalk {
   private menuPick(id: string): void {
     if (id.startsWith("tool:")) {
       this.tool = id.slice(5) as VrTool;
+      // Out of Move: nothing stays picked (green), so the grip can't carry it from another tool.
+      if (this.tool !== "move" && this.selected.size) {
+        this.selected.clear();
+        this.paintSelection();
+        this.placeGizmo();
+      }
       this.say(`${this.tool[0].toUpperCase()}${this.tool.slice(1)}`);
     } else if (id.startsWith("tag:")) {
       this.pinTag = id.slice(4) as PinTag;
@@ -1738,7 +1766,8 @@ export class XrWalk {
       const g = this.edge(hand, BUTTONS.squeeze, btn(BUTTONS.squeeze));
       if (g === "press") {
         if (this.inspecting || this.dollhouse) this.grabPart(hand);
-        else this.grab(hand);
+        else if (this.tool === "move") this.grab(hand);
+        else if (this.itemAt(this.cast(c, true))?.movable) this.say("To move furniture, pick Move in the menu (X)");
       } else if (g === "release") {
         if (this.inspecting || this.dollhouse) this.releasePart(hand);
         else if (this.carry?.hand === hand) this.drop();
@@ -1816,6 +1845,7 @@ export class XrWalk {
         } else this.setRoof(!this.roofOff);
       }
     }
+    if (this.falling && !walking && !this.inspecting && !this.dollhouse) this.followFloor();
     if (this.carry) this.drag();
     if (this.turning) this.dragTurn();
     if (this.inspecting) {
@@ -1885,12 +1915,19 @@ export class XrWalk {
   }
 
   /** Walking: a floor up to 400 below or above your feet becomes the floor you stand on (steps, stairs, a deck). */
+  /**
+   * Walking: up a step (up to 0.45 m) onto what is under you, or down to whatever is below when you walk off something
+   * (a table, a deck, a stair): a short drop at once, a longer one quickly but not in one jump.
+   */
   private followFloor(): void {
     const head = this.head();
-    const h = this.rayHit(new THREE.Vector3(head.x, 0.45, head.z), new THREE.Vector3(0, -1, 0), 0.9);
+    const h = this.rayHit(new THREE.Vector3(head.x, 0.45, head.z), new THREE.Vector3(0, -1, 0), 0.45 + FALL_REACH);
     if (!h) return;
     const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : UP;
-    if (n.dot(UP) > 0.7 && Math.abs(h.point.y) > 0.005) this.rig.position.y -= h.point.y;
+    if (n.dot(UP) <= 0.7 || Math.abs(h.point.y) <= 0.005) return;
+    const dy = h.point.y;
+    this.falling = dy < -FALL_STEP;
+    this.rig.position.y -= dy < -0.3 ? Math.max(dy, -FALL_STEP) : dy;
   }
 
   // ------------------------------------------------------------------ for tests
@@ -1923,6 +1960,8 @@ export class XrWalk {
       faceHover: this.faceHover?.text ?? null,
       pins: this.pins.map((p) => ({ tag: p.tag, at: p.at })),
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
+      /** How many colours each moved piece's copy is drawn in. */
+      colours: Object.fromEntries([...this.placed].map(([k, p]) => [k, new Set(p.ghost.geometry.groups.map((g) => g.materialIndex)).size || 1])),
       carrying: this.carry?.key ?? null,
       selected: [...this.selected],
       knobs: this.gizmo.parent ? this.gizmo.children.filter((k) => k.userData.turn !== undefined).map((k) => ({ turn: k.userData.turn as number, at: new THREE.Vector3().setFromMatrixPosition(k.matrixWorld).toArray() })) : [],

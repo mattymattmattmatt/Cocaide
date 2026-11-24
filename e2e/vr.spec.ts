@@ -123,6 +123,9 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   doc.features.push(
     { id: "s4", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 100] }, entities: [{ id: "r", type: "rect", center: [3000, 4500], w: 2000, h: 900 }] },
     { id: "sofa", op: "extrude", sketch: "s4", distance: 800, newBody: "sofa" },
+    // A red cushion on it: the sofa is two colours.
+    { id: "s5", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 900] }, entities: [{ id: "r", type: "rect", center: [3000, 4500], w: 1600, h: 600 }] },
+    { id: "cushion", op: "extrude", sketch: "s5", distance: 120, body: "sofa", appearance: { color: "#c0392b" } },
   );
   (doc as Record<string, unknown>).vr = { start: { at: [3000, 3000, 100], heading: 90 } };
   const text = JSON.stringify(doc);
@@ -177,7 +180,20 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await click();
   await expect.poll(async () => (await st()).pins).toEqual([{ tag: "tight", at: expect.anything() }]);
 
-  // The sofa: the right grip on it, the hand turned left, let go: moved west; the right stick while holding turns it.
+  // The grip carries furniture only in Move: in Pin, gripping the sofa does nothing.
+  await device(page, "const c = d.controllers.right; c.position.set(0, 1.2, -0.3); c.quaternion.set(-0.2588, 0, 0, 0.9659);");
+  await device(page, "d.controllers.right.updateButtonValue('squeeze', 1);");
+  await page.waitForTimeout(300);
+  expect((await st()).carrying).toBe(null);
+  await device(page, "d.controllers.right.updateButtonValue('squeeze', 0);");
+  await page.waitForTimeout(100);
+  await press("tool:move");
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
+  await page.waitForTimeout(100);
+  await device(page, "d.controllers.left.updateButtonValue('x-button', 0);");
+  await expect.poll(async () => (await st()).menu).toBe(false);
+
+  // The sofa, in Move: the right grip on it, the hand turned left, let go: moved west; the right stick while holding turns it.
   await device(page, "const c = d.controllers.right; c.position.set(0, 1.2, -0.3); c.quaternion.set(-0.2588, 0, 0, 0.9659);");
   await device(page, "d.controllers.right.updateButtonValue('squeeze', 1);");
   await expect.poll(async () => (await st()).carrying).toBe("sofa");
@@ -191,6 +207,8 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await expect.poll(async () => (await st()).carrying).toBe(null);
   let moved = (await st()).moved;
   expect(moved.length).toBe(1);
+  // Moved, it keeps its colours: the cushion's red as well as the sofa's own.
+  expect(((await st()) as unknown as { colours: Record<string, number> }).colours.sofa).toBe(2);
   expect(moved[0].move[0]).toBeLessThan(-100);
   expect(moved[0].turn).toBe(10);
   // A second carry, then A undoes it: back to where the first left it.
@@ -205,7 +223,7 @@ test("in VR: the menu, a measure, a pin, a sofa carried and turned, undo, the do
   await click("a-button");
   await expect.poll(async () => (await st()).moved[0].move[0]).toBe(first.move[0]);
 
-  // The Move tool: the trigger on the sofa lets it go (it stayed picked after the carry), again picks it (green).
+  // The trigger on the sofa lets it go (it stayed picked after the carry), again picks it (green).
   await press("tool:move");
   await device(page, "d.controllers.left.updateButtonValue('x-button', 1);");
   await page.waitForTimeout(100);
@@ -489,4 +507,35 @@ test("measuring faces in VR: point at a hole to read its size, click it and a po
   await expect.poll(async () => (await st()).cards.length).toBe(1);
   await press("measure:points");
   expect((await st()).measureMode).toBe("points");
+});
+
+test("walking off a table in VR brings you down to the floor", async ({ page }) => {
+  // A slab (top at 100) and a table on it (top at 800).
+  const doc = {
+    version: 1,
+    units: "mm",
+    name: "room",
+    features: [
+      { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [3000, 5000], w: 8000, h: 10000 }] },
+      { id: "slab", op: "extrude", sketch: "s1", distance: 100, newBody: "slab" },
+      { id: "s2", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 100] }, entities: [{ id: "r", type: "rect", center: [3000, 5000], w: 1200, h: 1000 }] },
+      { id: "bench", op: "extrude", sketch: "s2", distance: 700, newBody: "bench" },
+    ],
+    vr: { start: { at: [3000, 3000, 100], heading: 90 } },
+  };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await waitForRebuild(page);
+  await page.getByTestId("view-vr").click();
+  await expect.poll(async () => (await vr(page)).active).toBe(true);
+  // Standing on the table (y 4500–5500), facing north; the left stick held walks off its edge.
+  await hook(page, (h) => (h as unknown as { vrStandAt(at: number[], heading: number): void }).vrStandAt([3000, 4800, 800], 90));
+  await page.waitForTimeout(200);
+  expect(Math.abs((await vr(page)).standing!.at[2] - 800)).toBeLessThan(20);
+  await device(page, "d.controllers.left.updateAxes('thumbstick', 0, 1);");
+  await expect.poll(async () => Math.abs((await vr(page)).standing!.at[1] - 4800), { timeout: 10_000 }).toBeGreaterThan(900);
+  await device(page, "d.controllers.left.updateAxes('thumbstick', 0, 0);");
+  // Down on the slab, not hanging at the table's height.
+  await expect.poll(async () => Math.abs((await vr(page)).standing!.at[2] - 100), { timeout: 5_000 }).toBeLessThan(20);
 });
