@@ -618,3 +618,53 @@ test("a .glb model in an assembly keeps its texture in VR, beside a plain white 
   // And it is furniture: it moves.
   expect(((await page.evaluate("window.__cocaideViewport.vrItems()")) as string[]).filter((s) => s.startsWith("sofa-1"))).toEqual(["sofa-1/model:true"]);
 });
+
+test("the right stick up and down lifts you like a lift, walking keeps you at that height, and a teleport puts you back on the floor", async ({ page }) => {
+  const doc = {
+    version: 1,
+    units: "mm",
+    name: "room",
+    features: [
+      { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [3000, 5000], w: 8000, h: 10000 }] },
+      { id: "slab", op: "extrude", sketch: "s1", distance: 100, newBody: "slab" },
+    ],
+    vr: { start: { at: [3000, 3000, 100], heading: 90 } },
+  };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await waitForRebuild(page);
+  await page.getByTestId("view-vr").click();
+  await expect.poll(async () => (await vr(page)).active).toBe(true);
+  const lift = () => page.evaluate("window.__cocaideViewport.vrState().lift") as Promise<number>;
+  const z = async () => (await vr(page)).standing!.at[2];
+  await expect.poll(z).toBeLessThan(120);
+  // Up: the right stick pushed forward lifts you; let go, you stay there (not dropped back to the floor).
+  await device(page, "d.controllers.right.updateAxes('thumbstick', 0, -1);");
+  await expect.poll(lift, { timeout: 15_000 }).toBeGreaterThan(250);
+  await device(page, "d.controllers.right.updateAxes('thumbstick', 0, 0);");
+  await page.waitForTimeout(300);
+  const up = await lift();
+  await page.waitForTimeout(500);
+  expect(await lift()).toBe(up);
+  expect(Math.abs((await z()) - (100 + up))).toBeLessThan(25);
+  // Down past the floor: lowered, as if sitting low.
+  await device(page, "d.controllers.right.updateAxes('thumbstick', 0, 1);");
+  await expect.poll(lift, { timeout: 15_000 }).toBeLessThan(-150);
+  await device(page, "d.controllers.right.updateAxes('thumbstick', 0, 0);");
+  await page.waitForTimeout(300);
+  const down = await lift();
+  // Walking keeps you lowered that far above (below) the floor.
+  await device(page, "d.controllers.left.updateAxes('thumbstick', 0, -1);");
+  await expect.poll(async () => (await vr(page)).standing!.at[1], { timeout: 5_000 }).toBeGreaterThan(3600);
+  await device(page, "d.controllers.left.updateAxes('thumbstick', 0, 0);");
+  await page.waitForTimeout(300);
+  expect(await lift()).toBe(down);
+  expect(Math.abs((await z()) - (100 + down))).toBeLessThan(25);
+  // A teleport: back on the floor at your own height.
+  await device(page, "const c = d.controllers.left; c.position.set(-0.2, 1.2, -0.3); c.quaternion.set(-0.2588, 0, 0, 0.9659); c.updateButtonValue('trigger', 1);");
+  await page.waitForTimeout(400);
+  await device(page, "d.controllers.left.updateButtonValue('trigger', 0);");
+  await expect.poll(lift).toBe(0);
+  await expect.poll(async () => Math.abs((await z()) - 100)).toBeLessThan(25);
+});

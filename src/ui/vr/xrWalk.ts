@@ -11,7 +11,9 @@
 //               Move (the trigger picks pieces of furniture, green, and lets
 //               them go: a group; on the ring's knobs it turns them 10° a
 //               click, or sweep a knob round); stick: snap turn, or
-//               turn what you carry; A: undo; B: roof off.
+//               turn what you carry; up and down, a lift (down to sit on
+//               a sofa at its height; a teleport puts you back on the
+//               floor); A: undo; B: roof off.
 //   Either grip: in Move, carry what is picked (or the piece you point at), put it
 //               down where you let go.
 //   Menu: tools, snapping, the pin's kind, roof, back to the start, the
@@ -154,6 +156,10 @@ const FALL_REACH = 6;
 /** The longest note typed on a pin (the file allows 500). */
 const NOTE_MAX = 200;
 const FALL_STEP = 0.12;
+/** The right stick up and down lifts you like a lift: how fast at full tilt (m/s), and how far down and up it goes (m). */
+const LIFT_SPEED = 0.6;
+const LIFT_MIN = -1.4;
+const LIFT_MAX = 3;
 const TURN_STEP = 10;
 
 export class XrWalk {
@@ -222,7 +228,7 @@ export class XrWalk {
   private pinCursor = -1;
   private menu: Panel;
   private menuOpen = false;
-  private dollhouse: { rot: number; pos: THREE.Vector3 } | null = null;
+  private dollhouse: { rot: number; pos: THREE.Vector3; lift: number } | null = null;
   private vignette: THREE.Mesh;
   private pointer: THREE.Mesh;
   /** Where the right hand's ray meets the menu: a small ball on the panel, drawn over it. */
@@ -241,6 +247,10 @@ export class XrWalk {
   private spin = false;
   /** Coming down off something, a frame at a time, until the floor is under you. */
   private falling = false;
+  /** How far the right stick has lifted you (m, up positive; down to sit on a sofa at its real height), till you teleport. */
+  private lift = 0;
+  /** The right stick is lifting you now (when it lets go, how far is said). */
+  private lifting = false;
 
   constructor(private host: XrHost) {
     this.zup.rotation.x = -Math.PI / 2;
@@ -331,7 +341,7 @@ export class XrWalk {
     this.addControllers();
     session.addEventListener("end", () => this.leave());
     this.last = performance.now();
-    renderer.setAnimationLoop((t) => this.frame(t));
+    renderer.setAnimationLoop(() => this.frame());
     this.host.onChange(true);
     this.say(this.inspecting ? "Grip to hold it · both grips: turn it, stretch to size it · A: true size" : "Welcome: X for the menu");
   }
@@ -428,6 +438,7 @@ export class XrWalk {
   /** The rig placed so the start is under your feet, facing its way. */
   private goStart(): void {
     this.leaveDollhouse();
+    this.lift = 0;
     const { rotY, position } = rigFor(this.startNow);
     this.rig.rotation.set(0, rotY, 0);
     this.rig.position.copy(position);
@@ -577,6 +588,8 @@ export class XrWalk {
   private teleport(): void {
     const t = this.hit;
     if (!t) return;
+    // A teleport stands you on the floor pointed at again, however far the right stick had lifted you.
+    this.lift = 0;
     if (this.dollhouse) {
       // From the dollhouse: stand at the spot pointed at, full size, facing the way the model faces you now (however
       // it has been turned in your hands).
@@ -1284,6 +1297,7 @@ export class XrWalk {
     this.pinCursor = (this.pinCursor + 1) % all.length;
     const p = all[this.pinCursor];
     this.leaveDollhouse();
+    this.lift = 0;
     const head = this.head();
     const yaw = this.rig.rotation.y;
     const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(UP, this.headYaw());
@@ -1384,6 +1398,7 @@ export class XrWalk {
   private toInspect(announce = true): void {
     this.leaveDollhouse();
     this.inspecting = true;
+    this.lift = 0;
     this.zup.remove(this.ground);
     this.rig.add(this.floor);
     this.setRoof(false);
@@ -1488,12 +1503,14 @@ export class XrWalk {
       this.leaveDollhouse();
       this.rig.rotation.y = back.rot;
       this.rig.position.copy(back.pos);
+      this.lift = back.lift;
       return void this.say("Full size");
     }
     // The model's box in its own frame (mm), from the mesh's points.
     const box = this.partBox();
     if (box.isEmpty()) return void this.say("Nothing to make small");
-    this.dollhouse = { rot: this.rig.rotation.y, pos: this.rig.position.clone() };
+    this.dollhouse = { rot: this.rig.rotation.y, pos: this.rig.position.clone(), lift: this.lift };
+    this.lift = 0;
     const size = box.getSize(new THREE.Vector3());
     const k = Math.min(1, 1.2 / (Math.max(size.x, size.y, size.z, 1) / 1000));
     // Your own floor at your feet (the rig back at the room's origin), the model held instead.
@@ -1833,8 +1850,11 @@ export class XrWalk {
     d.mesh.geometry.setIndex(new THREE.BufferAttribute(idx, 1));
   }
 
-  private frame(t: number): void {
-    const dt = Math.min(0.1, (t - this.last) / 1000);
+  private frame(): void {
+    // Timed by the page's own clock: the frame's time can be on another clock (an emulator's), and a step back in
+    // it would walk you backwards.
+    const t = performance.now();
+    const dt = Math.max(0, Math.min(0.1, (t - this.last) / 1000));
     this.last = t;
     // The model rebuilt while in VR: draw the new one (sorted again); shown again by the desktop's display style: hide it.
     const m = this.host.mesh();
@@ -1916,6 +1936,21 @@ export class XrWalk {
             this.rig.rotation.y += a;
           }
         } else if (Math.abs(sx) < 0.3) this.turned[hand] = false;
+      }
+      // The right stick up and down: up and down like a lift (to sit on a sofa or stand at a bench at its real height),
+      // until a teleport puts you back on the floor.
+      if (hand === "right" && !holding && !this.inspecting && !this.dollhouse && this.carry?.hand !== "right") {
+        if (Math.abs(sy) > 0.25 && Math.abs(sx) < 0.5) {
+          const to = Math.min(LIFT_MAX, Math.max(LIFT_MIN, this.lift - sy * LIFT_SPEED * dt));
+          this.rig.position.y -= to - this.lift;
+          this.lift = to;
+          this.lifting = true;
+          this.falling = false;
+        } else if (this.lifting && Math.abs(sy) < 0.2) {
+          this.lifting = false;
+          const cm = Math.round(Math.abs(this.lift) * 100);
+          this.say(cm < 2 ? "At your own height" : `${this.lift > 0 ? "Up" : "Down"} ${cm} cm (teleport to stand on the floor again)`);
+        }
       }
       if (hand === "left" && prefs.smooth && !this.dollhouse && Math.hypot(sx, sy) > 0.15 && !(this.carry?.hand === "left") && !holding) {
         // Walk the way you look (level), the world sliding the other way; the floor followed up a step or a stair.
@@ -2035,11 +2070,13 @@ export class XrWalk {
    */
   private followFloor(): void {
     const head = this.head();
-    const h = this.rayHit(new THREE.Vector3(head.x, 0.45, head.z), new THREE.Vector3(0, -1, 0), 0.45 + FALL_REACH);
+    // Lifted (or lowered) by the right stick, the floor you stand on is that far below (or above) your feet.
+    const feet = -this.lift;
+    const h = this.rayHit(new THREE.Vector3(head.x, feet + 0.45, head.z), new THREE.Vector3(0, -1, 0), 0.45 + FALL_REACH);
     if (!h) return;
     const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : UP;
-    if (n.dot(UP) <= 0.7 || Math.abs(h.point.y) <= 0.005) return;
-    const dy = h.point.y;
+    const dy = h.point.y - feet;
+    if (n.dot(UP) <= 0.7 || Math.abs(dy) <= 0.005) return;
     this.falling = dy < -FALL_STEP;
     this.rig.position.y -= dy < -0.3 ? Math.max(dy, -FALL_STEP) : dy;
   }
@@ -2071,6 +2108,8 @@ export class XrWalk {
       menuDot: this.menuDot.visible ? this.menuDot.position.toArray().map((v) => Math.round(v * 1000)) : null,
       rayLength: Math.round((this.controller("right")?.ray.scale.z ?? 0) * 1000),
       dollhouse: !!this.dollhouse,
+      /** How far the right stick has lifted you (mm; negative: lowered). */
+      lift: Math.round(this.lift * 1000),
       measures: this.measures.map((m) => Math.round(Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1], m.b[2] - m.a[2]))),
       measureMode: this.measureMode,
       cards: this.measures.filter((m) => m.text).map((m) => m.text),
@@ -2100,6 +2139,7 @@ export class XrWalk {
   /** For tests: stand at a point (model mm), facing a heading, full size. */
   standAt(start: VrStart): void {
     this.leaveDollhouse();
+    this.lift = 0;
     const { rotY, position } = rigFor(start);
     this.rig.rotation.set(0, rotY, 0);
     this.rig.position.copy(position);
