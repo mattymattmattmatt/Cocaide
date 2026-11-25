@@ -14,8 +14,11 @@ interface Props {
   onClose(): void;
 }
 
-type SendState = { phase: "idle" } | { phase: "opening" } | { phase: "open"; code: string; sent: number } | { phase: "failed"; why: string } | { phase: "expired" };
-type GetState = { phase: "idle" } | { phase: "getting" } | { phase: "failed"; why: string };
+type SendState = { phase: "idle" } | { phase: "opening" } | { phase: "open"; code: string; sent: number; sending?: { fraction: number; bytes: number } } | { phase: "failed"; why: string } | { phase: "expired" };
+type GetState = { phase: "idle" } | { phase: "getting"; fraction?: number; bytes?: number } | { phase: "failed"; why: string };
+
+/** "3.4 MB", "820 kB". */
+const sizeText = (b: number) => (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} kB`);
 
 export function ShareDialog({ project, onReceived, onClose }: Props) {
   const [send, setSend] = useState<SendState>({ phase: "idle" });
@@ -39,7 +42,8 @@ export function ShareDialog({ project, onReceived, onClose }: Props) {
       },
       {
         ready: (code) => setSend({ phase: "open", code, sent: 0 }),
-        sent: (count) => setSend((s) => (s.phase === "open" ? { ...s, sent: count } : s)),
+        sent: (count) => setSend((s) => (s.phase === "open" ? { ...s, sent: count, sending: undefined } : s)),
+        progress: (fraction, bytes) => setSend((s) => (s.phase === "open" ? { ...s, sending: { fraction, bytes } } : s)),
         failed: (why) => setSend({ phase: "failed", why }),
         expired: () => setSend({ phase: "expired" }),
       },
@@ -54,7 +58,7 @@ export function ShareDialog({ project, onReceived, onClose }: Props) {
   const take = () => {
     if (!code) return;
     setGet({ phase: "getting" });
-    receive(code)
+    receive(code, { progress: (fraction, bytes) => setGet({ phase: "getting", fraction, bytes }) })
       .then(({ name, text }) => {
         onReceived(name, text);
         onClose();
@@ -85,7 +89,13 @@ export function ShareDialog({ project, onReceived, onClose }: Props) {
                   {showCode(send.code)}
                 </div>
                 <p className="small" data-testid="share-status">
-                  {send.sent ? `Sent ✓${send.sent > 1 ? ` (to ${send.sent} devices)` : ""}. ` : "Waiting for the other device… "}
+                  {send.sending && send.sending.fraction < 1
+                    ? `Sending… ${Math.floor(send.sending.fraction * 100)}% of ${sizeText(send.sending.bytes)}. `
+                    : send.sent
+                      ? `Sent ✓${send.sent > 1 ? ` (to ${send.sent} devices)` : ""}. `
+                      : send.sending
+                        ? "Sent, opening on the other device… "
+                        : "Waiting for the other device… "}
                   Keep this open while it connects; the code works for {SHARE_MINUTES} minutes.
                 </p>
                 <button type="button" onClick={stop} data-testid="share-stop">
@@ -134,6 +144,17 @@ export function ShareDialog({ project, onReceived, onClose }: Props) {
                 {get.phase === "getting" ? "Getting…" : "Get it"}
               </button>
             </form>
+            {get.phase === "getting" && get.bytes !== undefined && (
+              <div className="share-progress" data-testid="share-get-progress">
+                <div className="share-progress-bar">
+                  <div style={{ width: `${Math.round((get.fraction ?? 0) * 100)}%` }} />
+                </div>
+                <span className="small">
+                  {Math.floor((get.fraction ?? 0) * 100)}% of {sizeText(get.bytes)}
+                  {(get.fraction ?? 0) >= 1 ? " · opening…" : ""}
+                </span>
+              </div>
+            )}
             {get.phase === "failed" && (
               <p className="small error-text" data-testid="share-get-status">
                 Couldn&apos;t get it: {get.why}.

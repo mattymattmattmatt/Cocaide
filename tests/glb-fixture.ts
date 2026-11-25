@@ -7,7 +7,7 @@ export const PNG_2X2 = Uint8Array.from(
   (c) => c.charCodeAt(0),
 );
 
-export function boxGlb(w = 2, h = 0.5, d = 1, at: [number, number, number] = [0, 0, 0], opts: { color?: number[]; texture?: boolean } = {}): Uint8Array {
+export function boxGlb(w = 2, h = 0.5, d = 1, at: [number, number, number] = [0, 0, 0], opts: { color?: number[]; texture?: boolean; padding?: number } = {}): Uint8Array {
   const [x, y, z] = [w / 2, h / 2, d / 2];
   // Each face its own 4 corners (so it has its own uvs and normal).
   const faces: { n: number[]; c: number[][] }[] = [
@@ -47,6 +47,12 @@ export function boxGlb(w = 2, h = 0.5, d = 1, at: [number, number, number] = [0,
   const vUv = add(f32(uv));
   const vIdx = add(new Uint8Array(new Uint16Array(idx).buffer));
   const vImg = texture ? add(PNG_2X2) : -1;
+  // Bytes nothing uses (random, so they don't compress): to make a big file for tests of big files.
+  if (opts.padding) {
+    const junk = new Uint8Array(opts.padding);
+    for (let i = 0; i < junk.length; i += 65536) crypto.getRandomValues(junk.subarray(i, Math.min(junk.length, i + 65536)));
+    add(junk);
+  }
   const n = pos.length / 3;
   const json = {
     asset: { version: "2.0", generator: "cocaide test" },
