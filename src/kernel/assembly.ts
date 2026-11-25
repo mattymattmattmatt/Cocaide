@@ -3,6 +3,7 @@
 // the assembly's STEP file and its interference check are made of.
 
 import { isMeshPart } from "../mesh/meshPart";
+import { isSubAssembly, MAX_DEPTH, subAssemblyParts } from "../assembly/subassembly";
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import { interference } from "./measure";
 import type { OC, Scope } from "./oc";
@@ -24,26 +25,43 @@ export interface PlacedComponent {
 /** Runs `use` with each component's placed solid (components whose part didn't build are left out, and named). */
 export function withAssemblyShapes<T>(oc: OC, s: Scope, parts: Record<string, unknown>, components: PlacedComponent[], use: (shapes: { name: string; shape: TopoDS_Shape }[], missing: string[], built: Map<string, RebuildResult>) => T): T {
   const built = new Map<string, RebuildResult>();
+  const moved = (shape: TopoDS_Shape, R: number[][], t: number[]) => {
+    const trsf = s.track(new oc.gp_Trsf());
+    trsf.SetValues(R[0][0], R[0][1], R[0][2], t[0], R[1][0], R[1][1], R[1][2], t[1], R[2][0], R[2][1], R[2][2], t[2]);
+    return s.track(s.track(new oc.BRepBuilderAPI_Transform(shape, trsf, true, false)).Shape());
+  };
+  /**
+   * A part's solid in its own frame (`key` names it for reuse), or null when it has none. A sub-assembly: its
+   * components' solids placed where it keeps them, one compound (a mesh part in it left out); null if none built.
+   */
+  const solidOf = (key: string, doc: unknown, depth: number): TopoDS_Shape | null => {
+    // A mesh part (a .glb model) has no solid: left out of what needs one.
+    if (isMeshPart(doc)) return null;
+    if (isSubAssembly(doc) && depth <= MAX_DEPTH) {
+      const shapes = subAssemblyParts(doc as Record<string, unknown>).flatMap((c) => {
+        const sh = solidOf(`${key}/${c.key}`, c.part, depth + 1);
+        return sh ? [moved(sh, c.R, c.t)] : [];
+      });
+      return shapes.length ? compoundOf(oc, s, shapes) : null;
+    }
+    let r = built.get(key);
+    if (!r) {
+      r = rebuild(doc, oc);
+      built.set(key, r);
+    }
+    return r.solid ?? null;
+  };
   try {
     const shapes: { name: string; shape: TopoDS_Shape }[] = [];
     const missing: string[] = [];
     for (const k of components) {
-      // A mesh part (a .glb model) has no solid: left out of what needs one, not counted as broken.
       if (isMeshPart(parts[k.part])) continue;
-      let r = built.get(k.part);
-      if (!r) {
-        r = rebuild(parts[k.part], oc);
-        built.set(k.part, r);
-      }
-      if (!r.solid) {
+      const solid = solidOf(k.part, parts[k.part], 0);
+      if (!solid) {
         missing.push(k.id);
         continue;
       }
-      const trsf = s.track(new oc.gp_Trsf());
-      const R = k.R;
-      trsf.SetValues(R[0][0], R[0][1], R[0][2], k.t[0], R[1][0], R[1][1], R[1][2], k.t[1], R[2][0], R[2][1], R[2][2], k.t[2]);
-      const moved = s.track(s.track(new oc.BRepBuilderAPI_Transform(r.solid, trsf, true, false)).Shape());
-      shapes.push({ name: k.id, shape: moved });
+      shapes.push({ name: k.id, shape: moved(solid, k.R, k.t) });
     }
     return use(shapes, missing, built);
   } finally {

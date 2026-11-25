@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isMeshPart } from "../mesh/meshPart";
 import { assemblyBom } from "../assembly/bom";
+import { isSubAssembly } from "../assembly/subassembly";
 import { autoExplode } from "../assembly/explode";
 import { partDocuments } from "../assembly/model";
 import { heroCommands, planAssemblySheet, sheetCommands } from "../drafting/assemblyPlan";
@@ -2766,8 +2767,10 @@ export function App() {
     d.load(formatDocument(part));
     setSelectedFeature(null);
     setSketch(null);
-    setMode("model");
-    setNotice({ kind: "info", text: `Editing ${pe.name}, a part of ${pe.assembly}: Done puts it back in the assembly.` });
+    // A sub-assembly opens on its Assembly tab (its parts and their places), a part on the Model tab.
+    const sub = isSubAssembly(part);
+    setMode(sub ? "assembly" : "model");
+    setNotice({ kind: "info", text: `Editing ${pe.name}, a ${sub ? "sub-assembly" : "part"} of ${pe.assembly}: Done puts it back in the assembly.` });
   };
   const finishPartEdit = (keep: boolean) => {
     const pe = partEdit;
@@ -3398,7 +3401,7 @@ export function App() {
           <div className="part-edit-bar" role="status" data-testid="part-edit-bar">
             <Icon name="model" size={16} />
             <span>
-              Editing <b>{partEdit.name}</b>, a part of the assembly <b>{partEdit.assembly}</b>
+              Editing <b>{partEdit.name}</b>, {parsed.ok && isSubAssembly(parsed.value) ? "a sub-assembly" : "a part"} of the assembly <b>{partEdit.assembly}</b>
             </span>
             <span className="sep" />
             <button onClick={() => finishPartEdit(false)} title="Leave the part as it was in the assembly" data-testid="part-edit-cancel">

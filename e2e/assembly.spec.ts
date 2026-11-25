@@ -652,3 +652,37 @@ test("a view picked while an assembly is still loading stays: its parts coming i
   await page.waitForTimeout(1500);
   expect(await front()).toBe(1);
 });
+
+test("an assembly put into an assembly: in as one sub-assembly, listed once, mated by a face of one of its parts, moving whole", async ({ page }) => {
+  // A small "shed": two 100 cube walls 300 apart, in a document of its own.
+  const wall = { version: 1, units: "mm", name: "wall", features: [
+    { id: "s", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [
+      { id: "a", type: "line", start: [0, 0], end: [100, 0] }, { id: "b", type: "line", start: [100, 0], end: [100, 100] },
+      { id: "c", type: "line", start: [100, 100], end: [0, 100] }, { id: "e", type: "line", start: [0, 100], end: [0, 0] }] },
+    { id: "x", op: "extrude", sketch: "s", distance: 100 }] };
+  const shed = { version: 1, units: "mm", name: "shed", features: [], assembly: { parts: { wall }, components: [{ id: "wall-1", part: "wall", fixed: true }, { id: "wall-2", part: "wall", at: [300, 0, 0], fixed: true }] } };
+  await page.getByTestId("mode-assembly").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-self").click();
+  await page.getByTestId("asm-insert").click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByTestId("asm-insert-file").click();
+  await (await chooser).setFiles({ name: "shed.cocaide.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(shed)) });
+  await expect(page.getByTestId("asm-component-shed-1")).toBeVisible();
+  await expect(page.getByTestId("notice")).toContainText("sub-assembly (2 components, one piece)");
+  // Carried whole (its own assembly in it), listed as one row.
+  const a = (await assembly(page)) as unknown as { parts: Record<string, { assembly?: { components: unknown[] } }>; components: { id: string; at?: number[] }[] };
+  expect(a.parts.shed.assembly?.components).toHaveLength(2);
+  await expect(page.getByTestId("asm-bom")).toContainText("shed (sub-assembly, 2 components)");
+  const at = a.components.find((k) => k.id === "shed-1")!.at ?? [0, 0, 0];
+  // The bracket's top, then the shed's far wall's top: coincident; the whole shed comes down to the bracket's top.
+  await page.waitForTimeout(1500);
+  await clickAt(page, [-20, 10, 6]);
+  await clickAt(page, [at[0] + 350, at[1] + 50, at[2] + 100], true);
+  await expect(page.getByTestId("asm-mate-btn-coincident")).toBeEnabled();
+  await page.getByTestId("asm-mate-btn-coincident").click();
+  await expect.poll(async () => ((await assembly(page))?.components.find((k) => k.id === "shed-1")?.at ?? [0, 0, 0])[2]).toBeCloseTo(-94, 3);
+  // The kernel takes it as one component: interference runs over it.
+  await page.getByTestId("asm-interference").click();
+  await expect(page.getByTestId("asm-clashes")).toBeVisible();
+});

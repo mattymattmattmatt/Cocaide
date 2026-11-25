@@ -5,6 +5,7 @@
 import { isMeshPart, meshSpecOf, scaleForSize, type MeshSpec } from "../../mesh/meshPart";
 import { glbPart } from "../../mesh/glbPart";
 import { loadMeshView, meshKey } from "../../mesh/loadMesh";
+import { componentCount, isSubAssembly, subAssemblyKey, subAssemblyView } from "../../assembly/subassembly";
 import { explodeOffsets } from "../../doc/assembly";
 import { autoExplode, explodeWithout, withOffset } from "../../assembly/explode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -80,12 +81,15 @@ export function useAssembly(o: AssemblyOptions) {
     if (!o.active) return;
     let gone = false;
     for (const [key, part] of Object.entries(docs)) {
-      // A mesh part (a .glb) is read in the page; the rest are built by the kernel.
-      const mesh = isMeshPart(part);
-      const g = mesh ? `mesh|${meshKey(part)}` : geometryKey(part);
+      // A mesh part (a .glb) is read in the page; the rest are built by the kernel. A sub-assembly (a document with
+      // an assembly of its own): its components' parts built so, placed and joined, one piece.
+      const leafKey = (d: Record<string, unknown>) => (isMeshPart(d) ? `mesh|${meshKey(d)}` : geometryKey(d));
+      const build = (d: Record<string, unknown>) => (isMeshPart(d) ? loadMeshView(d, meshKey(d)) : o.kernel.partView(d));
+      const sub = isSubAssembly(part);
+      const g = sub ? `sub|${subAssemblyKey(part, leafKey)}` : leafKey(part);
       if (keys.current.get(key) === g) continue;
       keys.current.set(key, g);
-      (mesh ? loadMeshView(part, key) : o.kernel.partView(part))
+      (sub ? subAssemblyView(part, build) : isMeshPart(part) ? loadMeshView(part, key) : o.kernel.partView(part))
         .then((v) => {
           if (gone || keys.current.get(key) !== g) return;
           setViews((m) => new Map(m).set(key, v));
@@ -221,15 +225,21 @@ export function useAssembly(o: AssemblyOptions) {
 
   const insertSelf = () => insert(SELF, typeof doc?.name === "string" ? doc.name : "part");
 
-  /** A part document (from a file or an example) carried in the assembly and put in. The same part again is used again. */
+  /**
+   * A part document (from a file or an example) carried in the assembly and put in. The same part again is used
+   * again. A document with an assembly of its own comes in as a sub-assembly: its components, where it keeps them,
+   * one piece to mate and move.
+   */
   const insertDocument = (part: Record<string, unknown>) => {
     if (!Array.isArray(part.features)) return o.notice("That isn't a part: it has no features.", "error");
     const name = typeof part.name === "string" && part.name.trim() ? part.name : "part";
-    const { assembly: _a, drawing: _d, ...clean } = part;
-    void _a;
+    const sub = isSubAssembly(part);
+    const { assembly: _a, drawing: _d, ...rest } = part;
     void _d;
+    const clean: Record<string, unknown> = sub ? { ...rest, assembly: _a } : rest;
     const parts = base().parts ?? {};
-    const same = Object.entries(parts).find(([, d]) => geometryKey(d) === geometryKey(clean))?.[0];
+    const keyOf = (d: unknown) => (isSubAssembly(d) ? JSON.stringify(d) : geometryKey(d));
+    const same = Object.entries(parts).find(([, d]) => keyOf(d) === keyOf(clean))?.[0];
     let key = same;
     if (!key) {
       const stem = name.replace(/[^\w-]+/g, "_") || "part";
@@ -238,6 +248,7 @@ export function useAssembly(o: AssemblyOptions) {
     }
     const k = key;
     insert(k, name, (a) => (same ? a : { ...a, parts: { ...(a.parts ?? {}), [k]: clean } }));
+    if (sub) o.notice(`${name} is in as a sub-assembly (${componentCount(clean)} components, one piece): select a face of it and one of another, then pick a mate.`, "info");
   };
 
   const insertFile = async () => {
@@ -646,7 +657,10 @@ export function useAssembly(o: AssemblyOptions) {
   const bom = useMemo(() => {
     const rows = new Map<string, { part: string; name: string; qty: number }>();
     for (const k of asm?.components ?? []) {
-      const r = rows.get(k.part) ?? { part: k.part, name: doc ? partName(doc as Record<string, unknown>, k.part) : k.part, qty: 0 };
+      // A sub-assembly is one row, marked so, with how many components it holds.
+      const sub = doc ? partDocument(doc as Record<string, unknown>, k.part) : undefined;
+      const label = doc ? partName(doc as Record<string, unknown>, k.part) : k.part;
+      const r = rows.get(k.part) ?? { part: k.part, name: k.part !== SELF && isSubAssembly(sub) ? `${label} (sub-assembly, ${componentCount(sub)} components)` : label, qty: 0 };
       r.qty++;
       rows.set(k.part, r);
     }
