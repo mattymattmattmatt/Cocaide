@@ -8,7 +8,7 @@ import { checkConstraints } from "../src/geom/constraints";
 import { buildProfile } from "../src/geom/profile";
 import { sketchDof, solveSketch } from "../src/geom/solver";
 import { chamferCorners, cornersOf, filletCorners } from "../src/geom/sketchEdit/fillet";
-import { chainOf, insideOf, offsetEntities, sideOf } from "../src/geom/sketchEdit/offset";
+import { chainOf, flipTowards, insideOf, offsetEntities, offsetSides, sideOf } from "../src/geom/sketchEdit/offset";
 import type { Edit, SketchState } from "../src/geom/sketchEdit/relations";
 
 type Line = Extract<SketchEntity, { type: "line" }>;
@@ -295,5 +295,68 @@ describe("offset entities", () => {
     expect(p.ok && p.area).toBeCloseTo(34 * 24 - 4 * 4 + Math.PI * 4, 6);
     expect(checkConstraints(r.entities, r.constraints)).toEqual([]);
     expect(sketchDof(r.entities, r.constraints)).toBe(sketchDof(f.entities, f.constraints));
+  });
+
+  it("offsets a filleted rectangle inward by more than its fillets: the arcs drop out and the lines meet sharp", () => {
+    const s = rectangle();
+    const picked = cornersOf(s, { entities: ["l1", "l2", "l3", "l4"], points: [] });
+    if (typeof picked === "string") throw new Error(picked);
+    const f = solved(ok(filletCorners(picked.state, picked.corners, 4)));
+    const r = ok(offsetEntities(f, ["l1"], { distance: 6, side: 1 }));
+    const made = r.entities.filter((e) => r.made!.includes(e.id));
+    expect(made.map((e) => e.type)).toEqual(["line", "line", "line", "line"]);
+    const p = buildProfile(made);
+    expect(p.ok && p.area).toBeCloseTo(28 * 18, 6);
+    expect(checkConstraints(r.entities, r.constraints)).toEqual([]);
+    // Still held by the one dimension: changed, the inner rectangle follows.
+    const k = r.constraints.findIndex((c) => c.type === "offset");
+    const moved = solveSketch(r.entities, r.constraints.map((c, i) => (i === k ? ({ ...c, value: 7 } as Constraint) : c)));
+    expect(moved.ok).toBe(true);
+    if (moved.ok) {
+      const base = get<Line>(moved, "l1");
+      const inner = moved.entities.find((e) => e.id === r.made![0]) as Line;
+      expect(inner.start[1] - base.start[1]).toBeCloseTo(7, 6);
+    }
+    // Nothing left: refused, saying so.
+    expect(offsetEntities(f, ["l1"], { distance: 16, side: 1 })).toMatch(/too big for this shape/);
+  });
+
+  it("a short side its neighbours' offsets close over drops out (a small chamfer offset inward)", () => {
+    // A 40 × 30 rectangle with its bottom right corner chamfered 1 × 1: offset in by 3, the chamfer's offset would
+    // turn inside out, so it goes and the bottom and right sides meet sharp.
+    const p: Vec2[] = [[0, 0], [39, 0], [40, 1], [40, 30], [0, 30]];
+    const entities: SketchEntity[] = p.map((a, i) => ({ id: `l${i + 1}`, type: "line", start: a, end: p[(i + 1) % p.length] }));
+    const r = ok(offsetEntities({ entities, constraints: [] }, ["l1"], { distance: 3, side: 1 }));
+    const made = r.entities.filter((e) => r.made!.includes(e.id));
+    expect(made).toHaveLength(4);
+    const prof = buildProfile(made);
+    expect(prof.ok && prof.area).toBeCloseTo(34 * 24, 6);
+    expect(checkConstraints(r.entities, r.constraints)).toEqual([]);
+  });
+
+  it("several closed shapes picked together go each its own way out (or each in), whichever way each was drawn", () => {
+    const a = rectangle();
+    // A second rectangle drawn the other way round (clockwise).
+    const q: Vec2[] = [[100, 0], [100, 30], [140, 30], [140, 0]];
+    const b: SketchEntity[] = q.map((x, i) => ({ id: `m${i + 1}`, type: "line", start: x, end: q[(i + 1) % 4] }));
+    const s = { entities: [...a.entities, ...b], constraints: a.constraints };
+    expect(offsetSides(s, ["l1", "m1"], true, false)).toEqual([-1, 1]);
+    const r = ok(offsetEntities(s, ["l1", "m1"], { distance: 2, side: 1, sides: offsetSides(s, ["l1", "m1"], true, false) }));
+    const made = r.entities.filter((e) => r.made!.includes(e.id));
+    const first = buildProfile(made.slice(0, 4));
+    const second = buildProfile(made.slice(4));
+    expect(first.ok && first.area).toBeCloseTo(44 * 34, 6);
+    expect(second.ok && second.area).toBeCloseTo(44 * 34, 6);
+    expect(offsetSides(s, ["l1", "m1"], true, true)).toEqual([1, -1]);
+  });
+
+  it("which way the pointer asks: inside a closed chain is the other way from its usual (out); too near the line, it can't tell", () => {
+    const s = rectangle();
+    expect(flipTowards(s, ["l1"], true, [20, 15])).toBe(true);
+    expect(flipTowards(s, ["l1"], true, [20, -5])).toBe(false);
+    expect(flipTowards(s, ["l1"], true, [20, 0.2], 0.5)).toBeNull();
+    const open: SketchState = { entities: [{ id: "l1", type: "line", start: [0, 0], end: [10, 0] }], constraints: [] };
+    expect(flipTowards(open, ["l1"], true, [5, 3])).toBe(false);
+    expect(flipTowards(open, ["l1"], true, [5, -3])).toBe(true);
   });
 });

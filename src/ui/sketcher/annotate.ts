@@ -253,7 +253,8 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
         if (o.type === "line") {
           const b = byId.get(base);
           if (b?.type !== "line") return;
-          p = [(b.start[0] + b.end[0]) / 2, (b.start[1] + b.end[1]) / 2];
+          // A third of the way along, not the middle: the relation badges sit at the middle and would cover it.
+          p = [b.start[0] + (b.end[0] - b.start[0]) / 3, b.start[1] + (b.end[1] - b.start[1]) / 3];
           q = foot(o.start, o.end, p);
         } else {
           const r = o.type === "circle" ? o.radius : dist2(o.start, o.center);
@@ -264,8 +265,22 @@ export function dimensionShapes(entities: SketchEntity[], constraints: Constrain
           p = [o.center[0] + u[0] * rb, o.center[1] + u[1] * rb];
           q = [o.center[0] + u[0] * r, o.center[1] + u[1] * r];
         }
-        if (dist2(p, q) < 1e-9) return;
-        aligned(index, text, p, q, [p[0] - q[0], p[1] - q[1]]);
+        const len = dist2(p, q);
+        if (len < 1e-9) return;
+        // Across from the base to the offset, arrows at both, and the number just past the offset (an offset is
+        // often narrow on screen: between the two it would sit on the lines).
+        const u: Vec2 = [(q[0] - p[0]) / len, (q[1] - p[1]) / len];
+        const past: Vec2 = [q[0] + u[0] * 10 * px, q[1] + u[1] * 10 * px];
+        out.push({
+          index,
+          text,
+          lines: [[p, past]],
+          arrows: [
+            { at: p, dir: [-u[0], -u[1]] },
+            { at: q, dir: u },
+          ],
+          at: [q[0] + u[0] * 20 * px, q[1] + u[1] * 20 * px],
+        });
         return;
       }
       case "angle": {

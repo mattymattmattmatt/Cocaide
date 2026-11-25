@@ -35,6 +35,8 @@ export interface EditPicks {
   skip?: number[];
   /** Picking the entities still (true), or the next thing (the mirror line, the base point). */
   picking?: boolean;
+  /** An offset going the other way from its usual side, because the pointer went there. */
+  flip?: boolean;
 }
 
 export const NO_PICKS: EditPicks = { entities: [], points: [], places: [] };
@@ -85,6 +87,8 @@ export interface EditToolDef {
   click(state: SketchState, picks: EditPicks, input: EditInput, options: ToolOptions): EditStep;
   /** A drag across the sketch, along `path` (power trim). */
   drag?(state: SketchState, path: Vec2[], options: ToolOptions): Edit | string | null;
+  /** The pointer moved (over the sketch, with this tool): new picks when that changes them (an offset's side), else null. Its preview follows the pointer too. */
+  hover?(state: SketchState, picks: EditPicks, input: EditInput, options: ToolOptions): EditPicks | null;
   /** What it would do now (with the pointer at `hover` for a click tool). */
   preview?(state: SketchState, picks: EditPicks, options: ToolOptions, hover: EditInput | null): EditPreview;
   /** The edit Apply makes: null while there is not enough to make it. */

@@ -120,6 +120,8 @@ export interface OffsetOptions {
   distance: number;
   /** 1: to the left of each chain (the way it runs); -1: to the right. Ignored with `both`. */
   side: 1 | -1;
+  /** Each chain's own side, in the order chainsOf gives them (several closed shapes picked go each its own way out); `side` for any not given. */
+  sides?: (1 | -1)[];
   both?: boolean;
   /** An open chain offset both ways: its ends closed with arcs or lines. */
   cap?: "none" | "arcs" | "lines";
@@ -156,6 +158,45 @@ export function chainsOf(entities: SketchEntity[], ids: string[], whole = true):
   return chains;
 }
 
+/** The chains the picks name, as offsetEntities takes them: rectangles and slots exploded into lines and arcs first. */
+function pickedChains(state: SketchState, ids: string[], whole: boolean): { entities: SketchEntity[]; chains: Chain[] } | string {
+  const ex = explodeAll(state, ids);
+  const entities = ex.state.entities;
+  const chains = chainsOf(entities, ex.ids.filter((id) => entities.find((e) => e.id === id)?.type !== "point"), whole);
+  return typeof chains === "string" ? chains : { entities, chains };
+}
+
+/** A chain's usual side: out of a closed one, to the left of an open one (the way it was drawn). */
+function usualSide(entities: SketchEntity[], chain: Chain): 1 | -1 {
+  return chain.closed ? (-insideOf(entities, chain) as 1 | -1) : 1;
+}
+
+/** Each picked chain's side (for `sides`): its usual side, or all turned round with `flip`. */
+export function offsetSides(state: SketchState, ids: string[], whole: boolean, flip: boolean): (1 | -1)[] {
+  const r = pickedChains(state, ids, whole);
+  if (typeof r === "string") return [];
+  return r.chains.map((c) => (flip ? -usualSide(r.entities, c) : usualSide(r.entities, c)) as 1 | -1);
+}
+
+/**
+ * Which way the pointer at p asks for: whether it is on the other side from the usual one (outside a closed chain,
+ * left of an open one) of the picked chain nearest it. Null when it is too near that chain to tell (within `tol`).
+ */
+export function flipTowards(state: SketchState, ids: string[], whole: boolean, p: Vec2, tol = 0): boolean | null {
+  const r = pickedChains(state, ids, whole);
+  if (typeof r === "string" || !r.chains.length) return null;
+  let best: Chain | null = null;
+  let bestD = Infinity;
+  for (const c of r.chains) {
+    for (const k of baseCurves(r.entities, c)) {
+      const d = distanceTo(k, p);
+      if (d < bestD) [best, bestD] = [c, d];
+    }
+  }
+  if (!best || bestD <= tol) return null;
+  return sideOf(r.entities, best, p) !== usualSide(r.entities, best);
+}
+
 /** Offset entities: every chain the picks name, at the distance, to its side or both. */
 export function offsetEntities(stateIn: SketchState, ids: string[], opts: OffsetOptions): Edit | string {
   const d = opts.distance;
@@ -181,8 +222,8 @@ export function offsetEntities(stateIn: SketchState, ids: string[], opts: Offset
     const [a, b] = [p, q].map((r) => made.find((e) => e.id === r.split(".")[0]));
     if (a && b && smooth(a, b, pointAtRef([a], p))) hard.push({ type: "tangent", entities: [a.id, b.id] });
   };
-  for (const chain of chains) {
-    const sides: (1 | -1)[] = opts.both ? [1, -1] : [opts.side];
+  for (const [ci, chain] of chains.entries()) {
+    const sides: (1 | -1)[] = opts.both ? [1, -1] : [opts.sides?.[ci] ?? opts.side];
     const built: Piece[][] = [];
     for (const s of sides) {
       const pieces = offsetChain(state.entities, chain, s, d, opts.corners ?? "sharp", ids2);
@@ -252,11 +293,17 @@ function smooth(a: SketchEntity, b: SketchEntity, p: Vec2 | null): boolean {
   return Math.abs(cross2(tangentAt(ca, paramOf(ca, p)), tangentAt(cb, paramOf(cb, p)))) < 1e-6;
 }
 
-/** The offset pieces of one chain to one side, corners joined. */
+/**
+ * The offset pieces of one chain to one side, corners joined. Offset inwards, a piece can vanish: an arc whose radius
+ * the offset uses up (a fillet smaller than the offset), or a short piece its neighbours' offsets close over. That
+ * piece is left out and its neighbours run on to meet, as a corner, so a rounded rectangle offset in by more than
+ * its fillets comes out a sharp one. Only if nothing is left, or two neighbours never meet, is it refused.
+ */
 function offsetChain(entities: SketchEntity[], chain: Chain, s: 1 | -1, d: number, corners: "sharp" | "round", ids: (p: string) => string): Piece[] | string {
   const curves = baseCurves(entities, chain);
-  const raw: Curve[] = [];
-  for (let i = 0; i < curves.length; i++) {
+  const n = curves.length;
+  const raw: (Curve | null)[] = [];
+  for (let i = 0; i < n; i++) {
     const c = curves[i];
     if (c.kind === "line") {
       const t = tangentAt(c, 0);
@@ -267,48 +314,78 @@ function offsetChain(entities: SketchEntity[], chain: Chain, s: 1 | -1, d: numbe
     // To the left of an anticlockwise arc is towards its centre.
     const ccw = c.kind === "circle" || c.sweep > 0;
     const r = c.r - s * d * (ccw ? 1 : -1);
-    if (r <= TOL) return `the offset of ${chain.links[i].id} (R${round(c.r)}) ${d >= c.r ? `by ${round(d)} reaches its centre` : "vanishes"}: offset it by less than ${round(c.r)}, or the other way`;
+    if (r <= TOL) {
+      if (n === 1) return `the offset of ${chain.links[i].id} (R${round(c.r)}) ${d >= c.r ? `by ${round(d)} reaches its centre` : "vanishes"}: offset it by less than ${round(c.r)}, or the other way`;
+      raw.push(null);
+      continue;
+    }
     raw.push(c.kind === "circle" ? { kind: "circle", c: c.c, r } : { kind: "arc", c: c.c, r, start: c.start, sweep: c.sweep });
   }
-  // Each piece's ends, the chain's way: moved where it meets its neighbour.
-  const from: Vec2[] = raw.map((c) => (c.kind === "circle" ? pointAt(c, 0) : pointAt(c, 0)));
-  const to: Vec2[] = raw.map((c) => (c.kind === "circle" ? pointAt(c, 0) : pointAt(c, 1)));
-  const cornerArcs: { after: number; center: Vec2; a: Vec2; b: Vec2; ccw: boolean; base: string }[] = [];
-  const n = curves.length;
-  for (let i = 0; i < (chain.closed ? n : n - 1); i++) {
-    if (n === 1) break;
-    const j = (i + 1) % n;
-    const t1 = tangentAt(curves[i], 1);
-    const t2 = tangentAt(curves[j], 0);
-    const turn = cross2(t1, t2);
-    const P = pointAt(curves[i], 1);
-    if (Math.abs(turn) < 1e-9 && dot2(t1, t2) > 0) continue; // tangent: the offsets meet already
-    const inside = turn * s > 0;
-    const meetAt = carrierMeet(raw[i], raw[j]).sort((p, q) => dist2(p, P) - dist2(q, P))[0];
-    const link = chain.links[i];
-    const baseRef = `${link.id}.${link.reversed ? "start" : "end"}`;
-    if (inside || (corners === "sharp" && meetAt && dist2(meetAt, P) < 1e3 * d)) {
-      if (!meetAt) return `the offsets of ${link.id} and ${chain.links[j].id} don't meet: offset by less`;
-      to[i] = meetAt;
-      from[j] = meetAt;
-    } else {
-      cornerArcs.push({ after: i, center: P, a: to[i], b: from[j], ccw: turn > 0, base: baseRef });
+  const alive = raw.map((c) => c !== null);
+  const tooBig = `an offset of ${round(d)} is too big for this ${chain.closed ? "shape" : "chain"}: nothing of it would be left; offset by less, or the other way`;
+  let from: Vec2[] = [];
+  let to: Vec2[] = [];
+  let cornerArcs: { after: number; center: Vec2; a: Vec2; b: Vec2; ccw: boolean; base: string }[] = [];
+  // Join the pieces still there; leave out any that turned inside out; again, until none does.
+  for (let pass = 0; pass <= n; pass++) {
+    const live = alive.flatMap((a, i) => (a ? [i] : []));
+    if (!live.length) return tooBig;
+    from = raw.map((c) => (c ? pointAt(c, 0) : [0, 0]));
+    to = raw.map((c) => (c ? (c.kind === "circle" ? pointAt(c, 0) : pointAt(c, 1)) : [0, 0]));
+    cornerArcs = [];
+    const pairs = chain.closed ? live.length : live.length - 1;
+    for (let k = 0; k < pairs && live.length > 1; k++) {
+      const i = live[k];
+      const j = live[(k + 1) % live.length];
+      const ri = raw[i]!;
+      const rj = raw[j]!;
+      const t1 = tangentAt(curves[i], 1);
+      const t2 = tangentAt(curves[j], 0);
+      const P = pointAt(curves[i], 1);
+      const link = chain.links[i];
+      const baseRef = `${link.id}.${link.reversed ? "start" : "end"}`;
+      const adjacent = j === (i + 1) % n;
+      if (adjacent && Math.abs(cross2(t1, t2)) < 1e-9 && dot2(t1, t2) > 0) continue; // tangent: the offsets meet already
+      // Where the two run on to meet: nearest the corner they offset (past a piece left out, nearest where i ended).
+      const near = adjacent ? P : to[i];
+      const meetAt = carrierMeet(ri, rj).sort((p, q) => dist2(p, near) - dist2(q, near))[0];
+      const turn = cross2(t1, t2);
+      const inside = !adjacent || turn * s > 0;
+      if (inside || (corners === "sharp" && meetAt && dist2(meetAt, P) < 1e3 * d)) {
+        // (Past pieces left out, two that never meet are opposite sides with the shape used up between them.)
+        if (!meetAt) return adjacent ? `the offsets of ${link.id} and ${chain.links[j].id} don't meet: offset by less` : tooBig;
+        to[i] = meetAt;
+        from[j] = meetAt;
+      } else {
+        cornerArcs.push({ after: i, center: P, a: to[i], b: from[j], ccw: turn > 0, base: baseRef });
+      }
     }
-  }
-  // Each piece still runs the way its base does, with some length.
-  for (let i = 0; i < n; i++) {
-    const c = raw[i];
-    if (c.kind === "line") {
-      const base = curves[i] as Extract<Curve, { kind: "line" }>;
-      if (dot2(sub2(to[i], from[i]), sub2(base.b, base.a)) <= 10 * TOL * dist2(base.a, base.b)) return `an offset of ${round(d)} is too big for ${chain.links[i].id}: its offset would turn inside out; offset by less`;
-    } else if (c.kind === "arc") {
-      const a0 = angleOf(sub2(from[i], c.c));
-      const a1 = angleOf(sub2(to[i], c.c));
-      const sweep = c.sweep > 0 ? wrapAngle(a1 - a0) : wrapAngle(a0 - a1);
-      if (sweep <= 1e-9 || sweep > Math.abs(c.sweep) + Math.PI / 2) return `an offset of ${round(d)} is too big for ${chain.links[i].id}: its offset would turn inside out; offset by less`;
+    // Each piece still runs the way its base does, with some length; one that doesn't is left out.
+    let dropped = false;
+    for (const i of live) {
+      const c = raw[i]!;
+      let ok = true;
+      if (c.kind === "line") {
+        const base = curves[i] as Extract<Curve, { kind: "line" }>;
+        ok = dot2(sub2(to[i], from[i]), sub2(base.b, base.a)) > 10 * TOL * dist2(base.a, base.b);
+      } else if (c.kind === "arc") {
+        const a0 = angleOf(sub2(from[i], c.c));
+        const a1 = angleOf(sub2(to[i], c.c));
+        const sweep = c.sweep > 0 ? wrapAngle(a1 - a0) : wrapAngle(a0 - a1);
+        ok = sweep > 1e-9 && sweep <= Math.abs(c.sweep) + Math.PI / 2;
+      }
+      if (!ok) {
+        if (live.length === 1) return tooBig;
+        alive[i] = false;
+        dropped = true;
+      }
     }
+    if (!dropped) break;
+    if (pass === n) return tooBig;
   }
-  const pieces: Piece[] = raw.map((c, i) => {
+  const pieces: Piece[] = [];
+  raw.forEach((c, i) => {
+    if (!c || !alive[i]) return;
     const link = chain.links[i];
     const base = entities.find((e) => e.id === link.id)!;
     const id = ids(base.type === "line" ? "l" : base.type === "arc" ? "a" : "c");
@@ -318,14 +395,14 @@ function offsetChain(entities: SketchEntity[], chain: Chain, s: 1 | -1, d: numbe
     if (c.kind === "line") entity = { id, type: "line", start: ps, end: pe };
     else if (c.kind === "circle") entity = { id, type: "circle", center: c.c, radius: c.r };
     else entity = { id, type: "arc", center: c.c, start: ps, end: pe, ...((base as Open).type === "arc" && (base as Extract<SketchEntity, { type: "arc" }>).clockwise ? { clockwise: true } : {}) };
-    return { curve: c, link: i, base: link.id, entity, in: `${id}.${link.reversed ? "end" : "start"}`, out: `${id}.${link.reversed ? "start" : "end"}` };
+    pieces.push({ curve: c, link: i, base: link.id, entity, in: `${id}.${link.reversed ? "end" : "start"}`, out: `${id}.${link.reversed ? "start" : "end"}` });
   });
-  // Round corners go in between the pieces they join, the way the chain turns there.
+  // Round corners go in after the piece they follow, the way the chain turns there.
   for (const k of [...cornerArcs].reverse()) {
     const id = ids("a");
     const entity: SketchEntity = { id, type: "arc", center: k.center, start: k.ccw ? k.a : k.b, end: k.ccw ? k.b : k.a };
     const arc: Piece = { curve: curveOf(entity)!, link: -1, base: k.base, entity, in: `${id}.${k.ccw ? "start" : "end"}`, out: `${id}.${k.ccw ? "end" : "start"}` };
-    pieces.splice(k.after + 1, 0, arc);
+    pieces.splice(pieces.findIndex((p) => p.link === k.after) + 1, 0, arc);
   }
   return pieces;
 }

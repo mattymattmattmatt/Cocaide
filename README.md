@@ -505,6 +505,7 @@ Phase O turns the modeller into a full parametric part modeller. Everything belo
 ### Sketch editing
 
 - Trim (T) and power trim, Extend (E), Split, sketch Fillet and Chamfer, Offset, Mirror (M), linear and circular sketch patterns, Move, Copy, Rotate and Scale, and Explode (a rectangle or slot into its lines and arcs). Each keeps the relations that still apply and adds the ones the edit implies, so a mirrored copy moves with the original.
+  - **Offset**: hover a line, arc or circle (or a rectangle or slot) to see its chain's offset; click it to pick it (Ctrl or Shift adds more), then point to the side you want: the preview follows the pointer, in or out of a closed shape, either side of an open chain. Click there to place it, or press Enter (Reverse turns it round). One offset dimension holds it all. Offset inward by more than a fillet, the arc drops out and its sides meet in a sharp corner; a short side the offset closes over drops out the same way. Several shapes picked together each go their own way out (or in).
 - Closed regions are shaded, so you can see what will extrude.
 
 ![The sketcher: a plate fully defined in black, relation glyphs, Smart Dimensions, and a line's right-click menu](docs/sketch-relations.png)

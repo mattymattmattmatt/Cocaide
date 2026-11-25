@@ -78,6 +78,8 @@ export interface CanvasEdit {
   /** Its preview follows the pointer (a trim's piece, a move's rubber band). */
   follows: boolean;
   preview(hover: EditInput | null): EditPreview;
+  /** The pointer moved over the sketch (for a tool that follows it). */
+  onHover?(input: EditInput): void;
   onClick(input: EditInput): void;
   /** A drag across the sketch (power trim). */
   onStroke(path: Vec2[]): void;
@@ -715,6 +717,9 @@ export function SketchCanvas(props: Props) {
     () => (props.edit ? props.edit.preview(editHover ? editInput(editHover) : null) : {}),
     [props.edit, editHover?.[0], editHover?.[1], entities], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  useEffect(() => {
+    if (editHover && props.edit?.onHover) props.edit.onHover(editInput(editHover));
+  }, [editHover?.[0], editHover?.[1]]); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedFaces = new Set(chosen.flatMap((s) => (s.kind === "face" ? [s.index] : [])));
   const hoverOwner = hoverItem?.kind === "entity" ? hoverItem.id : hoverItem?.kind === "point" ? hoverItem.ref.split(".")[0] : null;
   const isHover = (id: string) => hoverItem?.kind === "entity" && hoverItem.id === id;

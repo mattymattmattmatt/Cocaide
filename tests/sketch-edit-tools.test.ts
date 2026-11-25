@@ -223,4 +223,27 @@ describe("on the canvas", () => {
     const m = edit(tool("mirror").apply!({ entities: [line("l1", [1, 0], [2, 3])], constraints: [] }, { ...NO_PICKS, entities: ["l1"], about: "Y" }, options("mirror")));
     expect(relationGlyphs(m.entities, m.constraints, 0.1).filter((g) => m.constraints[g.index].type === "symmetric")).toHaveLength(2);
   });
+
+  it("follows the pointer: hovering shows the chain's offset before a pick; after it, the side the pointer is on; a click away places it there", () => {
+    const s = rectangle();
+    const t = tool("offset");
+    const o = options("offset", { distance: 2 });
+    // Hovering a side, nothing picked: its rectangle's offset, the usual way (out).
+    expect(t.preview!(s, NO_PICKS, o, at([20, 0], entity("l1"))).add).toHaveLength(4);
+    expect(t.preview!(s, NO_PICKS, o, at([20, 15])).add).toBeUndefined();
+    const picked = { ...NO_PICKS, entities: ["l1"] };
+    // The pointer inside: the picks turn round, and the preview goes in.
+    const inside = t.hover!(s, picked, at([20, 15]), o)!;
+    expect(inside.flip).toBe(true);
+    expect(t.hover!(s, inside, at([20, 14]), o)).toBeNull();
+    const inner = t.preview!(s, picked, o, at([20, 15])).add!;
+    expect(inner.find((e) => e.id === "l5")).toEqual({ id: "l5", type: "line", start: [2, 2], end: [38, 2] });
+    // A click inside (on the region, not a line) places it there.
+    const step = t.click(s, picked, at([20, 15], { kind: "face", index: 0 } as SketchItem), o);
+    expect("edit" in step && typeof step.edit !== "string" && step.edit.entities.find((e) => e.id === "l5")).toEqual({ id: "l5", type: "line", start: [2, 2], end: [38, 2] });
+    // Enter after pointing inside: in too.
+    expect(edit(t.apply!(s, inside, o)).entities.find((e) => e.id === "l5")).toMatchObject({ start: [2, 2] });
+    // A click on a corner point is not a click away: it says to click the line.
+    expect(t.click(s, picked, at([0, 0], { kind: "point", ref: "l1.start" }), o)).toEqual({ message: expect.stringContaining("not its end") });
+  });
 });

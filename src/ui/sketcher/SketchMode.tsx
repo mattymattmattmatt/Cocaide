@@ -616,13 +616,17 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
       picks: editPicks,
       chosen,
       places,
-      follows: editTool.kind === "click" || places,
+      follows: editTool.kind === "click" || places || !!editTool.hover,
       preview: (hover) => {
         try {
           return editTool.preview?.(draft, editPicks, toolOptions, hover) ?? {};
         } catch {
           return {};
         }
+      },
+      onHover: (input) => {
+        const next = editTool.hover?.(draft, editPicks, input, toolOptions);
+        if (next) setEditPicks(next);
       },
       onClick: onEditClick,
       onStroke: onEditStroke,
@@ -988,6 +992,19 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
     const el = view3d[where];
     return el ? createPortal(node, el) : null;
   };
+  // The strips sit just below the toolbar, however many rows it wraps to (a narrow window wraps it to two).
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const bar = toolbarRef.current;
+    const over = view3d?.over;
+    if (!bar || !over) return;
+    const fit = () => over.style.setProperty("--sketch-bar-h", `${Math.round(bar.getBoundingClientRect().bottom - over.getBoundingClientRect().top)}px`);
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(bar);
+    ro.observe(over);
+    return () => ro.disconnect();
+  }, [view3d?.over, toolbarRef.current]); // eslint-disable-line react-hooks/exhaustive-deps
   const inCenter = (node: ReactNode): ReactNode => (view3d ? node : <section className="center sketch-center">{node}</section>);
   if (view3d) view3d.draft.current = entities;
 
@@ -997,7 +1014,7 @@ export function SketchMode({ session, model, onFinish, onCancel, onAsk, applyRef
         <>
         {slot(
           "top",
-        <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
+        <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools" ref={toolbarRef}>
           {MODES.filter(([t]) => t !== "convert").map(([t, label, id, icon]) => (
             <ToolButton key={t} icon={icon} label={label} pressed={tool === t} onClick={() => setTool(t)} title={`${TOOL_TITLE[t] ?? label}${keyHint(id, prefs)}`} testId={`tool-${t}`} />
           ))}

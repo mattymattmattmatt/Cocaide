@@ -371,8 +371,40 @@ test("an undo while an edit tool holds picks drops the picks it took away; Undo 
   await expect(page.getByTestId("tool-prompt")).toContainText("1 entity picked");
   await page.keyboard.press("Control+z");
   await expect(page.locator("[data-entity]")).toHaveCount(0);
-  await expect(page.getByTestId("tool-prompt")).toHaveText("Click a line, arc or circle: its chain is offset");
+  await expect(page.getByTestId("tool-prompt")).toHaveText("Click a line, arc or circle (its chain comes with it); hover one to see its offset");
   await expect(page.getByTestId("tool-problem")).toHaveCount(0);
   await expect(page.getByTestId("tool-apply")).toBeDisabled();
+  await page.getByTestId("cancel-sketch").click();
+});
+
+test("offset follows the pointer: hover shows it, the pointer picks the side, a click there places it; inward past the fillets it comes out sharp", async ({ page }) => {
+  await sketchOnTop(page);
+  await page.keyboard.press("r");
+  await sketchClick(page, 10, 10);
+  await sketchClick(page, 50, 40);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("tool-fillet").click();
+  for (const [x, y] of [[10, 10], [50, 10], [50, 40], [10, 40]] as Vec2[]) await sketchClick(page, x, y);
+  await commit(page, "tool-option-radius", "4");
+  await page.getByTestId("tool-apply").click();
+  await page.getByTestId("tool-offset").click();
+  // Hovering the top side: the whole rounded rectangle's offset, out (four lines and four arcs).
+  const [hx, hy] = await toScreen(page, [30, 40]);
+  await page.mouse.move(hx, hy);
+  await expect(page.locator(".entity.preview.edit")).toHaveCount(8);
+  await sketchClick(page, 30, 10);
+  await commit(page, "tool-option-distance", "6");
+  // The pointer inside: the preview goes in, the fillets used up, so a sharp 28 × 18 rectangle.
+  const [ix, iy] = await toScreen(page, [30, 25]);
+  await page.mouse.move(ix, iy, { steps: 4 });
+  await expect(page.locator(".entity.preview.edit")).toHaveCount(4);
+  await expect(page.getByTestId("tool-problem")).toHaveCount(0);
+  await page.mouse.click(ix, iy);
+  const outer = 1200 - 4 * (16 - 4 * Math.PI);
+  await expect(page.getByTestId("profile-status")).toContainText(`1 region, area ${Math.round((outer - 28 * 18) * 1000) / 1000}`);
+  await expect(page.getByTestId("constraint-list")).toContainText("offset from");
+  // One undo takes it back.
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("profile-status")).toContainText(`1 region, area ${Math.round(outer * 1000) / 1000}`);
   await page.getByTestId("cancel-sketch").click();
 });
