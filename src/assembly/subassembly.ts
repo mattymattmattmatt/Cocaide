@@ -15,6 +15,7 @@ import type { Assembly } from "../doc/types";
 import type { RebuildView } from "../worker/protocol";
 import { partDocuments } from "./model";
 import { composeScene } from "./scene";
+import { asAppearance, PartAppearances } from "../appearance";
 import { placementOf } from "./transform";
 
 /** How deep sub-assemblies may nest. */
@@ -81,7 +82,21 @@ export async function subAssemblyView(doc: Record<string, unknown>, build: (part
   );
   if (!views.size && failed.length) throw new Error(failed.join("; "));
   const name = typeof doc.name === "string" ? doc.name : "sub-assembly";
-  const view = composeScene(asm.components.map((k) => ({ id: k.id, placement: placementOf(k), view: views.get(k.part), hidden: k.hidden })), name).view;
+  const scene = composeScene(asm.components.map((k) => ({ id: k.id, placement: placementOf(k), view: views.get(k.part), hidden: k.hidden })), name);
+  // Each face's look as it is here: its component's own colour, else what its part shows it as (a face of a
+  // sub-assembly in it already carries its look), so the parts keep their colours wherever this is put.
+  const byId = new Map(asm.components.map((k) => [k.id, k]));
+  const looks = new Map<string, PartAppearances>();
+  const faces = scene.view.faces.map((f, i) => {
+    const o = scene.faceOwner[i];
+    const k = byId.get(o.component)!;
+    const src = views.get(k.part)?.faces[o.local];
+    let pa = looks.get(k.part);
+    if (!pa) looks.set(k.part, (pa = new PartAppearances(docs[k.part])));
+    const look = asAppearance(k.appearance) ?? src?.look ?? (src ? (pa.face(src)?.appearance ?? null) : null);
+    return look ? { ...f, look } : f;
+  });
+  const view = { ...scene.view, faces };
   return failed.length ? { ...view, errors: failed } : view;
 }
 

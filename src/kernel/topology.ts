@@ -2,7 +2,7 @@
 // every rebuild; nothing stores a topology index.
 
 import type { TopoDS_Edge, TopoDS_Face, TopoDS_Shape } from "replicad-opencascadejs";
-import type { Vec3 } from "../doc/types";
+import type { Appearance, Vec3 } from "../doc/types";
 import { cross3, dist3, dot3, len3, normalize3, scale3, sub3 } from "../geom/vec";
 import { type OC, type Scope } from "./oc";
 
@@ -44,6 +44,8 @@ export interface FaceInfo {
   modifiedBy?: string[];
   /** A mesh part's face (one of its .glb's materials, src/mesh/meshPart.ts): its colour and texture, when nothing overrides them. */
   mesh?: MeshLook;
+  /** A sub-assembly's face (src/assembly/subassembly.ts): how it looks as its own part and component show it, when the component using the sub-assembly sets no colour of its own. */
+  look?: Appearance;
 }
 
 /** How a mesh part's face looks from its .glb: a base colour ("#rrggbb") and a texture (a key of the view's `textures`). */

@@ -87,6 +87,15 @@ describe("sub-assemblies", () => {
     expect((g as { p: number[] }).p[0]).toBe(400);
   });
 
+  it("keeps its parts' colours (a component's own colour over its part's), so it looks the same wherever it is put", async () => {
+    const d = shed();
+    (d.assembly.parts.wall as Record<string, unknown>).appearance = { color: "#6b6c6c" };
+    (d.assembly.components[1] as Record<string, unknown>).appearance = { color: "#ffffff" };
+    const v = await subAssemblyView(d, fakeBuild);
+    expect(new Set(v.faces.filter((f) => f.body === "wall-1").map((f) => f.look?.color))).toEqual(new Set(["#6b6c6c"]));
+    expect(new Set(v.faces.filter((f) => f.body === "wall-2").map((f) => f.look?.color))).toEqual(new Set(["#ffffff"]));
+  });
+
   it("is built again when one of its components moves, not when nothing changed", () => {
     const leaf = (d: Record<string, unknown>) => JSON.stringify(d.features);
     const a = shed();

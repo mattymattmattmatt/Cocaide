@@ -844,7 +844,8 @@ export function useAssembly(o: AssemblyOptions) {
       if (!k) return null;
       const own = lookTry?.id === k.id ? lookTry.look : asAppearance(k.appearance);
       const face = own ? null : views.get(k.part)?.faces[o.local];
-      const look = own ?? (face ? (lookOf(k.part).face(face)?.appearance ?? null) : null);
+      // A sub-assembly's face carries its own look (its part's colour inside it).
+      const look = own ?? face?.look ?? (face ? (lookOf(k.part).face(face)?.appearance ?? null) : null);
       if (look) any = true;
       return look;
     });
