@@ -42,6 +42,15 @@ export interface FaceInfo {
   createdBy?: string;
   /** The features after it that changed this face (trimmed it, cut into it), in order. */
   modifiedBy?: string[];
+  /** A mesh part's face (one of its .glb's materials, src/mesh/meshPart.ts): its colour and texture, when nothing overrides them. */
+  mesh?: MeshLook;
+}
+
+/** How a mesh part's face looks from its .glb: a base colour ("#rrggbb") and a texture (a key of the view's `textures`). */
+export interface MeshLook {
+  color: string;
+  texture?: string;
+  doubleSided?: boolean;
 }
 
 export function listFaces(oc: OC, s: Scope, shape: TopoDS_Shape): TopoDS_Face[] {

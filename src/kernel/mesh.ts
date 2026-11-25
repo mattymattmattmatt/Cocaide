@@ -16,6 +16,8 @@ export interface MeshData {
   edges: Float32Array;
   /** Segment ranges per B-rep edge, in unique-edge explorer order (same order as EdgeInfo.index). */
   edgeRanges: { start: number; count: number }[];
+  /** Texture coordinates (u v per vertex): a mesh part's (src/mesh/meshPart.ts); B-rep meshes have none. */
+  uvs?: Float32Array;
 }
 
 export function tessellate(oc: OC, shape: TopoDS_Shape): MeshData {

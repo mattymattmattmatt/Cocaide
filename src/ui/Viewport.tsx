@@ -63,6 +63,8 @@ import type { Frame as PlaneFrame } from "../geom/frame";
 import { to3D } from "../geom/frame";
 import type { CameraFeed } from "./sketcher/planeView";
 import { boxCorners, facingFit, SketchPlaneLayer } from "./viewport/sketchStage";
+import { meshTexture as loadMeshTexture } from "./viewport/meshTexture";
+import type { MeshLook } from "../kernel/topology";
 
 export type { ViewName } from "./viewport/views";
 
@@ -1566,10 +1568,15 @@ export function Viewport({
     const paintMesh = (v: RebuildView, g: THREE.BufferGeometry): THREE.Material | THREE.Material[] => {
     // A face's look, or the default: a colour per body for a part of several, else the part grey.
     const partGrey = cssColor(el, "--part", "#c4cad3");
-    const surface = (look: Appearance | null, fallback: THREE.ColorRepresentation, visible = true) => {
+    const surface = (look: Appearance | null, fallback: THREE.ColorRepresentation, visible = true, meshLook?: MeshLook) => {
       const light = finishLight(look?.finish);
+      // A mesh part's face, nothing over it: its own colour and texture, as the .glb has it.
+      const own = !look && meshLook;
+      const map = own && meshLook.texture ? loadMeshTexture(v, meshLook.texture, () => render()) : null;
       return new THREE.MeshStandardMaterial({
-        color: look ? new THREE.Color(look.color) : fallback,
+        color: look ? new THREE.Color(look.color) : own ? new THREE.Color(meshLook.color) : fallback,
+        ...(map ? { map } : {}),
+        ...(meshLook?.doubleSided ? { side: THREE.DoubleSide } : {}),
         metalness: light.metalness,
         roughness: light.roughness,
         ...(light.env > 0 ? { envMap: room(), envMapIntensity: light.env } : {}),
@@ -1583,7 +1590,8 @@ export function Viewport({
     const looks = faceLooks && faceLooks.length === v.faces.length && faceLooks.some(Boolean) ? faceLooks : null;
     matBody = [];
     matLook = [];
-    if (bodies.length > 1 || looks) {
+    const meshFaces = v.faces.some((f) => f.mesh);
+    if (bodies.length > 1 || looks || meshFaces) {
       // Triangle groups: runs of faces of one body and one look (each body's faces are contiguous), one material each.
       const bodyIndex = new Map(bodies.map((b, i) => [b.name, i]));
       const mats: THREE.Material[] = [];
@@ -1593,13 +1601,14 @@ export function Viewport({
       faceRanges.forEach((r, i) => {
         const bi = bodies.length > 1 ? (bodyIndex.get(v.faces[i]?.body ?? "") ?? 0) : 0;
         const look = looks?.[i] ?? null;
-        const key = `${bi}|${appearanceKey(look)}`;
+        const ml = v.faces[i]?.mesh;
+        const key = `${bi}|${appearanceKey(look)}|${ml && !look ? `${ml.color}|${ml.texture ?? ""}|${ml.doubleSided ? 2 : 1}` : ""}`;
         let mat = byKey.get(key);
         if (mat === undefined) {
           mat = mats.length;
           byKey.set(key, mat);
           const name = bodies[bi]?.name ?? "";
-          mats.push(surface(look, bodies.length > 1 ? BODY_COLORS[bi % BODY_COLORS.length] : partGrey, !hidden.has(name)));
+          mats.push(surface(look, bodies.length > 1 ? BODY_COLORS[bi % BODY_COLORS.length] : partGrey, !hidden.has(name), ml));
           matBody.push(name);
           matLook.push(look);
         }
@@ -1654,6 +1663,8 @@ export function Viewport({
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(v.mesh.positions, 3));
         g.setAttribute("normal", new THREE.BufferAttribute(v.mesh.normals, 3));
+        // A mesh part's texture coordinates (src/mesh/meshPart.ts).
+        if (v.mesh.uvs) g.setAttribute("uv", new THREE.BufferAttribute(v.mesh.uvs, 2));
         g.setIndex(new THREE.BufferAttribute(v.mesh.indices, 1));
         g.computeBoundingSphere();
         mesh = new THREE.Mesh(g, paintMesh(v, g));
@@ -2809,6 +2820,11 @@ export function Viewport({
         /** What is lit up for a moment (a row hovered in a tree): how many faces and edges. */
         peeked: () => ({ faces: peek.filter((t) => t.kind === "face").length, edges: peek.filter((t) => t.kind === "edge").length }),
         vrItems: () => itemsOf(shownView).map((i) => `${i.key}:${i.movable}`),
+        /** For tests: each material drawing a mesh part's faces (a .glb model): its colour and whether it has a texture. */
+        meshLooks: () =>
+          mesh && shownView?.faces.some((f) => f.mesh)
+            ? ([mesh.material].flat() as THREE.MeshStandardMaterial[]).filter((m) => m.map || m.side === THREE.DoubleSide).map((m) => ({ color: `#${m.color.getHexString()}`, texture: !!m.map, loaded: !!(m.map?.image as { width?: number } | undefined)?.width, uv: !!mesh!.geometry.getAttribute("uv") }))
+            : [],
         exitVr: () => xr.exit(),
         /** Where the camera is, what it looks at, and which way is up. */
         camera() {

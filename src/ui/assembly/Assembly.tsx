@@ -78,7 +78,7 @@ export function AssemblyBar({ a, undo, redo, canUndo, canRedo, onDrawing, sectio
               {(close) => (
                 <>
                   <MenuItem icon="model" label="This part" hint="The part of this document (its Model tab)" onClick={() => (close(), a.insertSelf())} testId="asm-insert-self" />
-                  <MenuItem icon="open" label="From a file…" hint="A .cocaide.json part or a STEP file (.step, .stp): it is carried in this file, and its holes and faces mate like any" onClick={() => (close(), void a.insertFile())} testId="asm-insert-file" />
+                  <MenuItem icon="open" label="From a file…" hint="A .cocaide.json part, a STEP file (.step, .stp), or a .glb model (furniture made elsewhere, drawn with its texture): it is carried in this file" onClick={() => (close(), void a.insertFile())} testId="asm-insert-file" />
                   {a.examples.map((name) => (
                     <MenuItem key={name} icon="examples" label={`Example: ${name}`} onClick={() => (close(), a.insertExample(name))} testId={`asm-insert-example-${name.replace(/\W+/g, "-")}`} />
                   ))}
@@ -419,6 +419,45 @@ export function AssemblyMain({
   );
 }
 
+/** A mesh part's (a .glb model's) size: type its real width, depth or height and the others follow in proportion. */
+function MeshSize({ a, part, info }: { a: AssemblyWorkspace; part: string; info: { scale: number; size: [number, number, number] | null } }) {
+  const size = info.size;
+  const box = (axis: 0 | 1 | 2, label: string) => (
+    <label className="asm-mesh-dim">
+      <span>{label}</span>
+      <input
+        key={`${part}-${axis}-${size ? Math.round(size[axis]) : "-"}`}
+        type="text"
+        inputMode="decimal"
+        defaultValue={size ? String(Math.round(size[axis])) : ""}
+        disabled={!size}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        onBlur={(e) => {
+          const v = Number(e.target.value);
+          if (size && v > 0 && Math.abs(v - size[axis]) >= 0.5) a.setMeshSize(part, axis, v);
+          else if (size) e.target.value = String(Math.round(size[axis]));
+        }}
+        data-testid={`asm-mesh-size-${"xyz"[axis]}`}
+      />
+    </label>
+  );
+  return (
+    <div className="asm-mesh" data-testid="asm-mesh-size">
+      <div className="asm-mesh-head">
+        <Icon name="iso" size={14} /> Model (.glb) · size, mm
+      </div>
+      <div className="asm-mesh-dims">
+        {box(0, "Width (X)")}
+        {box(1, "Depth (Y)")}
+        {box(2, "Height (Z)")}
+      </div>
+      <p className="muted small">Type one real size; the others follow in proportion ({info.scale === 1 ? "as modelled" : `×${Math.round(info.scale * 1000) / 1000} of the file`}). Shown, measured and carried in VR; left out of STEP and drawings.</p>
+    </div>
+  );
+}
+
 function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (key: string) => void }) {
   const k = a.item?.kind === "component" ? a.asm?.components.find((x) => x.id === a.item!.id) : undefined;
   const m = a.item?.kind === "mate" ? a.asm?.mates?.find((x) => x.id === a.item!.id) : undefined;
@@ -442,6 +481,7 @@ function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (
     );
   }
   if (k) {
+    const mesh = a.meshInfo(k.part);
     const at = (k.at ?? [0, 0, 0]) as Vec3;
     const rot = (k.rotation ?? [0, 0, 0]) as Vec3;
     sections.push(
@@ -450,13 +490,16 @@ function AssemblyProps({ a, onEditPart }: { a: AssemblyWorkspace; onEditPart?: (
         <Field label="Part">
           <span className="readout">{k.part === SELF ? `${a.partName(k.part)} (this part)` : a.partName(k.part)}</span>
         </Field>
+        {mesh && <MeshSize a={a} part={k.part} info={mesh} />}
         <div className="asm-part-actions">
+          {!mesh && (
           <button type="button" onClick={() => onEditPart?.(k.part)} title={k.part === SELF ? "This document's own part: on the Model tab" : "Open this part on the Model tab, change it with every tool, then Done puts it back here (every component using it updates)"} data-testid="asm-edit-part">
             <Icon name="model" size={14} />
             Edit part
           </button>
+          )}
           {k.part !== SELF && (
-            <button type="button" onClick={() => void a.replacePart(k.part)} title="Put a newer copy of the part in from its file (.cocaide.json or STEP): every component using it updates, where it is; mates find their faces again where they still exist" data-testid="asm-replace-part">
+            <button type="button" onClick={() => void a.replacePart(k.part)} title={mesh ? "Put a newer copy of the model in from its .glb file: it keeps the size it was given" : "Put a newer copy of the part in from its file (.cocaide.json or STEP): every component using it updates, where it is; mates find their faces again where they still exist"} data-testid="asm-replace-part">
               <Icon name="open" size={14} />
               Replace from file…
             </button>

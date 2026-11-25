@@ -5,7 +5,8 @@
 // rejects it. Points are model mm, Z up; headings and turns degrees
 // counter-clockwise in plan. Pure.
 
-import { placementOf, pointFrom, apply, transpose } from "../assembly/transform";
+import { placementOf, pointFrom, apply, transpose, fromEuler, mul, written } from "../assembly/transform";
+import { isMeshPart } from "../mesh/meshPart";
 import type { Vec3 } from "./types";
 
 export interface VrStart {
@@ -168,6 +169,21 @@ export function acceptMove(doc: Doc, id: string): { doc: Doc; note?: string } | 
     const k = comps.find((c) => c.id === m.component);
     if (!k) return { error: `the component ${m.component} is not in the assembly any more` };
     const P = placementOf(k as { at?: Vec3; rotation?: Vec3 });
+    // A mesh part (a .glb model) has no features to move: the component itself goes where it was put, turned about
+    // the vertical through its middle.
+    const parts0 = obj(asm!.parts) ? (asm!.parts as Record<string, Doc>) : {};
+    if (k.part !== "self" && isMeshPart(parts0[String(k.part)])) {
+      const R = m.turn ? fromEuler([0, 0, m.turn]) : fromEuler([0, 0, 0]);
+      const c = m.centre;
+      const off = apply(R, [P.t[0] - c[0], P.t[1] - c[1], P.t[2] - c[2]]);
+      const w = written({ R: mul(R, P.R), t: [c[0] + off[0] + m.move[0], c[1] + off[1] + m.move[1], c[2] + off[2] + m.move[2]] });
+      const placed = { ...k, at: round(w.at), rotation: w.rotation.map((v) => Math.round(v * 100) / 100) as Vec3 };
+      const rest = (vr.moves ?? []).filter((x) => x.id !== id);
+      const nextVr: VrSettings = { ...vr, ...(rest.length ? { moves: rest } : {}) };
+      if (!rest.length) delete nextVr.moves;
+      const out: Doc = { ...doc, assembly: { ...asm!, components: comps.map((x) => (x.id === k.id ? placed : x)) } };
+      return { doc: Object.keys(nextVr).length ? { ...out, vr: nextVr } : (({ vr: _drop, ...r }) => r)(out) };
+    }
     const back = transpose(P.R);
     move = apply(back, m.move);
     axis = apply(back, [0, 0, 1]);

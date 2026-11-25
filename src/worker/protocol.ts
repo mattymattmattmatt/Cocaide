@@ -48,6 +48,10 @@ export interface RebuildView {
   holes?: HoleRecord[];
   /** By feature id: whose faces and edges its selectors matched (the tree's parents and children through the part's geometry). */
   uses?: Record<string, string[]>;
+  /** A mesh part's texture images, by key (its faces' `mesh.texture`): kept as their file bytes. */
+  textures?: Record<string, { mime: string; bytes: Uint8Array }>;
+  /** A mesh part's size as drawn (mm: across X, Y, up Z). */
+  meshSize?: [number, number, number];
 }
 
 /**

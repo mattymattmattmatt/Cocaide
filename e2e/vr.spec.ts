@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { openApp, savedDocument, waitForRebuild } from "./helpers";
+import { boxGlb } from "../tests/glb-fixture";
 
 type Hook = {
   project(p: number[]): [number, number];
@@ -587,4 +588,33 @@ test("walking off a table in VR brings you down to the floor", async ({ page }) 
   await device(page, "d.controllers.left.updateAxes('thumbstick', 0, 0);");
   // Down on the slab, not hanging at the table's height.
   await expect.poll(async () => Math.abs((await vr(page)).standing!.at[2] - 100), { timeout: 5_000 }).toBeLessThan(20);
+});
+
+test("a .glb model in an assembly keeps its texture in VR, beside a plain white part", async ({ page }) => {
+  // A white slab (this part) and a textured 2 × 0.5 × 1 m model, white too under its texture: VR must not take one for the other.
+  const doc = {
+    version: 1, units: "mm", name: "room", appearance: { color: "#ffffff" },
+    features: [
+      { id: "s1", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, 0] }, entities: [{ id: "r", type: "rect", center: [3000, 5000], w: 8000, h: 10000 }] },
+      { id: "slab", op: "extrude", sketch: "s1", distance: 100, newBody: "slab" },
+    ],
+    assembly: {
+      parts: { sofa: { version: 1, units: "mm", name: "Sofa", features: [], mesh: { glb: Buffer.from(boxGlb(2, 0.5, 1)).toString("base64") } } },
+      components: [{ id: "room", part: "self", fixed: true }, { id: "sofa-1", part: "sofa", at: [3000, 5000, 100] }],
+    },
+    vr: { start: { at: [3000, 3000, 100], heading: 90 } },
+  };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.reload();
+  await waitForRebuild(page);
+  await page.getByTestId("mode-assembly").click();
+  await expect.poll(async () => page.evaluate("window.__cocaideViewport.meshLooks()"), { timeout: 60_000 }).toEqual([expect.objectContaining({ texture: true, loaded: true, uv: true })]);
+  await page.getByTestId("view-vr").click();
+  await expect.poll(async () => (await vr(page)).active).toBe(true);
+  type T = { textured: number; drawUv: boolean };
+  await expect.poll(async () => ((await page.evaluate("window.__cocaideViewport.vrState()")) as T).textured).toBe(1);
+  expect(((await page.evaluate("window.__cocaideViewport.vrState()")) as T).drawUv).toBe(true);
+  // And it is furniture: it moves.
+  expect(((await page.evaluate("window.__cocaideViewport.vrItems()")) as string[]).filter((s) => s.startsWith("sofa-1"))).toEqual(["sofa-1/model:true"]);
 });

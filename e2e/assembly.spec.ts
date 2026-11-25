@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import type { Vec3 } from "../src/doc/types";
 import { expectVolume, openApp, savedDocument } from "./helpers";
+import { boxGlb } from "../tests/glb-fixture";
 
 test.beforeEach(async ({ page }) => {
   (page as unknown as { problems: string[] }).problems = await openApp(page);
@@ -537,6 +538,39 @@ test("the engine example opens on its Assembly tab: eleven parts, every kind of 
   // Built and solved: no mate shows as failing.
   await expect.poll(async () => page.locator(".asm-mate-row.failed").count(), { timeout: 60_000 }).toBe(0);
   for (const kind of ["Coincident", "Distance", "Parallel", "Perpendicular", "Angle", "Concentric, rotation locked", "Tangent", "Lock"]) await expect(page.getByTestId("assembly-tree")).toContainText(kind);
+});
+
+test("a .glb model put in from a file: carried in the file as a mesh part, drawn, sized to its real width", async ({ page }) => {
+  await page.getByTestId("mode-assembly").click();
+  await page.getByTestId("asm-insert").click();
+  await page.getByTestId("asm-insert-self").click();
+  await expect(page.getByTestId("asm-component-bracket-1")).toBeVisible();
+  // A 2 × 0.5 × 1 m box with a texture (glTF Y up), as a furniture maker's export would be.
+  await page.getByTestId("asm-insert").click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByTestId("asm-insert-file").click();
+  await (await chooser).setFiles({ name: "Ivory_sofa.glb", mimeType: "model/gltf-binary", buffer: Buffer.from(boxGlb(2, 0.5, 1)) });
+  const row = page.locator('[data-testid^="asm-component-Ivory"]');
+  await expect(row).toHaveCount(1);
+  await expect(page.getByTestId("notice")).toContainText("2000 × 1000 × 500 mm as modelled");
+  // In the file: a part with no features and the .glb, base64.
+  const parts = ((await assembly(page)) as unknown as { parts: Record<string, { name: string; features: unknown[]; mesh: { glb: string; scale?: number } }> }).parts;
+  const [key, part] = Object.entries(parts)[0];
+  expect(part.name).toBe("Ivory sofa");
+  expect(part.features).toEqual([]);
+  expect(Buffer.from(part.mesh.glb, "base64").subarray(0, 4).toString()).toBe("glTF");
+  // Selected: its size, as modelled; typed to its real width, the rest follow.
+  await row.locator(".asm-row").click();
+  await expect(page.getByTestId("asm-mesh-size")).toBeVisible();
+  await expect(page.getByTestId("asm-mesh-size-x")).toHaveValue("2000");
+  await expect(page.getByTestId("asm-edit-part")).toHaveCount(0);
+  await page.getByTestId("asm-mesh-size-x").fill("3380");
+  await page.getByTestId("asm-mesh-size-x").press("Enter");
+  await expect.poll(async () => ((await assembly(page)) as unknown as { parts: Record<string, { mesh: { scale?: number } }> }).parts[key].mesh.scale).toBeCloseTo(1.69, 3);
+  await expect(page.getByTestId("asm-mesh-size-y")).toHaveValue("1690");
+  await expect(page.getByTestId("asm-mesh-size-z")).toHaveValue("845");
+  // Drawn: the joined view has its face, textured.
+  await expect.poll(async () => page.evaluate("window.__cocaideViewport.meshLooks?.()")).toEqual([expect.objectContaining({ texture: true })]);
 });
 
 test("the timber shed example opens on its Assembly tab with all 64 components built", async ({ page }) => {

@@ -2,6 +2,7 @@
 // and each component's solid placed (x ↦ R·x + t) under its own name: what
 // the assembly's STEP file and its interference check are made of.
 
+import { isMeshPart } from "../mesh/meshPart";
 import type { TopoDS_Shape } from "replicad-opencascadejs";
 import { interference } from "./measure";
 import type { OC, Scope } from "./oc";
@@ -27,6 +28,8 @@ export function withAssemblyShapes<T>(oc: OC, s: Scope, parts: Record<string, un
     const shapes: { name: string; shape: TopoDS_Shape }[] = [];
     const missing: string[] = [];
     for (const k of components) {
+      // A mesh part (a .glb model) has no solid: left out of what needs one, not counted as broken.
+      if (isMeshPart(parts[k.part])) continue;
       let r = built.get(k.part);
       if (!r) {
         r = rebuild(parts[k.part], oc);

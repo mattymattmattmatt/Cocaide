@@ -4,6 +4,7 @@
 // that makes the change (setAssembly: the assembly with the mates solved).
 // What the user can do in the Assembly tab, the AI can do here, and check.
 
+import { isMeshPart } from "../mesh/meshPart";
 import { autoExplode, explodeWithout } from "./explode";
 import { nextComponentId, nextMateId, SELF, validateAssembly } from "../doc/assembly";
 import type { Command, RawDocument } from "../doc/commands";
@@ -63,6 +64,8 @@ async function topologies(env: AssemblyEnv, asm: Assembly, doc: RawDocument = en
   const views = new Map<string, PartTopology>();
   const problems: string[] = [];
   for (const [key, part] of Object.entries(partDocuments(doc as Raw, asm))) {
+    // A mesh part (a .glb model) has no faces to mate to: nothing to build.
+    if (isMeshPart(part)) continue;
     const t = await env.topology(part);
     if (typeof t === "string") problems.push(`part "${key}" (${partName(doc as Raw, key)}) doesn't build: ${t}`);
     else views.set(key, t);

@@ -40,7 +40,8 @@ export function itemsOf(view: RebuildView | null): VrItem[] {
     const key = f.partBody !== undefined ? `${body}/${f.partBody}` : body;
     let it = by.get(key);
     if (!it) {
-      it = { key, body, ...(f.partBody !== undefined ? { partBody: f.partBody } : {}), faces: [], min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity], movable: isFurniture(body, f.partBody) };
+      // A mesh part (a .glb model, src/mesh/meshPart.ts) is furniture made elsewhere: it always moves.
+      it = { key, body, ...(f.partBody !== undefined ? { partBody: f.partBody } : {}), faces: [], min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity], movable: !!f.mesh || isFurniture(body, f.partBody) };
       by.set(key, it);
     }
     it.faces.push(i);
@@ -73,6 +74,26 @@ export function itemTriangles(view: RebuildView, item: VrItem): Float32Array {
       out[o++] = m.positions[v];
       out[o++] = m.positions[v + 1];
       out[o++] = m.positions[v + 2];
+    }
+  }
+  return out;
+}
+
+/** An item's texture coordinates, laid out as itemTriangles lays out its points (null: the view has none). */
+export function itemUvs(view: RebuildView, item: VrItem): Float32Array | null {
+  const m = view.mesh!;
+  if (!m.uvs) return null;
+  let n = 0;
+  for (const i of item.faces) n += m.faceRanges[i]?.count ?? 0;
+  const out = new Float32Array(n * 2);
+  let o = 0;
+  for (const i of item.faces) {
+    const r = m.faceRanges[i];
+    if (!r) continue;
+    for (let t = r.start; t < r.start + r.count; t++) {
+      const v = m.indices[t] * 2;
+      out[o++] = m.uvs[v];
+      out[o++] = m.uvs[v + 1];
     }
   }
   return out;

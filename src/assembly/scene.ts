@@ -42,6 +42,10 @@ export function composeScene(components: SceneComponent[], name = "assembly"): A
   const bodies: RebuildView["bodies"] = [];
   const faceOwner: Owner[] = [];
   const edgeOwner: Owner[] = [];
+  // Texture coordinates (a mesh part's; zeros for the rest) and texture images, only when some part has them.
+  const anyUvs = components.some((k) => !k.hidden && k.view?.mesh?.uvs);
+  const uvs: number[] = [];
+  const textures: NonNullable<RebuildView["textures"]> = {};
   for (const k of components) {
     const v = k.view;
     if (k.hidden || !v) continue;
@@ -58,6 +62,11 @@ export function composeScene(components: SceneComponent[], name = "assembly"): A
       const n = apply(P.R, [m.normals[i], m.normals[i + 1], m.normals[i + 2]]);
       normals.push(n[0], n[1], n[2]);
     }
+    if (anyUvs) {
+      if (m.uvs) for (let i = 0; i < m.uvs.length; i++) uvs.push(m.uvs[i]);
+      else for (let i = 0; i < m.positions.length / 3; i++) uvs.push(0, 0);
+    }
+    if (v.textures) Object.assign(textures, v.textures);
     for (let i = 0; i < m.indices.length; i++) indices.push(m.indices[i] + vertexBase);
     for (const r of m.faceRanges) faceRanges.push({ start: r.start + indexBase, count: r.count });
     for (let i = 0; i < m.edges.length; i += 3) {
@@ -102,10 +111,10 @@ export function composeScene(components: SceneComponent[], name = "assembly"): A
     bodies.push({ name: k.id, faces: [faceBase, faces.length], edges: [edgeBase, edgeInfos.length] });
   }
   const mesh: MeshData | null = positions.length
-    ? { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), faceRanges, edges: new Float32Array(edges), edgeRanges }
+    ? { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), faceRanges, edges: new Float32Array(edges), edgeRanges, ...(anyUvs ? { uvs: new Float32Array(uvs) } : {}) }
     : null;
   return {
-    view: { ok: true, name, errors: [], features: [], sketches: [], measurements: null, mesh, faces, edges: edgeInfos, bodies, datums: {} },
+    view: { ok: true, name, errors: [], features: [], sketches: [], measurements: null, mesh, faces, edges: edgeInfos, bodies, datums: {}, ...(Object.keys(textures).length ? { textures } : {}) },
     faceOwner,
     edgeOwner,
   };

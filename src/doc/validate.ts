@@ -5,6 +5,7 @@
 // document unusable. Feature problems are reported per feature so the rest of
 // the part can still rebuild.
 
+import { meshSpecProblems } from "../mesh/meshPart";
 import { vrProblems } from "./vr";
 import {
   BODY_NAME,
@@ -201,7 +202,9 @@ export function validateDocument(input: unknown, opts: ValidateOptions = {}): Va
     result.headerErrors = header.errors;
     return result;
   }
-  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "appearance", "bodyAppearances", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly", "vr"]);
+  header.keys(input, "", ["version", "units", "name", "parameters", "material", "bodyMaterials", "appearance", "bodyAppearances", "source", "photo", "profiles", "nodes", "welds", "features", "drawing", "rollback", "properties", "folders", "cutList", "assembly", "vr", "mesh"]);
+  // A mesh part (src/mesh/meshPart.ts): a .glb carried, drawn instead of features.
+  if (input.mesh !== undefined) for (const m of meshSpecProblems(input.mesh)) header.fail("mesh", m);
   if (input.version !== 1) header.fail("version", `must be 1 (got ${describe(input.version)})`);
   if (input.units !== "mm") {
     header.fail("units", `must be "mm" (got ${describe(input.units)}); v1 documents store millimetres only`);

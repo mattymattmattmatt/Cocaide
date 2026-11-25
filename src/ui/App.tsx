@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { isMeshPart } from "../mesh/meshPart";
 import { assemblyBom } from "../assembly/bom";
 import { autoExplode } from "../assembly/explode";
 import { partDocuments } from "../assembly/model";
@@ -175,6 +176,8 @@ const EXAMPLES: Record<string, string> = {
 /** The examples that are parts (an assembly can't go into another as a part). */
 const PART_EXAMPLES = Object.fromEntries(Object.entries(EXAMPLES).filter(([, t]) => !t.includes('"assembly"')));
 const STORAGE_KEY = "cocaide.document.v1";
+/** The most text kept in the browser's storage across reloads (it holds about 5 MB). */
+const STORE_MAX_CHARS = 4_500_000;
 const REBUILD_DELAY_MS = 250;
 /** In the drawing, how long the model is still before the sheets not on screen are projected. */
 const REST_OF_SHEETS_DELAY_MS = 600;
@@ -755,12 +758,26 @@ export function App() {
   }, [composed]); // eslint-disable-line react-hooks/exhaustive-deps
   const drawingChecksNow = useMemo(() => (composed && shown ? drawingChecks(composed.sheets, shown, view?.measurements ?? null, geometry?.g ?? null) : []), [composed, shown, view, geometry]);
 
-  // Keep the working document across reloads.
+  // Keep the working document across reloads. One too big for the browser's storage (a .glb model carried in it) is
+  // not kept, and the copy kept before is dropped, so a reload doesn't bring back something older; said once.
+  const tooBigWarned = useRef(false);
   useEffect(() => {
+    const big = d.text.length + (d.savedText === d.text ? 0 : d.savedText.length) > STORE_MAX_CHARS;
     try {
+      if (big) throw new Error("too big");
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ text: d.text, savedText: d.savedText }));
+      tooBigWarned.current = false;
     } catch {
-      // storage full or disabled: not fatal
+      // Storage full or disabled: not fatal, but don't leave an older copy to come back.
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        /* private window */
+      }
+      if (big && !tooBigWarned.current) {
+        tooBigWarned.current = true;
+        setNotice({ kind: "info", text: "This project is too big for the browser to keep across a reload (it carries a .glb model): Save it as a file to keep your changes." });
+      }
     }
   }, [d.text, d.savedText]);
 
@@ -1686,6 +1703,7 @@ export function App() {
       if (!asm.explode?.length && asm.components.length > 1) {
         const tops = new Map<string, PartTopology>();
         for (const [key, part] of Object.entries(partDocuments(doc as Record<string, unknown>, asm))) {
+          if (isMeshPart(part)) continue;
           const t = await kernel.port.topology(part);
           if (t) tops.set(key, t);
         }

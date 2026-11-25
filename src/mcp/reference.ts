@@ -413,6 +413,12 @@ an example, a .cocaide.json, or a STEP file, whose faces are mateable like any),
 "rotation" [rx, ry, rz] degrees (turned about X, then Y, then Z, then moved), and mates between their faces, edges
 or default planes and axes. The first component is fixed at the origin; mates move the others (never a fixed one).
 The assembly never changes the part.
+A carried part can instead be a mesh: a .glb model (furniture made elsewhere), drawn with its texture, picked,
+hidden, measured point to point and moved in VR like any component, but with no features, faces to mate or solid
+(left out of STEP export, interference and drawings): { "version": 1, "units": "mm", "name": "Sofa", "features": [],
+"mesh": { "glb": "<the .glb, base64>" | "url": "https://...", "scale"?: 1.6 } }. glTF is Y up in metres: it is drawn
+Z up in mm, "scale" times, the middle of its underside on the part's origin; place it with the component's "at" and
+"rotation". The Assembly tab's Insert > From a file takes a .glb; its properties set its real size.
 Assembling, step by step:
 1. insertComponent each part ({ "part": "self" }, { "part": { "example": "flange" } }, { "part": { "file": "pin.step" } });
    a second copy of a part: insertComponent with the part key the assembly carries.

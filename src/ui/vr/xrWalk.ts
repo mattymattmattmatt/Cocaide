@@ -32,7 +32,7 @@ import * as THREE from "three";
 import { niceName, PIN_COLORS, PIN_TAGS, PIN_WORDS, type PinTag, type VrMove, type VrPin, type VrStart } from "../../doc/vr";
 import type { Vec3 } from "../../doc/types";
 import type { RebuildView } from "../../worker/protocol";
-import { centreOf, itemOfFace, itemOfMove, itemsOf, itemTriangles, type VrItem } from "./items";
+import { centreOf, itemOfFace, itemOfMove, itemsOf, itemTriangles, itemUvs, type VrItem } from "./items";
 import { cardSprite, disposeSprite, Panel, pinSprite, textSprite, VR_COLORS } from "./vrText";
 import { scaledAbout, scaleText, startScale, twoHandPose, type HeldPose } from "./inspect";
 import type { VrPrefs } from "./vrPrefs";
@@ -652,15 +652,20 @@ export class XrWalk {
       const view = this.host.view()!;
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(itemTriangles(view, item), 3));
+      // A mesh part's texture coordinates, so its copy keeps its texture.
+      const uv = itemUvs(view, item);
+      if (uv) g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
       g.computeVertexNormals();
       // Each face in the colour the model draws it (a chair's frame and its cushion), in runs of one material.
       const { materials, groups } = this.materialsOf(item);
       for (const gr of groups) g.addGroup(gr.start, gr.count, gr.index);
       const ghost = new THREE.Mesh(g, materials);
-      // Its edges in black, as the model draws them.
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x1d1e20 }));
-      edges.raycast = () => {};
-      ghost.add(edges);
+      // Its edges in black, as the model draws them (a mesh part, a .glb model, has none drawn: only its texture).
+      if (!item.faces.some((f) => view.faces[f]?.mesh)) {
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x1d1e20 }));
+        edges.raycast = () => {};
+        ghost.add(edges);
+      }
       ghost.matrixAutoUpdate = false;
       ghost.frustumCulled = false;
       ghost.userData.item = item.key;
@@ -1733,12 +1738,13 @@ export class XrWalk {
     const src = m?.geometry.index;
     if (!m || !src || !Array.isArray(m.material) || m.material.length < 2 || !m.parent) return;
     const g = m.geometry;
-    // One material for each look (colour, finish, opacity, shown or not): the first of the mesh's with it.
+    // One material for each look (colour, finish, opacity, shown or not, texture and sides: a .glb model's textured
+    // white is not the house's plain white): the first of the mesh's with it.
     const keys = new Map<string, number>();
     const looks: THREE.Material[] = [];
     const slot = m.material.map((mt) => {
       const s = mt as THREE.MeshStandardMaterial;
-      const k = [s.color?.getHex(), s.metalness, s.roughness, s.opacity, s.transparent, s.visible, !!s.envMap].join("|");
+      const k = [s.color?.getHex(), s.metalness, s.roughness, s.opacity, s.transparent, s.visible, !!s.envMap, s.map?.uuid ?? "", s.side].join("|");
       let i = keys.get(k);
       if (i === undefined) {
         i = looks.length;
@@ -1755,6 +1761,9 @@ export class XrWalk {
     const copy = new THREE.BufferGeometry();
     copy.setAttribute("position", g.getAttribute("position"));
     copy.setAttribute("normal", g.getAttribute("normal"));
+    // A mesh part's texture coordinates (src/mesh/meshPart.ts).
+    const uv = g.getAttribute("uv");
+    if (uv) copy.setAttribute("uv", uv);
     let n = 0;
     lists.forEach((list, k) => {
       const first = n;
@@ -2069,6 +2078,10 @@ export class XrWalk {
       pins: this.pins.map((p) => ({ tag: p.tag, at: p.at, ...(p.text ? { text: p.text } : {}) })),
       typing: this.typing?.text ?? null,
       moved: [...this.placed.values()].map((p) => ({ key: p.item.key, move: p.move, turn: p.turn })),
+      /** How many of the materials VR draws the model with carry a texture (a .glb model's). */
+      textured: ([(this.draw?.mesh ?? this.host.mesh())?.material ?? []].flat() as THREE.MeshStandardMaterial[]).filter((m) => !!m.map).length,
+      /** Whether VR's copy of the model has texture coordinates. */
+      drawUv: !!(this.draw?.mesh ?? this.host.mesh())?.geometry.getAttribute("uv"),
       /** How many colours each moved piece's copy is drawn in. */
       colours: Object.fromEntries([...this.placed].map(([k, p]) => [k, new Set(p.ghost.geometry.groups.map((g) => g.materialIndex)).size || 1])),
       carrying: this.carry?.key ?? null,

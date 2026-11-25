@@ -2,6 +2,9 @@
 // built in the kernel worker, the scene on screen, the solve, what is
 // selected, and every edit as one undo step with the mates solved.
 
+import { isMeshPart, meshSpecOf, scaleForSize, type MeshSpec } from "../../mesh/meshPart";
+import { glbPart } from "../../mesh/glbPart";
+import { loadMeshView, meshKey } from "../../mesh/loadMesh";
 import { explodeOffsets } from "../../doc/assembly";
 import { autoExplode, explodeWithout, withOffset } from "../../assembly/explode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -77,11 +80,12 @@ export function useAssembly(o: AssemblyOptions) {
     if (!o.active) return;
     let gone = false;
     for (const [key, part] of Object.entries(docs)) {
-      const g = geometryKey(part);
+      // A mesh part (a .glb) is read in the page; the rest are built by the kernel.
+      const mesh = isMeshPart(part);
+      const g = mesh ? `mesh|${meshKey(part)}` : geometryKey(part);
       if (keys.current.get(key) === g) continue;
       keys.current.set(key, g);
-      o.kernel
-        .partView(part)
+      (mesh ? loadMeshView(part, key) : o.kernel.partView(part))
         .then((v) => {
           if (gone || keys.current.get(key) !== g) return;
           setViews((m) => new Map(m).set(key, v));
@@ -237,9 +241,16 @@ export function useAssembly(o: AssemblyOptions) {
   };
 
   const insertFile = async () => {
-    const file = await pickFile(".json,.cocaide.json,application/json,.step,.stp,.STEP,.STP");
+    const file = await pickFile(".json,.cocaide.json,application/json,.step,.stp,.STEP,.STP,.glb,.GLB");
     if (!file) return;
     try {
+      // A .glb model (furniture made elsewhere): carried in the file as a mesh part, drawn with its texture.
+      if (/\.glb$/i.test(file.name)) {
+        const made = await glbPart(file);
+        insertDocument(made.part);
+        o.notice(`${made.part.name} is in, ${made.size.map((v) => Math.round(v)).join(" × ")} mm as modelled: set its real size in its properties (Size), then place it.`, "info");
+        return;
+      }
       const text = await file.text();
       // A STEP file comes in as a part of its own (an imported solid): its faces, holes and bosses mate like any.
       if (/\.(step|stp)$/i.test(file.name)) {
@@ -258,10 +269,19 @@ export function useAssembly(o: AssemblyOptions) {
   /** A part in the file (not this one) replaced by a newer copy from a file: every component using it updates, where it is; mates find their faces again where they still exist. */
   const replacePart = async (key: string) => {
     if (key === SELF || !doc) return o.notice("That is this document's own part: change it on the Model tab.", "info");
-    const file = await pickFile(".json,.cocaide.json,application/json,.step,.stp,.STEP,.STP");
+    const file = await pickFile(".json,.cocaide.json,application/json,.step,.stp,.STEP,.STP,.glb,.GLB");
     if (!file) return;
     let part: Record<string, unknown>;
     try {
+      if (/\.glb$/i.test(file.name)) {
+        part = (await glbPart(file)).part;
+        // A model replacing a model keeps the size it was given.
+        const old = meshSpecOf(partDocument(doc as Record<string, unknown>, key));
+        if (old?.scale) (part.mesh as MeshSpec).scale = old.scale;
+        const problem = o.dispatch({ type: "setAssemblyPart", key, part });
+        if (problem) return o.notice(`Not replaced: ${problem}`, "error");
+        return o.notice(`Replaced ${partName(doc as Record<string, unknown>, key)} with ${file.name}.`);
+      }
       const text = await file.text();
       if (/\.(step|stp)$/i.test(file.name)) {
         const made = stepPart(file.name, text);
@@ -276,6 +296,23 @@ export function useAssembly(o: AssemblyOptions) {
     const problem = o.dispatch({ type: "setAssemblyPart", key, part });
     if (problem) return o.notice(`Not replaced: ${problem}`, "error");
     o.notice(`Replaced ${was} with ${file.name}: ${users.join(", ")} ${users.length === 1 ? "updates" : "update"} where ${users.length === 1 ? "it is" : "they are"}. A mate whose face is gone shows red in the tree: pick its faces again.`);
+  };
+
+  /** A mesh part's scale and its size as drawn (null: not a mesh part); size null while it loads. */
+  const meshInfo = (key: string): { scale: number; size: [number, number, number] | null } | null => {
+    const spec = doc ? meshSpecOf(partDocument(doc as Record<string, unknown>, key)) : null;
+    if (!spec) return null;
+    return { scale: spec.scale ?? 1, size: views.get(key)?.meshSize ?? null };
+  };
+  /** A mesh part made `length` mm along one side (0 across X, 1 Y, 2 up), the others in proportion. */
+  const setMeshSize = (key: string, axis: 0 | 1 | 2, length: number) => {
+    const part = doc ? partDocument(doc as Record<string, unknown>, key) : undefined;
+    const spec = meshSpecOf(part);
+    const info = meshInfo(key);
+    if (!part || !spec || !info?.size) return;
+    const scale = Math.round(scaleForSize(info.size, info.scale, axis, length) * 1e6) / 1e6;
+    const problem = o.dispatch({ type: "setAssemblyPart", key, part: { ...part, mesh: { ...spec, scale } } });
+    if (problem) o.notice(`Not resized: ${problem}`, "error");
   };
 
   const insertExample = (name: string) => {
@@ -883,6 +920,8 @@ export function useAssembly(o: AssemblyOptions) {
     pick,
     insertSelf,
     insertFile,
+    meshInfo,
+    setMeshSize,
     insertExample,
     replacePart,
     mate,
