@@ -31,10 +31,11 @@ test("draw a 3D sketch: points from the last, Tab to a vertical plane, an exact 
   const editor = page.getByTestId("sketch3d-editor");
   await expect(editor.getByTestId("sketch3d-draw")).toHaveAttribute("aria-pressed", "true");
   await expect(editor.getByTestId("sketch3d-plane-XY")).toHaveAttribute("aria-checked", "true");
-  // Three clicks on the ground plane: a point, then two lines.
+  // Three clicks on the ground plane: a point, then two lines (the second off every axis's line on screen: straight
+  // up the screen from a point is up the Z axis now, so it would rise).
   await clickAt(page, 0.5, 0.6);
   await clickAt(page, 0.65, 0.6);
-  await clickAt(page, 0.65, 0.4);
+  await clickAt(page, 0.75, 0.75);
   await expect(page.getByTestId("draw3d-tip")).toContainText("XY plane");
   // Tab: the vertical XZ plane through the last point; one more click goes up.
   await page.keyboard.press("Tab");
@@ -179,4 +180,59 @@ test("draw onto another sketch: partway along its line, and on its end, the poin
   expect((await sketch3d(page)).points[1]).toEqual({ id: "p2", at: { sketch: "gable", point: "r1.end" } });
   // Properties says what each follows.
   await expect(page.getByTestId("sketch3d-follows-p2")).toContainText("gable's r1.end");
+});
+
+test("posts up from another sketch's corners without Tab: the line locks along Z, a typed length places it, the tops join into a frame", async ({ page }) => {
+  await page.setViewportSize({ width: 1700, height: 1100 });
+  const P = [[-300, -200], [300, -200], [300, 200], [-300, 200]];
+  const doc = { version: 1, units: "mm", name: "frame", features: [{ id: "base", op: "sketch", plane: { type: "ref", ref: { datum: "Top" } }, entities: P.map((a, i) => ({ id: `l${i + 1}`, type: "line", start: a, end: P[(i + 1) % 4] })) }] };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+  await page.getByTestId("view-fit").click();
+  const cb = (await page.locator("canvas").first().boundingBox())!;
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(600);
+  await page.getByText("Weldments", { exact: true }).click();
+  await page.getByTestId("tool-sketch3d").click();
+  const H = 200;
+  // Every corner and the point above it in clear view (off the toolbars), to point at.
+  const inView = async (p: number[]) => {
+    const [x, y] = await screenOf(page, p);
+    expect(x).toBeGreaterThan(cb.x + 60);
+    expect(x).toBeLessThan(cb.x + cb.width - 60);
+    expect(y).toBeGreaterThan(cb.y + 40);
+    expect(y).toBeLessThan(cb.y + cb.height - 80);
+    return [x, y] as const;
+  };
+  for (const c of P) {
+    const [cx, cy] = await inView([c[0], c[1], 0]);
+    await page.mouse.move(cx + 2, cy + 1);
+    await page.mouse.click(cx + 2, cy + 1);
+    // Pointed straight up, on the XY work plane still: it locks along Z.
+    const [ux, uy] = await inView([c[0], c[1], H]);
+    await page.mouse.move(ux + 1, uy - 3);
+    await expect(page.getByTestId("draw3d-tip")).toContainText("Along Z");
+    // A typed length: exactly that far up.
+    await page.keyboard.type(String(H));
+    await expect(page.getByTestId("draw3d-typed")).toContainText(`Length ${H} mm`);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
+  }
+  // The tops joined, round and back to the first: a frame.
+  for (const c of [...P, P[0]]) {
+    const [tx, ty] = await inView([c[0], c[1], H]);
+    await page.mouse.move(tx + 1, ty);
+    await page.mouse.click(tx + 1, ty);
+  }
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => (await sketch3d(page))?.lines?.length).toBe(8);
+  const f = await sketch3d(page);
+  // Each corner follows the rectangle; each top is measured straight up from its corner, so the posts follow it too.
+  const tops = f.points.filter((p: any) => p.from);
+  expect(tops).toHaveLength(4);
+  for (const t of tops) expect(t.by).toEqual([0, 0, H]);
+  expect(f.points.filter((p: any) => p.at?.sketch === "base")).toHaveLength(4);
 });

@@ -47,7 +47,7 @@ import type { VrViewProps } from "./vr/types";
 import { threadBands, ThreadLayer } from "./viewport/threadLayer";
 import { PreviewLayer, type PreviewLook } from "./viewport/preview";
 import { entityPolylines3d, sketchAt, sketchEntityAt, type SketchEntityHit } from "./model/sketchPick";
-import { deltaText, nextPlane, niceStep, PLANE_AXES, rayPlane, snapToGrid, type WorkPlane } from "./sketch3d/place";
+import { deltaText, nextPlane, niceStep, PLANE_AXES, rayPlane, snapToGrid, type WorkPlane , alongAxis, atLength, AXIS_COLORS, AXIS_NAMES} from "./sketch3d/place";
 import { entityPolylines } from "../geom/profile";
 import { sketchRefText } from "../features/datum";
 import { areaZoom, blendRig, distanceToRay, ease, framePoints, nearestOnSegments, nearestToRay, poseOf, rigOf, rotationCentre, VIEW_GLIDE_MS, type CentreWhy, type Pose } from "./viewport/orbit";
@@ -324,6 +324,8 @@ interface ViewportApi {
   setSketchMarks(marks: readonly { sketch: string; entity: string }[]): void;
   /** The 3D sketch being drawn changed: draw it again. */
   redrawDraw3d(): void;
+  /** A length typed while drawing a 3D sketch: the next point that far along the line under way (false: no line under way). */
+  drawLength(len: number): boolean;
   /** The frame's corners, and the one selected. */
   setCorners(list: readonly CornerMark[], selected: string | null): void;
   setUnderlay(u: Underlay | null): void;
@@ -2019,7 +2021,7 @@ export function Viewport({
     };
     // ------------------------------------------------------------ drawing a 3D sketch
     type Link = { sketch: string; point: string; t?: number };
-    let drawHover: { at: Vec3; snap: string | null; on?: string; link?: Link } | null = null;
+    let drawHover: { at: Vec3; snap: string | null; on?: string; link?: Link; axis?: number } | null = null;
     /** A point of the sketch being dragged: from where, and where it is now. */
     let pointDrag: { id: string; from: Vec3; at: Vec3; x: number; y: number; pointer: number } | null = null;
     /** Points elsewhere a click snaps onto: the part's corners, and other sketches' ends, centres and points. */
@@ -2058,7 +2060,7 @@ export function Viewport({
      * the part or another sketch's point, else on the work plane through
      * `base`, snapped to the grid from it.
      */
-    const drawAt = (x: number, y: number, base?: Vec3, skip?: string): { at: Vec3; snap: string | null; on?: string; link?: Link } | null => {
+    const drawAt = (x: number, y: number, base?: Vec3, skip?: string): { at: Vec3; snap: string | null; on?: string; link?: Link; axis?: number } | null => {
       const d = draw3dRef.current;
       if (!d) return null;
       const near = (at: Vec3) => {
@@ -2081,7 +2083,44 @@ export function Viewport({
       aim(x, y);
       const o = raycaster.ray.origin;
       const dir = raycaster.ray.direction;
-      // Partway along a line: the point on it nearest the pointer's ray.
+      const from = base ?? d.anchor ?? [0, 0, 0];
+      const step = niceStep(controls.worldPerPixel());
+      // Along an axis: from the point drawn from, the pointer within 10 px of where the X, Y or Z line through it
+      // runs on screen locks the line to that axis. On the ground plane (XY, where drawing starts) that's any of the
+      // three, so a post goes straight up from a corner without Tab; on a plane turned to with Tab, its own two axes.
+      if (base ?? d.anchor) {
+        const f2 = projectPx(from);
+        let ax: { k: number; px: number; t: number } | null = null;
+        if (f2) {
+          for (const k of d.plane === "XY" ? [0, 1, 2] : PLANE_AXES[d.plane]) {
+            const tip: Vec3 = [...from];
+            tip[k] += step * 10;
+            const t2 = projectPx(tip);
+            if (!t2) continue;
+            const [ux, uy] = [t2[0] - f2[0], t2[1] - f2[1]];
+            const len = Math.hypot(ux, uy);
+            if (len < 6) continue; // the axis points at the eye: no line to follow on screen
+            const px = Math.abs((x - f2[0]) * uy - (y - f2[1]) * ux) / len;
+            if (px > 10) continue;
+            // The point on the axis nearest the pointer must show under it (an axis seen end on, short on screen, can't
+            // reach a pointer far out along its line: that pointer means the plane, not the axis).
+            const t = alongAxis([o.x, o.y, o.z], [dir.x, dir.y, dir.z], from, k);
+            if (t === null) continue;
+            const exact: Vec3 = [...from];
+            exact[k] += t;
+            const q = projectPx(exact);
+            if (!q || Math.hypot(q[0] - x, q[1] - y) > 12) continue;
+            if (!ax || px < ax.px) ax = { k, px, t };
+          }
+        }
+        if (ax) {
+          const at: Vec3 = [...from];
+          at[ax.k] = Math.round((from[ax.k] + Math.round(ax.t / step) * step) * 1e6) / 1e6 + 0;
+          if (at[ax.k] !== from[ax.k]) return { at, snap: null, axis: ax.k };
+        }
+      }
+      // Partway along a line (after an axis lock: a post drawn up past a line behind it stays a post): the point on it
+      // nearest the pointer's ray.
       let online: { at: Vec3; on: string; link?: Link; px: number } | null = null;
       for (const l of snapLines(d)) {
         const u = [l.b[0] - l.a[0], l.b[1] - l.a[1], l.b[2] - l.a[2]];
@@ -2100,9 +2139,8 @@ export function Viewport({
         if (px <= 8 && (!online || px < online.px)) online = { at, on: `${l.on} (${Math.round(t * 1000) / 10}% along)`, ...(l.sketch && l.id ? { link: { sketch: l.sketch, point: l.id, t } } : {}), px };
       }
       if (online) return { at: online.at, snap: null, on: online.on, ...(online.link ? { link: online.link } : {}) };
-      const from = base ?? d.anchor ?? [0, 0, 0];
       const hit = rayPlane([o.x, o.y, o.z], [dir.x, dir.y, dir.z], from, d.plane);
-      return hit ? { at: snapToGrid(hit, from, d.plane, niceStep(controls.worldPerPixel())), snap: null } : null;
+      return hit ? { at: snapToGrid(hit, from, d.plane, step), snap: null } : null;
     };
     const redrawDraw3d = () => {
       disposeGroup(drawGroup);
@@ -2146,6 +2184,15 @@ export function Viewport({
         const h = vertexDots([pointDrag.at], HOVER_COLOR, 13);
         if (h) drawGroup.add(h);
       }
+      // Locked to an axis: that axis through the point drawn from, in its colour.
+      if (drawHover?.axis !== undefined && d.anchor && !pointDrag) {
+        const k = drawHover.axis;
+        const a: Vec3 = [...d.anchor];
+        const b: Vec3 = [...d.anchor];
+        a[k] -= step * 40;
+        b[k] += step * 40;
+        line([a, b], new THREE.LineDashedMaterial({ color: AXIS_COLORS[k], dashSize: step / 2, gapSize: step / 4, depthTest: false }), 7);
+      }
       // The line under way, and where it would end.
       if (drawHover && !pointDrag) {
         if (d.anchor) line([d.anchor, drawHover.at], new THREE.LineDashedMaterial({ color: HOVER_COLOR, dashSize: step / 2, gapSize: step / 3, depthTest: false }), 8);
@@ -2160,7 +2207,8 @@ export function Viewport({
       renderer.domElement.style.cursor = "crosshair";
       const rect = renderer.domElement.getBoundingClientRect();
       const d = draw3dRef.current!;
-      setDrawTip(drawHover ? { x: e.clientX - rect.left, y: e.clientY - rect.top, text: drawHover.on ? `On ${drawHover.on} · ${deltaText(d.anchor, drawHover.at)}` : deltaText(d.anchor, drawHover.at), snap: drawHover.snap } : null);
+      const along = drawHover?.axis !== undefined ? `Along ${AXIS_NAMES[drawHover.axis]} · ` : "";
+      setDrawTip(drawHover ? { x: e.clientX - rect.left, y: e.clientY - rect.top, text: drawHover.on ? `On ${drawHover.on} · ${deltaText(d.anchor, drawHover.at)}` : `${along}${deltaText(d.anchor, drawHover.at)}`, snap: drawHover.snap } : null);
     };
     // A press on one of the sketch's points drags it (before the controls see it); a press and release in place is a click on it.
     const drawPointDown = (e: PointerEvent) => {
@@ -3011,6 +3059,14 @@ export function Viewport({
         }
         redrawDraw3d();
       },
+      drawLength(len) {
+        const d = draw3dRef.current;
+        if (!d?.anchor || !drawHover || drawHover.snap) return false;
+        const at = atLength(d.anchor, drawHover.at, len);
+        if (!at) return false;
+        d.onPlace({ at, snap: null });
+        return true;
+      },
       setSketchMarks(next) {
         sketchPicked = next;
         redrawMarks();
@@ -3338,6 +3394,13 @@ export function Viewport({
   }, [corners, selectedCorner]);
   const draw3dRef = useRef(draw3d);
   draw3dRef.current = draw3d;
+  // A length being typed while drawing a 3D sketch (Enter places the point that far along the line).
+  const [drawTyped, setDrawTyped] = useState("");
+  const drawTypedRef = useRef(drawTyped);
+  drawTypedRef.current = drawTyped;
+  useEffect(() => {
+    if (!draw3d?.anchor) setDrawTyped("");
+  }, [draw3d?.anchor]);
   useEffect(() => {
     api.current?.redrawDraw3d();
   }, [draw3d]);
@@ -3350,6 +3413,14 @@ export function Viewport({
       const t = e.target as HTMLElement | null;
       if (!d || (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable))) return;
       if (e.key === "Tab") d.onPlane(nextPlane(d.plane));
+      // A length typed while a line is under way: Enter puts the point that far along it.
+      else if (d.anchor && !e.ctrlKey && !e.metaKey && !e.altKey && /^[0-9.]$/.test(e.key)) setDrawTyped((v) => (v + e.key).slice(0, 12));
+      else if (e.key === "Backspace" && drawTypedRef.current) setDrawTyped((v) => v.slice(0, -1));
+      else if (e.key === "Enter" && drawTypedRef.current) {
+        const len = Number(drawTypedRef.current);
+        if (len > 0) api.current?.drawLength(len);
+        setDrawTyped("");
+      } else if (e.key === "Escape" && drawTypedRef.current) setDrawTyped("");
       else if (e.key === "Escape") d.onEnd();
       else return;
       e.preventDefault();
@@ -3922,8 +3993,9 @@ export function Viewport({
       {drawTip && draw3d && (
         <TipBox x={drawTip.x} y={drawTip.y} testId="draw3d-tip">
           <div>{drawTip.snap ? `On ${drawTip.snap}` : drawTip.text}</div>
+          {drawTyped && <div data-testid="draw3d-typed">Length {drawTyped} mm · Enter</div>}
           <div className="pick-hint">
-            {draw3d.plane} plane · Tab turns it · {draw3d.anchor ? "Esc or double-click ends the line" : "click to start a line"}
+            {draw3d.plane} plane · Tab turns it · {draw3d.anchor ? "type a length · Esc or double-click ends the line" : "click to start a line"}
           </div>
         </TipBox>
       )}

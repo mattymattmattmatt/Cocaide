@@ -9,7 +9,7 @@ import { apply, type RawDocument } from "../src/doc/commands";
 import { allErrors, validateDocument } from "../src/doc/validate";
 import { sketch3dPoint, sketch3dPositions } from "../src/geom/sketch3d";
 import { loadOC, rebuild, type OC } from "../src/kernel";
-import { niceStep, rayPlane, snapToGrid } from "../src/ui/sketch3d/place";
+import { niceStep, rayPlane, snapToGrid, alongAxis, atLength } from "../src/ui/sketch3d/place";
 import { membersFromSketch } from "../src/weldment/sketchFrame";
 
 const table: RawDocument = JSON.parse(readFileSync(new URL("../examples/table-frame.cocaide.json", import.meta.url), "utf8"));
@@ -157,5 +157,23 @@ describe("3D sketch points that follow other sketches", () => {
     const m = (d: unknown) => validateDocument(d).features.find((f) => f.feature?.op === "member")!.feature as unknown as { from: number[] };
     expect(m(r.doc).from).toEqual([500, 0, 1650]);
     expect(m(moved).from).toEqual([500, 0, 1750]);
+  });
+});
+
+describe("drawing along an axis, and a typed length", () => {
+  it("the pointer's ray nearest the axis through the point drawn from: how far up (or along) it is", () => {
+    // Looking down 45° at the Z axis through (100, 0, 0) from in front: the ray passes (100, 0, 300) at its nearest.
+    const o: [number, number, number] = [100, -1000, 1300];
+    const d: [number, number, number] = [0, 1, -1];
+    expect(alongAxis(o, d, [100, 0, 0], 2)).toBeCloseTo(300, 9);
+    // Along X from the same point: the ray crosses x = 100 only, so nearest at 0 along it.
+    expect(alongAxis(o, d, [100, 0, 0], 0)).toBeCloseTo(0, 9);
+    // A ray along the axis itself: nothing to find.
+    expect(alongAxis([0, 0, 0], [0, 0, 1], [0, 0, 0], 2)).toBeNull();
+  });
+  it("a typed length: that far from the point drawn from, toward the pointer", () => {
+    expect(atLength([0, 0, 0], [0, 0, 37], 800)).toEqual([0, 0, 800]);
+    expect(atLength([10, 0, 0], [13, 4, 0], 10)).toEqual([16, 8, 0]);
+    expect(atLength([1, 1, 1], [1, 1, 1], 5)).toBeNull();
   });
 });

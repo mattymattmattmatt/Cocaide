@@ -50,3 +50,30 @@ export function deltaText(from: Vec3 | null, to: Vec3): string {
   const d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
   return `Δ ${d.map(r).join(", ")} · ${r(Math.hypot(...d))} mm`;
 }
+
+/** The axes' names and colours (the view's triad: X red, Y green, Z blue). */
+export const AXIS_NAMES = ["X", "Y", "Z"] as const;
+export const AXIS_COLORS = [0xd9534f, 0x3fa35a, 0x3f7fd9] as const;
+
+/**
+ * Where the pointer's ray (from `o` along `d`) comes nearest the axis line
+ * through `base` along axis `k`: how far along the axis from `base` (null
+ * when the ray runs along the axis).
+ */
+export function alongAxis(o: Vec3, d: Vec3, base: Vec3, k: number): number | null {
+  const w = [o[0] - base[0], o[1] - base[1], o[2] - base[2]];
+  const a = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+  const b = d[k];
+  const den = a - b * b;
+  if (den < 1e-12 * a) return null;
+  const dw = d[0] * w[0] + d[1] * w[1] + d[2] * w[2];
+  return (a * w[k] - b * dw) / den;
+}
+
+/** A point `len` from `from` toward `to` (the direction of the line being drawn); null when they are one point. */
+export function atLength(from: Vec3, to: Vec3, len: number): Vec3 | null {
+  const v = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+  const n = Math.hypot(v[0], v[1], v[2]);
+  if (n < 1e-9) return null;
+  return from.map((x, i) => Math.round((x + (v[i] / n) * len) * 1e6) / 1e6 + 0) as Vec3;
+}
