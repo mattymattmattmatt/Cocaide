@@ -65,6 +65,20 @@ export const ui: UiOp = {
       set: (v, f, c) => switchMode(f, String(v), PLANE_MODE_SPECS, c.before, { distance: 10, angle: 45 }, c),
     },
     ...refFields(PLANE_MODE_SPECS, REF_LABELS, modeOf),
+    // An offset plane up to a point instead of a distance (a vertex, a sketch's corner): the usual CAD shortcut. Picking
+    // one makes it parallel to the plane above, through that point, and it follows the point.
+    {
+      kind: "datumRef",
+      key: "upTo",
+      label: "Up to a point",
+      testId: "prop-plane-upto",
+      accepts: ["point"],
+      optional: true,
+      hint: "A vertex of the part or a point of a sketch (its corner, a line's end): the plane goes through it, parallel to the plane above, instead of a distance",
+      when: (f) => modeOf(f) === "offset",
+      get: () => undefined,
+      set: (v, f) => (v ? { mode: "parallelThroughPoint", refs: [refsOf(f)[0] ?? { datum: "Top" }, v as DatumRef], distance: null } : {}),
+    },
     { kind: "number", key: "distance", label: "Distance", unit: "mm", default: 0, hint: "Along the plane's normal; negative goes behind it", when: (f) => modeOf(f) === "offset" },
     { kind: "number", key: "angle", label: "Angle", unit: "°", hint: "Turned about the axis, right-handed", when: (f) => modeOf(f) === "angle" },
     {

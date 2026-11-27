@@ -76,7 +76,7 @@ export function MobileViewer(p: MobileViewerProps) {
 
   // Taps pick while measuring: one face, edge or corner for its size or place; a second for the distance; a third starts again.
   const pick = (t: PickTarget | null) => {
-    if (!measuring || !t || t.kind === "datum") return;
+    if (!measuring || !t || t.kind === "datum" || t.kind === "sketch") return;
     setSelection((sel) => {
       const n = sel.faces.length + sel.edges.length + (sel.vertices?.length ?? 0);
       const base: Selection = n >= 2 ? EMPTY_SELECTION : sel;

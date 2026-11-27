@@ -114,6 +114,9 @@ export interface SketchInView {
   ok: boolean;
   entities: SketchEntity[];
   frame: Frame;
+  /** A 3D sketch's lines and points, in space (its entities are empty). */
+  lines3d?: { id: string; a: Vec3; b: Vec3; construction?: boolean }[];
+  points3d?: { id: string; at: Vec3 }[];
 }
 
 /**
@@ -230,9 +233,25 @@ function faceAxes(faces: FaceInfo[], mesh: MeshData, frame: Frame): ModelEdge[] 
  */
 function otherSketches(sketches: SketchInView[], frame: Frame, exclude?: string): ModelEdge[] {
   const out: ModelEdge[] = [];
-  for (const s of sketches) {
-    if (!s.ok || s.id === exclude) continue;
-    for (const e of s.entities) {
+  for (const s3 of sketches) {
+    if (!s3.ok || s3.id === exclude) continue;
+    // A 3D sketch's points and lines: each as a one-entity sketch on a frame of its own (a point at its origin, a line
+    // along its x), as the rebuild resolves a reference to them, so they snap and project as another sketch's would.
+    const items: { s: SketchInView; e: SketchEntity }[] = s3.entities.map((e) => ({ s: s3, e }));
+    for (const p of s3.points3d ?? []) items.push({ s: { ...s3, frame: { origin: p.at, x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] } }, e: { id: p.id, type: "point", at: [0, 0] } as SketchEntity });
+    for (const l of s3.lines3d ?? []) {
+      const d: Vec3 = [l.b[0] - l.a[0], l.b[1] - l.a[1], l.b[2] - l.a[2]];
+      const len = Math.hypot(d[0], d[1], d[2]);
+      if (len < 1e-9) continue;
+      const x: Vec3 = [d[0] / len, d[1] / len, d[2] / len];
+      const up: Vec3 = Math.abs(x[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1];
+      let z: Vec3 = [x[1] * up[2] - x[2] * up[1], x[2] * up[0] - x[0] * up[2], x[0] * up[1] - x[1] * up[0]];
+      const zl = Math.hypot(z[0], z[1], z[2]);
+      z = [z[0] / zl, z[1] / zl, z[2] / zl];
+      const y: Vec3 = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      items.push({ s: { ...s3, frame: { origin: l.a, x, y, z } }, e: { id: l.id, type: "line", start: [0, 0], end: [len, 0], ...(l.construction ? { construction: true } : {}) } as SketchEntity });
+    }
+    for (const { s, e } of items) {
       const id = sketchStandIn(s.id, e.id);
       const lines = e.type === "point" ? [[e.at]] : entityPolylines(e, Math.PI / 48);
       const poly3 = lines.flatMap((pl) => pl.map((p) => to3D(s.frame, p)));

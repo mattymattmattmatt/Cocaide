@@ -126,7 +126,7 @@ function SessionFields({ link, children }: { link: SessionLink; children: ReactN
     const key = f?.key ?? null;
     if (key !== active) setActive(key);
     const summary = f ? summaryOf(f) : null;
-    const sig = summary ? JSON.stringify([summary.key, summary.count, summary.prompt, summary.takes, summary.items.map((i) => (i.kind === "datum" ? i.id : i.kind === "vertex" ? `${i.edge}${i.at}` : `${i.kind}${i.index}`))]) : "";
+    const sig = summary ? JSON.stringify([summary.key, summary.count, summary.prompt, summary.takes, summary.items.map((i) => (i.kind === "datum" ? i.id : i.kind === "vertex" ? `${i.edge}${i.at}` : i.kind === "sketch" ? `${i.pick.sketch}:${i.pick.entity}:${i.pick.at ?? ""}` : `${i.kind}${i.index}`))]) : "";
     if (sig !== reported.current) {
       reported.current = sig;
       link.report(summary);

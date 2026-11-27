@@ -1228,6 +1228,8 @@ export function App() {
     if (sessionRef.current) return;
     if (!target) return setDimsOf(null);
     if (target.kind === "datum") return features.some((f) => f.id === target.id) ? showDimensions(target.id) : undefined;
+    // A sketch's entity: its sketch's dimensions.
+    if (target.kind === "sketch") return features.some((f) => f.id === target.pick.sketch) ? showDimensions(target.pick.sketch) : undefined;
     const v = view;
     const faceIndex = target.kind === "face" ? target.index : (v?.edges[target.kind === "vertex" ? target.edge : target.index]?.faces[0] ?? -1);
     if (!v || faceIndex < 0) return;
@@ -1936,6 +1938,8 @@ export function App() {
     // An edge, vertex or plane keeps a selection it is already part of (Fillet the selected edges); a face's entries act
     // on that one face at the point clicked (Sketch on this face, Hole here), so a face is always selected alone, here.
     setSelection((sel) => (target.kind !== "face" && isSelected(sel, target) ? sel : only(target)));
+    // A sketch's entity: its sketch's menu.
+    if (target.kind === "sketch") return contextMenuRef.current({ kind: "feature", id: target.pick.sketch }, x, y);
     contextMenuRef.current(
       target.kind === "datum" ? { kind: "datum", id: target.id } : target.kind === "vertex" ? { kind: "vertex", edge: target.edge, at: target.at } : { kind: target.kind, index: target.index },
       x,
@@ -3544,7 +3548,9 @@ export function App() {
                   sketchHint={session && activeField?.sketches ? (hit) => pickRouter.current?.sketchHint?.(hit) ?? null : linePicking ? memberLineHint : null}
                   sketchLines={!session && linePicking}
                   sketchBox={linePicking ? pickMemberBox : null}
-                  sketchMarks={!session && memberCmd ? memberCmd.lines : null}
+                  sketchMarks={!session && memberCmd ? memberCmd.lines : !session && selection.sketches?.length ? selection.sketches.map((p) => ({ sketch: p.sketch, entity: p.entity })) : null}
+                  // Nothing being edited: a sketch's point or line clicked in the view is selected (Plane, Axis and Point take it).
+                  selectSketches={mode === "model" && !session && !sketch && !draw3d && !linePicking && !memberCmd}
                   draw3d={draw3d}
                   corners={cornerMarks}
                   selectedCorner={selectedCorner}

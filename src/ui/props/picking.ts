@@ -253,7 +253,7 @@ export function refTargets(ref: unknown, view: RebuildView | null): PickTarget[]
 
 const sameTarget = (a: PickTarget, b: PickTarget) =>
   a.kind === b.kind &&
-  (a.kind === "datum" ? a.id === (b as typeof a).id : a.kind === "vertex" ? a.edge === (b as typeof a).edge && a.at === (b as typeof a).at : a.index === (b as typeof a).index);
+  (a.kind === "datum" ? a.id === (b as typeof a).id : a.kind === "vertex" ? a.edge === (b as typeof a).edge && a.at === (b as typeof a).at : a.kind === "sketch" ? a.pick.sketch === (b as typeof a).pick.sketch && a.pick.entity === (b as typeof a).pick.entity && a.pick.at === (b as typeof a).pick.at : a.index === (b as typeof a).index);
 
 /** Is the target among these items? */
 export function holds(items: readonly PickTarget[], target: PickTarget): boolean {

@@ -5,7 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { commit, openApp, savedDocument, waitForRebuild } from "./helpers";
+import { commit, openApp, savedDocument, sketchClick, waitForRebuild } from "./helpers";
 
 let problems: string[] = [];
 test.beforeEach(async ({ page }) => {
@@ -235,4 +235,64 @@ test("posts up from another sketch's corners without Tab: the line locks along Z
   expect(tops).toHaveLength(4);
   for (const t of tops) expect(t.by).toEqual([0, 0, H]);
   expect(f.points.filter((p: any) => p.at?.sketch === "base")).toHaveLength(4);
+});
+
+test("a plane parallel to Top up to another sketch's vertex: selected first, or by Up to a point on an offset plane", async ({ page }) => {
+  // A sketch on Front: an L, its top end 500 up.
+  const doc = { version: 1, units: "mm", name: "p", features: [{ id: "side", op: "sketch", plane: { type: "ref", ref: { datum: "Front" } }, entities: [{ id: "l1", type: "line", start: [0, 0], end: [300, 0] }, { id: "l2", type: "line", start: [300, 0], end: [300, 500] }] }] };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+  await page.getByTestId("view-fit").click();
+  // Selected first: Top, then (Shift) the sketch's corner, picked in the view; Plane goes through it, parallel to Top.
+  await page.getByText("Top plane", { exact: true }).click();
+  const [vx, vy] = await screenOf(page, [300, 0, 500]);
+  await page.mouse.move(vx, vy);
+  await expect(page.getByTestId("sketch-pick-tip")).toContainText("the end of side's l2");
+  await page.keyboard.down("Shift");
+  await page.mouse.click(vx, vy);
+  await page.keyboard.up("Shift");
+  await expect(page.getByTestId("selection")).toContainText("1 plane + 1 sketch point");
+  await page.getByTestId("tab-reference").click();
+  await page.getByTestId("tool-plane").click();
+  await expect(page.getByTestId("prop-datum-where")).toHaveText("through 0, 0, 500 · normal +Z");
+  const planeOf = async () => (await saved(page)).features.find((f: any) => f.op === "plane");
+  expect(await planeOf()).toEqual({ id: "plane_1", op: "plane", mode: "parallelThroughPoint", refs: [{ datum: "Top" }, { sketch: "side", entity: "l2", at: "end" }] });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+z");
+  await expect.poll(planeOf).toBeUndefined();
+  // Or: Plane from Top (10 above it), then Up to a point, and the corner clicked in the view.
+  await page.getByText("Top plane", { exact: true }).click();
+  await page.getByTestId("tool-plane").click();
+  await expect(page.getByTestId("prop-datum-where")).toHaveText("through 0, 0, 10 · normal +Z");
+  await page.getByTestId("prop-plane-upto").first().click();
+  await page.mouse.move(vx, vy);
+  await expect(page.getByTestId("sketch-pick-tip")).toContainText("Up to a point");
+  await page.mouse.click(vx, vy);
+  await expect(page.getByTestId("prop-datum-where")).toHaveText("through 0, 0, 500 · normal +Z");
+  expect((await planeOf()).mode).toBe("parallelThroughPoint");
+});
+
+test("a sketch's line snapped onto a 3D sketch's points: each end follows the point it is on", async ({ page }) => {
+  const doc = { version: 1, units: "mm", name: "x", features: [
+    { id: "s3", op: "sketch3d", points: [{ id: "p1", at: [10, 0, 0] }, { id: "p2", from: "p1", by: [0, 0, 50] }, { id: "p3", at: [-20, 15, 0] }], lines: [{ id: "l1", start: "p1", end: "p2" }, { id: "l2", start: "p1", end: "p3" }] },
+  ] };
+  const text = JSON.stringify(doc);
+  await page.evaluate((text) => localStorage.setItem("cocaide.document.v1", JSON.stringify({ text, savedText: text })), text);
+  await page.goto("/?e2e");
+  await waitForRebuild(page);
+  await page.getByText("Top plane", { exact: true }).click();
+  await page.getByTestId("tool-sketch").click();
+  await expect(page.getByTestId("sketch-canvas")).toBeVisible();
+  await page.getByTestId("tool-line").click();
+  await sketchClick(page, -19.7, 15.3);
+  await sketchClick(page, 10.3, 0.3);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("sketch-status")).toContainText("Fully defined");
+  await page.getByTestId("finish-sketch").click();
+  await waitForRebuild(page);
+  const f = (await saved(page)).features.find((x: any) => x.op === "sketch");
+  expect(f.entities.filter((e: any) => e.ref).map((e: any) => e.ref)).toEqual([{ sketch: "s3", entity: "p3" }, { sketch: "s3", entity: "p1" }]);
+  await expect(page.getByTestId("status")).not.toContainText(/error/i);
 });

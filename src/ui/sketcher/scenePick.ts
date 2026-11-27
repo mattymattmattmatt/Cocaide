@@ -83,7 +83,7 @@ export interface SceneMiss {
  * else nothing. `local` is the pointer in the view's pixels.
  */
 export function standInFor(pick: PickTarget | null, m: ModelView, cam: ViewCamera, local: Vec2, opts: { faces?: boolean; axes?: boolean; endOn?: boolean } = {}): SceneHit | SceneMiss | null {
-  if (!pick || pick.kind === "datum") return null;
+  if (!pick || pick.kind === "datum" || pick.kind === "sketch") return null;
   if (pick.kind === "face") {
     if (opts.faces) {
       if (!m.faces.some((f) => f.index === pick.index)) return null;

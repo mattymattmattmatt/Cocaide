@@ -177,3 +177,49 @@ describe("drawing along an axis, and a typed length", () => {
     expect(atLength([1, 1, 1], [1, 1, 1], 5)).toBeNull();
   });
 });
+
+describe("a 3D sketch's points and lines as references", () => {
+  const withPost = (height: number) => ({
+    version: 1, units: "mm", name: "refs",
+    features: [
+      { id: "s3", op: "sketch3d", points: [{ id: "p1", at: [100, 0, 0] }, { id: "p2", from: "p1", by: [0, 0, height] }, { id: "p3", at: [-200, 150, 0] }], lines: [{ id: "l1", start: "p1", end: "p2" }, { id: "l2", start: "p1", end: "p3" }] },
+      // A plane parallel to Top through the post's top (by the point, and by the line's end), an axis along the post.
+      { id: "level", op: "plane", mode: "parallelThroughPoint", refs: [{ datum: "Top" }, { sketch: "s3", entity: "p2" }] },
+      { id: "level2", op: "plane", mode: "parallelThroughPoint", refs: [{ datum: "Top" }, { sketch: "s3", entity: "l1", at: "end" }] },
+      { id: "post", op: "axis", mode: "edge", refs: [{ sketch: "s3", entity: "l1" }] },
+      // A sketch on Top tied to the 3D sketch's floor points: a line from p3 to p1.
+      { id: "floor", op: "sketch", plane: { type: "ref", ref: { datum: "Top" } }, entities: [
+        { id: "l1", type: "line", start: [-200, 150], end: [100, 0] },
+        { id: "a", type: "point", at: [-200, 150], ref: { sketch: "s3", entity: "p3" } },
+        { id: "b", type: "point", at: [100, 0], ref: { sketch: "s3", entity: "p1" } },
+      ], constraints: [{ type: "coincident", points: ["l1.start", "a.at"] }, { type: "coincident", points: ["l1.end", "b.at"] }] },
+    ],
+  });
+  it("validate, build, and follow the 3D sketch: a plane through its point, an axis along its line, a sketch on its points", () => {
+    for (const h of [500, 800]) {
+      const doc = withPost(h);
+      expect(allErrors(validateDocument(doc))).toEqual([]);
+      const b = rebuild(doc, oc);
+      try {
+        expect(b.errors.filter((e) => !/no solid/.test(e))).toEqual([]);
+        expect(b.datums.level).toMatchObject({ kind: "plane", normal: [0, 0, 1] });
+        expect((b.datums.level as { origin: number[] }).origin[2]).toBeCloseTo(h, 6);
+        expect((b.datums.level2 as { origin: number[] }).origin[2]).toBeCloseTo(h, 6);
+        expect(b.datums.post).toMatchObject({ kind: "axis" });
+        expect((b.datums.post as { direction: number[] }).direction.map((v) => Math.round(v * 1e6) / 1e6 + 0)).toEqual([0, 0, 1]);
+      } finally {
+        b.dispose();
+      }
+    }
+  });
+  it("a reference to a point or line the 3D sketch hasn't: says what it has", () => {
+    const doc = withPost(500);
+    (doc.features[1] as { refs: unknown[] }).refs[1] = { sketch: "s3", entity: "p9" };
+    const b = rebuild(doc, oc);
+    try {
+      expect(b.errors.join(" ")).toMatch(/s3 has no point or line "p9" \(its points: p1, p2, p3; its lines: l1, l2\)/);
+    } finally {
+      b.dispose();
+    }
+  });
+});

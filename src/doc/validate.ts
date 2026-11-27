@@ -2466,7 +2466,7 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
       const id = v.sketch;
       if (typeof id !== "string" || id === "") c.fail(`${path}.sketch`, `must be the id of an earlier sketch (got ${describe(id)})`);
       else if (!earlier.has(id)) c.fail(`${path}.sketch`, `"${id}" is not a feature before this one: a sketch can take only an earlier sketch's entities`);
-      else if (earlier.get(id) !== "sketch") c.fail(`${path}.sketch`, `"${id}" is ${article(earlier.get(id)!)}, not a sketch`);
+      else if (earlier.get(id) !== "sketch" && earlier.get(id) !== "sketch3d") c.fail(`${path}.sketch`, `"${id}" is ${article(earlier.get(id)!)}, not a sketch or a 3D sketch`);
       if (typeof v.entity !== "string" || v.entity === "") c.fail(`${path}.entity`, `must be the id of an entity of that sketch (got ${describe(v.entity)})`);
       if (v.at !== undefined && !EDGE_POINTS.includes(v.at as EdgePoint)) c.fail(`${path}.at`, `must be ${EDGE_POINTS.map((p) => `"${p}"`).join(", ")} (got ${describe(v.at)})`);
       if (c.errors.length > before) break;
@@ -2474,7 +2474,8 @@ export function validateDatumRef(v: unknown, path: string, c: Checker, earlier: 
       const entity = v.entity as string;
       const at = v.at as EdgePoint | undefined;
       const known = SKETCHES_BEFORE.get(earlier);
-      if (known) {
+      // (A 3D sketch's point or line: the rebuild finds it, and says so if it isn't there.)
+      if (known && earlier.get(sketch) === "sketch") {
         // Checked against that sketch as validated: the entity is there, and it can be what it is asked to be.
         const s = known.get(sketch);
         const e = s?.entities.find((x) => x.id === entity);

@@ -515,3 +515,22 @@ describe("the Plane tool's newer guesses", () => {
     expect(d.kind === "plane" && d.origin[1]).toBeCloseTo(-3.3, 6);
   });
 });
+
+describe("a sketch's points and lines in the selection", () => {
+  const kindOf = (id: string) => (id === "Top" ? ("plane" as const) : undefined);
+  const corner = { sketch: "side", entity: "l2", type: "line", at: "end" as const, point: [300, 0, 500] as [number, number, number] };
+  it("Top and a sketch's corner: Plane goes parallel to Top through it (following the sketch)", () => {
+    const p = planeFromSelection({ faces: [], edges: [], datums: ["Top"], sketches: [corner] }, null, kindOf);
+    expect(p.feature).toEqual({ op: "plane", mode: "parallelThroughPoint", refs: [{ datum: "Top" }, { sketch: "side", entity: "l2", at: "end" }] });
+  });
+  it("a 3D sketch's line: Axis runs along it; three sketch points: a plane through them", () => {
+    const line = { sketch: "s3", entity: "l1", type: "line", point: [100, 0, 250] as [number, number, number], dir: [0, 0, 1] as [number, number, number] };
+    expect(axisFromSelection({ faces: [], edges: [], sketches: [line] }, null, kindOf).feature).toMatchObject({ op: "axis", refs: [{ sketch: "s3", entity: "l1" }] });
+    const pts = [0, 1, 2].map((i) => ({ sketch: "s3", entity: `p${i + 1}`, type: "point", point: [i * 100, i === 2 ? 100 : 0, 0] as [number, number, number] }));
+    expect(planeFromSelection({ faces: [], edges: [], sketches: pts }, null, kindOf).feature).toMatchObject({ op: "plane", mode: "threePoints" });
+  });
+  it("the chip says what is picked", () => {
+    expect(selectionText({ faces: [], edges: [], sketches: [corner] }, [], [])).toBe("the end of side's l2 · 300, 0, 500");
+    expect(selectionText({ faces: [], edges: [], datums: ["Top"], sketches: [corner] }, [], [])).toBe("1 plane + 1 sketch point");
+  });
+});

@@ -34,7 +34,7 @@ import { activePlanes, cutsBody, offsetArrow, sectionPlane, setPlane, type Secti
 import { Icon, type IconName } from "./icons";
 import { inputPrefs, keyHint, pointer, useCommands, useInputPrefs } from "./input";
 import { datumShapes, datumVisible, DEFAULT_DATUM_VIEW, DEFAULT_PLANES, type DatumShape, type DatumView } from "./model/datumDisplay";
-import { describeDatum, describeEdge, describeFace, describeVertex, EMPTY_SELECTION, fmt, selectionText, vertexPoint, type PickTarget, type Selection, type VertexPick } from "./model/selection";
+import { describeDatum, describeEdge, describeFace, describeSketchPick, describeVertex, EMPTY_SELECTION, fmt, selectionText, vertexPoint, type PickTarget, type Selection, type VertexPick } from "./model/selection";
 import { MenuItem, Popup } from "./tools";
 import { DatumLayer, type DatumLabel } from "./viewport/datums";
 import { EvalLayer, type EvalOverlay } from "./viewport/evalLayer";
@@ -213,6 +213,8 @@ interface Props {
   pickReach?: ((target: PickTarget) => PickTarget[] | null) | null;
   /** A session's reference field takes other sketches' entities: a click on one drawn in the view goes to it first (true: taken). */
   sketchPick?: ((hit: SketchEntityHit) => boolean) | null;
+  /** Model mode, nothing being edited: a click on a sketch's point or line drawn in the view selects it (Shift adds). */
+  selectSketches?: boolean;
   /** What a click on such an entity would do, for the pointer's tip ("Click to use it for Axis"). */
   sketchHint?: ((hit: SketchEntityHit) => string | null) | null;
   /** Sketch picking takes whole lines (the members-from-sketch tool): other entities and lines' end points aren't hit. */
@@ -430,6 +432,7 @@ export function Viewport({
   peek: peekList = null,
   pickReach = null,
   sketchPick = null,
+  selectSketches = false,
   sketchLines = false,
   sketchBox = null,
   sketchMarks = null,
@@ -2005,7 +2008,7 @@ export function Viewport({
     };
 
     /** The same thing (a face, an edge, a vertex or a datum), wherever on it. */
-    const targetKey = (t: PickTarget | null) => (!t ? "" : t.kind === "datum" ? `d:${t.id}` : t.kind === "vertex" ? `v:${t.edge}:${t.at}` : `${t.kind}:${t.index}`);
+    const targetKey = (t: PickTarget | null) => (!t ? "" : t.kind === "datum" ? `d:${t.id}` : t.kind === "vertex" ? `v:${t.edge}:${t.at}` : t.kind === "sketch" ? `s:${t.pick.sketch}:${t.pick.entity}:${t.pick.at ?? ""}` : `${t.kind}:${t.index}`);
     const sameTarget = (a: PickTarget | null, b: PickTarget | null) => targetKey(a) === targetKey(b);
     // A handle being dragged: which one, how far along its arrow the drag started, and the value now.
     let drag: { g: HandleDrag; h: HandleSpec; value: HandleValue; id: number } | null = null;
@@ -2275,7 +2278,7 @@ export function Viewport({
       renderer.domElement.style.cursor = hot ? (hot.locked ? "not-allowed" : "grab") : "";
       const rect = renderer.domElement.getBoundingClientRect();
       // A session's reference field takes other sketches' entities: one under the pointer wins, as a click on it does.
-      const sketchHit = !hot && sketchPickRef.current && overlays.visible && shownView?.sketches?.length ? sketchHitAt(e.clientX, e.clientY) : null;
+      const sketchHit = !hot && (sketchPickRef.current || selectSketchesRef.current) && overlays.visible && shownView?.sketches?.length ? sketchHitAt(e.clientX, e.clientY) : null;
       const sketchKey = (h: SketchEntityHit | null) => (h ? `${h.sketch}:${h.entity}:${h.at ?? ""}` : "");
       if (sketchKey(sketchHit) !== sketchKey(sketchHot)) {
         sketchHot = sketchHit;
@@ -2412,6 +2415,24 @@ export function Viewport({
       if (e.button === 0 && sketchPickRef.current && overlays.visible && shownView?.sketches?.length) {
         const hit = sketchHitAt(e.clientX, e.clientY);
         if (hit && sketchPickRef.current(hit)) return;
+      }
+      // Selecting: a sketch's point or line drawn in the view, before the part under it (it is drawn over it).
+      if (e.button === 0 && !sketchPickRef.current && selectSketchesRef.current && overlays.visible && shownView?.sketches?.length) {
+        const hit = sketchHitAt(e.clientX, e.clientY);
+        if (hit) {
+          let dir: Vec3 | undefined;
+          if (!hit.at && hit.type === "line") {
+            const k = drawnSketches().find((x) => x.id === hit.sketch);
+            const line = k ? entityPolylines3d(k, hit.entity)[0] : undefined;
+            if (line && line.length >= 2) {
+              const [a, b] = [line[0], line[line.length - 1]];
+              const n = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+              if (n > 1e-9) dir = [(b[0] - a[0]) / n, (b[1] - a[1]) / n, (b[2] - a[2]) / n];
+            }
+          }
+          pickRef.current({ kind: "sketch", pick: { sketch: hit.sketch, entity: hit.entity, type: hit.type, ...(hit.at ? { at: hit.at } : {}), point: hit.point, ...(dir ? { dir } : {}) }, point: hit.point }, additive);
+          return;
+        }
       }
       if (e.button === 2) {
         // A sketch drawn over the part is right-clicked before what is under it (as it is drawn on top).
@@ -3377,6 +3398,8 @@ export function Viewport({
   pickReachRef.current = pickReach;
   const sketchPickRef = useRef(sketchPick);
   sketchPickRef.current = sketchPick;
+  const selectSketchesRef = useRef(selectSketches);
+  selectSketchesRef.current = selectSketches;
   const sketchHintRef = useRef(sketchHint);
   sketchHintRef.current = sketchHint;
   const sketchLinesRef = useRef(sketchLines);
@@ -4020,6 +4043,8 @@ function PickTip({ hover, info, hint }: { hover: Hover; info: { faces: FaceInfo[
       ? describeDatum(t.id, info.datums)
       : t.kind === "vertex"
         ? describeVertex({ edge: t.edge, at: t.at }, info.edges)
+        : t.kind === "sketch"
+          ? describeSketchPick(t.pick)
         : t.kind === "face"
           ? describeFace(face)
           : describeEdge(info.edges[t.index]);

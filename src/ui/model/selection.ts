@@ -5,7 +5,7 @@
 //
 // Pure: no three.js, so Vitest covers it in node.
 
-import type { Vec3 } from "../../doc/types";
+import type { EdgePoint, Vec3 } from "../../doc/types";
 import { DEFAULT_DATUMS, type Datum } from "../../features/datum";
 import { formatDirection } from "../../geom/vec";
 import type { EdgeInfo, FaceInfo } from "../../kernel/topology";
@@ -17,12 +17,31 @@ export interface VertexPick {
   at: "start" | "end" | "mid" | "center";
 }
 
-/** A click on the part (a B-rep face, edge or vertex) or on reference geometry (a plane, axis or point, by id), and where. */
+/**
+ * A sketch's entity picked in the view (another sketch's line, arc, circle or point drawn there): which, the point of
+ * it if near one (an end, the middle, a centre), where, and a line's direction. Plane, Axis and Point take it as a
+ * reference ({ sketch, entity, at? }) that follows the sketch.
+ */
+export interface SketchPick {
+  sketch: string;
+  entity: string;
+  /** line, arc, circle or point. */
+  type: string;
+  at?: EdgePoint;
+  point: Vec3;
+  /** A straight line's direction (start to end), when the pick is the line itself. */
+  dir?: Vec3;
+}
+
+const sameSketchPick = (a: SketchPick, b: SketchPick) => a.sketch === b.sketch && a.entity === b.entity && (a.at ?? "") === (b.at ?? "");
+
+/** A click on the part (a B-rep face, edge or vertex), on reference geometry (a plane, axis or point, by id) or on a sketch's entity, and where. */
 export type PickTarget =
   /** `face`, on an edge: the face under the pointer beside it, when known (the loop "Select loop" means). */
   | { kind: "face" | "edge"; index: number; point: Vec3; face?: number }
   | { kind: "vertex"; edge: number; at: VertexPick["at"]; point: Vec3 }
-  | { kind: "datum"; id: string; point: Vec3 };
+  | { kind: "datum"; id: string; point: Vec3 }
+  | { kind: "sketch"; pick: SketchPick; point: Vec3 };
 
 export interface Selection {
   faces: number[];
@@ -31,6 +50,8 @@ export interface Selection {
   vertices?: VertexPick[];
   /** Reference geometry by id: a default plane ("Top"), the origin, or a plane, axis or point feature. */
   datums?: string[];
+  /** Sketches' entities and points (a corner of a sketch, its line). */
+  sketches?: SketchPick[];
   /** Where the last face was clicked; a new hole goes here. */
   point?: Vec3;
 }
@@ -48,6 +69,8 @@ export function only(target: PickTarget): Selection {
       return { faces: [], edges: [], vertices: [{ edge: target.edge, at: target.at }] };
     case "datum":
       return { faces: [], edges: [], datums: [target.id] };
+    case "sketch":
+      return { faces: [], edges: [], sketches: [target.pick] };
   }
 }
 
@@ -62,6 +85,8 @@ export function isSelected(sel: Selection, target: PickTarget): boolean {
       return (sel.vertices ?? []).some((v) => v.edge === target.edge && v.at === target.at);
     case "datum":
       return (sel.datums ?? []).includes(target.id);
+    case "sketch":
+      return (sel.sketches ?? []).some((p) => sameSketchPick(p, target.pick));
   }
 }
 
@@ -74,8 +99,8 @@ function toggle<T>(list: T[] | undefined, x: T, same: (a: T, b: T) => boolean): 
 
 /** The selection without an empty optional list. */
 function tidy(sel: Selection): Selection {
-  const { vertices, datums, ...rest } = sel;
-  return { ...rest, ...(vertices?.length ? { vertices } : {}), ...(datums?.length ? { datums } : {}) };
+  const { vertices, datums, sketches, ...rest } = sel;
+  return { ...rest, ...(vertices?.length ? { vertices } : {}), ...(datums?.length ? { datums } : {}), ...(sketches?.length ? { sketches } : {}) };
 }
 
 /**
@@ -95,6 +120,8 @@ export function pickInto(sel: Selection, target: PickTarget | null, additive: bo
       return tidy({ ...sel, vertices: toggle(sel.vertices, { edge: target.edge, at: target.at }, (a, b) => a.edge === b.edge && a.at === b.at) });
     case "datum":
       return tidy({ ...sel, datums: toggle(sel.datums, target.id, (a, b) => a === b) });
+    case "sketch":
+      return tidy({ ...sel, sketches: toggle(sel.sketches, target.pick, sameSketchPick) });
     case "face":
       break;
   }
@@ -109,7 +136,7 @@ export function pickInto(sel: Selection, target: PickTarget | null, additive: bo
 
 /** How many things are selected. */
 export function selectionSize(sel: Selection): number {
-  return sel.faces.length + sel.edges.length + (sel.vertices?.length ?? 0) + (sel.datums?.length ?? 0);
+  return sel.faces.length + sel.edges.length + (sel.vertices?.length ?? 0) + (sel.datums?.length ?? 0) + (sel.sketches?.length ?? 0);
 }
 
 /** "planar face of base · normal +Z · offset 6", for a face under the pointer or selected alone. */
@@ -180,13 +207,16 @@ export function selectionText(sel: Selection, faces: FaceInfo[], edges: EdgeInfo
   const ne = sel.edges.length;
   const vs = sel.vertices ?? [];
   const ds = sel.datums ?? [];
-  const total = nf + ne + vs.length + ds.length;
+  const ss = sel.sketches ?? [];
+  const total = nf + ne + vs.length + ds.length + ss.length;
   if (total === 1) {
     if (nf) return describeFace(faces[sel.faces[0]]);
     if (ne) return describeEdge(edges[sel.edges[0]]);
     if (vs.length) return describeVertex(vs[0], edges);
+    if (ss.length) return describeSketchPick(ss[0]);
     return describeDatum(ds[0], datums);
   }
+  const sketchPoints = ss.filter((p) => p.at || p.type === "point").length;
   const count = (n: number, one: string, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` : "");
   const kinds = { plane: 0, axis: 0, point: 0, frame: 0 };
   for (const id of ds) kinds[datumKindOf(id, datums) ?? "plane"]++;
@@ -198,6 +228,8 @@ export function selectionText(sel: Selection, faces: FaceInfo[], edges: EdgeInfo
     count(kinds.axis, "axis", "axes"),
     count(kinds.point, "point"),
     count(kinds.frame, "coordinate system", "coordinate systems"),
+    count(sketchPoints, "sketch point"),
+    count(ss.length - sketchPoints, "sketch entity", "sketch entities"),
   ]
     .filter(Boolean)
     .join(" + ");
@@ -225,4 +257,13 @@ export function facesOfBody(view: { faces: { index: number; body?: string }[]; b
   const first = view.bodies[0]?.name;
   const body = view.faces[face]?.body ?? first;
   return view.faces.filter((f) => (f.body ?? first) === body).map((f) => f.index);
+}
+
+/** "the end of side's l2 · 300, 0, 500", "side's l1 (a line)". */
+export function describeSketchPick(p: SketchPick): string {
+  const whose = `${p.sketch}'s ${p.entity}`;
+  const where = p.point.map(fmt).join(", ");
+  if (p.at) return `${p.at === "start" ? "the start of" : p.at === "end" ? "the end of" : p.at === "mid" ? "the middle of" : "the centre of"} ${whose} · ${where}`;
+  if (p.type === "point") return `${whose} (a sketch point) · ${where}`;
+  return `${whose} (${p.type === "arc" ? "an arc" : `a ${p.type}`})`;
 }

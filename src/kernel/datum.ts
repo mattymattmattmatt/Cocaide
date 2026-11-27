@@ -74,6 +74,10 @@ function resolve(ctx: DatumContext, ref: DatumRef, want: DatumKind | "any", path
  * OpError: the sketch failed or is suppressed, or has no such entity.
  */
 export function sketchSource(ctx: DatumContext, ref: SketchEntityRef, path: string): { entity: SketchEntity; frame: Frame } {
+  // A 3D sketch's point or line: as a one-entity sketch on a frame of its own (a point at the frame's origin, a line
+  // along its x), so it is a reference (and projects into a sketch) exactly as another sketch's would be.
+  const f3 = ctx.v.features.map((x) => x.feature as unknown as { id?: string; op?: string; placed?: Record<string, Vec3>; lines?: { id: string; start: string; end: string }[] }).find((x) => x.id === ref.sketch && x.op === "sketch3d");
+  if (f3) return sketch3dSource(f3.placed ?? {}, f3.lines ?? [], ref, path);
   const profile = ctx.profiles?.get(ref.sketch);
   if (!profile || !ctx.sketch) {
     const known = ctx.profiles?.has(ref.sketch);
@@ -83,6 +87,25 @@ export function sketchSource(ctx: DatumContext, ref: SketchEntityRef, path: stri
   const entity = f?.entities.find((e) => e.id === ref.entity);
   if (!entity) throw new OpError(`${path}.entity: ${ref.sketch} has no entity "${ref.entity}"${f ? ` (it has ${f.entities.map((e) => e.id).join(", ") || "none"})` : ""}; re-pick the reference or delete it`);
   return { entity, frame: profile.frame };
+}
+
+/** A 3D sketch's point (by its id) or line, as sketchSource gives another sketch's entity. */
+function sketch3dSource(placed: Record<string, Vec3>, lines: { id: string; start: string; end: string }[], ref: SketchEntityRef, path: string): { entity: SketchEntity; frame: Frame } {
+  const at = placed[ref.entity];
+  if (at) return { entity: { id: ref.entity, type: "point", at: [0, 0] } as SketchEntity, frame: { origin: at, x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] } };
+  const l = lines.find((x) => x.id === ref.entity);
+  const a = l ? placed[l.start] : undefined;
+  const b = l ? placed[l.end] : undefined;
+  if (!l || !a || !b) throw new OpError(`${path}.entity: ${ref.sketch} has no point or line "${ref.entity}" (its points: ${Object.keys(placed).join(", ") || "none"}; its lines: ${lines.map((x) => x.id).join(", ") || "none"}); re-pick the reference or delete it`);
+  const d = sub3(b, a);
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (len < 1e-9) throw new OpError(`${path}.entity: ${ref.sketch}'s line ${l.id} has no length`);
+  const x = normalize3(d);
+  // Any square to it: the world Z crossed with it, or Y when it runs up Z.
+  const up: Vec3 = Math.abs(x[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1];
+  const z = normalize3([x[1] * up[2] - x[2] * up[1], x[2] * up[0] - x[0] * up[2], x[0] * up[1] - x[1] * up[0]]);
+  const y: Vec3 = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+  return { entity: { id: l.id, type: "line", start: [0, 0], end: [len, 0] } as SketchEntity, frame: { origin: a, x, y, z } };
 }
 
 function fromSketch(ctx: DatumContext, ref: SketchEntityRef, want: DatumKind | "any", path: string): RefDatum {

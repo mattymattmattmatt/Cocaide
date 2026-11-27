@@ -76,6 +76,14 @@ function itemsOf(sel: Selection, view: RebuildView | null, kindOf: (id: string) 
     const at = v.at === "start" ? e.start : v.at === "end" ? e.end : v.at === "mid" ? e.mid : e.center;
     items.push({ ref: { edge: s.selector, at: v.at }, what: "vertex", ...(at ? { at } : {}) });
   }
+  // A sketch's point (an end, middle or centre, or a point) is a point; its line a straight edge; its arc or circle a round
+  // edge (its axis, or with Point its centre). The reference follows the sketch.
+  for (const p of sel.sketches ?? []) {
+    const ref = { sketch: p.sketch, entity: p.entity, ...(p.at ? { at: p.at } : {}) } as DatumRef;
+    if (p.at || p.type === "point") items.push({ ref, what: "point", at: p.point });
+    else if (p.type === "line") items.push({ ref, what: "line", ...(p.dir ? { dir: p.dir } : {}), at: p.point });
+    else items.push({ ref, what: "circle" });
+  }
   for (const id of sel.datums ?? []) {
     const kind = kindOf(id);
     if (!kind) continue;
@@ -207,6 +215,11 @@ export function pointFromSelection(sel: Selection, view: RebuildView | null, kin
     if (is(item, "circle")) return { feature: { op: "point", mode: "center", refs: refs(item) } };
     if (is(item, "planarFace", "roundFace", "otherFace")) return { feature: { op: "point", mode: "center", refs: refs(item) } };
     if (is(item, "line", "curve")) return { feature: { op: "point", mode: "onEdge", refs: refs(item), t: 0.5 } };
+    // A sketch line's end or middle: on that line there, so it follows the sketch.
+    if (is(item, "point") && "sketch" in item.ref && item.ref.at && item.ref.at !== "center") {
+      const { at, ...line } = item.ref;
+      return { feature: { op: "point", mode: "onEdge", refs: [line], t: at === "end" ? 1 : at === "mid" ? 0.5 : 0 } };
+    }
     // A vertex: the end of its edge, so it stays on the corner when the part changes.
     if (is(item, "vertex") && "edge" in item.ref) {
       if (item.ref.at === "center") return { feature: { op: "point", mode: "center", refs: [{ edge: item.ref.edge }] } };
