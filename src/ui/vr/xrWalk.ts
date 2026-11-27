@@ -160,6 +160,8 @@ const FALL_STEP = 0.12;
 const LIFT_SPEED = 0.6;
 const LIFT_MIN = -1.4;
 const LIFT_MAX = 3;
+/** How long (s) the right stick must be held up or down before it lifts: a quick flick, or one on the way to a turn, doesn't. */
+const LIFT_DELAY = 0.25;
 const TURN_STEP = 10;
 
 export class XrWalk {
@@ -251,6 +253,8 @@ export class XrWalk {
   private lift = 0;
   /** The right stick is lifting you now (when it lets go, how far is said). */
   private lifting = false;
+  /** How long (s) the right stick has been held up or down (it lifts once this reaches LIFT_DELAY). */
+  private liftHold = 0;
 
   constructor(private host: XrHost) {
     this.zup.rotation.x = -Math.PI / 2;
@@ -1940,7 +1944,10 @@ export class XrWalk {
       // The right stick up and down: up and down like a lift (to sit on a sofa or stand at a bench at its real height),
       // until a teleport puts you back on the floor.
       if (hand === "right" && !holding && !this.inspecting && !this.dollhouse && this.carry?.hand !== "right") {
-        if (Math.abs(sy) > 0.25 && Math.abs(sx) < 0.5) {
+        // Held up or down (not sideways, and not straight after a turn) for a moment before it lifts.
+        const wants = Math.abs(sy) > 0.25 && Math.abs(sx) < 0.5 && !this.turned.right;
+        this.liftHold = wants ? this.liftHold + dt : 0;
+        if (wants && this.liftHold >= LIFT_DELAY) {
           const to = Math.min(LIFT_MAX, Math.max(LIFT_MIN, this.lift - sy * LIFT_SPEED * dt));
           this.rig.position.y -= to - this.lift;
           this.lift = to;

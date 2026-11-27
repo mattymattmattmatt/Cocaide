@@ -619,7 +619,7 @@ test("a .glb model in an assembly keeps its texture in VR, beside a plain white 
   expect(((await page.evaluate("window.__cocaideViewport.vrItems()")) as string[]).filter((s) => s.startsWith("sofa-1"))).toEqual(["sofa-1/model:true"]);
 });
 
-test("the right stick up and down lifts you like a lift, walking keeps you at that height, and a teleport puts you back on the floor", async ({ page }) => {
+test("the right stick held up or down lifts you like a lift (a quick flick doesn't), walking keeps you at that height, and a teleport puts you back on the floor", async ({ page }) => {
   const doc = {
     version: 1,
     units: "mm",
@@ -639,7 +639,13 @@ test("the right stick up and down lifts you like a lift, walking keeps you at th
   const lift = () => page.evaluate("window.__cocaideViewport.vrState().lift") as Promise<number>;
   const z = async () => (await vr(page)).standing!.at[2];
   await expect.poll(z).toBeLessThan(120);
-  // Up: the right stick pushed forward lifts you; let go, you stay there (not dropped back to the floor).
+  // A quick flick (under a quarter second, as on the way to a turn) doesn't lift you.
+  await device(page, "d.controllers.right.updateAxes('thumbstick', 0, -1);");
+  await page.waitForTimeout(80);
+  await device(page, "d.controllers.right.updateAxes('thumbstick', 0, 0);");
+  await page.waitForTimeout(300);
+  expect(await lift()).toBe(0);
+  // Up: the right stick held forward lifts you; let go, you stay there (not dropped back to the floor).
   await device(page, "d.controllers.right.updateAxes('thumbstick', 0, -1);");
   await expect.poll(lift, { timeout: 15_000 }).toBeGreaterThan(250);
   await device(page, "d.controllers.right.updateAxes('thumbstick', 0, 0);");
