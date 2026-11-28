@@ -2160,7 +2160,12 @@ function designationWords(d: string): string {
 export function sameDesignation(designations: string[], size: string): string | undefined {
   const want = designationWords(size);
   const hits = designations.filter((d) => designationWords(d) === want);
-  return hits.length === 1 ? hits[0] : undefined;
+  if (hits.length) return hits.length === 1 ? hits[0] : undefined;
+  // Its numbers alone ("100x100x5" for "100x100x5.0 SHS"): the family's name left off.
+  const nums = (d: string) => designationWords(d).split(" ").filter((w) => /\d/.test(w)).join(" ");
+  const bare = nums(size);
+  const near = bare ? designations.filter((d) => nums(d) === bare) : [];
+  return near.length === 1 ? near[0] : undefined;
 }
 
 // ---------------------------------------------------------------- frames

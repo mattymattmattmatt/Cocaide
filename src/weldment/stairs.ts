@@ -120,9 +120,12 @@ interface Flight {
 export function planStair(doc: RawDocument, spec: StairSpec): { ok: true; doc: RawDocument; report: StairReport; features: string[]; commands: Command[] } | { ok: false; error: string } {
   if (!(spec.rise > 0) || !(spec.width >= 500) || !(spec.going > 0)) return { ok: false, error: "the stair needs a floor-to-floor height, a width of 500 or more and a going" };
   const report = stairNumbers(spec);
-  const pre = spec.id ?? "stair";
   const taken = new Set(doc.features.map((f) => String(f.id)));
-  if ([...taken].some((id) => id.startsWith(`${pre}_`))) return { ok: false, error: `the part already has features named ${pre}_…: give the stair another id` };
+  const used = (p: string) => [...taken].some((id) => id === p || id.startsWith(`${p}_`));
+  // No id: the next free one ("stair", then "stair_2", "stair_3"...), so a second stair just works.
+  let pre = spec.id ?? "stair";
+  if (spec.id === undefined) for (let i = 2; used(pre); i++) pre = `stair_${i}`;
+  else if (used(pre)) return { ok: false, error: `the part already has features named ${pre}_…: give the stair another id (or leave id out for the next free one)` };
   const T = spec.tread ?? 40;
   const H = spec.housing ?? 12;
   const nose = spec.nosing ?? 20;
@@ -231,13 +234,18 @@ export function planStair(doc: RawDocument, spec: StairSpec): { ok: true; doc: R
     const zb = landingZ - T - D / 2;
     const inset = B / 2 + 5;
     const [a, b, c, d] = landing;
+    // Each bearer in from its edge by half its width (its face on the landing's edge): the front one clear of the lower
+    // flight's stringers, cut plumb at that edge, and its top tread; the back one clear of the upper flight's.
+    const ul = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const into: Pt = [((b[0] - a[0]) / ul) * inset, ((b[1] - a[1]) / ul) * inset];
+    const move = ([p, q]: [Pt, Pt], k: number): [Pt, Pt] => [[p[0] + into[0] * k, p[1] + into[1] * k], [q[0] + into[0] * k, q[1] + into[1] * k]];
     const shrink = (p: Pt, q: Pt): [Pt, Pt] => {
       const L = Math.hypot(q[0] - p[0], q[1] - p[1]);
       const ux = (q[0] - p[0]) / L;
       const uy = (q[1] - p[1]) / L;
       return [[p[0] + ux * inset, p[1] + uy * inset], [q[0] - ux * inset, q[1] - uy * inset]];
     };
-    for (const [n, [p, q]] of [["front", shrink(d, a)], ["back", shrink(b, c)]] as const) {
+    for (const [n, [p, q]] of [["front", move(shrink(d, a), 1)], ["back", move(shrink(b, c), -1)]] as const) {
       add({ id: `${lid}_bearer_${n}`, op: "member", profile: copy.name, size, from: [r1(p[0]), r1(p[1]), r1(zb)], to: [r1(q[0]), r1(q[1]), r1(zb)] });
     }
   }

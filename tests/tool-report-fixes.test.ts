@@ -5,6 +5,8 @@
 // - a gusset can sit flush with the members' undersides (or tops), and be offset
 // - a selector may say "pick": "nearest" with "near"
 // - the subscription's usage warning is not a tool issue
+// - a bare size ("100x100x5") is the catalogue's "100x100x5.0 SHS"; a size it lacks lists the nearest ones
+// - a throughAllBoth cut from a plane with the whole part on one side of it cuts (it goes the way the part is)
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { StreamReader } from "../src/bridge/claude";
@@ -60,6 +62,40 @@ describe("member sizes written another way", () => {
     }
     expect(allErrors(validateDocument(corner("SHS 30x30x2.5"))).join(" ")).toMatch(/is not a size of SHS/);
   }, 120_000);
+});
+
+describe("bare sizes, nearest sizes", () => {
+  it('"100x100x5" is "100x100x5.0 SHS"; a CHS size the catalogue lacks lists the ones nearest it', () => {
+    const cmd = libraryProfileCommand({ query: "SHS", sizes: ["100x100x5"] });
+    if (typeof cmd === "string") throw new Error(cmd);
+    const r = apply({ version: 1, units: "mm", name: "s", features: [] } as unknown as RawDocument, cmd);
+    if (!r.ok) throw new Error(r.error);
+    const doc = { ...r.doc, features: [{ id: "m", op: "member", profile: "SHS (AS/NZS 1163)", size: "100x100x5", from: [0, 0, 0], to: [500, 0, 0] }] } as unknown as RawDocument;
+    expect(allErrors(validateDocument(doc))).toEqual([]);
+    const miss = libraryProfileCommand({ query: "CHS", sizes: ["168.3x7.1"] });
+    expect(typeof miss).toBe("string");
+    expect((miss as string).match(/near it: ([^.]+\.\d[^.]*?)[,.]/)?.[1]).toMatch(/^165\.1x/);
+  });
+});
+
+describe("through all both ways", () => {
+  it("cuts from a plane with the whole part on one side, either side", () => {
+    for (const z of [200, -50]) {
+      const doc = { version: 1, units: "mm", name: "c", features: [
+        { id: "s", op: "sketch", plane: "Top", entities: [{ id: "r", type: "rect", center: [0, 0], w: 100, h: 100 }] },
+        { id: "box", op: "extrude", sketch: "s", distance: 100 },
+        { id: "s2", op: "sketch", plane: { type: "datum", normal: [0, 0, 1], origin: [0, 0, z] }, entities: [{ id: "c", type: "circle", center: [0, 0], radius: 20 }] },
+        { id: "hole", op: "cut", sketch: "s2", extent: "throughAllBoth" },
+      ] } as unknown as RawDocument;
+      const b = rebuild(doc, oc);
+      try {
+        expect(b.errors).toEqual([]);
+        expect(b.measurements!.volume).toBeCloseTo(100 * 100 * 100 - Math.PI * 400 * 100, -1);
+      } finally {
+        b.dispose();
+      }
+    }
+  });
 });
 
 describe("welds and gussets", () => {

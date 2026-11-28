@@ -77,6 +77,34 @@ describe("turned stairs", () => {
   });
 });
 
+describe("several stairs, and the landing's bearers", () => {
+  it("a second stair with no id takes the next free name; a given id already used is refused", () => {
+    const one = planStair(empty(), base);
+    if (!one.ok) throw new Error(one.error);
+    const two = planStair(one.doc, { ...base, origin: [0, 3000, 3079] });
+    if (!two.ok) throw new Error(two.error);
+    expect(two.features.every((id) => id.startsWith("stair_2_"))).toBe(true);
+    const three = planStair(two.doc, { ...base, origin: [0, 6000, 6158] });
+    expect(three.ok && three.features[0].startsWith("stair_3_")).toBe(true);
+    const clash = planStair(one.doc, { ...base, id: "stair" });
+    expect(!clash.ok && clash.error).toMatch(/already has features named stair_…/);
+  });
+  it("a U stair's landing bearers clear the stringers and treads: nothing in it overlaps", () => {
+    for (const turn of ["left", "right"] as const) {
+      const r = planStair(empty(), { ...base, type: "U", turn });
+      if (!r.ok) throw new Error(r.error);
+      const b = rebuild(r.doc, oc);
+      try {
+        expect(b.errors).toEqual([]);
+        const clashes = (b.measurements!.interference ?? []).filter((i: { bodies: string[] }) => i.bodies.some((x) => /bearer/.test(x)));
+        expect(clashes).toEqual([]);
+      } finally {
+        b.dispose();
+      }
+    }
+  });
+});
+
 describe("the agent's stair tool", () => {
   it("adds the stair as one undo step and returns its numbers", async () => {
     const { AgentSession } = await import("../src/agent/session");

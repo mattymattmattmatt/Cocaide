@@ -37,9 +37,15 @@ function findSize(entry: LibraryEntry, wanted: string): ProfileSize | undefined 
 function sizeList(entry: LibraryEntry, near?: string): string {
   const all = entry.sizes.map((s) => s.designation);
   if (!near) return all.slice(0, 30).join(", ") + (all.length > 30 ? `, … (${all.length} sizes)` : "");
-  const lead = norm(near).split("x")[0];
-  const close = all.filter((d) => norm(d).startsWith(lead + "x"));
-  return (close.length ? close : all.slice(0, 20)).join(", ");
+  // The nearest by their numbers: the first (the size) counts most, then the rest (the wall).
+  const nums = (d: string) => (norm(d).match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+  const want = nums(near);
+  if (!want.length) return all.slice(0, 20).join(", ");
+  const gap = (d: string) => {
+    const n = nums(d);
+    return want.reduce((g, w, i) => g + (Math.abs((n[i] ?? 0) - w) / Math.max(w, 1e-9)) * (i === 0 ? 100 : 1), 0);
+  };
+  return [...all].sort((a, b) => gap(a) - gap(b)).slice(0, 8).join(", ");
 }
 
 /**

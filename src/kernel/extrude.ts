@@ -84,7 +84,18 @@ export function extrudeTool(ctx: RebuildCtx, s: Scope, f: ExtrudeFeature, profil
     const half = f.distance! / 2;
     pieces.push(b.piece(1, start, b.blind(start, 1, half), f.draft), b.piece(-1, start, b.blind(start, -1, half), f.draft));
   } else if (extent === "throughAllBoth") {
-    pieces.push(b.piece(1, start, b.throughAll(start, 1), f.draft), b.piece(-1, start, b.throughAll(start, -1), f.draft));
+    // Both ways: a side with nothing of the part on it is left out (the part all on one side of the sketch).
+    const ends = ([1, -1] as const).map((sign) => {
+      try {
+        return [sign, b.throughAll(start, sign)] as const;
+      } catch (e) {
+        if (e instanceof OpError && /entirely behind/.test(e.message)) return null;
+        throw e;
+      }
+    });
+    const both = ends.filter((x) => x !== null);
+    if (!both.length) throw new OpError(`through all both ways: the profile reaches none of ${f.bodies?.length ? "the bodies it works on" : "the part"} in either direction; check where the sketch is${f.bodies?.length ? " and its bodies" : ""}`);
+    for (const [sign, end] of both) pieces.push(b.piece(sign, start, end, f.draft));
   } else {
     pieces.push(b.piece(1, start, b.end(1, start, { extent, distance: f.distance, upTo: f.upTo, offset: f.offset }), f.draft));
     const d2 = f.direction2;
